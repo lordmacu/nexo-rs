@@ -32,6 +32,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use nexo_config::WhatsappPluginConfig;
@@ -109,6 +111,34 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
             }
         };
 
+        // pairing/start is operator-initiated — they explicitly
+        // want a fresh QR. wa-agent's `Client::new_in_dir` will
+        // resume any existing signal session under
+        // `<session_dir>/.whatsapp-rs/` and silently skip the QR
+        // step if it does. That bypasses the operator UI entirely
+        // (challenge flips straight to `Linked`, no QR ever
+        // pushed). Wipe the signal session before starting so
+        // every pairing/start produces a real QR. Failure to
+        // wipe is logged but not fatal — wa-agent may still
+        // produce a fresh QR if the session was already invalid
+        // server-side, and surfacing a hard error here would
+        // block the operator from retrying.
+        let signal_dir = session_dir.join(".whatsapp-rs");
+        match tokio::fs::remove_dir_all(&signal_dir).await {
+            Ok(()) => tracing::info!(
+                signal_dir = %signal_dir.display(),
+                "WhatsappPairingTrigger: cleared stale signal session for fresh QR",
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Fresh install / first pair — nothing to wipe.
+            }
+            Err(e) => tracing::warn!(
+                signal_dir = %signal_dir.display(),
+                error = %e,
+                "WhatsappPairingTrigger: could not wipe signal session — pairing may auto-resume",
+            ),
+        }
+
         // Capture context fields the spawned task needs. The
         // store is `Arc` so the on_qr closure (sync, FnMut)
         // can clone-and-update without async.
@@ -118,12 +148,24 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
         let cancel = ctx.cancel.clone();
         let handle_cancel = cancel.clone();
 
+        // Tracks whether the wa-agent client ever produced a QR
+        // before `connect()` resolved. If `Ok` arrives without
+        // any QR firing, the signal session resumed silently
+        // (wipe race, or operator hit a code path that bypassed
+        // the wipe) and the operator UI would otherwise see a
+        // misleading green "✅ emparejado" without ever scanning.
+        // The post-connect branch checks this flag and surfaces
+        // an error in that case.
+        let qr_fired = Arc::new(AtomicBool::new(false));
+        let qr_fired_for_qr = qr_fired.clone();
+
         // Closure passed into `pair_with_callback` — fires on
         // every QR rotation (~20s on WhatsApp). Updates the
         // store synchronously + pushes a notification frame.
         let store_for_qr = store.clone();
         let notifier_for_qr = notifier.clone();
         let on_qr = move |qr_png_b64: String, qr_ascii: String, expires_at_ms: u64| {
+            qr_fired_for_qr.store(true, Ordering::SeqCst);
             // Skip update if cancelled — race between QR
             // arrival and operator clicking cancel.
             let _ = store_for_qr.update_qr(
@@ -161,6 +203,39 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
                 }
                 result = pair_with_callback(&session_dir, on_qr) => {
                     match result {
+                        Ok(_outcome) if !qr_fired.load(Ordering::SeqCst) => {
+                            // `connect()` resolved without the
+                            // wa-agent client ever firing on_qr,
+                            // which means the signal session
+                            // resumed silently. Should not happen
+                            // because we wipe the session above,
+                            // but if it does, do NOT mark Linked
+                            // — that would lie to the operator
+                            // (no QR was scanned, no fresh device
+                            // bound). Surface as Expired + error
+                            // so the UI offers retry.
+                            let mut data = PairingStatusData::default();
+                            data.error = Some(
+                                "session_resumed_without_qr — wipe failed; check daemon logs"
+                                    .into(),
+                            );
+                            let _ = store.update_state(
+                                challenge_id,
+                                PairingState::Expired,
+                                data.clone(),
+                            );
+                            if let Some(n) = &notifier {
+                                n.notify_status(&PairingStatus {
+                                    challenge_id,
+                                    state: PairingState::Expired,
+                                    data,
+                                });
+                            }
+                            tracing::error!(
+                                challenge_id = %challenge_id,
+                                "WhatsappPairingTrigger: connect resolved Ok WITHOUT firing on_qr — silent resume defended",
+                            );
+                        }
                         Ok(_outcome) => {
                             // wa-agent returned without
                             // device_jid (today). Mark the
@@ -381,5 +456,37 @@ mod tests {
     async fn channel_id_is_whatsapp() {
         let trigger = WhatsappPairingTrigger::from_configs(&[]);
         assert_eq!(trigger.channel_id(), "whatsapp");
+    }
+
+    #[tokio::test]
+    async fn start_wipes_signal_session_before_pairing() {
+        // Stale `.whatsapp-rs/` survives a credential revoke and
+        // would otherwise let `connect()` resume silently — no
+        // QR, no escape. The trigger MUST wipe it so every
+        // pairing/start produces a fresh QR.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_dir = tmp.path().to_path_buf();
+        let signal_dir = session_dir.join(".whatsapp-rs");
+        std::fs::create_dir_all(&signal_dir).expect("mkdir signal_dir");
+        std::fs::write(signal_dir.join("Session-9999.bin"), b"stale").expect("seed stale session");
+        assert!(signal_dir.exists(), "precondition: stale dir present");
+
+        let cfg = cfg_with(Some("ana"), session_dir.to_str().unwrap());
+        let trigger = WhatsappPairingTrigger::from_configs(&[cfg]);
+        let (ctx, _store, cancel) = ctx_for(Some("ana"));
+
+        // Start spawns a task; immediately cancel it so we don't
+        // hit the WhatsApp servers in unit tests. The wipe runs
+        // SYNCHRONOUSLY before the spawn so it's already done by
+        // the time `start` returns.
+        let handle = trigger.start(ctx).await.expect("start ok");
+        cancel.cancel();
+        // Drop the handle so the spawned task observes cancel.
+        drop(handle);
+
+        assert!(
+            !signal_dir.exists(),
+            ".whatsapp-rs/ should be wiped before pairing flow begins",
+        );
     }
 }
