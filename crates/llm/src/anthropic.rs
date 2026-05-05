@@ -1128,24 +1128,32 @@ impl LlmProviderFactory for AnthropicFactory {
         // Static fallback when /v1/models is unreachable (no creds
         // yet, OAuth-bundle pre-upsert, network blocked). IDs come
         // from `claude-code-leak/src/utils/model/configs.ts`
-        // `firstParty` field — Anthropic's public API expects the
-        // **dated** SKU (`claude-sonnet-4-5-20250929`), not the
-        // versionless alias (`claude-sonnet-4-5`) which 404s on
-        // the OAuth-bundle subscription tier. The two -4-6 IDs
-        // are version-less by design (latest aliases per the
-        // canonical config).
+        // `firstParty` field. Two SKU shapes coexist:
         //
-        // Order: most-broadly-available first so wizards that
-        // stamp `models[0]` as the default get the safest pick.
+        // * **Versionless aliases** — `claude-sonnet-4-6`,
+        //   `claude-opus-4-6`. Resolved server-side to the
+        //   latest dated build. Claude Code subscription tier
+        //   exposes these as the canonical Pro / Max defaults
+        //   (see `model.ts::getDefaultSonnetModel` line 127).
+        // * **Dated SKUs** — `claude-sonnet-4-5-20250929`,
+        //   `claude-haiku-4-5-20251001`, etc. Required for
+        //   pinned production deployments and direct API key
+        //   access; the OAuth-bundle endpoint 404s on the
+        //   versionless 4-5 alias and on dated 4-5 SKUs from
+        //   the Pro tier (incident 2026-05-05).
+        //
+        // Order: Claude Code OAuth-tier defaults first
+        // (`-4-6` aliases) so `models[0]` is the safest pick
+        // when the wizard stamps without a live probe.
         &[
-            "claude-sonnet-4-5-20250929",
-            "claude-haiku-4-5-20251001",
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-1-20250805",
-            "claude-opus-4-20250514",
-            "claude-opus-4-5-20251101",
             "claude-sonnet-4-6",
             "claude-opus-4-6",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-20250514",
         ]
     }
 
