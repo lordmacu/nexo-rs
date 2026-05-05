@@ -1126,16 +1126,26 @@ impl LlmProviderFactory for AnthropicFactory {
 
     fn known_models(&self) -> &'static [&'static str] {
         // Static fallback when /v1/models is unreachable (no creds
-        // yet, OAuth-bundle pre-upsert, network blocked). Order:
-        // sonnet-4-5 first because it's available on every tier
-        // (public API + Claude Code OAuth-bundle), opus higher-revs
-        // last because the subscription endpoint sometimes 404s on
-        // them despite being in the catalog.
+        // yet, OAuth-bundle pre-upsert, network blocked). IDs come
+        // from `claude-code-leak/src/utils/model/configs.ts`
+        // `firstParty` field — Anthropic's public API expects the
+        // **dated** SKU (`claude-sonnet-4-5-20250929`), not the
+        // versionless alias (`claude-sonnet-4-5`) which 404s on
+        // the OAuth-bundle subscription tier. The two -4-6 IDs
+        // are version-less by design (latest aliases per the
+        // canonical config).
+        //
+        // Order: most-broadly-available first so wizards that
+        // stamp `models[0]` as the default get the safest pick.
         &[
-            "claude-sonnet-4-5",
-            "claude-haiku-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-1-20250805",
+            "claude-opus-4-20250514",
+            "claude-opus-4-5-20251101",
             "claude-sonnet-4-6",
-            "claude-opus-4-7",
+            "claude-opus-4-6",
         ]
     }
 

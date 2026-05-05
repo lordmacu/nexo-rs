@@ -163,9 +163,14 @@ impl ConfigReloadCoordinator {
         };
 
         // 2. Structural + provider validation (aggregate errors).
-        let names = self.llm_registry.names();
-        let known_providers =
-            crate::agent::KnownProviders::new(names.iter().map(String::as_str));
+        // Phase 82.10.s: providers are LLM yaml instance ids
+        // (`anthropic-a5b8`), NOT factory ids — agents bind to
+        // yaml-key instances that map to a factory via
+        // `factory_type`. Mirror the boot validation path in
+        // `src/main.rs::validate_agents_with_providers`.
+        let known_providers = crate::agent::KnownProviders::new(
+            cfg.llm.providers.keys().map(String::as_str),
+        );
         let telegram_instances: &[TelegramPluginConfig] = &cfg.plugins.telegram;
         if let Err(e) = crate::agent::validate_agents_with_providers(
             &cfg.agents.agents,
