@@ -81,6 +81,22 @@ Open follow-ups:
   the draft payload). After upsert, frontend can re-probe via
   `probe(provider_id)` to refresh the live model list against
   the persisted bundle.
+- **82.10.p.b.client-reload** — `WhatsappPairingTrigger::start()`
+  (Phase 82.10.p.b, commit `cc47c80`) wipes `.whatsapp-rs/`
+  before `pair_with_callback` so the next session is clean on
+  disk, but the in-memory `whatsapp_rs::Client` instance the
+  plugin holds is NOT rebuilt — it keeps the prior session's
+  identity (`key_index=N`). After pairing succeeds and writes
+  `key_index=N+1` to creds.json, the server's normal post-
+  pairing `stream:error code=515` triggers a reconnect; the
+  reconnect uses the stale in-memory `key_index=N` → 401 → loop
+  until the daemon process restarts. Fix: after
+  `pair_with_callback` returns Ok, drop + recreate the Client
+  bound to the freshly-written creds.json so reconnects use the
+  new identity. Live incident 2026-05-05: operator paired
+  successfully (creds.json `me.id=…:41`) but daemon kept
+  reconnecting as `…:40` until manual restart.
+
 - **82.10.u.oauth-finish-seed-defaults** — `nexo/admin/llm_providers/oauth_finish`
   currently writes `auth.mode + auth.bundle` to yaml as a side
   effect (so a subsequent `upsert` only needs metadata + model).
