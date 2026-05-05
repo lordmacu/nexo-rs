@@ -288,6 +288,21 @@ pub(crate) fn build_messages_url(base_url: &str) -> String {
     }
 }
 
+/// Render an auth header value as a fingerprint (`prefix…suffix len=N`)
+/// suitable for tracing. Surfaces enough to tell two tokens apart in
+/// logs without leaking the cleartext credential. For shorter values
+/// (< 16 chars) returns just `len=N` so a stray short value can't
+/// reconstruct the secret.
+fn fingerprint_auth(value: &str) -> String {
+    let len = value.len();
+    if len < 16 {
+        return format!("len={len}");
+    }
+    let prefix: String = value.chars().take(8).collect();
+    let suffix: String = value.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    format!("{prefix}…{suffix} len={len}")
+}
+
 /// Read a reqwest response body lossily — `text()` returns `Err` on
 /// invalid UTF-8 or transport-level read errors, both of which lose
 /// the body entirely and leave us with empty error logs. Read raw
@@ -474,6 +489,8 @@ impl AnthropicClient {
             model = %self.model,
             subscription = self.auth.is_subscription(),
             stream = false,
+            url = %url,
+            base_url = %self.base_url,
             "anthropic request"
         );
         let body = build_body(&self.model, req, self.auth.is_subscription());
@@ -558,6 +575,8 @@ impl AnthropicClient {
             model = %self.model,
             subscription = self.auth.is_subscription(),
             stream = true,
+            url = %url,
+            base_url = %self.base_url,
             "anthropic request"
         );
         let mut body = build_body(&self.model, req, self.auth.is_subscription());
@@ -905,10 +924,24 @@ fn build_body(model: &str, req: &ChatRequest, is_subscription: bool) -> Value {
             .iter()
             .enumerate()
             .map(|(i, t)| {
+                // Anthropic API requires `input_schema.type` (always
+                // "object" for tool params). Some upstream tools ship
+                // a bare `{}` or an `{properties: …}` without the
+                // top-level `type`. Normalise here so the request
+                // doesn't 400 out with
+                // `tools.<i>.custom.input_schema.type: Field required`.
+                let mut input_schema = t.parameters.clone();
+                if !input_schema.is_object() {
+                    input_schema = json!({"type": "object"});
+                } else if input_schema.get("type").is_none() {
+                    if let Some(obj) = input_schema.as_object_mut() {
+                        obj.insert("type".to_string(), json!("object"));
+                    }
+                }
                 let mut obj = json!({
                     "name": t.name,
                     "description": t.description,
-                    "input_schema": t.parameters,
+                    "input_schema": input_schema,
                 });
                 if i == last_idx && req.cache_tools && allow_cache {
                     obj["cache_control"] = cache_control_for(CachePolicy::Ephemeral1h);
