@@ -1810,13 +1810,22 @@ async fn main() -> Result<()> {
     }
 
     // Provider-level validation pass: every agent's (and every
-    // binding override's) `model.provider` must be a real registered
-    // provider. Same aggregate error format as the structural pass
-    // above so multi-agent configs surface every typo in one error.
+    // binding override's) `model.provider` must reference a real
+    // provider entry from `llm.yaml`. Same aggregate error format
+    // as the structural pass above so multi-agent configs surface
+    // every typo in one error.
+    //
+    // Source of truth = `cfg.llm.providers` keys (e.g.
+    // `anthropic-a5b8`, `minimax`), NOT `llm_registry.names()`
+    // which returns factory ids (`anthropic`, `minimax`, ...).
+    // Multi-instance setups (one operator with multiple anthropic
+    // accounts named `anthropic-eb7e`, `anthropic-a5b8`, ...) need
+    // the per-id list, otherwise every wizard-created instance
+    // fails this gate with `unknown LLM provider`.
     {
-        let names = llm_registry.names();
+        let provider_ids: Vec<String> = cfg.llm.providers.keys().cloned().collect();
         let known_providers =
-            nexo_core::agent::KnownProviders::new(names.iter().map(String::as_str));
+            nexo_core::agent::KnownProviders::new(provider_ids.iter().map(String::as_str));
         nexo_core::agent::validate_agents_with_providers(
             &cfg.agents.agents,
             &cfg.plugins.telegram,
