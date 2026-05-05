@@ -726,6 +726,12 @@ impl AdminRpcDispatcher {
             // microapp from its own daemon. Granted only to UIs
             // that expose a deliberate "rotate token" action.
             "nexo/admin/auth/rotate_token" => Some("auth_rotate"),
+            // WhatsApp bot bubble — list assigned bots + send a
+            // manual message. Reuses the channel CRUD gate since
+            // operators who can manage channels are the same set
+            // that drives the bubble UI.
+            "nexo/admin/whatsapp/bot/list"
+            | "nexo/admin/whatsapp/bot/send" => Some("channels_crud"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
