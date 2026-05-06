@@ -48,6 +48,9 @@ pub mod events;
 #[cfg(feature = "stt")]
 pub mod stt;
 
+#[cfg(feature = "wizard")]
+pub mod wizard;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
