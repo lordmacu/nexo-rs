@@ -27,6 +27,15 @@ webhook       = []
 # microapps that fan out daemon notifications to per-connection
 # SSE streams.
 notifications = []
+# Generic event log + broadcast scaffolding lifted from the
+# agent-creator-microapp's firehose module. Provides
+# `EventStore<T>` (SQLite append-log with retention sweep),
+# `EventBroadcastState<T>` (store + tokio broadcast), a persisting
+# listener that combines `notifications::build_broadcast_listener`
+# with a SQLite-append side-effect, and the sweep-loop task.
+# Implies `notifications` so the persisting listener can reuse
+# the decode-then-broadcast helper.
+events = ["notifications", "dep:sqlx", "dep:chrono", "dep:tokio-util"]
 # Phase 81.15.a — child-side `PluginAdapter` for out-of-tree
 # subprocess plugins. Gated so existing microapp consumers don't
 # pull the `nexo-plugin-manifest` + `nexo-broker` deps unless they
@@ -61,9 +70,15 @@ nexo-broker = { version = "0.1.1", path = "../broker", optional = true }
 nexo-llm = { version = "0.1.1", path = "../llm", optional = true }
 nexo-memory = { version = "0.1.2", path = "../memory", optional = true }
 toml = { version = "0.8", optional = true }
+# `events` feature — SQLite append-log + retention sweep +
+# wall-clock cutoff for time-based pruning. All optional;
+# microapps that don't enable `events` skip the deps entirely.
+sqlx       = { workspace = true, optional = true }
+chrono     = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]

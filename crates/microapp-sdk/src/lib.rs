@@ -42,6 +42,9 @@ pub mod admin;
 #[cfg(feature = "notifications")]
 pub mod notifications;
 
+#[cfg(feature = "events")]
+pub mod events;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 

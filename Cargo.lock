@@ -3857,6 +3857,7 @@ name = "nexo-microapp-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "dashmap 6.1.0",
  "nexo-broker",
  "nexo-llm",
@@ -3866,8 +3867,10 @@ dependencies = [
  "nexo-tool-meta",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
