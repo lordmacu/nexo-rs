@@ -701,12 +701,20 @@ fn build_openai_body(req: &ChatRequest) -> Value {
             .tools
             .iter()
             .map(|t| {
+                let mut parameters = t.parameters.clone();
+                if !parameters.is_object() {
+                    parameters = json!({"type": "object"});
+                } else if parameters.get("type").is_none() {
+                    if let Some(obj) = parameters.as_object_mut() {
+                        obj.insert("type".to_string(), json!("object"));
+                    }
+                }
                 json!({
                     "type": "function",
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters,
+                        "parameters": parameters,
                     }
                 })
             })
