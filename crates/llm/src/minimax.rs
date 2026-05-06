@@ -841,10 +841,18 @@ fn build_anthropic_body(req: &ChatRequest) -> Value {
             .tools
             .iter()
             .map(|t| {
+                let mut input_schema = t.parameters.clone();
+                if !input_schema.is_object() {
+                    input_schema = json!({"type": "object"});
+                } else if input_schema.get("type").is_none() {
+                    if let Some(obj) = input_schema.as_object_mut() {
+                        obj.insert("type".to_string(), json!("object"));
+                    }
+                }
                 json!({
                     "name": t.name,
                     "description": t.description,
-                    "input_schema": t.parameters,
+                    "input_schema": input_schema,
                 })
             })
             .collect();

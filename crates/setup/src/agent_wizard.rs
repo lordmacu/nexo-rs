@@ -55,7 +55,7 @@ pub const MODEL_CATALOG: &[(&str, &[&str])] = &[
             "o1-mini",
         ],
     ),
-    ("deepseek", &["deepseek-chat", "deepseek-reasoner"]),
+    ("deepseek", &["deepseek-v4-flash", "deepseek-v4-pro"]),
     ("openai_custom", &[]),
 ];
 

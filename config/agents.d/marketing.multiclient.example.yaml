@@ -91,7 +91,7 @@ agents:
   - id: marketing_charlie_exec
     model:
       provider: deepseek
-      model: deepseek-chat
+      model: deepseek-v4-flash
     plugins:
       - marketing
     inbound_bindings:

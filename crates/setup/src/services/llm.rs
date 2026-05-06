@@ -88,7 +88,7 @@ pub fn defs() -> Vec<ServiceDef> {
             description: Some(
                 "API key DeepSeek (https://platform.deepseek.com). \
                  Wire-compatible con OpenAI — el conector reusa el cliente. \
-                 Modelos: `deepseek-chat` (general) · `deepseek-reasoner` (razonamiento, sin tools).",
+                 Modelos: `deepseek-v4-flash` (rápido) · `deepseek-v4-pro` (potente).",
             ),
             fields: vec![FieldDef {
                 key: "api_key",

@@ -24,17 +24,17 @@
 //!   - id: ana
 //!     model:
 //!       provider: deepseek
-//!       model: deepseek-chat       # or deepseek-reasoner
+//!       model: deepseek-v4-flash       # or deepseek-v4-pro
 //! ```
 //!
 //! ## Notes
 //!
-//! - **Models:** `deepseek-chat` (general) and `deepseek-reasoner`
-//!   (reasoning-tuned). Pass the exact id under `model.model`.
+//! - **Models:** `deepseek-v4-flash` (fast) and `deepseek-v4-pro`
+//!   (powerful). Pass the exact id under `model.model`.
 //! - **Streaming:** identical to OpenAI's SSE; `OpenAiClient::chat_stream`
 //!   handles it transparently.
 //! - **Tool calling:** DeepSeek follows the OpenAI tool-calling spec for
-//!   `deepseek-chat`. `deepseek-reasoner` does not currently expose tool
+//!   Both models support tool calling.
 //!   use — log a warning at boot if an agent paired with reasoner has
 //!   `allowed_tools` populated.
 //! - **Rate limits:** standard 429 handling via `RetryConfig`; DeepSeek
@@ -102,7 +102,7 @@ impl LlmProviderFactory for DeepSeekFactory {
     }
 
     fn known_models(&self) -> &'static [&'static str] {
-        &["deepseek-chat", "deepseek-reasoner"]
+        &["deepseek-v4-flash", "deepseek-v4-pro"]
     }
 }
 
@@ -138,7 +138,7 @@ mod tests {
         // configure DeepSeek with just an API key.
         let cfg = empty_cfg();
         DeepSeekFactory
-            .build(&cfg, "deepseek-chat", RetryConfig::default())
+            .build(&cfg, "deepseek-v4-flash", RetryConfig::default())
             .expect("DeepSeek client should build with blank base_url");
     }
 
@@ -150,7 +150,7 @@ mod tests {
         // private), but the build path must succeed and not panic on
         // the alternate URL.
         DeepSeekFactory
-            .build(&cfg, "deepseek-chat", RetryConfig::default())
+            .build(&cfg, "deepseek-v4-flash", RetryConfig::default())
             .expect("DeepSeek client should respect operator-set base_url");
     }
 }
