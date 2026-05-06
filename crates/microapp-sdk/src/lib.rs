@@ -51,6 +51,9 @@ pub mod stt;
 #[cfg(feature = "wizard")]
 pub mod wizard;
 
+#[cfg(feature = "voice")]
+pub mod voice;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
