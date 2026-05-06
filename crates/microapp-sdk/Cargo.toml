@@ -36,6 +36,14 @@ notifications = []
 # Implies `notifications` so the persisting listener can reuse
 # the decode-then-broadcast helper.
 events = ["notifications", "dep:sqlx", "dep:chrono", "dep:tokio-util"]
+# Local speech-to-text for inbound voice notes — `TranscribeConfig`
+# + `transcribe_file` + an `InboundTransformHandler` that
+# implements `ToolHandler` so a microapp registers the
+# `*_inbound_transform` tool with one line. Whisper.cpp ships as a
+# vendored C build via `whisper-rs` (~30 s on first compile);
+# guarded by this feature so non-voice microapps skip it. Pulls
+# `tokio/process` for the ffmpeg pipe.
+stt = ["dep:whisper-rs", "tokio/process"]
 # Phase 81.15.a — child-side `PluginAdapter` for out-of-tree
 # subprocess plugins. Gated so existing microapp consumers don't
 # pull the `nexo-plugin-manifest` + `nexo-broker` deps unless they
@@ -76,9 +84,13 @@ toml = { version = "0.8", optional = true }
 sqlx       = { workspace = true, optional = true }
 chrono     = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
+# `stt` feature — whisper.cpp wrapper. Default-features off to
+# skip the OpenBLAS auto-link (each microapp surfaces its own BLAS
+# preference via system libs if needed).
+whisper-rs = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]

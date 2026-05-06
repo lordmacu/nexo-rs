@@ -45,6 +45,9 @@ pub mod notifications;
 #[cfg(feature = "events")]
 pub mod events;
 
+#[cfg(feature = "stt")]
+pub mod stt;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
