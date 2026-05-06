@@ -3930,6 +3930,7 @@ dependencies = [
  "nexo-microapp-sdk",
  "nexo-plugin-manifest",
  "nexo-tool-meta",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

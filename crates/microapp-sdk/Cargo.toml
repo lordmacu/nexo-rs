@@ -44,6 +44,12 @@ events = ["notifications", "dep:sqlx", "dep:chrono", "dep:tokio-util"]
 # guarded by this feature so non-voice microapps skip it. Pulls
 # `tokio/process` for the ffmpeg pipe.
 stt = ["dep:whisper-rs", "tokio/process"]
+# First-run wizard scaffolding: a generic `CachedSnapshot<T>` with
+# TTL invalidation and an `LlmProber` that validates an OpenAI-
+# compatible API key server-side (`GET {base_url}/models`) so the
+# raw key never leaves the microapp. Pulls `reqwest` rustls-only
+# to avoid system OpenSSL.
+wizard = ["dep:reqwest"]
 # Phase 81.15.a — child-side `PluginAdapter` for out-of-tree
 # subprocess plugins. Gated so existing microapp consumers don't
 # pull the `nexo-plugin-manifest` + `nexo-broker` deps unless they
@@ -88,9 +94,12 @@ tokio-util = { workspace = true, optional = true }
 # skip the OpenBLAS auto-link (each microapp surfaces its own BLAS
 # preference via system libs if needed).
 whisper-rs = { version = "0.13", default-features = false, optional = true }
+# `wizard` feature — server-side LLM key probe. rustls-only to
+# match the agent-creator-microapp baseline (no system OpenSSL).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
