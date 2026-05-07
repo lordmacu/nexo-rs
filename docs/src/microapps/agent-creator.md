@@ -157,5 +157,5 @@ workaround. Five gaps closed during the v1 build:
 5. SDK lacked `HumanTakeover` + `TranscriptStream::filter_by_agent`
    helpers → both shipped.
 
-See [`FOLLOWUPS.md`](../../../FOLLOWUPS.md) for the active
+See `FOLLOWUPS.md` (workspace root) for the active
 deferred-follow-up list.

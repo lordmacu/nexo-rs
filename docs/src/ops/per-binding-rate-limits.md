@@ -230,5 +230,5 @@ Tracking metrics:
 ## See also
 
 - [Rate limiting & retry (LLM provider)](../llm/retry.md) — different layer, applies to outbound LLM calls.
-- [Sender rate limit](../agents/sender-rate-limit.md) — drop-at-intake guard, runs before this limiter.
+- Sender rate limit — drop-at-intake guard, runs before this limiter (see `crates/core/src/agent/sender_rate_limit.rs`).
 - [Capability toggles](./capabilities.md) — env-var-driven feature toggles separate from per-binding policy.

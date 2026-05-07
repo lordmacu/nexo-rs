@@ -156,7 +156,7 @@ column.
 ## See also
 
 - [Channel doctor (operator CLI)](../ops/channel-doctor.md)
-- [Concept — pairing](../config/pairing.md) — channel inbound
+- [Concept — pairing](../ops/pairing.md) — channel inbound
   flows through the same pairing gate as WhatsApp / Telegram
   inbound, so a sender that hasn't been allowlisted will see
   a `[pairing]` denial just like any other surface.

@@ -273,7 +273,7 @@ is computed. Defense-in-depth: any `token` / `password` /
 
 ### Adding a new channel persister
 
-1. Implement [`ChannelCredentialPersister`](crate::ChannelCredentialPersister)
+1. Implement `ChannelCredentialPersister`
    in `crates/setup/src/persisters/<channel>.rs`.
 2. Add to `nexo_setup::persisters` re-exports.
 3. Push into `AdminBootstrapInputs.persisters` in `src/main.rs`.

@@ -143,7 +143,7 @@ When the agent receives work, what runs the loop?
   match parent for cache hit). `skipTranscript: true` keeps the
   fork's messages out of the parent's history.
 
-→ See [Acceptance autodetect](../config/acceptance-autodetect.md), [Self-driving guide](../recipes/self-driving.md)
+→ See Acceptance autodetect (deferred), Self-driving guide (deferred)
 
 ---
 
@@ -186,7 +186,7 @@ The agent can fire on its own schedule.
   decides whether to act on it or call `Sleep`. Mutually
   exclusive with `role: coordinator`.
 
-→ See [Cron jitter](../ops/cron-jitter.md), [Proactive mode](../agents/proactive-mode.md)
+→ See Cron jitter (deferred), [Proactive mode](../agents/proactive-mode.md)
 
 ---
 
@@ -343,7 +343,7 @@ Everything the agent does leaves a trail.
   mutates YAML, a row lands in `config_changes` table with
   patch_id, actor_origin, allowed paths.
 
-→ See [Logging](../ops/logging.md), [Metrics](../ops/metrics.md), [Turn-level audit log](../architecture/turn-log.md)
+→ See [Logging](../ops/logging.md), [Metrics](../ops/metrics.md), Turn-level audit log (deferred)
 
 ---
 
@@ -580,6 +580,6 @@ None of these block the autonomous agent's current capabilities.
 - **Multi-agent coordination patterns** →
   [Multi-agent coordination](./multi-agent-coordination.md).
 - **Audit + observability stack** → [Logging](../ops/logging.md)
-  + [Metrics](../ops/metrics.md) + [Turn-level audit log](../architecture/turn-log.md).
+  + [Metrics](../ops/metrics.md) + Turn-level audit log (deferred).
 - **Phase tracking** — `PHASES.md` at repo root has the
   exhaustive sub-phase status (✅ MVP / ⬜ open / DEFERRED).
