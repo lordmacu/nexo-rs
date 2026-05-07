@@ -131,11 +131,287 @@ impl RegionCode {
 
 /// Parsed BCP-47 locale (subset).
 ///
-/// Cheap to clone — wraps a single canonical [`String`]. Step 2
-/// adds [`std::str::FromStr`] / [`std::fmt::Display`] / serde
-/// transparency.
+/// Cheap to clone — wraps a single canonical [`String`]
+/// (`es-AR`, never `ES_ar`). Construct via [`std::str::FromStr`]
+/// or [`Locale::new`]; both routes guarantee the closed-enum set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Locale(String);
+
+impl Locale {
+    /// Build a locale from already-typed enum values. The caller
+    /// has already proved the language + region pair is valid; the
+    /// resulting [`Locale::as_bcp47`] is the canonical
+    /// `"<lang>-<REGION>"` (or `"<lang>"` when region is None).
+    pub fn new(language: LangCode, region: Option<RegionCode>) -> Self {
+        let raw = match region {
+            Some(r) => format!("{}-{}", language.as_str(), r.as_str()),
+            None => language.as_str().to_string(),
+        };
+        Self(raw)
+    }
+
+    /// Recover the [`LangCode`]. Infallible: every constructed
+    /// [`Locale`] has been parsed against the closed enum.
+    pub fn language(&self) -> LangCode {
+        // Safe-by-construction: `Self::new` and `FromStr` both
+        // build from a known-good `LangCode`. We re-parse the
+        // first segment instead of caching to keep the type
+        // small + `Copy`-clone-friendly via the inner String.
+        let head = self.0.split('-').next().unwrap_or("");
+        parse_language(head).expect("Locale invariant: language always valid")
+    }
+
+    /// Recover the [`RegionCode`] when present, `None` for
+    /// language-only locales (`"es"`, `"en"`, …).
+    pub fn region(&self) -> Option<RegionCode> {
+        let mut parts = self.0.split('-');
+        let _lang = parts.next();
+        let region = parts.next()?;
+        // `Self::new` and `FromStr` only produce already-validated
+        // region tokens, so this expect can never trip on a value
+        // that came through the public surface.
+        Some(parse_region(region).expect("Locale invariant: region always valid"))
+    }
+
+    /// The canonical BCP-47 string (`"es-AR"` / `"en-US"` /
+    /// `"es"`). Identical to [`Locale::to_string`] but without the
+    /// allocation when the caller can borrow.
+    pub fn as_bcp47(&self) -> &str {
+        &self.0
+    }
+
+    /// Drop the region subtag, returning the language-only locale.
+    /// Useful for fallback logic in voice picker / addendum tables.
+    pub fn language_only(&self) -> Locale {
+        Self::new(self.language(), None)
+    }
+
+    /// `true` when the locale carries no region subtag.
+    pub fn is_just_language(&self) -> bool {
+        !self.0.contains('-')
+    }
+}
+
+impl std::str::FromStr for Locale {
+    type Err = LocaleParseError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(LocaleParseError::Empty);
+        }
+        // `es_AR` (Java/Microsoft style) accepted; canonical
+        // separator is `-`. Lowercase the language head, uppercase
+        // the region tail, refuse anything past the first region.
+        let normalised = trimmed.replace('_', "-");
+        let mut parts = normalised.split('-');
+        let lang_raw = parts.next().unwrap_or(""); // safe: non-empty trimmed
+        let region_raw = parts.next();
+        if parts.next().is_some() {
+            return Err(LocaleParseError::TooManySubtags(trimmed.to_string()));
+        }
+
+        let lang_lower = lang_raw.to_ascii_lowercase();
+        let language =
+            parse_language(&lang_lower).ok_or_else(|| LocaleParseError::UnknownLanguage(lang_raw.to_string()))?;
+
+        let region = match region_raw {
+            None => None,
+            Some(r) => {
+                let upper = r.to_ascii_uppercase();
+                let region = parse_region(&upper).ok_or_else(|| {
+                    LocaleParseError::UnknownRegion(language.as_str().to_string(), r.to_string())
+                })?;
+                Some(region)
+            }
+        };
+
+        Ok(Self::new(language, region))
+    }
+}
+
+impl std::fmt::Display for Locale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+// `#[serde(transparent)]` makes the JSON / YAML wire shape a bare
+// string (`"es-AR"`), preserving compatibility with the existing
+// `OutboundReplyContext.language: Option<String>` field. The
+// transparent representation also means `serde_json::to_string`
+// of a `Locale` is `"\"es-AR\""` — same as the input.
+impl serde::Serialize for Locale {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Locale {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let raw = String::deserialize(d)?;
+        raw.parse().map_err(D::Error::custom)
+    }
+}
+
+fn parse_language(s: &str) -> Option<LangCode> {
+    Some(match s {
+        "de" => LangCode::De,
+        "en" => LangCode::En,
+        "es" => LangCode::Es,
+        "fr" => LangCode::Fr,
+        "it" => LangCode::It,
+        "ja" => LangCode::Ja,
+        "pt" => LangCode::Pt,
+        "zh" => LangCode::Zh,
+        _ => return None,
+    })
+}
+
+fn parse_region(s: &str) -> Option<RegionCode> {
+    Some(match s {
+        "AR" => RegionCode::Ar,
+        "AU" => RegionCode::Au,
+        "BR" => RegionCode::Br,
+        "CA" => RegionCode::Ca,
+        "CL" => RegionCode::Cl,
+        "CN" => RegionCode::Cn,
+        "CO" => RegionCode::Co,
+        "DE" => RegionCode::De,
+        "ES" => RegionCode::Es,
+        "FR" => RegionCode::Fr,
+        "GB" => RegionCode::Gb,
+        "IT" => RegionCode::It,
+        "JP" => RegionCode::Jp,
+        "MX" => RegionCode::Mx,
+        "PE" => RegionCode::Pe,
+        "PT" => RegionCode::Pt,
+        "US" => RegionCode::Us,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // ── Parser: valid inputs ────────────────────────────────────
+
+    #[test]
+    fn parses_language_only() {
+        let l = Locale::from_str("es").unwrap();
+        assert_eq!(l.language(), LangCode::Es);
+        assert_eq!(l.region(), None);
+        assert_eq!(l.as_bcp47(), "es");
+    }
+
+    #[test]
+    fn parses_full_locale() {
+        let l = Locale::from_str("es-AR").unwrap();
+        assert_eq!(l.language(), LangCode::Es);
+        assert_eq!(l.region(), Some(RegionCode::Ar));
+        assert_eq!(l.as_bcp47(), "es-AR");
+    }
+
+    #[test]
+    fn parses_underscore_separator_canonicalises_to_hyphen() {
+        let l = Locale::from_str("es_AR").unwrap();
+        assert_eq!(l.as_bcp47(), "es-AR");
+    }
+
+    #[test]
+    fn parses_mixed_case_canonicalises() {
+        let l = Locale::from_str("ES-ar").unwrap();
+        assert_eq!(l.as_bcp47(), "es-AR");
+    }
+
+    #[test]
+    fn parses_with_surrounding_whitespace() {
+        let l = Locale::from_str("  es-AR  ").unwrap();
+        assert_eq!(l.as_bcp47(), "es-AR");
+    }
+
+    #[test]
+    fn parses_pt_br() {
+        let l = Locale::from_str("pt-BR").unwrap();
+        assert_eq!(l.language(), LangCode::Pt);
+        assert_eq!(l.region(), Some(RegionCode::Br));
+    }
+
+    // ── Parser: invalid inputs ─────────────────────────────────
+
+    #[test]
+    fn empty_string_errors_with_empty_variant() {
+        assert_eq!(Locale::from_str("").unwrap_err(), LocaleParseError::Empty);
+    }
+
+    #[test]
+    fn whitespace_only_errors_with_empty_variant() {
+        assert_eq!(
+            Locale::from_str("   ").unwrap_err(),
+            LocaleParseError::Empty
+        );
+    }
+
+    #[test]
+    fn unknown_language_errors() {
+        match Locale::from_str("xx").unwrap_err() {
+            LocaleParseError::UnknownLanguage(s) => assert_eq!(s, "xx"),
+            other => panic!("expected UnknownLanguage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_region_for_known_language_errors() {
+        match Locale::from_str("es-XX").unwrap_err() {
+            LocaleParseError::UnknownRegion(lang, region) => {
+                assert_eq!(lang, "es");
+                assert_eq!(region, "XX");
+            }
+            other => panic!("expected UnknownRegion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extra_subtags_errors_too_many() {
+        match Locale::from_str("es-AR-x").unwrap_err() {
+            LocaleParseError::TooManySubtags(s) => assert_eq!(s, "es-AR-x"),
+            other => panic!("expected TooManySubtags, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn script_subtag_errors_too_many() {
+        // `zh-Hant` carries a script subtag; v1 parser rejects.
+        match Locale::from_str("zh-Hant-CN").unwrap_err() {
+            LocaleParseError::TooManySubtags(_) => {}
+            other => panic!("expected TooManySubtags, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn variant_subtag_errors_too_many() {
+        match Locale::from_str("de-DE-1996").unwrap_err() {
+            LocaleParseError::TooManySubtags(_) => {}
+            other => panic!("expected TooManySubtags, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn m49_un_region_code_errors_unknown_region() {
+        // `es-419` (UN M.49 for Latin America) — not in v1 enum.
+        match Locale::from_str("es-419").unwrap_err() {
+            LocaleParseError::UnknownRegion(lang, region) => {
+                assert_eq!(lang, "es");
+                assert_eq!(region, "419");
+            }
+            other => panic!("expected UnknownRegion, got {other:?}"),
+        }
+    }
+}
+
 
 /// Parser-side errors. Wrapped in [`thiserror::Error`] so they
 /// surface cleanly through the existing error envelopes
