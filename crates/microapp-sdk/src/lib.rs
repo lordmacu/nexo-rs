@@ -90,6 +90,12 @@ pub use plugin::{
     BrokerEventHandler, BrokerSender, LlmCompleteParams, LlmCompleteResult, LlmStream,
     PluginAdapter, RpcError, ShutdownHandler, TokenCount,
 };
+// Re-export the broker event type so `on_broker_event` callers
+// can name the closure parameter without depending on
+// `nexo-broker` directly. Lift introduced when the marketing
+// extension needed `Event` for its inbound subscriber.
+#[cfg(feature = "plugin")]
+pub use nexo_broker::Event as BrokerEvent;
 
 #[cfg(feature = "admin")]
 pub use admin::{AdminClient, AdminError, AdminSender, DEFAULT_ADMIN_TIMEOUT};
