@@ -292,6 +292,143 @@ pub struct Vendedor {
     /// from `claude-opus-4-7` reasoning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<crate::admin::agents::ModelRef>,
+    /// M15.38 — per-event notification toggles + target channel.
+    /// `None` = vendedor receives no notifications about email
+    /// events. When `Some`, the marketing extension publishes to
+    /// `agent.email.notification.<agent_id>` for every
+    /// enabled event; the agent's runtime / forwarder consumes
+    /// the topic and routes per `channel` (today: WhatsApp via
+    /// the agent's existing inbound binding).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_settings: Option<VendedorNotificationSettings>,
+}
+
+// ── Notification settings + event payload (M15.38) ──────────────
+
+/// Where a notification gets forwarded. Tagged enum so JS
+/// clients pattern-match on `kind` + the consumer (agent
+/// runtime / sidecar) routes per variant.
+///
+/// - `Disabled` — even with toggles on, the event publishes
+///   but the forwarder skips it (useful for "log only" flows).
+/// - `Whatsapp` — agent's existing WA inbound binding doubles
+///   as outbound; marketing doesn't need to know the WA
+///   instance, the forwarder resolves it agent-side.
+/// - `Email { to }` — forward via the framework's email
+///   plugin outbound to an arbitrary address. Use case: ops
+///   alerts, on-call rota, BCC to a shared inbox.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotificationChannel {
+    Disabled,
+    Whatsapp,
+    Email {
+        /// Recipient address — the forwarder publishes
+        /// `plugin.outbound.email.<instance>` with this in `to`.
+        to: String,
+    },
+}
+
+impl Default for NotificationChannel {
+    fn default() -> Self {
+        Self::Whatsapp
+    }
+}
+
+/// Per-vendedor notification config. Granular toggles so the
+/// operator opts into noisy events (transitions on every
+/// inbound) vs high-signal events (new lead, draft pending).
+///
+/// Default values via `VendedorNotificationSettings::default`
+/// — useful when the operator opts in but doesn't fine-tune.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VendedorNotificationSettings {
+    /// Notify on cold-thread lead creation. Default: `true`.
+    #[serde(default = "default_true")]
+    pub on_lead_created: bool,
+    /// Notify on every state transition (cold → engaged,
+    /// engaged → meeting_scheduled, …). Default: `false` —
+    /// transitions fire often during active conversations
+    /// and most operators prefer the firehose for real-time.
+    #[serde(default)]
+    pub on_lead_transitioned: bool,
+    /// Notify when an AI draft awaits operator approval.
+    /// Default: `true`. Wires up alongside the M22 draft
+    /// pipeline; the topic is published from there.
+    #[serde(default = "default_true")]
+    pub on_draft_pending: bool,
+    /// Notify when the meeting-intent classifier hits high
+    /// confidence on an inbound (Calendly URL, "podemos vernos
+    /// el martes", …). Default: `true`.
+    #[serde(default = "default_true")]
+    pub on_meeting_intent: bool,
+    /// Target channel the forwarder uses. See
+    /// [`NotificationChannel`].
+    #[serde(default)]
+    pub channel: NotificationChannel,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for VendedorNotificationSettings {
+    fn default() -> Self {
+        Self {
+            on_lead_created: true,
+            on_lead_transitioned: false,
+            on_draft_pending: true,
+            on_meeting_intent: true,
+            channel: NotificationChannel::default(),
+        }
+    }
+}
+
+/// Discriminated by `kind` so JS clients pattern-match on the
+/// string without typed access. Mirrors `LeadFirehoseEvent`'s
+/// shape but scoped to *operator-facing* notifications (vs the
+/// firehose, which is UI-data-binding).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EmailNotificationKind {
+    LeadCreated,
+    LeadTransitioned,
+    DraftPending,
+    MeetingIntent,
+}
+
+/// Operator-facing notification published by the marketing
+/// extension on `agent.email.notification.<agent_id>`. The
+/// agent's runtime (or a sidecar) subscribes and forwards via
+/// the configured channel.
+///
+/// The `summary` field is pre-rendered for forwarders that
+/// don't want to template per-kind; the typed `kind` + payload
+/// fields let smarter forwarders compose richer messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EmailNotification {
+    /// Discriminator — `lead_created`, `lead_transitioned`,
+    /// `draft_pending`, `meeting_intent`.
+    pub kind: EmailNotificationKind,
+    pub tenant_id: TenantIdRef,
+    /// Bound `agents.yaml.<id>` — the topic suffix carries the
+    /// same value so wildcard subscriptions work cleanly.
+    pub agent_id: String,
+    pub lead_id: LeadId,
+    pub vendedor_id: VendedorId,
+    pub vendedor_email: String,
+    /// Sender email — the lead's `from_email`.
+    pub from_email: String,
+    pub subject: String,
+    pub at_ms: i64,
+    /// Operator-facing single-paragraph summary the forwarder
+    /// can use as the WA message body verbatim. Pre-localised
+    /// to the vendedor's `preferred_language` when set.
+    pub summary: String,
+    /// Channel the forwarder routes to (mirrors the vendedor's
+    /// `notification_settings.channel`). See
+    /// [`NotificationChannel`].
+    pub channel: NotificationChannel,
 }
 
 // ── Mailbox config ──────────────────────────────────────────────
@@ -690,6 +827,7 @@ mod tests {
             preferred_language: None,
             agent_id: None,
             model_override: None,
+            notification_settings: None,
         };
         roundtrip(&v);
         // Serialised JSON should not include the optional
@@ -718,10 +856,80 @@ mod tests {
                 provider: "anthropic".into(),
                 model: "claude-opus-4-7".into(),
             }),
+            notification_settings: None,
         };
         roundtrip(&v);
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"agent_id\":\"ana\""), "{s}");
         assert!(s.contains("\"provider\":\"anthropic\""), "{s}");
+    }
+
+    #[test]
+    fn notification_channel_whatsapp_roundtrip() {
+        let ch = NotificationChannel::Whatsapp;
+        roundtrip(&ch);
+        let s = serde_json::to_string(&ch).unwrap();
+        assert_eq!(s, r#"{"kind":"whatsapp"}"#, "{s}");
+    }
+
+    #[test]
+    fn notification_channel_email_with_target_roundtrip() {
+        let ch = NotificationChannel::Email {
+            to: "ops@acme.com".into(),
+        };
+        roundtrip(&ch);
+        let s = serde_json::to_string(&ch).unwrap();
+        assert!(s.contains(r#""kind":"email""#), "{s}");
+        assert!(s.contains(r#""to":"ops@acme.com""#), "{s}");
+    }
+
+    #[test]
+    fn vendedor_notification_settings_default_matches_spec() {
+        let s = VendedorNotificationSettings::default();
+        assert!(s.on_lead_created);
+        assert!(!s.on_lead_transitioned);
+        assert!(s.on_draft_pending);
+        assert!(s.on_meeting_intent);
+        assert_eq!(s.channel, NotificationChannel::Whatsapp);
+    }
+
+    #[test]
+    fn vendedor_notification_settings_partial_payload_uses_serde_defaults() {
+        // Operator writes only `channel` — the toggles default
+        // via the field-level `#[serde(default = …)]` attrs.
+        // Use JSON instead of YAML to avoid pulling serde_yaml
+        // into tool-meta dev-deps; the parse logic is the same.
+        let json = r#"{
+            "channel": { "kind": "email", "to": "ops@acme.com" }
+        }"#;
+        let parsed: VendedorNotificationSettings = serde_json::from_str(json).unwrap();
+        assert!(parsed.on_lead_created);
+        assert!(!parsed.on_lead_transitioned);
+        assert!(parsed.on_draft_pending);
+        assert!(parsed.on_meeting_intent);
+        assert_eq!(
+            parsed.channel,
+            NotificationChannel::Email {
+                to: "ops@acme.com".into()
+            }
+        );
+    }
+
+    #[test]
+    fn email_notification_full_roundtrip() {
+        let n = EmailNotification {
+            kind: EmailNotificationKind::LeadCreated,
+            tenant_id: TenantIdRef("acme".into()),
+            agent_id: "pedro-agent".into(),
+            lead_id: LeadId("l-42".into()),
+            vendedor_id: VendedorId("pedro".into()),
+            vendedor_email: "pedro@acme.com".into(),
+            from_email: "cliente@empresa.com".into(),
+            subject: "Cotización".into(),
+            at_ms: 1_700_000_000_000,
+            summary: "📧 Nuevo lead de cliente@empresa.com (Cotización)".into(),
+            channel: NotificationChannel::Whatsapp,
+        };
+        roundtrip(&n);
     }
 }
