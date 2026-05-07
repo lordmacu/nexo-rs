@@ -1,0 +1,639 @@
+// Phase 82.15 — wire types for the `nexo-rs-extension-marketing`
+// extension + `agent-creator` microapp. Per-field rustdoc lives
+// inline; the crate-wide `deny(missing_docs)` is relaxed for
+// this module while it stabilises (followup: complete docs once
+// the extension lands a v0.1.0 the operator can install).
+#![allow(missing_docs)]
+
+//! Phase 82.15 — `marketing` wire types for the
+//! `nexo-rs-extension-marketing` extension + `agent-creator`
+//! microapp.
+//!
+//! Bit-equivalent across:
+//!   - extension's tool handlers (Rust)
+//!   - extension's HTTP admin API (Rust)
+//!   - microapp's HTTP proxy (Rust)
+//!   - microapp's frontend (TypeScript via `serde_typescript`)
+//!
+//! Multi-tenant by construction: every record carries a
+//! `tenant_id` (or is implicitly tenant-scoped by per-tenant DB
+//! file paths the extension uses). Caller must validate tenant
+//! ownership server-side; never trust client-supplied ids.
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+// ── Newtype ids ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct LeadId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct PersonId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct CompanyId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct VendedorId(pub String);
+
+/// Stable kebab-case tenant id. Matches `^[a-z][a-z0-9-]{1,30}$`.
+/// Mirrors `crates/tool-meta/src/admin/tenants.rs::TenantSummary::id`
+/// but kept as a typed wrapper so call sites can't accidentally
+/// swap a tenant id with a person id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(transparent)]
+pub struct TenantIdRef(pub String);
+
+// ── Enums ───────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LeadState {
+    Cold,
+    Engaged,
+    MeetingScheduled,
+    Qualified,
+    Lost,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainKind {
+    Personal,
+    Corporate,
+    Disposable,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EnrichmentStatus {
+    None,
+    SignatureParsed,
+    LlmExtracted,
+    CrossLinked,
+    ApiEnriched,
+    Manual,
+    PersonalOnlyGiveup,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SentimentBand {
+    VeryNegative,
+    Negative,
+    Neutral,
+    Positive,
+    VeryPositive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentClass {
+    Browsing,
+    Comparing,
+    ReadyToBuy,
+    Objecting,
+    SupportRequest,
+    OutOfScope,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MailboxMode {
+    /// Push via IMAP IDLE. Lowest latency.
+    Idle,
+    /// IDLE first, fall back to poll on drop, return to IDLE
+    /// next reconnect.
+    Adaptive,
+    /// Plain `FETCH` every `poll_interval_seconds`.
+    Poll,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+// ── Routing predicate AST ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RulePredicate {
+    /// Exact-match domain kind from the classifier.
+    SenderDomainKind { value: DomainKind },
+    /// Glob match against the full sender email
+    /// (e.g. `*@acme.com`, `juan@*`).
+    SenderEmailMatches { pattern: String },
+    CompanyIndustry { value: String },
+    PersonHasTag { tag: String },
+    ScoreGte { score: u8 },
+    BodyContains { needle: String },
+    SubjectContains { needle: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AssignTarget {
+    Vendedor { id: VendedorId },
+    RoundRobin { pool: Vec<VendedorId> },
+    /// Drop the inbound silently — never create a lead, never
+    /// notify. Used for disposable / spam routing rules.
+    Drop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutingRule {
+    /// Stable id used for audit ("matched rule `vip-personal`").
+    pub id: String,
+    /// Operator-facing label.
+    pub name: String,
+    /// All conditions must match (AND). For OR, author multiple
+    /// rules in priority order.
+    pub conditions: Vec<RulePredicate>,
+    pub assigns_to: AssignTarget,
+    /// Reference to a `FollowupProfile.id`.
+    pub followup_profile: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuleSet {
+    pub tenant_id: TenantIdRef,
+    pub version: u32,
+    pub rules: Vec<RoutingRule>,
+    /// Default when no rule matches. Most operators set this to
+    /// a `RoundRobin` pool of every active vendedor.
+    pub default_target: AssignTarget,
+}
+
+// ── Followup profile ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FollowupProfile {
+    pub id: String,
+    /// Ordered list of delays (e.g. `["24h", "72h", "168h"]`).
+    /// Parsed via `humantime::parse_duration` on the consumer
+    /// side; kept as strings here so the YAML stays human-readable.
+    pub cadence: Vec<String>,
+    pub max_attempts: u8,
+    /// When `true` (default), a client reply on the thread
+    /// cancels every remaining followup.
+    pub stop_on_reply: bool,
+}
+
+// ── Person / Company / Vendedor records ─────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Person {
+    pub id: PersonId,
+    pub tenant_id: TenantIdRef,
+    pub primary_name: String,
+    pub primary_email: String,
+    pub alt_emails: Vec<String>,
+    pub company_id: Option<CompanyId>,
+    pub enrichment_status: EnrichmentStatus,
+    /// 0.0..=1.0. Operator-confirmed manual entries → 1.0.
+    pub enrichment_confidence: f32,
+    pub tags: Vec<String>,
+    pub created_at_ms: i64,
+    pub last_seen_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Company {
+    pub id: CompanyId,
+    pub tenant_id: TenantIdRef,
+    pub domain: String,
+    pub name: String,
+    pub industry: Option<String>,
+    pub size_band: Option<String>,
+    /// Wall-clock UTC of last successful scrape; `None` for
+    /// personal domains that the scraper skipped.
+    pub enriched_at_ms: Option<i64>,
+    pub is_personal_domain: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkingHoursWindow {
+    /// IANA timezone (`America/Bogota`).
+    pub timezone: String,
+    /// Per-weekday window. `None` means "off" that weekday.
+    pub mon_fri: Option<DayWindow>,
+    pub saturday: Option<DayWindow>,
+    pub sunday: Option<DayWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DayWindow {
+    /// `HH:MM` in the parent's timezone.
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Vendedor {
+    pub id: VendedorId,
+    pub tenant_id: TenantIdRef,
+    pub name: String,
+    /// Primary outbound email. The extension publishes outbound
+    /// to `plugin.outbound.email.<email-instance>` — the
+    /// operator wires the credential persister so SMTP creds
+    /// resolve from this address.
+    pub primary_email: String,
+    pub alt_emails: Vec<String>,
+    pub signature_text: String,
+    pub working_hours: Option<WorkingHoursWindow>,
+    pub on_vacation: bool,
+    /// `None` when not on vacation. Inclusive ISO 8601 dates.
+    pub vacation_until: Option<DateTime<Utc>>,
+    /// Optional language hint that biases the LLM toward this
+    /// vendedor's preferred outbound style.
+    pub preferred_language: Option<String>,
+}
+
+// ── Mailbox config ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveHoursWindow {
+    pub timezone: String,
+    pub mon_fri: Option<DayWindow>,
+    pub saturday: Option<DayWindow>,
+    pub sunday: Option<DayWindow>,
+    /// Polling interval to use OUTSIDE the active window.
+    /// Defaults to 5 minutes (300) so weekends / nights cost
+    /// less while mailbox stays alive.
+    pub off_hours_poll_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MailboxConfig {
+    pub id: String,
+    pub tenant_id: TenantIdRef,
+    pub address: String,
+    /// Resolves to a credential persister kind in the framework
+    /// (`gmail` / `outlook` / `imap_password`). Wire shape
+    /// stays string so new providers don't break this enum.
+    pub provider: String,
+    pub mode: MailboxMode,
+    pub poll_interval_seconds: u32,
+    pub active: bool,
+    /// `true` = operator approves drafts before send.
+    /// `false` = autonomous outbound. Combined with topic
+    /// guardrails (M21) so even autonomous mailboxes can route
+    /// sensitive topics through the approval queue.
+    pub draft_mode: bool,
+    pub active_hours: Option<ActiveHoursWindow>,
+    /// Email-plugin instance name this mailbox routes through.
+    /// Outbound publishes to `plugin.outbound.email.<instance>`
+    /// + inbound subscribes to `plugin.inbound.email.<instance>`.
+    pub email_plugin_instance: String,
+}
+
+// ── Lead + thread ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Lead {
+    pub id: LeadId,
+    pub tenant_id: TenantIdRef,
+    pub thread_id: String,
+    pub subject: String,
+    pub person_id: PersonId,
+    pub vendedor_id: VendedorId,
+    pub state: LeadState,
+    /// 0..=100 heuristic score. See SDK
+    /// `nexo-microapp-sdk::scoring::HeuristicScorer`.
+    pub score: u8,
+    pub sentiment: SentimentBand,
+    pub intent: IntentClass,
+    pub topic_tags: Vec<String>,
+    pub last_activity_ms: i64,
+    /// `None` = no followup scheduled (qualified / lost / awaiting
+    /// client). `Some(ms)` = next sweep tick eligible.
+    pub next_check_at_ms: Option<i64>,
+    pub followup_attempts: u8,
+    /// Audit trail explaining the routing decision. Operator-
+    /// readable strings; surfaced in the lead context panel
+    /// "why this lead?" section.
+    pub why_routed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutboundDraft {
+    pub thread_id: String,
+    pub lead_id: LeadId,
+    pub vendedor_id: VendedorId,
+    pub body: String,
+    pub status: DraftStatus,
+    pub created_at_ms: i64,
+    /// Idempotency key the extension stamps on
+    /// `OutboundCommand` so a double-approve doesn't double-send.
+    pub idempotency_key: String,
+}
+
+// ── Tool args + responses ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeadProfileArgs {
+    pub tenant_id: TenantIdRef,
+    pub from_email: String,
+    pub subject: String,
+    /// First ~400 chars; the full body lives in the email
+    /// plugin's broker payload.
+    pub body_excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LeadProfileResponse {
+    pub person_id: PersonId,
+    pub company_id: Option<CompanyId>,
+    pub enrichment_status: EnrichmentStatus,
+    pub enrichment_confidence: f32,
+    /// `true` when the resolver merged this email into an
+    /// existing person record (multi-email merge happened on
+    /// this call). Microapp uses it to surface a "merged into
+    /// Juan García" affordance.
+    pub merged_into_existing: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeadRouteArgs {
+    pub tenant_id: TenantIdRef,
+    pub lead_id: LeadId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeadRouteResponse {
+    pub vendedor_id: Option<VendedorId>,
+    pub matched_rule_id: Option<String>,
+    /// Empty when `assigns_to: drop` matched.
+    pub why_routed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MeetingIntent {
+    pub accepted: bool,
+    /// ISO 8601 with offset. `None` when the operator must still
+    /// nail down the exact time.
+    pub proposed_time_iso: Option<String>,
+    /// 0.0..=1.0. Operator confirms above the operator-set
+    /// threshold (default 0.7) before the lead state advances.
+    pub confidence: f32,
+    /// Quote from the email body that triggered the match —
+    /// surfaced in the operator UI for one-click confirmation.
+    pub evidence: String,
+}
+
+// ── Enrichment trace ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EnrichmentResult {
+    /// Which `EnrichmentSource` produced this row
+    /// (`display_name`, `signature`, `llm_extractor`, …).
+    pub source: String,
+    pub confidence: f32,
+    pub person_inferred: Option<PersonInferred>,
+    pub company_inferred: Option<CompanyInferred>,
+    /// Free-form audit note ("matched signature line N").
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersonInferred {
+    pub name: Option<String>,
+    pub role: Option<String>,
+    pub seniority: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompanyInferred {
+    pub name: Option<String>,
+    pub domain: Option<String>,
+    pub industry: Option<String>,
+}
+
+// ── Lead transition events (NATS firehose) ──────────────────────
+
+/// Subject pattern: `agent.lead.transition.<tenant_id>.<lead_id>`.
+/// Tenant-scoped so empresa A's subscriber cannot wildcard-
+/// match B's lead transitions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LeadTransitionEvent {
+    pub tenant_id: TenantIdRef,
+    pub lead_id: LeadId,
+    pub from: LeadState,
+    pub to: LeadState,
+    pub at_ms: i64,
+    pub reason: String,
+    /// Optional tool call ids that triggered the transition,
+    /// useful for the replay timeline UI.
+    pub tool_call_ids: Vec<String>,
+    /// Free-form metadata (rule id matched, draft id approved,
+    /// followup attempt number, …).
+    pub meta: BTreeMap<String, String>,
+}
+
+// ── Tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{from_str, to_string};
+
+    fn roundtrip<T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug>(
+        value: &T,
+    ) {
+        let s = to_string(value).expect("serialize");
+        let back: T = from_str(&s).expect("deserialize");
+        assert_eq!(value, &back);
+    }
+
+    #[test]
+    fn lead_state_roundtrip() {
+        for s in [
+            LeadState::Cold,
+            LeadState::Engaged,
+            LeadState::MeetingScheduled,
+            LeadState::Qualified,
+            LeadState::Lost,
+        ] {
+            roundtrip(&s);
+        }
+    }
+
+    #[test]
+    fn lead_state_serialises_snake_case() {
+        let s = to_string(&LeadState::MeetingScheduled).unwrap();
+        assert_eq!(s, "\"meeting_scheduled\"");
+    }
+
+    #[test]
+    fn domain_kind_roundtrip() {
+        for k in [DomainKind::Personal, DomainKind::Corporate, DomainKind::Disposable] {
+            roundtrip(&k);
+        }
+    }
+
+    #[test]
+    fn rule_predicate_tagged_union() {
+        let p = RulePredicate::ScoreGte { score: 70 };
+        let s = to_string(&p).unwrap();
+        assert!(s.contains("\"kind\":\"score_gte\""));
+        roundtrip(&p);
+    }
+
+    #[test]
+    fn assign_target_round_robin_roundtrip() {
+        let t = AssignTarget::RoundRobin {
+            pool: vec![
+                VendedorId("pedro".into()),
+                VendedorId("ana".into()),
+            ],
+        };
+        roundtrip(&t);
+    }
+
+    #[test]
+    fn routing_rule_full_roundtrip() {
+        let r = RoutingRule {
+            id: "vip-personal".into(),
+            name: "VIP personal".into(),
+            conditions: vec![RulePredicate::PersonHasTag { tag: "vip".into() }],
+            assigns_to: AssignTarget::Vendedor {
+                id: VendedorId("ana".into()),
+            },
+            followup_profile: "vip".into(),
+            active: true,
+        };
+        roundtrip(&r);
+    }
+
+    #[test]
+    fn followup_profile_roundtrip() {
+        let p = FollowupProfile {
+            id: "default".into(),
+            cadence: vec!["24h".into(), "72h".into(), "168h".into()],
+            max_attempts: 3,
+            stop_on_reply: true,
+        };
+        roundtrip(&p);
+    }
+
+    #[test]
+    fn person_full_roundtrip() {
+        let p = Person {
+            id: PersonId("juan".into()),
+            tenant_id: TenantIdRef("acme".into()),
+            primary_name: "Juan García".into(),
+            primary_email: "juan@acme.com".into(),
+            alt_emails: vec!["juan.alt@gmail.com".into()],
+            company_id: Some(CompanyId("acme".into())),
+            enrichment_status: EnrichmentStatus::ApiEnriched,
+            enrichment_confidence: 0.95,
+            tags: vec!["recurring".into()],
+            created_at_ms: 1_700_000_000_000,
+            last_seen_at_ms: 1_700_900_000_000,
+        };
+        roundtrip(&p);
+    }
+
+    #[test]
+    fn lead_full_roundtrip() {
+        let l = Lead {
+            id: LeadId("lead-001".into()),
+            tenant_id: TenantIdRef("acme".into()),
+            thread_id: "th-001".into(),
+            subject: "Re: cotización".into(),
+            person_id: PersonId("juan".into()),
+            vendedor_id: VendedorId("pedro".into()),
+            state: LeadState::Engaged,
+            score: 73,
+            sentiment: SentimentBand::Positive,
+            intent: IntentClass::ReadyToBuy,
+            topic_tags: vec!["pricing".into()],
+            last_activity_ms: 1_700_000_000_000,
+            next_check_at_ms: Some(1_700_259_200_000),
+            followup_attempts: 0,
+            why_routed: vec!["score 73 >= 70".into()],
+        };
+        roundtrip(&l);
+    }
+
+    #[test]
+    fn meeting_intent_roundtrip() {
+        let m = MeetingIntent {
+            accepted: true,
+            proposed_time_iso: Some("2026-05-12T15:00:00-05:00".into()),
+            confidence: 0.85,
+            evidence: "yes Tuesday at 3pm".into(),
+        };
+        roundtrip(&m);
+    }
+
+    #[test]
+    fn mailbox_config_roundtrip() {
+        let m = MailboxConfig {
+            id: "ventas-acme".into(),
+            tenant_id: TenantIdRef("acme".into()),
+            address: "ventas@acme.com".into(),
+            provider: "gmail".into(),
+            mode: MailboxMode::Adaptive,
+            poll_interval_seconds: 60,
+            active: true,
+            draft_mode: true,
+            active_hours: Some(ActiveHoursWindow {
+                timezone: "America/Bogota".into(),
+                mon_fri: Some(DayWindow {
+                    start: "07:00".into(),
+                    end: "20:00".into(),
+                }),
+                saturday: None,
+                sunday: None,
+                off_hours_poll_seconds: 300,
+            }),
+            email_plugin_instance: "acme-ventas".into(),
+        };
+        roundtrip(&m);
+    }
+
+    #[test]
+    fn lead_transition_event_roundtrip() {
+        let mut meta = BTreeMap::new();
+        meta.insert("rule_id".into(), "corporate-warm".into());
+        let e = LeadTransitionEvent {
+            tenant_id: TenantIdRef("acme".into()),
+            lead_id: LeadId("lead-001".into()),
+            from: LeadState::Cold,
+            to: LeadState::Engaged,
+            at_ms: 1_700_000_000_000,
+            reason: "rule corporate-warm matched".into(),
+            tool_call_ids: vec!["call-1".into()],
+            meta,
+        };
+        roundtrip(&e);
+    }
+
+    #[test]
+    fn enrichment_result_partial_optionals() {
+        let r = EnrichmentResult {
+            source: "signature".into(),
+            confidence: 0.78,
+            person_inferred: Some(PersonInferred {
+                name: Some("Juan".into()),
+                role: Some("VP Sales".into()),
+                seniority: Some("VP".into()),
+            }),
+            company_inferred: None,
+            note: None,
+        };
+        roundtrip(&r);
+    }
+}

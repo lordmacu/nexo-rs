@@ -50,6 +50,7 @@ pub mod binding;
 pub mod event_source;
 pub mod http_server;
 pub mod inbound;
+pub mod marketing;
 pub mod meta;
 pub mod microapp_error;
 pub mod reply_kind;
