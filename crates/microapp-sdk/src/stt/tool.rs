@@ -79,9 +79,27 @@ impl ToolHandler for InboundTransformHandler {
         let parsed: InboundTransformArgs = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidArguments(format!("inbound transform args: {e}")))?;
 
+        // Entry-log so operators can see whether the framework's
+        // `*_inbound_transform` discovery actually invoked us. The
+        // hot path stays cheap — one `tracing::info!` per inbound,
+        // gated on the subscriber level.
+        let media_kind_log = parsed.media.as_ref().map(|m| m.kind.clone());
+        let media_path_log = parsed.media.as_ref().map(|m| m.path.clone());
+        let media_mime_log = parsed.media.as_ref().and_then(|m| m.mime_type.clone());
+        tracing::info!(
+            text_len = parsed.text.len(),
+            media_kind = ?media_kind_log,
+            media_path = ?media_path_log,
+            media_mime = ?media_mime_log,
+            "stt: inbound transform invoked"
+        );
+
         let media = match parsed.media {
             Some(m) => m,
             None => {
+                tracing::debug!(
+                    "stt: passthrough (no media on inbound)"
+                );
                 return Ok(ToolReply::ok_json(
                     json!({ "ok": true, "passthrough": true }),
                 ));
@@ -95,6 +113,11 @@ impl ToolHandler for InboundTransformHandler {
                 .map(|m| m.starts_with("audio/"))
                 .unwrap_or(false);
         if !is_audio {
+            tracing::debug!(
+                kind = %media.kind,
+                mime = ?media.mime_type,
+                "stt: passthrough (non-audio media)"
+            );
             return Ok(ToolReply::ok_json(
                 json!({ "ok": true, "passthrough": true }),
             ));
