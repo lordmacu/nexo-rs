@@ -27,6 +27,9 @@ pub mod fallback;
 
 pub use cache::{EnrichmentCache, SqliteEnrichmentCache};
 pub use domain_classifier::{classify, DomainKind};
-pub use fallback::{EnrichmentSource, FallbackChain, FallbackOutcome};
+pub use fallback::{
+    EnrichmentInput, EnrichmentSource, EnrichmentSourceError, FallbackChain,
+    FallbackOutcome, SourceCost,
+};
 
 pub use nexo_tool_meta::marketing::EnrichmentResult;
