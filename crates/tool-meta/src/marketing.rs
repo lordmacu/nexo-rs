@@ -129,22 +129,40 @@ pub enum DraftStatus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RulePredicate {
     /// Exact-match domain kind from the classifier.
-    SenderDomainKind { value: DomainKind },
+    SenderDomainKind {
+        value: DomainKind,
+    },
     /// Glob match against the full sender email
     /// (e.g. `*@acme.com`, `juan@*`).
-    SenderEmailMatches { pattern: String },
-    CompanyIndustry { value: String },
-    PersonHasTag { tag: String },
-    ScoreGte { score: u8 },
-    BodyContains { needle: String },
-    SubjectContains { needle: String },
+    SenderEmailMatches {
+        pattern: String,
+    },
+    CompanyIndustry {
+        value: String,
+    },
+    PersonHasTag {
+        tag: String,
+    },
+    ScoreGte {
+        score: u8,
+    },
+    BodyContains {
+        needle: String,
+    },
+    SubjectContains {
+        needle: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AssignTarget {
-    Vendedor { id: VendedorId },
-    RoundRobin { pool: Vec<VendedorId> },
+    Vendedor {
+        id: VendedorId,
+    },
+    RoundRobin {
+        pool: Vec<VendedorId>,
+    },
     /// Drop the inbound silently — never create a lead, never
     /// notify. Used for disposable / spam routing rules.
     Drop,
@@ -258,6 +276,22 @@ pub struct Vendedor {
     /// Optional language hint that biases the LLM toward this
     /// vendedor's preferred outbound style.
     pub preferred_language: Option<String>,
+    /// M15.35 — bound `agents.yaml.<id>`. When set, marketing
+    /// reuses the agent's `ModelRef` + `system_prompt` for AI
+    /// drafts / intent detection / identity resolution. The
+    /// daemon's admin RPC `agents/get` is the source of truth;
+    /// marketing extension never duplicates the LLM key.
+    /// `None` = vendedor has no AI assist (manual outbound only
+    /// — operator writes drafts in the UI without LLM help).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// M15.35 — per-vendedor model override. When `Some`, takes
+    /// precedence over the agent's default `ModelRef` for
+    /// every email-related LLM call. Use case: agent uses
+    /// `minimax-flash` for quick WA chat but emails benefit
+    /// from `claude-opus-4-7` reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<crate::admin::agents::ModelRef>,
 }
 
 // ── Mailbox config ──────────────────────────────────────────────
@@ -477,7 +511,11 @@ mod tests {
 
     #[test]
     fn domain_kind_roundtrip() {
-        for k in [DomainKind::Personal, DomainKind::Corporate, DomainKind::Disposable] {
+        for k in [
+            DomainKind::Personal,
+            DomainKind::Corporate,
+            DomainKind::Disposable,
+        ] {
             roundtrip(&k);
         }
     }
@@ -493,10 +531,7 @@ mod tests {
     #[test]
     fn assign_target_round_robin_roundtrip() {
         let t = AssignTarget::RoundRobin {
-            pool: vec![
-                VendedorId("pedro".into()),
-                VendedorId("ana".into()),
-            ],
+            pool: vec![VendedorId("pedro".into()), VendedorId("ana".into())],
         };
         roundtrip(&t);
     }
@@ -635,5 +670,58 @@ mod tests {
             note: None,
         };
         roundtrip(&r);
+    }
+
+    #[test]
+    fn vendedor_without_agent_binding_roundtrip() {
+        // Backward compat — `agent_id` + `model_override` are
+        // optional + skip-on-none, so existing YAML without
+        // these fields parses cleanly.
+        let v = Vendedor {
+            id: VendedorId("pedro".into()),
+            tenant_id: TenantIdRef("acme".into()),
+            name: "Pedro García".into(),
+            primary_email: "pedro@acme.com".into(),
+            alt_emails: Vec::new(),
+            signature_text: "—\nPedro".into(),
+            working_hours: None,
+            on_vacation: false,
+            vacation_until: None,
+            preferred_language: None,
+            agent_id: None,
+            model_override: None,
+        };
+        roundtrip(&v);
+        // Serialised JSON should not include the optional
+        // fields when None — operators see clean YAML.
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(!s.contains("agent_id"), "agent_id leaked: {s}");
+        assert!(!s.contains("model_override"), "model_override leaked: {s}");
+    }
+
+    #[test]
+    fn vendedor_with_agent_binding_and_override_roundtrip() {
+        use crate::admin::agents::ModelRef;
+        let v = Vendedor {
+            id: VendedorId("pedro".into()),
+            tenant_id: TenantIdRef("acme".into()),
+            name: "Pedro García".into(),
+            primary_email: "pedro@acme.com".into(),
+            alt_emails: Vec::new(),
+            signature_text: "—\nPedro".into(),
+            working_hours: None,
+            on_vacation: false,
+            vacation_until: None,
+            preferred_language: Some("es".into()),
+            agent_id: Some("ana".into()),
+            model_override: Some(ModelRef {
+                provider: "anthropic".into(),
+                model: "claude-opus-4-7".into(),
+            }),
+        };
+        roundtrip(&v);
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(s.contains("\"agent_id\":\"ana\""), "{s}");
+        assert!(s.contains("\"provider\":\"anthropic\""), "{s}");
     }
 }

@@ -88,7 +88,7 @@ pub struct AgentDetail {
 }
 
 /// LLM provider + model pointer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelRef {
     /// Provider id from `llm.yaml.providers.*`.
     pub provider: String,
