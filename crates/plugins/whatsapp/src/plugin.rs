@@ -219,6 +219,32 @@ impl Plugin for WhatsappPlugin {
         let broker_for_transcribe = broker.clone();
         let cfg_for_transcribe = self.cfg.clone();
 
+        // Resolve the typing-mode YAML knob into a wa-agent
+        // `RunAgentOpts`. Unknown values warn-fall-back to
+        // `Instant` (current behaviour) so a typo can't kill the
+        // boot. v1 honours Instant + Never; Thinking + Message
+        // parse but warn-degrade to Instant inside wa-agent.
+        let typing_mode = self
+            .cfg
+            .typing_mode
+            .as_deref()
+            .map(|raw| match raw.parse::<whatsapp_rs::agent::TypingMode>() {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        raw = %raw,
+                        "unknown whatsapp.typing_mode; defaulting to Instant"
+                    );
+                    whatsapp_rs::agent::TypingMode::Instant
+                }
+            })
+            .unwrap_or_default();
+        let run_opts = whatsapp_rs::agent::RunAgentOpts {
+            typing_mode,
+            ..whatsapp_rs::agent::RunAgentOpts::default()
+        };
+
         let inbound_handle = tokio::spawn(async move {
             tracing::info!(our_jid = %session_for_task.our_jid, "whatsapp inbound loop starting");
             let run = async {
@@ -228,11 +254,17 @@ impl Plugin for WhatsappPlugin {
                         &cfg_for_transcribe.transcriber.skill,
                         std::time::Duration::from_millis(cfg_for_transcribe.transcriber.timeout_ms),
                     );
+                    // wa-agent's `run_agent_with_transcribe` does not
+                    // accept opts yet — using legacy entry point so
+                    // the transcribe path keeps the default
+                    // `Instant` mode. Tracking as follow-up
+                    // `wa-agent-run-agent-with-transcribe-and-opts`.
+                    let _ = run_opts;
                     session_for_task
                         .run_agent_with_transcribe(acl, t, handler)
                         .await
                 } else {
-                    session_for_task.run_agent_with(acl, handler).await
+                    session_for_task.run_agent_with_opts(acl, run_opts, handler).await
                 }
             };
             tokio::select! {
@@ -406,6 +438,7 @@ mod nexo_plugin_tests {
             public_tunnel: Default::default(),
             instance: instance.map(|s| s.to_string()),
             allow_agents: Vec::new(),
+            typing_mode: None,
         }
     }
 

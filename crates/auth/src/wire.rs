@@ -589,6 +589,7 @@ mod tests {
             public_tunnel: Default::default(),
             instance: instance.map(|s| s.to_string()),
             allow_agents: allow.iter().map(|s| s.to_string()).collect(),
+            typing_mode: None,
         }
     }
 

@@ -187,6 +187,17 @@ pub struct WhatsappPluginConfig {
     /// handle for this instance (back-compat).
     #[serde(default)]
     pub allow_agents: Vec<String>,
+    /// When the chat-presence heartbeat starts on each inbound
+    /// turn. One of `instant`, `thinking`, `message`, `never`
+    /// (case-insensitive). Default `instant` reproduces the
+    /// pre-step-15 behaviour. v1 only honours `instant` and
+    /// `never`; the other two parse OK but log a warn and behave
+    /// as `instant` (queued as follow-up
+    /// `whatsapp-typing-mode-thinking-message-impl`). Unrecognised
+    /// values warn-fall-back to `instant` instead of failing
+    /// boot, so a YAML typo doesn't kill the daemon.
+    #[serde(default)]
+    pub typing_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
