@@ -34,7 +34,9 @@ L2: nexo-auth nexo-broker nexo-llm nexo-web-search
 L3: nexo-extensions nexo-memory
 L4: nexo-mcp
 L5: nexo-core
-L6: nexo-plugin-browser nexo-plugin-google nexo-plugin-telegram nexo-plugin-whatsapp
+L6: nexo-plugin-google nexo-plugin-telegram nexo-plugin-whatsapp
+    (nexo-plugin-browser extracted to standalone repo
+    `nexo-rs-plugin-browser` per Phase 81.17.c)
 L7: nexo-poller nexo-setup
 L8: nexo-poller-ext nexo-poller-tools
 ```

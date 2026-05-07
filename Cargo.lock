@@ -4205,35 +4205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexo-plugin-browser"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "dashmap 6.1.0",
- "futures",
- "libc",
- "nexo-broker",
- "nexo-cdp",
- "nexo-config",
- "nexo-core",
- "nexo-llm",
- "nexo-plugin-manifest",
- "nexo-resilience",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "tokio-util",
- "toml 0.8.23",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "nexo-plugin-email"
 version = "0.1.1"
 dependencies = [
@@ -4505,7 +4476,6 @@ dependencies = [
  "nexo-memory",
  "nexo-memory-snapshot",
  "nexo-pairing",
- "nexo-plugin-browser",
  "nexo-plugin-email",
  "nexo-plugin-google",
  "nexo-plugin-manifest",
