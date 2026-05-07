@@ -319,10 +319,11 @@ lto           = false
 codegen-units = 16
 strip         = "none"
 
-# Phase 82.10.q — patch wa-agent to local checkout so the typing-clear
-# fix in `src/agent.rs::run_agent_with` (explicit `send_typing(false)`
-# await before `apply_response`) ships in the daemon binary. Local path
-# tracks `/home/familia/whatsapp-rs`. Drop this override once the
-# upstream crate publishes >=0.1.2 with the fix.
+# Phase 82.10.q — patch wa-agent to a pinned git rev of
+# `lordmacu/whatsapp-rs` so the typing-clear fix in
+# `src/agent.rs::run_agent_with` (explicit `send_typing(false)`
+# await before `apply_response`) ships in the daemon binary.
+# Pinned rev tracks the committed fix on `main`. Drop this override
+# once the upstream crate publishes >=0.1.5 to crates.io with the fix.
 [patch.crates-io]
-wa-agent = { path = "/home/familia/whatsapp-rs" }
+wa-agent = { git = "https://github.com/lordmacu/whatsapp-rs", rev = "3970dcca644db7d17172766ed0dfe00fd644cfdc" }

@@ -7709,6 +7709,7 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 [[package]]
 name = "wa-agent"
 version = "0.1.5"
+source = "git+https://github.com/lordmacu/whatsapp-rs?rev=3970dcca644db7d17172766ed0dfe00fd644cfdc#3970dcca644db7d17172766ed0dfe00fd644cfdc"
 dependencies = [
  "aes",
  "aes-gcm",

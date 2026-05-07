@@ -21,12 +21,3 @@ anyhow      = "1"
 
 [package.metadata.dist]
 dist = false
-
-# Iterative release builds — full opt-level, no LTO, parallel
-# codegen. Costs ~5 % runtime perf vs `release`; saves ~50 % build
-# time. Use for local validation; reserve `--release` for publish.
-[profile.release-fast]
-inherits      = "release"
-lto           = false
-codegen-units = 16
-strip         = "none"
