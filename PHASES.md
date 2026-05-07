@@ -4087,6 +4087,102 @@ keeps the door open without committing scope.
 - Active backlog lives in `FOLLOWUPS.md`.
 - Architecture remains documented in `design-agent-framework.md`.
 
+### Phase 88 — WhatsApp recording-presence indicator   ✅
+
+**Goal:** Replace the "escribiendo…" indicator on the peer phone
+with "grabando audio…" while a voice note is being uploaded.
+Driven by user-visible regression: voice-mode-toggled
+conversations always painted typing because `whatsapp-rs::send_typing`
+hardcoded `<composing/>` without the `media="audio"` attribute
+that WhatsApp Web emits natively for voice-recording sessions.
+
+**Status:** shipped 2026-05-07 across `whatsapp-rs` master and
+`nexo-rs` main. Sub-phase 88.1 covered the protocol surface;
+88.2 the wa-agent runtime; 88.3 the plugin wiring; 88.4 the docs
++ FOLLOWUP entries.
+
+**88.1 — whatsapp-rs protocol surface (✅)**
+
+- `ChatPresenceState { Composing, Paused }` +
+  `ChatPresenceMedia { Text, Audio }` enums in
+  `messages/chat_presence.rs`.
+- `MessageManager::send_chat_presence(jid, state, media)`
+  builds `<chatstate><composing media="audio"/></chatstate>`
+  for the recording variant. Pure node builder
+  `build_chat_presence_node` extracted for unit-testable wire
+  shape (5 tests passing).
+- `send_typing(jid, composing)` reduced to a one-liner over
+  `send_chat_presence(.., None)`. Existing callers see no
+  behaviour change.
+
+**88.2 — wa-agent runtime (✅)**
+
+- `presence_handle.rs`: `PresenceHandle` RAII guard with
+  `Arc<AtomicU8>` media swap. `switch_media(Audio)` is
+  lock-free; the refresher task reads the byte before every
+  pulse and emits the corresponding `<chatstate>`. TTL safety
+  cap (60 s) + consecutive-failure circuit breaker (2 strikes)
+  ported from `research/src/channels/typing.ts:14,18`.
+- `Session::chat_presence_heartbeat(jid, media)` +
+  `*_with(jid, media, cfg)` constructors.
+  `Session::typing_heartbeat(jid)` retained as a one-liner that
+  wraps a `Text`-pinned `PresenceHandle` in a `TypingHandle`
+  newtype so external API stays stable.
+- `Response::VoiceNote { data, mime }` variant +
+  `apply_response` arm + `contains_voice_note` recursive helper.
+- `RunAgentOpts { auto_typing, typing_mode, presence_cfg }` +
+  `TypingMode { Instant, Thinking, Message, Never }` (FromStr,
+  Default, ParseTypingModeError). v1 honours `Instant` /
+  `Never`; the other two parse OK and warn-degrade to
+  `Instant` so YAML can pre-configure for a future release.
+- `run_agent_with_opts(acl, opts, handler)` threads the opts
+  into `run_agent_full` which now builds the heartbeat with
+  Text initially; on response return, calls
+  `response.contains_voice_note()` and
+  `switch_media(Audio)` + 250 ms cosmetic sleep before the
+  explicit Phase 82.10.q `Paused` await + `apply_response`.
+
+**88.3 — nexo-plugin-whatsapp wiring (✅)**
+
+- `dispatch.rs` voice_note arm wraps `send_voice_note` in
+  `Composing(Audio) → send → Paused` best-effort emits. Errors
+  on the presence side warn-log but never abort the audio
+  delivery.
+- `WhatsappPluginConfig::typing_mode: Option<String>` YAML
+  field. Plugin parses it via `TypingMode::from_str` and
+  threads through `RunAgentOpts` into
+  `Session::run_agent_with_opts`. Unknown values warn-degrade
+  to `Instant` so YAML typos can't kill boot.
+- `bridge.rs` deliberately unchanged — voice notes route
+  through dispatch.rs's proactive path under the current
+  architecture (the bridge oneshot drops on non-text payload
+  kinds in `dispatch.rs:155`). Consolidating the two paths
+  is queued as `whatsapp-voice-paths-consolidation`.
+
+**88.4 — docs + follow-ups (✅)**
+
+- `docs/src/plugins/whatsapp.md` § Presence indicators added.
+  `mdbook build docs` clean.
+- `FOLLOWUPS.md` records the 6 deferreds: thinking/message
+  modes, inbound→outbound presence hint propagation,
+  voice-paths consolidation, transcribe-and-opts entry point,
+  time-mock tests, and the two pre-existing test breakages
+  surfaced during the refactor.
+
+**Mining references:**
+- `research/src/channels/typing.ts:13-21` — TTL +
+  circuit-breaker semantics ported.
+- `research/extensions/whatsapp/src/inbound/send-api.ts:111-114`
+  — confirmed wire shape (`sendPresenceUpdate("composing", jid)`
+  via Baileys).
+- `research/docs/concepts/typing-indicators.md` — `typing_mode`
+  enum names + semantics aligned.
+- `claude-code-leak/` — absent on host; topic out of scope.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour; `typing_mode` is YAML-only and cosmetic. No
+`crates/setup/src/capabilities.rs::INVENTORY` entry needed.
+
 ### Phase 15.9 — Anthropic OAuth Claude-Code request shape   ✅
 
 **Goal:** Unblock Opus 4.x / Sonnet 4.x for users on Claude

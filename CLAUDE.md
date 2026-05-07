@@ -17,6 +17,7 @@ tracker**.
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 2/2 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 86 | Memory observability | 1/1 | ✅ shipped 2026-05-01 (86.2 ❌ DROPPED, fire-site wiring in FOLLOWUPS) |
 | 87 | LLM-as-judge verifier (+ container runtime DEFER) | 1/1 | ✅ shipped 2026-05-01 (87.2 DEFER until Phase 32/82 hardening; backend wire-up in FOLLOWUPS) |
+| 88 | WhatsApp recording-presence indicator (`media="audio"`) | 4/4 | ✅ shipped 2026-05-07 (88.1 wire shape + 88.2 wa-agent runtime + 88.3 plugin wiring + 88.4 docs/follow-ups; 6 deferreds in FOLLOWUPS.md) |
 
 **Curation 2026-05-01** (single source of truth for active scope):
 [`PHASES-curated.md`](PHASES-curated.md) — what is active, what was

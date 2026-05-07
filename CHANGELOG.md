@@ -8,6 +8,29 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Added
+
+- **WhatsApp recording-presence indicator + `typing_mode` YAML
+  knob.** The peer phone now sees "grabando audio…" while a
+  voice note is uploading instead of "escribiendo…", matching
+  the wire shape WhatsApp Web emits natively
+  (`<chatstate><composing media="audio"/></chatstate>`).
+  Implemented across `whatsapp-rs` (new `ChatPresenceState` /
+  `ChatPresenceMedia` enums, `send_chat_presence`,
+  `PresenceHandle` with mid-stream `switch_media`,
+  `Response::VoiceNote { data, mime }`,
+  `RunAgentOpts { auto_typing, typing_mode, presence_cfg }`,
+  `run_agent_with_opts`) and `nexo-plugin-whatsapp` (proactive
+  voice-note dispatch wraps the send in
+  `Composing(Audio) → send_voice_note → Paused`; new
+  `whatsapp.typing_mode` YAML field with
+  `instant`/`thinking`/`message`/`never` values, v1 honouring
+  `instant` + `never` and warn-degrading the other two to
+  `instant`). Existing `Session::typing_heartbeat` API stays
+  backwards-compatible — internally a newtype over
+  `PresenceHandle` pinned to `Text`. See the
+  [WhatsApp plugin docs § Presence indicators](docs/src/plugins/whatsapp.md#presence-indicators).
+
 ### Changed
 
 - **Phase 31 architecture pivot — decentralized GitHub Releases
