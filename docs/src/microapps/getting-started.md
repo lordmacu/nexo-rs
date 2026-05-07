@@ -181,7 +181,7 @@ add a `description` to your tool registration.
 ## Step 6 — add per-agent config (10 min)
 
 Different agents may need different microapp behaviour. Use
-[Phase 83.1](../../PHASES-microapps.md) `extensions_config`:
+Phase 83.1 (see `proyecto/PHASES.md`) `extensions_config`:
 
 ```yaml
 agents:
