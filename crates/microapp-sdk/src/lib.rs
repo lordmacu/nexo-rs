@@ -58,6 +58,9 @@ pub mod voice;
 #[cfg(feature = "identity")]
 pub mod identity;
 
+#[cfg(feature = "routing")]
+pub mod routing;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
