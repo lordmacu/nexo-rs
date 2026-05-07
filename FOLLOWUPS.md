@@ -33,13 +33,21 @@ standalone repo). 6 deferreds:
   Release with assets attached. The `nexo-rs` org placeholder
   was dropped — repos live under `lordmacu/`.
 
-- **`81.17.c.crates-publish`** — `cargo publish nexo-plugin-browser`
-  to crates.io. Depends on `nexo-microapp-sdk` being published
-  first (Phase 83.14.b ⬜). Until then the standalone repo's
-  Cargo.toml uses `path = "../proyecto/crates/microapp-sdk"`
-  interim deps.
-  How to apply: post-83.14.b, swap path deps for crates.io
-  versions in standalone Cargo.toml + `cargo publish`.
+- **`81.17.c.crates-publish`** — RESOLVED 2026-05-07. Four
+  crates.io publishes shipped today:
+    - `nexo-cdp v0.1.0` (workspace crate from `nexo-cdp-extract`).
+    - `nexo-plugin-manifest v0.1.1` (the published 0.1.0 was
+      missing entrypoint/extends/sandbox/supervisor schemas).
+    - `nexo-microapp-sdk v0.1.2` (gained `ToolDef` /
+      `on_tool` / `declare_tools` + uses new manifest crate).
+    - `nexo-plugin-browser v0.2.0` (slimmed to 4 deps from
+      crates.io alone — no proyecto sibling required).
+  External operators: `cargo install nexo-plugin-browser`. The
+  full 30-crate workspace publish (touching nexo-core 0.1.2,
+  nexo-mcp, nexo-memory, the never-published driver-* /
+  fork / dream / dispatch-tools / llm-auth crates) remains
+  Phase 83.14.b territory — needed for daemon publish, not
+  for the plugin.
 
 - **`81.17.c.in-tree-removal`** — RESOLVED 2026-05-07. The
   in-tree `crates/plugins/browser/` crate is gone; daemon

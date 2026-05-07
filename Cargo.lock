@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-microapp-sdk"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4274,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-manifest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "regex",
