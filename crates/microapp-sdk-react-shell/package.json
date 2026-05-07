@@ -1,0 +1,51 @@
+{
+  "name": "@nexo/microapp-ui-shell-react",
+  "version": "0.1.0",
+  "description": "Reusable workspace shell primitives for nexo-rs microapps (vertical icon rail + secondary sidebar + main + optional context panel + module manifest contract). Sibling of @nexo/microapp-ui-react (chat lib) — they compose.",
+  "license": "MIT OR Apache-2.0",
+  "author": "Cristian Garcia <informacion@cristiangarcia.co>",
+  "repository": "https://github.com/lordmacu/nexo-rs",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0",
+    "react-resizable-panels": "^2.0.0",
+    "zustand": "^5.0.0",
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "nexo",
+    "microapp",
+    "shell",
+    "react",
+    "workspace",
+    "module-manifest",
+    "rail",
+    "multi-tenant"
+  ]
+}
