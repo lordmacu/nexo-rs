@@ -507,6 +507,165 @@ impl BrokerSender {
     }
 }
 
+// ────────────────────────────────────────────────────────────────
+// Phase 81.17.c / 81.29.b — child-side tool dispatch
+//
+// Wire shape (contract v1.10.0 §5.t):
+//   host  → child   `tool.invoke { plugin_id, tool_name, args, agent_id }`
+//   child → host    `{ result }` or `{ error: { code, message } }`
+//                   error band: -33401 NotFound .. -33405 Denied.
+//
+// Authors register tool defs declaratively via
+// [`PluginAdapter::declare_tools`] (advertised in the initialize
+// reply so the host's `RemoteToolHandler` registration succeeds —
+// see `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`)
+// and a single dispatch closure via [`PluginAdapter::on_tool`].
+// ────────────────────────────────────────────────────────────────
+
+/// Declarative tool descriptor advertised in the `initialize` reply.
+///
+/// Wire-compatible with the host's
+/// `nexo_core::agent::tool_remote::RemoteToolDef` — same field
+/// names + `serde(rename_all)` so the JSON shape round-trips
+/// without per-side translators.
+///
+/// `name` MUST appear in the manifest's `[plugin.extends] tools = [...]`
+/// allowlist; advertising a name not in the manifest causes the
+/// host to kill the subprocess at handshake (defense against
+/// out-of-tree binaries advertising tools the operator did not
+/// authorise).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolDef {
+    /// LLM-facing tool name. Per 81.3 namespace policy must match
+    /// `<plugin_id>_*` or `ext_<plugin_id>_*`.
+    pub name: String,
+    /// One-sentence description shown to the LLM in the tool
+    /// catalogue. Keep concise; LLMs prune noisy descriptions.
+    pub description: String,
+    /// JSON Schema (object) for tool arguments. Must validate the
+    /// payload the LLM produces; the host runs schema validation
+    /// before round-tripping `tool.invoke` to the child.
+    pub input_schema: serde_json::Value,
+}
+
+/// Decoded `tool.invoke` request as the host hands it to the
+/// child-side handler. Field names mirror contract v1.10.0 §5.t.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ToolInvocation {
+    /// Stable plugin id from the manifest (echoed by the host so
+    /// multi-plugin handlers can dispatch).
+    pub plugin_id: String,
+    /// Canonical tool name — handlers route on this.
+    pub tool_name: String,
+    /// Tool-specific arguments. Defaults to `Value::Null` when the
+    /// host omits the field.
+    #[serde(default)]
+    pub args: serde_json::Value,
+    /// Agent id producing the call. `None` when the host
+    /// dispatcher is operator-driven (admin RPC, debug CLI).
+    #[serde(default)]
+    pub agent_id: Option<String>,
+}
+
+/// Failure modes the child can surface from a `tool.invoke`
+/// handler. Each variant maps onto the `-33401..-33405` JSON-RPC
+/// error band the host's `RemoteToolHandler` decodes (see
+/// `nexo_core::agent::tool_remote::parse_tool_error_string`).
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum ToolInvocationError {
+    /// `-33401` — tool name not advertised by this plugin.
+    /// Surfaces when the host dispatched a tool the manifest
+    /// allows but the runtime handler doesn't recognise.
+    #[error("tool not found: {0}")]
+    NotFound(String),
+    /// `-33402` — args failed handler-side validation. The host
+    /// already ran JSON-Schema validation; this branch covers
+    /// semantic checks the schema can't express.
+    #[error("invalid argument: {0}")]
+    ArgumentInvalid(String),
+    /// `-33403` — handler ran but failed (network blip, browser
+    /// crash, downstream API 5xx). LLM sees a soft failure and
+    /// can route around.
+    #[error("execution failed: {0}")]
+    ExecutionFailed(String),
+    /// `-33404` — tool exists but cannot run right now (e.g.,
+    /// missing binary on disk, dependency offline).
+    #[error("unavailable: {0}")]
+    Unavailable(String),
+    /// `-33405` — tool exists but the caller is not authorised.
+    /// Reserved for future capability-aware ACLs (81.28.b).
+    #[error("denied: {0}")]
+    Denied(String),
+}
+
+impl ToolInvocationError {
+    /// JSON-RPC error code corresponding to the variant. Matches
+    /// the host's decoder; see contract v1.10.0 §5.t.
+    pub fn code(&self) -> i32 {
+        match self {
+            Self::NotFound(_) => -33401,
+            Self::ArgumentInvalid(_) => -33402,
+            Self::ExecutionFailed(_) => -33403,
+            Self::Unavailable(_) => -33404,
+            Self::Denied(_) => -33405,
+        }
+    }
+}
+
+/// Async handler invoked by the dispatch loop on every
+/// `tool.invoke` request the host sends. Plugin authors register
+/// one via [`PluginAdapter::on_tool`]; the closure typically
+/// matches on `inv.tool_name` and routes to per-tool logic.
+///
+/// Blanket-implemented for any `Fn(ToolInvocation) -> Fut` where
+/// `Fut: Future<Output = Result<Value, ToolInvocationError>> + Send`,
+/// so call sites pass closures naturally:
+///
+/// ```ignore
+/// PluginAdapter::new(MANIFEST)?
+///     .on_tool(|inv: ToolInvocation| async move {
+///         match inv.tool_name.as_str() {
+///             "echo" => Ok(inv.args),
+///             other => Err(ToolInvocationError::NotFound(other.into())),
+///         }
+///     })
+///     .run_stdio().await
+/// ```
+pub trait ToolHandler: Send + Sync + 'static {
+    /// Invoke the handler. Returning `Ok(Value)` becomes the
+    /// `result` field of the JSON-RPC reply; `Err(...)` maps to
+    /// `{ error: { code, message } }` in the
+    /// `-33401..-33405` band.
+    fn call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
+                + Send,
+        >,
+    >;
+}
+
+impl<F, Fut> ToolHandler for F
+where
+    F: Fn(ToolInvocation) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send + 'static,
+{
+    fn call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
+                + Send,
+        >,
+    > {
+        Box::pin((self)(invocation))
+    }
+}
+
 /// Builder for the child-side plugin runtime. Authors call
 /// [`PluginAdapter::new`] with their manifest TOML, register
 /// `on_broker_event` + `on_shutdown` handlers, then drive the
@@ -939,6 +1098,109 @@ name = "test"
 description = "fixture"
 min_nexo_version = ">=0.1.0"
 "#;
+
+    // ── Phase 81.17.c — tool dispatch types ────────────────────
+
+    #[test]
+    fn tool_def_serde_round_trip() {
+        let def = ToolDef {
+            name: "test_plugin_echo".into(),
+            description: "Echo the args back.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "msg": { "type": "string" } },
+                "required": ["msg"],
+            }),
+        };
+        let s = serde_json::to_string(&def).unwrap();
+        // Wire-shape sentinel: must match the host-side decoder
+        // (`nexo_core::agent::tool_remote::RemoteToolDef`).
+        assert!(s.contains("\"name\":\"test_plugin_echo\""));
+        assert!(s.contains("\"description\":\"Echo the args back.\""));
+        assert!(s.contains("\"input_schema\""));
+        let back: ToolDef = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.name, def.name);
+        assert_eq!(back.description, def.description);
+        assert_eq!(back.input_schema, def.input_schema);
+    }
+
+    #[test]
+    fn tool_invocation_args_default_to_null() {
+        let raw = r#"{ "plugin_id": "p", "tool_name": "t" }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        assert_eq!(inv.plugin_id, "p");
+        assert_eq!(inv.tool_name, "t");
+        assert_eq!(inv.args, serde_json::Value::Null);
+        assert!(inv.agent_id.is_none());
+    }
+
+    #[test]
+    fn tool_invocation_full_shape_round_trip() {
+        let raw = r#"{
+            "plugin_id": "browser",
+            "tool_name": "browser_navigate",
+            "args": { "url": "about:blank" },
+            "agent_id": "ana"
+        }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        assert_eq!(inv.tool_name, "browser_navigate");
+        assert_eq!(inv.args["url"], "about:blank");
+        assert_eq!(inv.agent_id.as_deref(), Some("ana"));
+    }
+
+    #[test]
+    fn tool_invocation_error_codes_match_contract_v1_10_band() {
+        assert_eq!(ToolInvocationError::NotFound("x".into()).code(), -33401);
+        assert_eq!(ToolInvocationError::ArgumentInvalid("x".into()).code(), -33402);
+        assert_eq!(ToolInvocationError::ExecutionFailed("x".into()).code(), -33403);
+        assert_eq!(ToolInvocationError::Unavailable("x".into()).code(), -33404);
+        assert_eq!(ToolInvocationError::Denied("x".into()).code(), -33405);
+    }
+
+    #[test]
+    fn tool_invocation_error_messages_format_with_payload() {
+        let e = ToolInvocationError::NotFound("browser_thirteenth".into());
+        assert_eq!(e.to_string(), "tool not found: browser_thirteenth");
+        let e = ToolInvocationError::ExecutionFailed("CDP 500".into());
+        assert_eq!(e.to_string(), "execution failed: CDP 500");
+    }
+
+    #[tokio::test]
+    async fn tool_handler_blanket_impl_accepts_closure() {
+        // The closure form is the canonical entry point — verify
+        // that an `impl Fn(ToolInvocation) -> Fut` satisfies the
+        // `ToolHandler` trait via the blanket impl, and that the
+        // dispatch routes args through unchanged.
+        let handler = |inv: ToolInvocation| async move {
+            match inv.tool_name.as_str() {
+                "echo" => Ok(inv.args),
+                other => Err(ToolInvocationError::NotFound(other.into())),
+            }
+        };
+        let inv = ToolInvocation {
+            plugin_id: "p".into(),
+            tool_name: "echo".into(),
+            args: serde_json::json!({"hello": "world"}),
+            agent_id: None,
+        };
+        let out = ToolHandler::call(&handler, inv).await.unwrap();
+        assert_eq!(out, serde_json::json!({"hello": "world"}));
+    }
+
+    #[tokio::test]
+    async fn tool_handler_blanket_impl_propagates_error_variant() {
+        let handler = |_inv: ToolInvocation| async move {
+            Err::<serde_json::Value, _>(ToolInvocationError::Denied("nope".into()))
+        };
+        let inv = ToolInvocation {
+            plugin_id: "p".into(),
+            tool_name: "x".into(),
+            args: serde_json::Value::Null,
+            agent_id: None,
+        };
+        let err = ToolHandler::call(&handler, inv).await.unwrap_err();
+        assert_eq!(err.code(), -33405);
+    }
 
     /// Spawn the adapter on a duplex pipe + return helpers to
     /// drive it from the test's side: write requests, read
