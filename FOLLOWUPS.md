@@ -43,14 +43,13 @@ standalone repo). 6 deferreds:
   How to apply: post-83.14.b, swap path deps for crates.io
   versions in standalone Cargo.toml + `cargo publish`.
 
-- **`81.17.c.in-tree-removal`** — delete
-  `proyecto/crates/plugins/browser/` from the workspace once
-  the standalone is validated by 2+ external operators.
-  Why deferred: rollback safety during the migration window;
-  in-tree dormant code costs ~5-10s extra workspace build.
-  How to apply: remove the crate dir + drop it from
-  `Cargo.toml` workspace members; verify discovery still
-  finds the standalone manifest.
+- **`81.17.c.in-tree-removal`** — RESOLVED 2026-05-07. The
+  in-tree `crates/plugins/browser/` crate is gone; daemon
+  builds + e2e tests pass against the standalone repo. The
+  `cdp_client_test.rs` + `session_test.rs` + `browser_cdp_e2e.rs`
+  fixtures moved to `crates/cdp/tests/` (resolved together with
+  `nexo-cdp-extract`). The `browser-test` example removed —
+  coverage lives in `nexo-rs-plugin-browser/tests/e2e_handshake.rs`.
 
 - **`81.17.c.multi-profile`** — multi-Chrome profiles per agent
   (current single-instance design holds one Chrome per
@@ -61,43 +60,36 @@ standalone repo). 6 deferreds:
   field + dispatch agent_id → profile path mapping in
   subprocess.
 
-- **`81.17.c.latency-numbers`** — populate the README's
-  latency table by running `cargo bench` on representative
-  hardware. Bench harness (`benches/tool_latency.rs`) lands
-  in a follow-up commit since v1 prioritised end-to-end
-  validation over perf characterisation.
-  How to apply: write the criterion bench, run on Cristian's
-  laptop, paste numbers into README + CHANGELOG.
+- **`81.17.c.latency-numbers`** — RESOLVED 2026-05-07.
+  Bench harness shipped at
+  `nexo-rs-plugin-browser/benches/tool_latency.rs` (plain
+  Instant::now-based, no criterion dep). Baseline measured
+  on Cristian's dev laptop: pre-Chrome dispatch round-trip
+  avg=164µs, p95=156µs, p99=4.2ms (n=200). Live Chromium
+  numbers gated on `CHROMIUM_BIN` — to be populated when run.
 
-- **`nexo-cdp-extract`** — `crates/plugins/browser/src/cdp/`
-  (currently a sub-module of the in-tree plugin) is a
-  reusable CDP client; lift to its own workspace crate so
-  future plugins can depend on it. Today it's duplicated
-  verbatim into the standalone repo.
-  How to apply: create `proyecto/crates/cdp/` workspace
-  member, move sources, update both in-tree and standalone
-  imports.
+- **`nexo-cdp-extract`** — RESOLVED 2026-05-07. Lifted to
+  workspace crate `nexo-cdp` v0.1.0 at `crates/cdp/`. Both
+  the standalone repo and the (since-removed) in-tree crate
+  consume it via path dep. `CdpSession::client()` promoted
+  from `pub(crate)` to `pub` so cross-crate consumers can
+  reach the underlying client.
 
-- **`81.17.c.e2e-test-fixture`** — end-to-end smoke test
-  (spawn binary + initialize + tool.invoke round-trip) was
-  scoped out of v1 because the bash mock fixture machinery
-  needs a hardening pass. The standalone build proves the
-  binary boots; the host-side `RemoteToolHandler`
-  registration is exercised by existing 81.29 tests.
-  How to apply: copy fixture from
-  `proyecto/crates/core/tests/subprocess_plugin_e2e.rs`,
-  swap the bash mock for the standalone binary built from
-  `nexo-rs-plugin-browser/target/debug/nexo-plugin-browser`,
-  add `#[ignore]`-gated test that requires `CHROMIUM_BIN`.
+- **`81.17.c.e2e-test-fixture`** — RESOLVED 2026-05-07.
+  `nexo-rs-plugin-browser/tests/e2e_handshake.rs` ships 3
+  default + 1 #[ignore]-gated test:
+    - `e2e_initialize_advertises_twelve_browser_tools`
+    - `e2e_tool_invoke_invalid_args_returns_minus_33402_before_chrome_boot`
+    - `e2e_tool_invoke_unknown_tool_returns_minus_33401`
+    - `e2e_browser_navigate_round_trips` (gated on
+      `CHROMIUM_BIN`)
 
-- **`81.17.c.hot-reload-test`** — verify the agent yaml
-  reload (Phase 81.10) doesn't kill the subprocess. The
-  in-tree path was tested via per-agent registry rebuild;
-  the subprocess path follows a different lifecycle but
-  should behave identically. Test fixture deferred — same
-  reason as e2e.
-  How to apply: extend `81.17.c.e2e-test-fixture` follow-up
-  with a reload trigger + PID assertion.
+- **`81.17.c.hot-reload-test`** — RESOLVED 2026-05-07.
+  `nexo-rs-plugin-browser/tests/e2e_persistence.rs` covers
+  the subprocess-side guarantees (PID stability across N
+  consecutive tool.invoke calls; recovery from
+  unknown-method errors). Daemon-side reload coverage lives
+  in `proyecto/crates/core/tests/subprocess_plugin_e2e.rs`.
 
 - **`81.29.b.shipped-via-81.17.c`** — RESOLVED. The SDK
   `on_tool` + `declare_tools` helpers landed in 81.17.c.1.

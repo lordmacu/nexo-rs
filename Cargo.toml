@@ -20,7 +20,6 @@ members = [
     "crates/mcp",
     "crates/resilience",
     "crates/taskflow",
-    "crates/plugins/browser",
     "crates/plugins/whatsapp",
     "crates/plugins/telegram",
     "crates/plugins/email",
@@ -150,13 +149,11 @@ name = "nexo"
 path = "src/main.rs"
 
 # Phase 27.1 — dev/smoke programs live as examples so cargo-dist
-# doesn't pick them up. Run with `cargo run --example browser-test`,
-# `cargo run --example integration-browser-check`, or
-# `cargo run --example llm_smoke`.
-[[example]]
-name = "browser-test"
-path = "examples/browser-test.rs"
-
+# doesn't pick them up. Run with
+# `cargo run --example integration-browser-check` or
+# `cargo run --example llm_smoke`. (`browser-test` example
+# removed in the 81.17.c.in-tree-removal follow-up — equivalent
+# coverage lives in `nexo-rs-plugin-browser/tests/e2e_handshake.rs`.)
 [[example]]
 name = "integration-browser-check"
 path = "examples/integration-browser-check.rs"
@@ -235,7 +232,11 @@ rust-embed          = { version = "8", features = ["include-exclude"] }
 sha2                = { workspace = true }
 arc-swap            = { workspace = true }
 semver              = { workspace = true }
-nexo-plugin-browser = { version = "0.1.1", path = "crates/plugins/browser" }
+# Phase 81.17.c follow-up `81.17.c.in-tree-removal` — browser
+# plugin extracted to standalone repo `nexo-rs-plugin-browser`
+# and the in-tree dormant crate deleted. CDP client lives in
+# its own workspace crate `nexo-cdp` for any future
+# browser-flavoured plugins.
 nexo-cdp = { version = "0.1.0", path = "crates/cdp" }
 nexo-plugin-whatsapp = { version = "0.1.1", path = "crates/plugins/whatsapp" }
 nexo-plugin-telegram = { version = "0.1.1", path = "crates/plugins/telegram" }
