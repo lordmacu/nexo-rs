@@ -675,6 +675,19 @@ pub struct PluginAdapter {
     server_version: String,
     on_broker_event: Option<Arc<dyn BrokerEventHandler>>,
     on_shutdown: Option<Arc<dyn ShutdownHandler>>,
+    /// Phase 81.17.c — tool defs advertised in the `initialize`
+    /// reply's `tools: [...]` field. The host's decoder
+    /// (`nexo_core::agent::tool_remote::RemoteToolDef`) consumes
+    /// this list to register `RemoteToolHandler`s in the agent's
+    /// scoped registry. Empty when the plugin doesn't expose
+    /// tools — initialize-reply omits the field.
+    declared_tools: Vec<ToolDef>,
+    /// Phase 81.17.c — single dispatch closure invoked on every
+    /// `tool.invoke` request. `None` when the plugin doesn't
+    /// expose tools — `tool.invoke` requests reply `-32601 method
+    /// not found` so the host's RemoteToolHandler surfaces a
+    /// clear error.
+    tool_handler: Option<Arc<dyn ToolHandler>>,
 }
 
 /// Phase 81.15.c.b — handle returned by
@@ -771,6 +784,8 @@ impl PluginAdapter {
             server_version,
             on_broker_event: None,
             on_shutdown: None,
+            declared_tools: Vec::new(),
+            tool_handler: None,
         })
     }
 
@@ -788,6 +803,31 @@ impl PluginAdapter {
     /// silently dropped.
     pub fn on_broker_event<H: BrokerEventHandler>(mut self, handler: H) -> Self {
         self.on_broker_event = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 81.17.c — declare the tools this plugin will expose
+    /// in its `initialize` reply. Each [`ToolDef::name`] MUST
+    /// appear in the manifest's `[plugin.extends] tools = [...]`
+    /// allowlist or the host kills the subprocess at handshake.
+    ///
+    /// Pair with [`Self::on_tool`] to handle invocations.
+    pub fn declare_tools(mut self, defs: impl IntoIterator<Item = ToolDef>) -> Self {
+        self.declared_tools = defs.into_iter().collect();
+        self
+    }
+
+    /// Phase 81.17.c — register the dispatch handler for
+    /// incoming `tool.invoke` requests. The handler matches on
+    /// [`ToolInvocation::tool_name`] and routes to per-tool
+    /// logic; returning `Ok(value)` becomes the JSON-RPC
+    /// `result`, `Err(...)` maps to a `-33401..-33405` error.
+    ///
+    /// Without a handler, the dispatch loop replies `-32601
+    /// method not found` to `tool.invoke` requests so the host's
+    /// `RemoteToolHandler` surfaces a clear error.
+    pub fn on_tool<H: ToolHandler>(mut self, handler: H) -> Self {
+        self.tool_handler = Some(Arc::new(handler));
         self
     }
 
@@ -1009,11 +1049,28 @@ where
 
         match method {
             "initialize" => {
-                let result = json!({
+                // Phase 81.17.c — when the plugin declared tools,
+                // emit them as `tools: [...]` so the host's
+                // `Inner.declared_tools` (subprocess.rs:1052)
+                // populates and `register_remote_tool_handlers_after_init`
+                // can register `RemoteToolHandler`s.
+                let mut result_obj = json!({
                     "manifest": manifest_value,
                     "server_version": adapter.server_version,
                 });
-                write_result(&writer, id, result).await?;
+                if !adapter.declared_tools.is_empty() {
+                    let tools_value =
+                        serde_json::to_value(&adapter.declared_tools).map_err(|e| {
+                            SdkError::Io(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("declared_tools serialise failed: {e}"),
+                            ))
+                        })?;
+                    if let Some(map) = result_obj.as_object_mut() {
+                        map.insert("tools".to_string(), tools_value);
+                    }
+                }
+                write_result(&writer, id, result_obj).await?;
             }
             "shutdown" => {
                 if let Some(handler) = &adapter.on_shutdown {
@@ -1029,6 +1086,45 @@ where
                     write_result(&writer, id, json!({"ok": true})).await?;
                 }
                 break;
+            }
+            "tool.invoke" => {
+                // Phase 81.17.c — host-initiated tool dispatch. No
+                // registered handler ⇒ reply with -32601 so the
+                // host's `RemoteToolHandler` surfaces a typed
+                // ToolError to the agent.
+                let Some(handler) = adapter.tool_handler.clone() else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32601,
+                        "method not found: tool.invoke (no handler registered — call PluginAdapter::on_tool)",
+                    )
+                    .await?;
+                    continue;
+                };
+                let params = frame.get("params").cloned().unwrap_or(Value::Null);
+                let invocation: ToolInvocation = match serde_json::from_value(params) {
+                    Ok(inv) => inv,
+                    Err(e) => {
+                        write_error(
+                            &writer,
+                            id,
+                            -32602,
+                            &format!("tool.invoke: invalid params: {e}"),
+                        )
+                        .await?;
+                        continue;
+                    }
+                };
+                match handler.call(invocation).await {
+                    Ok(value) => {
+                        write_result(&writer, id, value).await?;
+                    }
+                    Err(err) => {
+                        let code = err.code();
+                        write_error(&writer, id, code, &err.to_string()).await?;
+                    }
+                }
             }
             other => {
                 write_error(
@@ -1246,6 +1342,115 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(reply["id"], 1);
         assert_eq!(reply["result"]["manifest"]["plugin"]["id"], "test_plugin");
         assert_eq!(reply["result"]["server_version"], "test_plugin-0.1.0");
+    }
+
+    // ── Phase 81.17.c — initialize-reply tools + tool.invoke routing ──
+
+    #[tokio::test]
+    async fn initialize_reply_omits_tools_when_none_declared() {
+        // Default builder: no `.declare_tools(...)` call; the
+        // initialize reply must NOT carry a `tools` field so the
+        // host's `result.pointer("/tools")` returns None and
+        // `Inner.declared_tools` stays empty.
+        let adapter = PluginAdapter::new(TEST_MANIFEST).expect("manifest parses");
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n")
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert!(reply["result"].get("tools").is_none(),
+            "expected no `tools` field; got: {}", reply["result"]);
+    }
+
+    #[tokio::test]
+    async fn initialize_reply_includes_declared_tools_array() {
+        let defs = vec![
+            ToolDef {
+                name: "test_plugin_echo".into(),
+                description: "Echo args.".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            },
+            ToolDef {
+                name: "test_plugin_ping".into(),
+                description: "Ping/pong.".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+            },
+        ];
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .declare_tools(defs);
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n")
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        let tools = reply["result"]["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0]["name"], "test_plugin_echo");
+        assert_eq!(tools[1]["name"], "test_plugin_ping");
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_routes_to_registered_handler() {
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_tool(|inv: ToolInvocation| async move {
+                Ok(serde_json::json!({"echoed": inv.args}))
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                br#"{"jsonrpc":"2.0","id":7,"method":"tool.invoke","params":{"plugin_id":"test_plugin","tool_name":"echo","args":{"x":1}}}
+"#,
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["result"]["echoed"]["x"], 1);
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_handler_error_maps_to_minus_33401() {
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_tool(|inv: ToolInvocation| async move {
+                Err::<serde_json::Value, _>(ToolInvocationError::NotFound(inv.tool_name))
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                br#"{"jsonrpc":"2.0","id":8,"method":"tool.invoke","params":{"plugin_id":"test_plugin","tool_name":"unknown"}}
+"#,
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 8);
+        assert_eq!(reply["error"]["code"], -33401);
+        assert!(reply["error"]["message"].as_str().unwrap().contains("unknown"));
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_without_handler_returns_method_not_found() {
+        // No `.on_tool(...)` call; dispatch loop must reply
+        // -32601 (method not found) so the host's
+        // RemoteToolHandler surfaces a typed error rather than
+        // hanging on a never-resolved oneshot.
+        let adapter = PluginAdapter::new(TEST_MANIFEST).expect("manifest parses");
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                br#"{"jsonrpc":"2.0","id":9,"method":"tool.invoke","params":{"plugin_id":"test_plugin","tool_name":"x"}}
+"#,
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 9);
+        assert_eq!(reply["error"]["code"], -32601);
     }
 
     #[tokio::test]
