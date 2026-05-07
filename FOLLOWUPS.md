@@ -18,6 +18,82 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Locale-aware agent language — shipped, follow-ups open
+
+BCP-47 locale model + per-locale addenda + voice picker shipped
+in commits `bd7e0cf..723227f` (proyecto + agent-creator-microapp
+main). Six deferreds:
+
+- **`locale-config-yaml-strict-validation`** — `nexo-config`
+  currently accepts any string for `agents.<id>.language`; the
+  closed-enum validation only fires at the admin RPC
+  (`agent_upsert`) and at the consumer side (microapp's
+  `parse_locale` warn-fallback). Daemon boot still tolerates a
+  YAML hand-edit with `language: "klingon"` — silently treated
+  as `None`. Why deferred: `nexo-config` cannot depend on
+  `nexo-microapp-sdk` (layer inversion). The right fix is to
+  move `Locale` from `nexo-microapp-sdk` to `nexo-tool-meta`
+  (which both `nexo-config` and the SDK already depend on),
+  then add a deserialise hook in `AgentConfig::language`.
+  How to apply: move the module + add `thiserror` to
+  `nexo-tool-meta/Cargo.toml`; re-export from the SDK so
+  existing consumer paths keep resolving; add the
+  `#[serde(deserialize_with = ...)]` validate hook.
+
+- **`locale-list-codegen-or-lint`** — the TS list at
+  `agent-creator-microapp/frontend/src/data/locales.ts` is
+  hand-curated; the canonical source of truth is the Rust
+  closed-enum surface in `nexo_microapp_sdk::locale`. Drift
+  risk: adding a Rust variant without updating the TS list =
+  silent miss in the dropdown. Why deferred: codegen pipeline
+  (Rust → TS via serde-reflection / typeshare / similar) is a
+  separate infra investment; v1 risk is low (locales add
+  rarely). How to apply: either codegen on `cargo build` or a
+  CI lint that diffs `Locale::from_str` accept-list vs the TS
+  `SUPPORTED_LOCALES` codes.
+
+- **`locale-set-extension-additional-languages`** — Korean
+  (ko-KR), Russian (ru-RU), Arabic (ar-SA / ar-EG / ar-MA),
+  Hindi (hi-IN), Turkish (tr-TR), Vietnamese (vi-VN), Thai
+  (th-TH), Polish (pl-PL), Dutch (nl-NL), Indonesian (id-ID).
+  Why deferred: <10 % of operators today; each language needs
+  a curated style addendum + voice id table entry.
+  How to apply: extend `LangCode` + `RegionCode` enums; add
+  one `*_VOICE_ADDENDUM` + `*_STYLE_ADDENDUM` const + one row
+  in `default_voice_for_locale`; mirror in
+  `frontend/src/data/locales.ts`.
+
+- **`locale-script-subtags`** — `zh-Hant` (Traditional
+  Chinese), `sr-Cyrl` (Serbian Cyrillic), `mn-Mongl` etc.
+  Currently rejected by parser as `TooManySubtags`. Why
+  deferred: the closed-enum design assumes
+  `language[-region]`; script as a third axis needs a
+  `ScriptCode` enum + 3-tuple match arms across every table.
+  How to apply: extend `Locale` with `script: Option<ScriptCode>`,
+  thread through every match arm.
+
+- **`locale-inbound-binding-override`** — `InboundBinding`
+  already has a `language: Option<String>` field that
+  overrides the agent's language for the matched channel. v1
+  doesn't extend that to the Locale-level (the binding string
+  parses but the runtime calls
+  `OutboundReplyContext.language` from the agent, not the
+  binding). Why deferred: the use case "same agent talks
+  es-AR on WhatsApp and es-ES on Telegram" is rare today.
+  How to apply: thread the binding's `language` through
+  `OutboundReplyContext.language` when building the context
+  in `nexo-core`'s reply pipeline.
+
+- **`locale-stt-input-hint`** — the SDK's STT pipeline
+  (`whisper-rs`) auto-detects the input language but accepts
+  a hint via `language` parameter for accented audio. v1
+  doesn't pass the agent's locale through. Why deferred:
+  whisper auto-detect works fine for the common cases;
+  hinting is a marginal-gain optimisation.
+  How to apply: thread the agent locale into
+  `nexo-microapp-sdk::stt::TranscribeConfig::language` via
+  the inbound transform context.
+
 ### WhatsApp recording-presence indicator — shipped, follow-ups open
 
 Recording presence + `typing_mode` YAML knob landed across
