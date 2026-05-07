@@ -3182,6 +3182,95 @@ extra) once meta-microapp is shippeable.
    `proyecto/CLAUDE.md` table.
 6. Add brainstorm/spec/plan/ejecutar tasks via TaskCreate.
 
+#### 83.18 — `microapp-ui-shell-react` reusable workspace shell — OPT-IN multi-module helper, NOT core   ⬜
+
+Triggered by `agent-creator-microapp`'s M16 milestone. The
+microapp ships a multi-module workspace shell (vertical icon
+rail + secondary sidebar + main + optional context panel)
+that's currently 100 % local under
+`agent-creator-microapp/frontend/src/shell/*`. Every primitive
+in there is module-agnostic — same shape will be reused by any
+future microapp that hosts ≥ 2 surfaces (chats + marketing,
+chats + reports, etc.). 83.18 lifts the primitives into the
+sibling SDK package so the microapp's `frontend/src/shell/`
+shrinks to a 200-line composition of imports.
+
+**Sibling, not replacement, of 83.13.** 83.13 is the chat-
+specific component library (WhatsApp Web 3-column layout).
+83.18 is the multi-module shell that *hosts* a chat module
+inside one of its panels. A microapp with no shell concept
+(single-page batch dashboard) ignores 83.18 entirely; a
+microapp with a chat surface but no other modules ignores
+83.18 and consumes 83.13 directly. A microapp with both
+imports both — they compose cleanly because 83.18 doesn't
+know what 83.13 renders inside the main panel.
+
+Scope:
+- TypeScript package published as `@nexo/microapp-ui-shell-react`
+  shipped under `crates/microapp-sdk-react-shell/` (mirrors the
+  layout of `crates/microapp-sdk-react/` from 83.13).
+- Exports the shell primitives:
+  - `ModuleManifest` types + `ModuleManifestSchema` (Zod) —
+    contract every module exports from
+    `<microapp>/frontend/src/modules/<id>/manifest.tsx`.
+  - `ModuleRegistry.fromGlob(globResult, tenantId)` — discover
+    + validate + run migrations for a discovered manifest set.
+    Pure-data; no React deps.
+  - `<Rail>` — vertical icon rail with bottom-nav variant for
+    narrow viewports + ARIA tablist + keyboard nav.
+  - `<SecondarySidebar>` + `<ContextPanel>` — slot bodies that
+    render a Component prop or null.
+  - `<ShellRoot>` — 4-zone composition with `react-resizable-
+    panels`, `<ModuleErrorBoundary>` per module, narrow
+    viewport sheet drawer for the sidebar, aria-live module-
+    change announcer.
+  - `<TenantSwitcher>` — accepts a `tenants` array + an active
+    id + an `onSwitch` callback; SDK doesn't know HOW to fetch
+    tenants (each microapp wires its own admin RPC client).
+  - `useShellContext()` + `useTenant()` + `useUrlState()` +
+    `useViewport()` + `usePersistedWidth()` — hooks the
+    consumer microapp imports without re-implementing.
+  - `useRegistry()` Zustand singleton for cross-tree access
+    (Cmd+K palette mounted outside the shell).
+  - `localStorage.ts` — namespaced shell + module:tenant scoping
+    + Zod-validated reads.
+- HOOK shape for tenant fetching: `<TenantSwitcher>` takes a
+  `tenants` prop, NOT a fetcher. The microapp wires its
+  preferred fetcher (e.g.
+  `agent-creator-microapp/src/api/tenants.ts`) and feeds the
+  result through.
+- HOOK shape for routing: `<ShellRoot>` consumes
+  `react-router-dom` v6+. The microapp passes a `<RouterProvider>`
+  or wraps `<ShellRoot>` inside a router itself.
+- The chat-specific `83.13` library + this shell are
+  composable: a microapp with both creates a `chats` module
+  whose sidebar imports `<ChatList>` from 83.13 and whose
+  main area renders `<ConversationView>` from 83.13.
+- Reference scaffold: `extensions/template-microapp-rust-with-ui-shell/`
+  imports both 83.13 and 83.18 to demonstrate the canonical
+  composition.
+
+Done criteria:
+- `crates/microapp-sdk-react-shell/` exists with package.json
+  (`@nexo/microapp-ui-shell-react`), tsconfig, vite/rollup
+  build that emits ESM + types.
+- `agent-creator-microapp/frontend/src/shell/*` shrinks to
+  ≤ 250 LOC of microapp-specific composition (manifest glob
+  discovery, App.tsx wiring, the marketing module's tenant
+  fetcher).
+- 42 existing unit tests in the microapp move to the SDK
+  package + keep passing.
+- A second microapp (synthetic test fixture) imports the SDK
+  shell and renders 2 modules without copy-pasting code.
+- README documents the consumer flow + the contract.
+
+Effort estimate: ~5 dev-days for the lift + ~2 dev-days for
+the second-microapp validation. Best done as a single
+brainstorm/spec/plan/ejecutar pass once a candidate consumer
+beyond `agent-creator` is on the roadmap (M15 marketing
+extension's host counts as the second consumer once it
+ships).
+
 ## Documentation policy
 
 - All Markdown content in this file is in English.
