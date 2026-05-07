@@ -358,6 +358,11 @@ pub struct VendedorNotificationSettings {
     /// Notify on cold-thread lead creation. Default: `true`.
     #[serde(default = "default_true")]
     pub on_lead_created: bool,
+    /// Notify on inbound that lands on an already-tracked
+    /// thread (the client replied). Default: `true` — high-
+    /// signal event most operators want to see immediately.
+    #[serde(default = "default_true")]
+    pub on_lead_replied: bool,
     /// Notify on every state transition (cold → engaged,
     /// engaged → meeting_scheduled, …). Default: `false` —
     /// transitions fire often during active conversations
@@ -388,6 +393,7 @@ impl Default for VendedorNotificationSettings {
     fn default() -> Self {
         Self {
             on_lead_created: true,
+            on_lead_replied: true,
             on_lead_transitioned: false,
             on_draft_pending: true,
             on_meeting_intent: true,
@@ -404,6 +410,10 @@ impl Default for VendedorNotificationSettings {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EmailNotificationKind {
     LeadCreated,
+    /// Inbound lands on a thread that already has a tracked
+    /// lead — the client just replied. Fires from the broker
+    /// hop's existing-thread branch.
+    LeadReplied,
     LeadTransitioned,
     DraftPending,
     MeetingIntent,
@@ -918,6 +928,7 @@ mod tests {
     fn vendedor_notification_settings_default_matches_spec() {
         let s = VendedorNotificationSettings::default();
         assert!(s.on_lead_created);
+        assert!(s.on_lead_replied);
         assert!(!s.on_lead_transitioned);
         assert!(s.on_draft_pending);
         assert!(s.on_meeting_intent);
@@ -942,6 +953,7 @@ mod tests {
         }"#;
         let parsed: VendedorNotificationSettings = serde_json::from_str(json).unwrap();
         assert!(parsed.on_lead_created);
+        assert!(parsed.on_lead_replied);
         assert!(!parsed.on_lead_transitioned);
         assert!(parsed.on_draft_pending);
         assert!(parsed.on_meeting_intent);
