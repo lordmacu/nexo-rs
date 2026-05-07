@@ -213,6 +213,73 @@ Pre-2021 WhatsApp clients ignore the `media` attribute and paint
 voice note still arrives; only the indicator lies. Affects
 <0.5 % of installs.
 
+## Idioma del agente y voz (locale BCP-47)
+
+The agent's `language` field accepts a full BCP-47 locale —
+`es-AR`, `es-ES`, `es-US`, `en-GB`, `pt-BR`, etc. — and the
+runtime honours both the language and the region for three
+things on every turn:
+
+1. **Per-locale system addendum** locks the LLM into the
+   regional register: voseo for `es-AR` (`vos`, `tenés`,
+   `podés`), tuteo + castellano vocab for `es-ES`
+   (`vosotros`, `vale`, `coger`), Spanglish-aware for `es-US`
+   (loanwords like `email`/`parking` not auto-translated),
+   British spelling + vocab for `en-GB`, etc. Operators
+   shipping `language: "es"` (no region) get a Latam-neutral
+   tuteo template.
+
+2. **Voice-mode SSML tutorial** — when voice mode is toggled
+   for the conversation, the marker tutorial appended to the
+   system prompt uses the locale's native register (so the
+   examples don't teach the LLM a dialect it shouldn't speak).
+
+3. **Default Edge voice** — when the per-conversation
+   `voice_id` is the install-wide default, the picker resolves
+   a region-matched voice:
+
+   | Locale  | Voice                  |
+   |---------|------------------------|
+   | `es-AR` | `es-AR-ElenaNeural`    |
+   | `es-MX` | `es-MX-DaliaNeural`    |
+   | `es-ES` | `es-ES-ElviraNeural`   |
+   | `es-CO` | `es-CO-SalomeNeural`   |
+   | `es-PE` | `es-PE-CamilaNeural`   |
+   | `es-CL` | `es-CL-CatalinaNeural` |
+   | `es-US` | `es-US-PalomaNeural`   |
+   | `en-US` | `en-US-AriaNeural`     |
+   | `en-GB` | `en-GB-SoniaNeural`    |
+   | `en-AU` | `en-AU-NatashaNeural`  |
+   | `en-CA` | `en-CA-ClaraNeural`    |
+   | `pt-BR` | `pt-BR-FranciscaNeural`|
+   | `pt-PT` | `pt-PT-RaquelNeural`   |
+   | `fr-FR` | `fr-FR-DeniseNeural`   |
+   | `fr-CA` | `fr-CA-SylvieNeural`   |
+   | `it-IT` | `it-IT-ElsaNeural`     |
+   | `de-DE` | `de-DE-KatjaNeural`    |
+   | `ja-JP` | `ja-JP-NanamiNeural`   |
+   | `zh-CN` | `zh-CN-XiaoxiaoNeural` |
+
+   Language-only locales fall back to the canonical region
+   (`es` → `es-MX`, `en` → `en-US`, `pt` → `pt-BR`, …).
+   Operators with a manually-picked `voice_id` keep their
+   choice; the picker only fires when the stored voice is the
+   install default.
+
+The supported locale set is closed (lives in
+`nexo_microapp_sdk::Locale`); unsupported strings (`klingon`,
+`es-419`, `zh-Hant`) are rejected by the admin RPC with
+`invalid_locale` so a YAML typo cannot reach the daemon.
+
+### Behaviour change — `language: "es"` agents
+
+Before this change, `language: "es"` agents inherited an
+Argentine voseo flavour from the legacy voice-mode addendum
+constant. The new behaviour routes `language: "es"` to the
+**Latam-neutral** template (tuteo, no voseo). Operators who
+want the previous Argentine flavour set `language: "es-AR"`
+explicitly.
+
 ## Gotchas
 
 - **Shared `session_dir` across agents = cross-delivery.** Each agent

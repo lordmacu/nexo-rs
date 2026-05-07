@@ -10,6 +10,52 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Locale-aware agent language (BCP-47).** `agents.<id>.language`
+  now accepts full locale codes (`es-AR`, `es-ES`, `es-US`,
+  `en-GB`, `pt-BR`, `fr-CA`, …) instead of just the 2-letter ISO
+  code. New `nexo_microapp_sdk::Locale` value type (closed-enum
+  parser) drives three locale-keyed tables in
+  `nexo_microapp_sdk::voice::locale_addenda`:
+
+    1. `language_style_addendum` — register / vocabulary
+       guidance: voseo for `es-AR`, vosotros + castellano vocab
+       for `es-ES`, Spanglish-aware for `es-US`, British
+       spelling for `en-GB`, etc.
+    2. `voice_mode_addendum` — SSML-marker tutorial localised
+       per region so the examples match the operator's chosen
+       dialect.
+    3. `default_voice_for_locale` — Edge voice picker matched
+       to the locale (e.g., `es-AR` → `es-AR-ElenaNeural`,
+       `en-GB` → `en-GB-SoniaNeural`). Falls back to
+       language-only canonical, then to the install-wide
+       default. Operator-selected per-conversation `voice_id`
+       overrides take precedence.
+
+  The `agent_upsert` admin RPC validates the locale string
+  server-side; bad values return `invalid_locale` errors. The
+  agent-edit form in the agent-creator UI now ships a grouped
+  `<optgroup>` dropdown over the supported set instead of the
+  legacy 2-option (es / en) select.
+
+  See the
+  [WhatsApp plugin docs § Idioma del agente y voz](docs/src/plugins/whatsapp.md#idioma-del-agente-y-voz-locale-bcp-47).
+
+### Fixed
+
+- **`language: "es"` no longer teaches LLMs voseo by accident.**
+  The legacy `VOICE_SYSTEM_ADDENDUM_ES` constant in the
+  agent-creator-microapp used voseo throughout (`Pensá`,
+  `Marcá`, `Tenés`, `úsalos`), inadvertently steering every
+  Spanish-language agent toward Argentine register — directly
+  contradicting the existing `language_addendum_for` which said
+  "NEVER use voseo". The new closed-enum routing in
+  `nexo_microapp_sdk::voice::locale_addenda` sends
+  `language: "es"` (and `es-MX` / `es-CO` / `es-PE` / `es-CL`)
+  to a Latam-neutral tuteo template, while preserving the
+  voseo template explicitly for `language: "es-AR"`. Operators
+  who liked the previous Argentine flavour should switch their
+  agent to `language: "es-AR"`.
+
 - **WhatsApp recording-presence indicator + `typing_mode` YAML
   knob.** The peer phone now sees "grabando audio…" while a
   voice note is uploading instead of "escribiendo…", matching

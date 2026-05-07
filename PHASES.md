@@ -4087,6 +4087,115 @@ keeps the door open without committing scope.
 - Active backlog lives in `FOLLOWUPS.md`.
 - Architecture remains documented in `design-agent-framework.md`.
 
+### Phase 89 — Locale-aware agent language (BCP-47)   ✅
+
+**Goal:** Replace the 2-letter ISO language model with full BCP-47
+locales so operators can pick `es-AR` (voseo) vs `es-ES`
+(castellano) vs `es-US` (Spanglish-aware), `en-GB` vs `en-US`,
+`pt-BR` vs `pt-PT`, and the runtime honours both the language
+and the region for: per-locale system prompt addenda,
+voice-mode SSML tutorial, and the Edge TTS voice picker.
+Driven by user-visible regression: every Spanish agent
+inherited Argentine voseo from the legacy voice-mode addendum
+constant — the closed-enum routing in this phase fixes the
+contradiction with `language_addendum_for`'s "no voseo" rule.
+
+**Status:** shipped 2026-05-07 across `nexo-microapp-sdk` and
+`agent-creator-microapp` main. Sub-phases 89.1 covered the SDK
+type + tables; 89.2 the admin-RPC validation; 89.3 the
+microapp wiring + bug fix; 89.4 the UI dropdown; 89.5 the
+docs + close-out.
+
+**89.1 — SDK Locale + addenda + voice picker (✅)**
+
+- `nexo_microapp_sdk::locale::{Locale, LangCode, RegionCode,
+  LocaleParseError}` — closed-enum BCP-47 subset. `FromStr`
+  trims whitespace, accepts `-` and `_` separators,
+  case-insensitive, rejects 3+ subtag inputs, rejects unknown
+  language / region.
+- `Locale` is `#[serde(transparent)]` over `String` so the
+  wire shape on `OutboundReplyContext.language: Option<String>`
+  stays unchanged for non-microapp consumers.
+- `nexo_microapp_sdk::voice::locale_addenda::{voice_mode_addendum,
+  language_style_addendum, default_voice_for_locale}` — three
+  pub functions consuming `Option<&Locale>`. Closed-enum
+  exhaustive matches over `(LangCode, RegionCode)` permutations.
+- 14 const `&'static str` templates: ES_AR / ES_LATAM / ES_ES /
+  ES_US, EN_US / EN_GB / EN_AU, PT_BR / PT_PT, FR / IT / DE /
+  JA / ZH (each in its own native language / script).
+- 26-entry voice picker table (Spanish 7 regions, English 4
+  regions, Portuguese 2, French 2, plus Italian / German /
+  Japanese / Chinese language-only). Falls back to
+  language-only canonical, then to `DEFAULT_VOICE_ID`.
+
+**89.2 — admin RPC locale validation (✅)**
+
+- `agent_upsert` parses `language` via `Locale::from_str`
+  before the admin call. Invalid strings return
+  `ToolError::InvalidArguments` with code `invalid_locale` and
+  the supported-list inline.
+- Empty string (`""`) is reserved for "keep existing" upstream
+  semantics and passes through unchanged.
+
+**89.3 — microapp consumes SDK helpers + BUG FIX (✅)**
+
+- `agent-creator-microapp/src/voice_mode/tool.rs` -134 LOC: the
+  duplicated `VOICE_SYSTEM_ADDENDUM_ES`, `VOICE_SYSTEM_ADDENDUM_EN`,
+  `voice_addendum_for`, `normalise_lang`,
+  `default_voice_for_language`, `language_addendum_for` are
+  deleted. Three call sites pipe
+  `OutboundReplyContext.language` through a new
+  `parse_locale` helper (warn-on-fail) and into the SDK
+  functions.
+- BUG FIX: `language: "es"` agents previously inherited
+  Argentine voseo from the legacy addendum constant. The new
+  closed-enum routing sends them to the Latam-neutral
+  template; `language: "es-AR"` explicitly opts back into
+  voseo. Documented as a behaviour change in CHANGELOG.
+
+**89.4 — UI grouped locale dropdown (✅)**
+
+- `agent-creator-microapp/frontend/src/data/locales.ts` (new) —
+  curated `SUPPORTED_LOCALES` mirroring the SDK closed-enum
+  surface. Labels in the locale's native language / script
+  (`España`, `日本`, `中国`).
+- `pages/Agents.tsx` replaces the 2-option `<select>` with a
+  grouped `<optgroup>` dropdown + helper text under the field
+  explaining the dialect/voice impact.
+
+**89.5 — docs + close-out (✅)**
+
+- `docs/src/plugins/whatsapp.md § Idioma del agente y voz`
+  documents the locale model, the addendum policy, the
+  voice picker table, and the `language: "es"` behaviour
+  change. `mdbook build docs` clean.
+- CHANGELOG `[Unreleased] § Added` + `§ Fixed` (two entries).
+- FOLLOWUPS gains 6 deferreds covering the layering refactor
+  (config-side YAML validation), TS list ↔ Rust enum drift
+  prevention, additional locale support (Korean, Russian,
+  Arabic, Hindi, Turkish, Vietnamese), script subtags
+  (zh-Hant / sr-Cyrl), per-binding override, STT input hint.
+
+**Mining references:**
+- `research/src/config/types.agents.ts:70-122` — confirmed
+  agent-level language is greenfield in the TS reference (no
+  catch-up; we're filling a gap OpenClaw deliberately punted).
+- `research/extensions/microsoft/speech-provider.ts:135-175,
+  238-241` — Edge voice catalogue exposes `Locale` per voice;
+  CJK auto-detect pattern adopted only for the language-only
+  fallback branch (no aggressive content-based routing).
+- `research/ui/src/i18n/lib/registry.ts:11-83` — BCP-47
+  vocabulary already proven viable in TS reference for UI
+  translations; same form reused on the agent layer.
+- `research/docs/concepts/typing-indicators.md` — referenced in
+  Phase 88 and unchanged here.
+- `claude-code-leak/` — absent on host; topic out of scope.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour; locale is a YAML field validated server-side with a
+structured error. No `crates/setup/src/capabilities.rs::INVENTORY`
+entry needed.
+
 ### Phase 88 — WhatsApp recording-presence indicator   ✅
 
 **Goal:** Replace the "escribiendo…" indicator on the peer phone
