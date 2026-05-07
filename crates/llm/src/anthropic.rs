@@ -288,28 +288,6 @@ pub(crate) fn build_messages_url(base_url: &str) -> String {
     }
 }
 
-/// Render an auth header value as a fingerprint (`prefix…suffix len=N`)
-/// suitable for tracing. Surfaces enough to tell two tokens apart in
-/// logs without leaking the cleartext credential. For shorter values
-/// (< 16 chars) returns just `len=N` so a stray short value can't
-/// reconstruct the secret.
-fn fingerprint_auth(value: &str) -> String {
-    let len = value.len();
-    if len < 16 {
-        return format!("len={len}");
-    }
-    let prefix: String = value.chars().take(8).collect();
-    let suffix: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    format!("{prefix}…{suffix} len={len}")
-}
-
 /// Read a reqwest response body lossily — `text()` returns `Err` on
 /// invalid UTF-8 or transport-level read errors, both of which lose
 /// the body entirely and leave us with empty error logs. Read raw
