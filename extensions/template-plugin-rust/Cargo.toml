@@ -35,3 +35,12 @@ flate2   = "1"
 tar      = "0.4"
 sha2     = "0.10"
 hex      = "0.4"
+
+# Iterative release builds — full opt-level, no LTO, parallel
+# codegen. Costs ~5 % runtime perf vs `release`; saves ~50 % build
+# time. Use for local validation; reserve `--release` for publish.
+[profile.release-fast]
+inherits      = "release"
+lto           = false
+codegen-units = 16
+strip         = "none"

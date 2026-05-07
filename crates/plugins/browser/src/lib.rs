@@ -1,10 +1,14 @@
-pub mod cdp;
+// Phase 81.17.c follow-up `nexo-cdp-extract` — CDP client moved
+// to workspace crate `nexo-cdp`. Re-exported as `crate::cdp` so
+// existing callers (`crate::cdp::CdpClient`, etc.) keep working
+// without touching every import.
+pub use nexo_cdp as cdp;
 pub mod chrome;
 pub mod command;
 pub mod plugin;
 pub mod tool;
 
-pub use cdp::{CdpClient, CdpSession};
+pub use nexo_cdp::{CdpClient, CdpSession};
 pub use chrome::{ChromeLauncher, RunningChrome};
 pub use command::{BrowserCmd, BrowserResult};
 pub use plugin::BrowserPlugin;

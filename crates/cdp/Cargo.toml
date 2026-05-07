@@ -1,0 +1,33 @@
+# Phase 81.17.c follow-up `nexo-cdp-extract`.
+#
+# Standalone Chrome DevTools Protocol client crate, lifted out of
+# `crates/plugins/browser/src/cdp/`. Reusable by any plugin or
+# tool that drives a CDP-speaking endpoint (Chrome / Chromium /
+# headless_shell). The browser plugin itself is the first
+# consumer (in-tree dormant + standalone repo).
+[package]
+name          = "nexo-cdp"
+description   = "Chrome DevTools Protocol (CDP) client used by Nexo plugins."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = ["nexo", "cdp", "chrome", "devtools-protocol"]
+categories    = ["api-bindings", "asynchronous"]
+
+[dependencies]
+tokio             = { workspace = true }
+serde_json        = { workspace = true }
+anyhow            = { workspace = true }
+tracing           = { workspace = true }
+dashmap           = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-util        = { workspace = true }
+reqwest           = { workspace = true }
+futures           = { workspace = true }
+base64            = { workspace = true }

@@ -14,7 +14,7 @@ pub struct CdpSession {
 }
 
 impl CdpSession {
-    pub(crate) fn client(&self) -> Arc<CdpClient> {
+    pub fn client(&self) -> Arc<CdpClient> {
         Arc::clone(&self.client)
     }
 
