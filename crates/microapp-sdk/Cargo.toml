@@ -81,6 +81,12 @@ identity = ["dep:sqlx", "dep:chrono"]
 # Pulls serde_yaml; useful beyond CRM (any microapp routing
 # inbound to handlers per declarative rules).
 routing = ["dep:serde_yaml"]
+# Phase 82.15 / M15.5 — enrichment primitives.
+# Curated domain classifier (200+ public providers + 30
+# disposable hosts), TTL-keyed (tenant_id, domain) sqlite
+# cache, and an EnrichmentSource trait + chain runner so
+# consumers compose fallback adapters in priority order.
+enrichment = ["dep:sqlx", "dep:once_cell"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -131,7 +137,7 @@ once_cell  = { version = "1", optional = true }
 serde_yaml = { workspace = true, optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
