@@ -306,32 +306,44 @@ pub struct Vendedor {
 // ── Notification settings + event payload (M15.38) ──────────────
 
 /// Where a notification gets forwarded. Tagged enum so JS
-/// clients pattern-match on `kind` + the consumer (agent
-/// runtime / sidecar) routes per variant.
+/// clients pattern-match on `kind`. Each non-trivial variant
+/// carries its **resolved** plugin-bridge instance — the
+/// frontend reads `agent.inbound_bindings` at vendedor-save
+/// time and bakes the instance string here so the forwarder
+/// (a plugin subprocess) never needs admin-RPC access to
+/// route. Stale bindings (operator re-pairs WA) require a
+/// vendedor re-save; the form surfaces the warning.
 ///
-/// - `Disabled` — even with toggles on, the event publishes
-///   but the forwarder skips it (useful for "log only" flows).
-/// - `Whatsapp` — agent's existing WA inbound binding doubles
-///   as outbound; marketing doesn't need to know the WA
-///   instance, the forwarder resolves it agent-side.
-/// - `Email { to }` — forward via the framework's email
-///   plugin outbound to an arbitrary address. Use case: ops
-///   alerts, on-call rota, BCC to a shared inbox.
+/// - `Disabled` — even with toggles on, the publisher skips
+///   the topic frame entirely (useful for "log only" flows).
+/// - `Whatsapp { instance }` — forwarder publishes to
+///   `plugin.outbound.whatsapp.<instance>`. `instance` is
+///   the WA bridge id (e.g. `"personal"`, `"business"`).
+/// - `Email { from_instance, to }` — forwarder publishes to
+///   `plugin.outbound.email.<from_instance>`. `from_instance`
+///   is the email plugin instance (mailbox id) used as the
+///   SMTP sender; `to` is the operator-supplied recipient.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NotificationChannel {
     Disabled,
-    Whatsapp,
+    Whatsapp {
+        instance: String,
+    },
     Email {
-        /// Recipient address — the forwarder publishes
-        /// `plugin.outbound.email.<instance>` with this in `to`.
+        from_instance: String,
         to: String,
     },
 }
 
 impl Default for NotificationChannel {
+    /// Default discriminator is `Whatsapp { instance: "" }` —
+    /// the frontend MUST resolve a non-empty instance before
+    /// save lands. Tests + serialisation round-trip survive.
     fn default() -> Self {
-        Self::Whatsapp
+        Self::Whatsapp {
+            instance: String::new(),
+        }
     }
 }
 
@@ -865,22 +877,41 @@ mod tests {
     }
 
     #[test]
-    fn notification_channel_whatsapp_roundtrip() {
-        let ch = NotificationChannel::Whatsapp;
+    fn notification_channel_whatsapp_carries_instance() {
+        let ch = NotificationChannel::Whatsapp {
+            instance: "personal".into(),
+        };
         roundtrip(&ch);
         let s = serde_json::to_string(&ch).unwrap();
-        assert_eq!(s, r#"{"kind":"whatsapp"}"#, "{s}");
+        assert!(s.contains(r#""kind":"whatsapp""#), "{s}");
+        assert!(s.contains(r#""instance":"personal""#), "{s}");
     }
 
     #[test]
-    fn notification_channel_email_with_target_roundtrip() {
+    fn notification_channel_email_carries_from_instance_and_to() {
         let ch = NotificationChannel::Email {
+            from_instance: "ventas-acme".into(),
             to: "ops@acme.com".into(),
         };
         roundtrip(&ch);
         let s = serde_json::to_string(&ch).unwrap();
         assert!(s.contains(r#""kind":"email""#), "{s}");
+        assert!(s.contains(r#""from_instance":"ventas-acme""#), "{s}");
         assert!(s.contains(r#""to":"ops@acme.com""#), "{s}");
+    }
+
+    #[test]
+    fn notification_channel_default_is_empty_whatsapp_instance() {
+        // Default exists for serde-default fallback when
+        // operator YAML omits the `channel` field. Empty
+        // instance means the forwarder skips silently — the
+        // frontend MUST resolve before save lands.
+        match NotificationChannel::default() {
+            NotificationChannel::Whatsapp { instance } => {
+                assert!(instance.is_empty());
+            }
+            other => panic!("expected default Whatsapp, got {other:?}"),
+        }
     }
 
     #[test]
@@ -890,17 +921,24 @@ mod tests {
         assert!(!s.on_lead_transitioned);
         assert!(s.on_draft_pending);
         assert!(s.on_meeting_intent);
-        assert_eq!(s.channel, NotificationChannel::Whatsapp);
+        // Default is `Whatsapp { instance: "" }` — caller
+        // (frontend) MUST resolve the binding before save.
+        assert!(matches!(
+            s.channel,
+            NotificationChannel::Whatsapp { ref instance } if instance.is_empty()
+        ));
     }
 
     #[test]
     fn vendedor_notification_settings_partial_payload_uses_serde_defaults() {
         // Operator writes only `channel` — the toggles default
         // via the field-level `#[serde(default = …)]` attrs.
-        // Use JSON instead of YAML to avoid pulling serde_yaml
-        // into tool-meta dev-deps; the parse logic is the same.
         let json = r#"{
-            "channel": { "kind": "email", "to": "ops@acme.com" }
+            "channel": {
+                "kind": "email",
+                "from_instance": "ventas-acme",
+                "to": "ops@acme.com"
+            }
         }"#;
         let parsed: VendedorNotificationSettings = serde_json::from_str(json).unwrap();
         assert!(parsed.on_lead_created);
@@ -910,7 +948,8 @@ mod tests {
         assert_eq!(
             parsed.channel,
             NotificationChannel::Email {
-                to: "ops@acme.com".into()
+                from_instance: "ventas-acme".into(),
+                to: "ops@acme.com".into(),
             }
         );
     }
@@ -928,7 +967,9 @@ mod tests {
             subject: "Cotización".into(),
             at_ms: 1_700_000_000_000,
             summary: "📧 Nuevo lead de cliente@empresa.com (Cotización)".into(),
-            channel: NotificationChannel::Whatsapp,
+            channel: NotificationChannel::Whatsapp {
+                instance: "personal".into(),
+            },
         };
         roundtrip(&n);
     }
