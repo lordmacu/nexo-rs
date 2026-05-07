@@ -8,6 +8,34 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed
+
+- **Browser plugin extracted to standalone repo (Phase 81.17.c).**
+  `nexo-plugin-browser` (the 12 `browser_*` tools + CDP client +
+  Chrome launcher) now ships as a standalone binary at
+  [`nexo-rs-plugin-browser`](https://github.com/nexo-rs/plugin-browser)
+  (sibling repo to `proyecto/`), loaded by the daemon via
+  discovery + auto-subprocess fallback (Phase 81.17.b). Tools
+  route through 81.29 `RemoteToolHandler` over JSON-RPC stdio
+  (`tool.invoke` wire surface).
+
+  **Operator action required**: build the standalone repo and
+  add its directory to `plugins.discovery.search_paths`. The
+  daemon no longer constructs `BrowserPlugin` in-process. Existing
+  `cfg.plugins.browser` YAML config is honoured — daemon
+  translates fields into `NEXO_PLUGIN_BROWSER_*` env vars before
+  spawning the subprocess.
+
+  In-tree `crates/plugins/browser/` stays dormant in the workspace
+  for one migration window (rollback safety); deletion tracked
+  as follow-up `81.17.c.in-tree-removal`.
+
+  New SDK helpers (promoted from 81.29.b):
+  `nexo_microapp_sdk::plugin::{ToolDef, ToolInvocation,
+  ToolInvocationError, ToolHandler}` + `PluginAdapter::declare_tools`
+  + `PluginAdapter::on_tool`. Initialize-reply now emits
+  `tools: [<ToolDef>...]` when the plugin declared any.
+
 ### Added
 
 - **Locale-aware agent language (BCP-47).** `agents.<id>.language`

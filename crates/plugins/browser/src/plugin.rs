@@ -395,7 +395,7 @@ mod tests {
         const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
         let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
         assert_eq!(m.plugin.id, "browser");
-        assert_eq!(m.plugin.version.to_string(), "0.1.1");
+        assert_eq!(m.plugin.version.to_string(), "0.2.0");
         assert_eq!(m.plugin.requires.nexo_capabilities, vec!["broker".to_string()]);
     }
 
@@ -411,7 +411,7 @@ mod tests {
         let plugin = BrowserPlugin::new(test_browser_config());
         let nexo: &dyn NexoPlugin = &plugin;
         assert_eq!(nexo.manifest().plugin.id, "browser");
-        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.1.1");
+        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.2.0");
     }
 
     #[test]

@@ -307,6 +307,15 @@ uuid                = { workspace = true }
 inherits = "release"
 lto = "thin"
 
+# Iterative release builds — full opt-level, no LTO, parallel
+# codegen. Costs ~5 % runtime; saves ~50 % build time. Use for
+# local validation; reserve `dist`/`--release` for publish.
+[profile.release-fast]
+inherits      = "release"
+lto           = false
+codegen-units = 16
+strip         = "none"
+
 # Phase 82.10.q — patch wa-agent to local checkout so the typing-clear
 # fix in `src/agent.rs::run_agent_with` (explicit `send_typing(false)`
 # await before `apply_response`) ships in the daemon binary. Local path

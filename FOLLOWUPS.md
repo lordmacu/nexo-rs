@@ -18,6 +18,92 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 81.17.c — plugin-browser standalone repo — shipped, follow-ups open
+
+Browser plugin extracted to sibling repo at
+`/home/familia/chat/nexo-rs-plugin-browser/` (commits
+`70b3db3..3474cba` on proyecto main + initial commits on the
+standalone repo). 6 deferreds:
+
+- **`81.17.c.publish-github`** — push the standalone repo to
+  public `github.com/nexo-rs/plugin-browser`. Currently lives
+  locally; the GH Actions workflow stub is committed but
+  inactive (tag-only trigger, no PR/push). Why deferred:
+  validates the local flow first; pushing to public is a
+  separate decision.
+  How to apply: `git remote add origin git@github.com:nexo-rs/plugin-browser.git`
+  + `git push -u origin master` + activate the workflow by
+  enabling Actions on the public repo.
+
+- **`81.17.c.crates-publish`** — `cargo publish nexo-plugin-browser`
+  to crates.io. Depends on `nexo-microapp-sdk` being published
+  first (Phase 83.14.b ⬜). Until then the standalone repo's
+  Cargo.toml uses `path = "../proyecto/crates/microapp-sdk"`
+  interim deps.
+  How to apply: post-83.14.b, swap path deps for crates.io
+  versions in standalone Cargo.toml + `cargo publish`.
+
+- **`81.17.c.in-tree-removal`** — delete
+  `proyecto/crates/plugins/browser/` from the workspace once
+  the standalone is validated by 2+ external operators.
+  Why deferred: rollback safety during the migration window;
+  in-tree dormant code costs ~5-10s extra workspace build.
+  How to apply: remove the crate dir + drop it from
+  `Cargo.toml` workspace members; verify discovery still
+  finds the standalone manifest.
+
+- **`81.17.c.multi-profile`** — multi-Chrome profiles per agent
+  (current single-instance design holds one Chrome per
+  subprocess). Useful when one operator runs multiple
+  browser-using agents needing isolated cookies / session.
+  Why deferred: scope creep for v1; demand-driven.
+  How to apply: extend manifest with `[plugin.instances]`
+  field + dispatch agent_id → profile path mapping in
+  subprocess.
+
+- **`81.17.c.latency-numbers`** — populate the README's
+  latency table by running `cargo bench` on representative
+  hardware. Bench harness (`benches/tool_latency.rs`) lands
+  in a follow-up commit since v1 prioritised end-to-end
+  validation over perf characterisation.
+  How to apply: write the criterion bench, run on Cristian's
+  laptop, paste numbers into README + CHANGELOG.
+
+- **`nexo-cdp-extract`** — `crates/plugins/browser/src/cdp/`
+  (currently a sub-module of the in-tree plugin) is a
+  reusable CDP client; lift to its own workspace crate so
+  future plugins can depend on it. Today it's duplicated
+  verbatim into the standalone repo.
+  How to apply: create `proyecto/crates/cdp/` workspace
+  member, move sources, update both in-tree and standalone
+  imports.
+
+- **`81.17.c.e2e-test-fixture`** — end-to-end smoke test
+  (spawn binary + initialize + tool.invoke round-trip) was
+  scoped out of v1 because the bash mock fixture machinery
+  needs a hardening pass. The standalone build proves the
+  binary boots; the host-side `RemoteToolHandler`
+  registration is exercised by existing 81.29 tests.
+  How to apply: copy fixture from
+  `proyecto/crates/core/tests/subprocess_plugin_e2e.rs`,
+  swap the bash mock for the standalone binary built from
+  `nexo-rs-plugin-browser/target/debug/nexo-plugin-browser`,
+  add `#[ignore]`-gated test that requires `CHROMIUM_BIN`.
+
+- **`81.17.c.hot-reload-test`** — verify the agent yaml
+  reload (Phase 81.10) doesn't kill the subprocess. The
+  in-tree path was tested via per-agent registry rebuild;
+  the subprocess path follows a different lifecycle but
+  should behave identically. Test fixture deferred — same
+  reason as e2e.
+  How to apply: extend `81.17.c.e2e-test-fixture` follow-up
+  with a reload trigger + PID assertion.
+
+- **`81.29.b.shipped-via-81.17.c`** — RESOLVED. The SDK
+  `on_tool` + `declare_tools` helpers landed in 81.17.c.1.
+  Mark FOLLOWUPS entry as completed when sweeping resolved
+  items.
+
 ### Locale-aware agent language — shipped, follow-ups open
 
 BCP-47 locale model + per-locale addenda + voice picker shipped
