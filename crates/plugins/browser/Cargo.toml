@@ -28,6 +28,7 @@ reqwest           = { workspace = true }
 futures           = { workspace = true }
 uuid              = { workspace = true }
 nexo-broker = { version = "0.1.1", path = "../../broker" }
+nexo-cdp = { version = "0.1.0", path = "../../cdp" }
 nexo-config = { version = "0.1.1", path = "../../config" }
 nexo-core = { version = "0.1.1", path = "../../core" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }

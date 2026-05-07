@@ -3567,6 +3567,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-cdp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "dashmap 6.1.0",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "nexo-companion-tui"
 version = "0.1.1"
 dependencies = [
@@ -4199,6 +4215,7 @@ dependencies = [
  "futures",
  "libc",
  "nexo-broker",
+ "nexo-cdp",
  "nexo-config",
  "nexo-core",
  "nexo-llm",
@@ -4470,6 +4487,7 @@ dependencies = [
  "nexo-agent-registry",
  "nexo-auth",
  "nexo-broker",
+ "nexo-cdp",
  "nexo-config",
  "nexo-core",
  "nexo-dispatch-tools",

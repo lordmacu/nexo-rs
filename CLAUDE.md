@@ -62,6 +62,22 @@ Location: `research/` — TypeScript, single-process, Node 22+. Reference, not t
 | `research/src/memory-host-sdk/` | memory architecture |
 | `research/docs/` | design decisions |
 
+## Build toolchain
+
+Machine-wide config in `~/.cargo/config.toml`: `mold` linker via
+`clang`, `sccache` as `rustc-wrapper`, `debug = "line-tables-only"`
+on dev. Don't `cargo install` anything that overrides those.
+
+Profiles defined in this workspace's `Cargo.toml`:
+
+- `release` — production: `lto = "thin"`, `codegen-units = 1`.
+- `release-fast` — same opt-level, no LTO, codegen-units=16. Use
+  for local validation; reserve `--release` for publish.
+- `dist` — what `cargo dist` ships.
+
+Use `cargo nextest run` instead of `cargo test` (parallel, faster).
+Inspect cache hits with `sccache --show-stats`.
+
 ## What NOT to do
 
 - Don't hardcode API keys — use `${ENV_VAR}` in YAML
