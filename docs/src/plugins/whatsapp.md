@@ -142,6 +142,77 @@ Inbound payloads (on `plugin.inbound.whatsapp[.<instance>]`):
 {"kind": "bridge_timeout", "msg_id": "...", "waited_ms": 30000}
 ```
 
+## Presence indicators
+
+While the agent prepares a reply, the WhatsApp plugin pulses the
+`<chatstate>` stanza on the peer phone so the user sees a live
+"escribiendo…" / "grabando audio…" indicator instead of dead
+silence. The wire shape matches what WhatsApp Web emits natively:
+
+```xml
+<!-- text reply (default) -->
+<chatstate to="JID"><composing/></chatstate>
+
+<!-- voice note about to be sent -->
+<chatstate to="JID"><composing media="audio"/></chatstate>
+
+<!-- pulse stops -->
+<chatstate to="JID"><paused/></chatstate>
+```
+
+The plugin switches the `media` attr automatically based on the
+outbound `OutboundReplyKind`:
+
+- **Text reply** → `<composing/>` for the LLM round-trip; pauses
+  before the message lands.
+- **Voice note (PTT)** → `<composing/>` while the LLM thinks,
+  flips to `<composing media="audio"/>` ~250 ms before the
+  upload + ack so the peer client has time to repaint
+  "grabando audio…", then pauses.
+- **Image / video / document** → not media-flagged in v1
+  (queued as follow-up).
+
+Proactive voice notes (microapp-driven, no inbound trigger) get
+the same recording-presence wrap via the outbound dispatcher,
+so the indicator is consistent regardless of who initiated the
+send.
+
+### `typing_mode` knob
+
+Plugin-instance YAML override. Default reproduces the historic
+behaviour.
+
+```yaml
+whatsapp:
+  enabled: true
+  session_dir: ...
+  typing_mode: instant   # default; see table below
+```
+
+| Value      | v1 behaviour                                                                                          |
+|------------|-------------------------------------------------------------------------------------------------------|
+| `instant`  | Heartbeat starts the moment the handler is invoked. Recommended default.                              |
+| `thinking` | Documented for parity with future reasoning-stream support; v1 falls back to `instant` + warn-log.    |
+| `message`  | Documented for parity with future first-text-delta support; v1 falls back to `instant` + warn-log.    |
+| `never`    | Skips the heartbeat entirely. Use when the bot should stay invisible (no presence cycling at all).    |
+
+Unknown values warn-degrade to `instant` rather than failing
+boot, so a YAML typo cannot wedge the daemon.
+
+The keepalive cadence (10 s), TTL safety cap (60 s) and
+consecutive-failure circuit breaker (2 strikes) are not exposed
+as YAML knobs in v1 — the defaults are what every agent wants.
+Crate consumers that need other values can pass a
+`PresenceHeartbeatConfig` through
+`Session::chat_presence_heartbeat_with` directly.
+
+### Old-client compatibility
+
+Pre-2021 WhatsApp clients ignore the `media` attribute and paint
+"escribiendo…" regardless. That's a degradation but harmless: the
+voice note still arrives; only the indicator lies. Affects
+<0.5 % of installs.
+
 ## Gotchas
 
 - **Shared `session_dir` across agents = cross-delivery.** Each agent

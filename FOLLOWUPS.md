@@ -18,6 +18,118 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### WhatsApp recording-presence indicator — shipped, follow-ups open
+
+Recording presence + `typing_mode` YAML knob landed across
+`whatsapp-rs` (commits `a6e66c7..3970dcc` on master) and
+`nexo-plugin-whatsapp` (commits `4a3f3cc..0bf96b2` on main).
+Open work the v1 deliberately punted:
+
+- **`whatsapp-typing-mode-thinking-message-impl`** — the
+  `Thinking` and `Message` variants of `TypingMode` parse
+  successfully but warn-degrade to `Instant` at runtime
+  (`whatsapp-rs/src/agent.rs::run_agent_full`,
+  inside the auto_typing block). Implementing them needs the
+  agent runtime to surface a "first reasoning delta" signal
+  (Thinking) and a "first non-silent text delta" signal
+  (Message). OpenClaw's `research/docs/concepts/typing-indicators.md`
+  documents the intended semantics; porting the actual delta
+  detection requires plumbing through `nexo-core`'s LLM stream
+  events into the bridge, then forwarding into wa-agent. Why
+  deferred: the user's reported symptom ("grabando audio")
+  doesn't need it; the YAML accepts the values today so a
+  future enable doesn't break configs.
+  How to apply: replace the warn-fallback in the
+  `match opts.typing_mode { Thinking | Message => ... }` arm
+  with actual deferred-start signalling.
+
+- **`whatsapp-presence-hint-inbound-to-outbound`** — when
+  `voice_mode` is toggled ON for a conversation, the peer phone
+  still sees "escribiendo…" during the LLM round-trip and only
+  flips to "grabando audio…" for the ~250 ms before the upload
+  + the upload itself. Showing "grabando audio…" the entire
+  time would require `voice_mode_inbound_transform` to emit a
+  presence hint that propagates through `OutboundReplyContext`
+  (or a new sibling field) so the bridge can start the
+  `PresenceHandle` with `Audio` from the first pulse. Why
+  deferred: changes the wire of `OutboundReplyContext`
+  (cross-channel struct in `nexo-tool-meta`) and forces every
+  reply transformer to opt in. Cosmetic UX vs. real schema
+  change.
+  How to apply: extend `OutboundReplyContext` with
+  `presence_hint: Option<ChatPresenceMedia>`; have
+  `voice_mode_inbound_transform` populate it; have
+  bridge.rs read it and pass through `RunAgentOpts` initial
+  media kind.
+
+- **`whatsapp-voice-paths-consolidation`** — voice notes flow
+  through TWO outbound paths today: `dispatch.rs` voice_note
+  arm (proactive, microapp-driven) and `Response::VoiceNote`
+  via wa-agent's `apply_response` (inbound-driven, theoretical
+  — the bridge oneshot drops in `dispatch.rs:155` when
+  payload kind is non-text, so currently inbound voice notes
+  ALSO route through dispatch.rs). Both wrap the send in
+  identical `Composing(Audio) → send → Paused` presence emits,
+  but two parallel implementations risk drift. Consolidating
+  to a single path would either (a) make `bridge_step`
+  carry richer payload than `Option<String>` so the bridge
+  handler can return `Response::VoiceNote` and apply_response
+  takes over, or (b) drop apply_response for voice notes and
+  always route through dispatch.rs. Why deferred: the v1
+  behaviour is correct on both paths today; consolidation is
+  a refactor, not a bug fix.
+  How to apply: option (a) — change `bridge_step` return
+  type, drop the `payload.kind != "text"` cancel in
+  `dispatch.rs:155`, return `Response::VoiceNote` from
+  `bridge.rs`. Option (b) — strip the apply_response
+  voice_note arm + Response::VoiceNote variant from wa-agent
+  (BREAKING wa-agent API).
+
+- **`wa-agent-run-agent-with-transcribe-and-opts`** — the
+  `Session::run_agent_with_transcribe` entry point doesn't
+  accept `RunAgentOpts`. nexo-plugin-whatsapp's transcribe
+  branch (`plugin.rs::run_agent_with_transcribe(acl, t, handler)`)
+  currently ignores the configured `typing_mode` knob and
+  falls back to `RunAgentOpts::default()`. Why deferred: the
+  transcribe path is rarely combined with `typing_mode: never`
+  in practice; the daemon log evidence in step 21 didn't
+  exercise it.
+  How to apply: add `Session::run_agent_with_transcribe_and_opts`
+  in whatsapp-rs (mirror of `run_agent_with_opts` with the
+  transcriber slot), thread it through plugin.rs.
+
+- **`whatsapp-rs-presence-handle-time-mock-tests`** — the TTL
+  + circuit-breaker branches in
+  `Session::chat_presence_heartbeat_with` are currently only
+  exercised at runtime (smoke test in step 21). Adding mocked
+  socket + `tokio::time::pause()` tests would catch
+  regressions without a phone. Why deferred: whatsapp-rs has
+  no shared mock-socket fixture today. Building one is
+  scope-creep for v1.
+  How to apply: introduce a minimal mock `SocketSender` in
+  `whatsapp-rs/tests/`, drive `chat_presence_heartbeat_with`
+  with `cfg.max_duration = 100ms` + `cfg.max_consecutive_failures = 1`
+  fixtures, assert the loop exits.
+
+- **`whatsapp-bridge-test-pre-existing-break`** — Pre-existing
+  break in `crates/plugins/whatsapp/tests/bridge_test.rs`:
+  `InboundEvent::Message` literal is missing the `media`,
+  `media_kind`, `media_path` fields added when the audio
+  bridge landed. Independent of presence work; tracked here
+  so the next refactor pass knows.
+  How to apply: add `media: None, media_kind: None,
+  media_path: None` to the `sample_event` fixture and verify
+  `cargo test -p nexo-plugin-whatsapp --test bridge_test` is
+  green.
+
+- **`whatsapp-rs-live-wa-test-duplicate-fields`** — Pre-existing
+  break in `crates/plugins/whatsapp/tests/live_wa_test.rs`:
+  duplicate `public_tunnel`/`instance`/`allow_agents` fields
+  in the struct literal (lines 53-55 and 60-62). Test almost
+  certainly never built green.
+  How to apply: drop the duplicate trio + verify the file
+  compiles.
+
 ### Phase 82.10.u — schema-driven LLM provider wizard 🟢 shipped, follow-ups open
 
 Phase 82.10.u introduced declarative credential schemas + OAuth
