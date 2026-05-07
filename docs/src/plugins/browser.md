@@ -13,7 +13,7 @@ work across DOM mutations within a single turn.
 > in follow-up `81.17.c.in-tree-removal`.
 
 Source-of-truth: standalone repo
-[`github.com/nexo-rs/plugin-browser`](https://github.com/nexo-rs/plugin-browser)
+[`github.com/lordmacu/nexo-plugin-browser`](https://github.com/lordmacu/nexo-plugin-browser)
 (local: `/home/familia/chat/nexo-rs-plugin-browser/`). In-tree mirror at
 `crates/plugins/browser/` is dormant; the daemon does NOT instantiate it
 in-process anymore.
@@ -46,7 +46,7 @@ flow from `cfg.plugins.browser` YAML via the daemon's
 `seed_browser_subprocess_env` helper.
 
 The standalone repo's
-[README](https://github.com/nexo-rs/plugin-browser#readme) covers
+[README](https://github.com/lordmacu/nexo-plugin-browser#readme) covers
 ENV var reference, sandbox notes, and the latency budget.
 
 ## Topics
