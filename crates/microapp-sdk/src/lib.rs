@@ -55,6 +55,9 @@ pub mod wizard;
 #[cfg(feature = "voice")]
 pub mod voice;
 
+#[cfg(feature = "identity")]
+pub mod identity;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 

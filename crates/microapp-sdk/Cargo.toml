@@ -71,6 +71,11 @@ voice = [
 # author plugins. Plugin authors enable this feature in their
 # Cargo.toml; microapp authors leave it off.
 plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:nexo-llm", "dep:nexo-memory", "dep:toml", "dep:dashmap"]
+# Phase 82.15 / M15.3 — identity store traits + sqlite default
+# impl. Person + PersonEmail + Company stores keyed by tenant
+# id with composite indexes. Pulls sqlx + chrono so non-CRM
+# microapps don't pay the dep cost.
+identity = ["dep:sqlx", "dep:chrono"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -118,7 +123,7 @@ regex      = { version = "1", optional = true }
 once_cell  = { version = "1", optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
