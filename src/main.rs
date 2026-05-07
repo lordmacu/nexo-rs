@@ -34,7 +34,10 @@ use nexo_core::{
 };
 use nexo_llm::LlmRegistry;
 use nexo_memory::LongTermMemory;
-use nexo_plugin_browser::BrowserPlugin;
+// Phase 81.17.c — `nexo_plugin_browser` no longer used in-process.
+// The crate stays in the workspace dormant until 81.17.c.in-tree-removal.
+// `seed_browser_subprocess_env` (below) translates yaml config into
+// env vars the standalone subprocess reads.
 use nexo_plugin_whatsapp::WhatsappPlugin;
 
 enum Mode {
@@ -714,6 +717,59 @@ struct CronRebuildDeps {
 ///     only, since ArcSwap gives us cheap atomic swaps).
 ///
 /// Limitation: agent add/remove during runtime is Phase 19 scope.
+/// Phase 81.17.c — translate `cfg.plugins.browser` YAML into the
+/// `NEXO_PLUGIN_BROWSER_*` env vars the standalone
+/// `nexo-plugin-browser` subprocess reads from
+/// `nexo_plugin_browser::env_config::browser_config_from_env`.
+///
+/// Called once at boot before the plugin init loop spawns the
+/// child. Daemon process env is the inherited env for every
+/// subprocess `Command::spawn`, so this single mutation fans out
+/// to every plugin spawn (browser is the only consumer of the
+/// `NEXO_PLUGIN_BROWSER_*` namespace, so collisions are
+/// impossible).
+///
+/// No-op when the operator hasn't configured `plugins.browser`
+/// in YAML — the subprocess (if discovered) falls back to the
+/// hardcoded defaults in `env_config.rs`.
+fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
+    std::env::set_var(
+        "NEXO_PLUGIN_BROWSER_HEADLESS",
+        if cfg.headless { "true" } else { "false" },
+    );
+    if !cfg.executable.is_empty() {
+        std::env::set_var("NEXO_PLUGIN_BROWSER_EXECUTABLE", &cfg.executable);
+    }
+    if !cfg.cdp_url.is_empty() {
+        std::env::set_var("NEXO_PLUGIN_BROWSER_CDP_URL", &cfg.cdp_url);
+    }
+    std::env::set_var("NEXO_PLUGIN_BROWSER_USER_DATA_DIR", &cfg.user_data_dir);
+    std::env::set_var(
+        "NEXO_PLUGIN_BROWSER_WINDOW_WIDTH",
+        cfg.window_width.to_string(),
+    );
+    std::env::set_var(
+        "NEXO_PLUGIN_BROWSER_WINDOW_HEIGHT",
+        cfg.window_height.to_string(),
+    );
+    std::env::set_var(
+        "NEXO_PLUGIN_BROWSER_CONNECT_TIMEOUT_MS",
+        cfg.connect_timeout_ms.to_string(),
+    );
+    std::env::set_var(
+        "NEXO_PLUGIN_BROWSER_COMMAND_TIMEOUT_MS",
+        cfg.command_timeout_ms.to_string(),
+    );
+    if !cfg.args.is_empty() {
+        std::env::set_var("NEXO_PLUGIN_BROWSER_ARGS", cfg.args.join(","));
+    }
+    tracing::info!(
+        headless = cfg.headless,
+        cdp_url = %cfg.cdp_url,
+        "browser plugin: seeded NEXO_PLUGIN_BROWSER_* env for subprocess spawn"
+    );
+}
+
 /// `tools_per_agent` and `agent_snapshot_handles` are populated
 /// during the boot agent loop and never extended; reload picks up
 /// policy changes for EXISTING agents only.
@@ -2162,22 +2218,23 @@ async fn main() -> Result<()> {
 
     // Plugins --------------------------------------------------------------
     let plugins = PluginRegistry::new();
-    // Keep an Arc<BrowserPlugin> aside so agents with `plugins: [browser]`
-    // can register the full `browser_*` tool family against it. Tool
-    // handlers call `plugin.execute(...)` directly — no broker round-trip
-    // — so each tool call hits the CDP session exactly once.
-    let browser_plugin: Option<Arc<nexo_plugin_browser::BrowserPlugin>> =
-        cfg.plugins.browser.clone().map(|browser_cfg| {
-            let plugin = Arc::new(BrowserPlugin::new(browser_cfg));
-            tracing::info!("registered plugin: browser");
-            plugin
-        });
-    if let Some(plugin) = browser_plugin.clone() {
-        // Register into the PluginRegistry via the Plugin trait. The
-        // registry stores `Arc<dyn Plugin>` so we keep our Arc handle
-        // alive for tool registration below.
-        plugins.register_arc(plugin as Arc<dyn nexo_core::agent::plugin::Plugin>);
+    // Phase 81.17.c — browser plugin extracted to standalone repo
+    // `nexo-rs-plugin-browser`. Daemon no longer constructs it
+    // in-process; discovery + auto-subprocess fallback (81.17.b)
+    // loads the binary if its directory is on
+    // `plugins.discovery.search_paths`. The 12 `browser_*` tools
+    // route through 81.29 RemoteToolHandler over JSON-RPC stdio.
+    //
+    // Operator yaml (`cfg.plugins.browser`) still exists; the
+    // daemon translates the values into env vars
+    // (`NEXO_PLUGIN_BROWSER_*`) the subprocess reads via
+    // `nexo_plugin_browser::env_config`. No-op if not configured.
+    if let Some(browser_cfg) = cfg.plugins.browser.clone() {
+        seed_browser_subprocess_env(&browser_cfg);
     }
+    // (no `let browser_plugin = ...` — gone)
+    // (no `register_browser_tools(...)` — gone; tools register
+    //  via the 81.29 RemoteToolHandler path inside the init loop.)
     // WhatsApp plugins — zero, one, or many accounts. Each one registers
     // under `whatsapp` (legacy single-account) or `whatsapp.<instance>`.
     // Pairing states are collected per-instance so the health server
@@ -3683,23 +3740,20 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        // Register the full browser_* tool family when the agent opts
-        // in via `plugins: [browser]`. Tools call the shared
-        // `Arc<BrowserPlugin>` directly so every LLM invocation hits
-        // the CDP session exactly once (no broker round-trip).
+        // Phase 81.17.c — browser_* tools register via 81.29
+        // RemoteToolHandler in the plugin init loop, not here.
+        // Agents with `plugins: [browser]` get the tools from the
+        // ScopedToolRegistry seeded by the subprocess plugin's
+        // initialize-reply tools[] array.
+        //
+        // Soft warning when agent declares the plugin but no
+        // browser manifest was discovered in
+        // plugins.discovery.search_paths.
         if agent_cfg.plugins.iter().any(|p| p == "browser") {
-            if let Some(plugin) = browser_plugin.as_ref() {
-                nexo_plugin_browser::register_browser_tools(&tools, plugin);
-                tracing::info!(
-                    agent = %agent_id,
-                    "registered browser_* tools for agent"
-                );
-            } else {
-                tracing::warn!(
-                    agent = %agent_id,
-                    "agent requests `browser` plugin but config/plugins/browser.yaml is absent"
-                );
-            }
+            tracing::debug!(
+                agent = %agent_id,
+                "agent declares `browser` plugin; tools auto-register via subprocess RemoteToolHandler"
+            );
         }
         // WhatsApp outbound tools — gated on `plugins: [whatsapp]`.
         // Tools publish to `plugin.outbound.whatsapp`; the plugin's
