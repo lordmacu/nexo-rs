@@ -49,11 +49,7 @@ impl FsSecretsStore {
 
 #[async_trait]
 impl SecretsStore for FsSecretsStore {
-    async fn write(
-        &self,
-        name: &str,
-        value: &str,
-    ) -> Result<SecretsWriteResponse, AdminRpcError> {
+    async fn write(&self, name: &str, value: &str) -> Result<SecretsWriteResponse, AdminRpcError> {
         let secrets_dir = self.secrets_dir.clone();
         let name_owned = name.to_string();
         let value_owned = value.to_string();

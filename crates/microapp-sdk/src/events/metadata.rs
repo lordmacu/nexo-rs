@@ -83,7 +83,9 @@ impl EventMetadata for AgentEventKind {
         match self {
             AgentEventKind::TranscriptAppended { sent_at_ms, .. } => *sent_at_ms,
             AgentEventKind::PendingInboundsDropped { at_ms, .. } => *at_ms,
-            AgentEventKind::EscalationRequested { requested_at_ms, .. } => *requested_at_ms,
+            AgentEventKind::EscalationRequested {
+                requested_at_ms, ..
+            } => *requested_at_ms,
             AgentEventKind::EscalationResolved { resolved_at_ms, .. } => *resolved_at_ms,
             AgentEventKind::ProcessingStateChanged { at_ms, .. } => *at_ms,
             _ => 0,

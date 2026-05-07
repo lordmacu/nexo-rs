@@ -55,9 +55,13 @@ pub struct StreamingPending {
 /// Errors surfaced by `register_remote_llm_providers`.
 #[derive(Debug, thiserror::Error)]
 pub enum LlmProviderRegistrationError {
-    #[error("LLM provider `{name}` already registered (cannot collide with built-ins or prior plugins)")]
+    #[error(
+        "LLM provider `{name}` already registered (cannot collide with built-ins or prior plugins)"
+    )]
     AlreadyRegistered { name: String },
-    #[error("subprocess plugin inner not initialized — call register_remote_llm_providers AFTER init()")]
+    #[error(
+        "subprocess plugin inner not initialized — call register_remote_llm_providers AFTER init()"
+    )]
     InnerUnavailable,
 }
 
@@ -117,12 +121,7 @@ impl RemoteLlmClient {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
 
-    fn build_request_frame(
-        &self,
-        id: u64,
-        request: &ChatRequest,
-        stream: bool,
-    ) -> Value {
+    fn build_request_frame(&self, id: u64, request: &ChatRequest, stream: bool) -> Value {
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -155,9 +154,7 @@ impl RemoteLlmClient {
         let provider = &self.provider;
 
         match code {
-            -32601 => anyhow::anyhow!(
-                "provider {provider} method not implemented: {message}"
-            ),
+            -32601 => anyhow::anyhow!("provider {provider} method not implemented: {message}"),
             -32602 => anyhow::anyhow!("invalid llm.chat params: {message}"),
             -32603 => anyhow::anyhow!("provider {provider} internal error: {message}"),
             -33101 => anyhow::anyhow!("connection failed: {message}"),
@@ -169,14 +166,9 @@ impl RemoteLlmClient {
                     .unwrap_or(0);
                 anyhow::anyhow!("rate limited; retry after {secs}s")
             }
-            -33104 => anyhow::anyhow!(
-                "model {} not available on provider {provider}",
-                self.model
-            ),
+            -33104 => anyhow::anyhow!("model {} not available on provider {provider}", self.model),
             -33105 => anyhow::anyhow!("context too long: {message}"),
-            _ => anyhow::anyhow!(
-                "provider {provider} error code {code}: {message}"
-            ),
+            _ => anyhow::anyhow!("provider {provider} error code {code}: {message}"),
         }
     }
 }
@@ -236,13 +228,8 @@ impl LlmClient for RemoteLlmClient {
 
         let (delta_tx, delta_rx) = mpsc::unbounded_channel::<StreamChunk>();
         let (final_tx, final_rx) = oneshot::channel::<Result<ChatResponse, String>>();
-        self.streaming_pending.insert(
-            id,
-            StreamingPending {
-                delta_tx,
-                final_tx,
-            },
-        );
+        self.streaming_pending
+            .insert(id, StreamingPending { delta_tx, final_tx });
 
         if let Err(e) = self.stdin_tx.send(frame).await {
             self.streaming_pending.remove(&id);

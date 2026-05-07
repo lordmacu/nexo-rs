@@ -196,10 +196,8 @@ impl ExtRegistryIndex {
     /// document; does NOT validate semantic constraints — call
     /// [`Self::validate`] for that.
     pub fn from_json_slice(bytes: &[u8]) -> Result<Self, IndexValidationError> {
-        serde_json::from_slice::<Self>(bytes).map_err(|e| {
-            IndexValidationError::Parse {
-                message: e.to_string(),
-            }
+        serde_json::from_slice::<Self>(bytes).map_err(|e| IndexValidationError::Parse {
+            message: e.to_string(),
         })
     }
 
@@ -272,7 +270,11 @@ fn validate_entry(entry: &ExtEntry) -> Result<(), IndexValidationError> {
         }
     }
     if let Some(s) = &entry.signing {
-        validate_https_url(&entry.id, "signing.cosign_signature_url", &s.cosign_signature_url)?;
+        validate_https_url(
+            &entry.id,
+            "signing.cosign_signature_url",
+            &s.cosign_signature_url,
+        )?;
         validate_https_url(
             &entry.id,
             "signing.cosign_certificate_url",
@@ -357,8 +359,7 @@ mod tests {
     #[test]
     fn parse_and_validate_minimal_verified_entry() {
         let json = sample_index_json();
-        let index = ExtRegistryIndex::from_json_slice(json.as_bytes())
-            .expect("parses cleanly");
+        let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).expect("parses cleanly");
         assert_eq!(index.schema_version.to_string(), "1.0.0");
         assert_eq!(index.entries.len(), 1);
         assert_eq!(index.entries[0].id, "slack");
@@ -368,8 +369,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_id() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         v["entries"][0]["id"] = serde_json::json!("UPPERCASE");
         let json = serde_json::to_string(&v).unwrap();
         let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).unwrap();
@@ -383,8 +383,7 @@ mod tests {
 
     #[test]
     fn rejects_non_https_url() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         v["entries"][0]["homepage"] = serde_json::json!("http://insecure.example.com");
         let json = serde_json::to_string(&v).unwrap();
         let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).unwrap();
@@ -398,8 +397,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_sha256() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         // Wrong length.
         v["entries"][0]["downloads"][0]["sha256"] = serde_json::json!("tooshort");
         let json = serde_json::to_string(&v).unwrap();
@@ -412,11 +410,9 @@ mod tests {
         }
 
         // Uppercase hex.
-        let mut v2: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
-        v2["entries"][0]["downloads"][0]["sha256"] = serde_json::json!(
-            "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
-        );
+        let mut v2: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
+        v2["entries"][0]["downloads"][0]["sha256"] =
+            serde_json::json!("ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789");
         let json2 = serde_json::to_string(&v2).unwrap();
         let index2 = ExtRegistryIndex::from_json_slice(json2.as_bytes()).unwrap();
         match index2.validate() {
@@ -427,12 +423,8 @@ mod tests {
 
     #[test]
     fn rejects_verified_without_signing() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
-        v["entries"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("signing");
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
+        v["entries"][0].as_object_mut().unwrap().remove("signing");
         let json = serde_json::to_string(&v).unwrap();
         let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).unwrap();
         match index.validate() {
@@ -445,13 +437,9 @@ mod tests {
 
     #[test]
     fn community_tier_can_omit_signing() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         v["entries"][0]["tier"] = serde_json::json!("community");
-        v["entries"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("signing");
+        v["entries"][0].as_object_mut().unwrap().remove("signing");
         let json = serde_json::to_string(&v).unwrap();
         let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).unwrap();
         index
@@ -461,8 +449,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_downloads() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         v["entries"][0]["downloads"] = serde_json::json!([]);
         let json = serde_json::to_string(&v).unwrap();
         let index = ExtRegistryIndex::from_json_slice(json.as_bytes()).unwrap();
@@ -482,8 +469,7 @@ mod tests {
     #[test]
     fn bundled_sample_index_parses_and_validates() {
         let bytes = include_bytes!("../examples/sample-ext-index.json");
-        let index = ExtRegistryIndex::from_json_slice(bytes)
-            .expect("sample parses");
+        let index = ExtRegistryIndex::from_json_slice(bytes).expect("sample parses");
         assert_eq!(index.entries.len(), 2);
         assert_eq!(index.entries[0].id, "slack");
         assert_eq!(index.entries[0].tier, ExtTier::Verified);
@@ -494,8 +480,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_field_in_entry() {
-        let mut v: serde_json::Value =
-            serde_json::from_str(&sample_index_json()).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&sample_index_json()).unwrap();
         v["entries"][0]["mystery_field"] = serde_json::json!("oops");
         let json = serde_json::to_string(&v).unwrap();
         match ExtRegistryIndex::from_json_slice(json.as_bytes()) {

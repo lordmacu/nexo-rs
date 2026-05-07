@@ -15,8 +15,8 @@ use nexo_plugin_manifest::{validate, ManifestError, PluginManifest};
 
 use super::config::{resolve_search_paths, PluginDiscoveryConfig};
 use super::report::{
-    DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic,
-    DiscoveryDiagnosticKind, PluginDiscoveryReport,
+    DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
+    PluginDiscoveryReport,
 };
 use super::NexoPluginRegistrySnapshot;
 
@@ -70,11 +70,9 @@ pub fn discover(
             let entry = match entry_result {
                 Ok(e) => e,
                 Err(e) => {
-                    let is_perm_denied = e
-                        .io_error()
-                        .is_some_and(|io: &std::io::Error| {
-                            io.kind() == std::io::ErrorKind::PermissionDenied
-                        });
+                    let is_perm_denied = e.io_error().is_some_and(|io: &std::io::Error| {
+                        io.kind() == std::io::ErrorKind::PermissionDenied
+                    });
                     let kind = if is_perm_denied {
                         DiscoveryDiagnosticKind::PermissionDenied
                     } else {
@@ -82,10 +80,8 @@ pub fn discover(
                             error: format!("walk error: {e}"),
                         }
                     };
-                    let err_path: PathBuf = e
-                        .path()
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| root.clone());
+                    let err_path: PathBuf =
+                        e.path().map(PathBuf::from).unwrap_or_else(|| root.clone());
                     report.diagnostics.push(DiscoveryDiagnostic {
                         level: DiagnosticLevel::Warn,
                         path: err_path,
@@ -118,9 +114,7 @@ pub fn discover(
                     continue;
                 }
             };
-            if !cfg.follow_symlinks
-                && !canonical_manifest.starts_with(&canonical_root)
-            {
+            if !cfg.follow_symlinks && !canonical_manifest.starts_with(&canonical_root) {
                 report.diagnostics.push(DiscoveryDiagnostic {
                     level: DiagnosticLevel::Error,
                     path: manifest_path.clone(),
@@ -165,14 +159,11 @@ pub fn discover(
             let mut errs: Vec<ManifestError> = Vec::new();
             validate::run_all(&manifest, current_nexo_version, &mut errs);
             if !errs.is_empty() {
-                let strings: Vec<String> =
-                    errs.iter().map(|e| format!("{e}")).collect();
+                let strings: Vec<String> = errs.iter().map(|e| format!("{e}")).collect();
                 report.diagnostics.push(DiscoveryDiagnostic {
                     level: DiagnosticLevel::Error,
                     path: manifest_path.clone(),
-                    kind: DiscoveryDiagnosticKind::ValidationFailed {
-                        errors: strings,
-                    },
+                    kind: DiscoveryDiagnosticKind::ValidationFailed { errors: strings },
                 });
                 report.invalid += 1;
                 continue;
@@ -202,9 +193,7 @@ pub fn discover(
                 report.diagnostics.push(DiscoveryDiagnostic {
                     level: DiagnosticLevel::Warn,
                     path: manifest_path.clone(),
-                    kind: DiscoveryDiagnosticKind::AllowlistRejected {
-                        id: id.clone(),
-                    },
+                    kind: DiscoveryDiagnosticKind::AllowlistRejected { id: id.clone() },
                 });
                 continue;
             }
@@ -292,11 +281,7 @@ mod tests {
         fn with_malformed(&self, plugin_id: &str) -> &Self {
             let dir = self.root.path().join(plugin_id);
             fs::create_dir_all(&dir).unwrap();
-            fs::write(
-                dir.join(MANIFEST_FILENAME),
-                "this is not [valid toml ===\n",
-            )
-            .unwrap();
+            fs::write(dir.join(MANIFEST_FILENAME), "this is not [valid toml ===\n").unwrap();
             self
         }
 
@@ -351,12 +336,11 @@ mod tests {
         let snap = discover(&cfg(vec![t.root().to_path_buf()]), &current_v());
         assert_eq!(snap.plugins.len(), 1);
         assert_eq!(snap.last_report.invalid, 1);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::ManifestParseError { .. }
-            ))
-        );
+        assert!(snap
+            .last_report
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.kind, DiscoveryDiagnosticKind::ManifestParseError { .. })));
     }
 
     #[test]
@@ -366,12 +350,11 @@ mod tests {
         let snap = discover(&cfg(vec![t.root().to_path_buf()]), &current_v());
         assert_eq!(snap.plugins.len(), 0);
         assert_eq!(snap.last_report.invalid, 1);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::ValidationFailed { .. }
-            ))
-        );
+        assert!(snap
+            .last_report
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.kind, DiscoveryDiagnosticKind::ValidationFailed { .. })));
     }
 
     #[test]
@@ -383,29 +366,26 @@ mod tests {
         let snap = discover(&c, &current_v());
         assert_eq!(snap.plugins.len(), 0);
         assert_eq!(snap.last_report.disabled, 1);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::Disabled { id } if id == "browser"
-            ))
-        );
+        assert!(snap.last_report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::Disabled { id } if id == "browser"
+        )));
     }
 
     #[test]
     fn allowlist_rejects_non_listed() {
         let t = PluginTreeBuilder::new();
-        t.with_valid("browser", "0.1.0").with_valid("email", "0.1.0");
+        t.with_valid("browser", "0.1.0")
+            .with_valid("email", "0.1.0");
         let mut c = cfg(vec![t.root().to_path_buf()]);
         c.allowlist = vec!["browser".into()];
         let snap = discover(&c, &current_v());
         assert_eq!(snap.plugins.len(), 1);
         assert_eq!(snap.last_report.loaded_ids, vec!["browser".to_string()]);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::AllowlistRejected { id } if id == "email"
-            ))
-        );
+        assert!(snap.last_report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::AllowlistRejected { id } if id == "email"
+        )));
     }
 
     #[test]
@@ -419,7 +399,10 @@ mod tests {
             &current_v(),
         );
         assert_eq!(snap.plugins.len(), 1);
-        assert_eq!(snap.plugins[0].manifest.plugin.version, Version::parse("0.1.0").unwrap());
+        assert_eq!(
+            snap.plugins[0].manifest.plugin.version,
+            Version::parse("0.1.0").unwrap()
+        );
         assert_eq!(snap.last_report.duplicates, 1);
     }
 
@@ -438,13 +421,11 @@ mod tests {
         let snap = discover(&cfg(vec![t.root().to_path_buf()]), &current_v());
         assert_eq!(snap.plugins.len(), 0);
         assert_eq!(snap.last_report.invalid, 1);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::ValidationFailed { errors }
-                    if errors.iter().any(|e| e.contains("nexo") || e.contains("version"))
-            ))
-        );
+        assert!(snap.last_report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::ValidationFailed { errors }
+                if errors.iter().any(|e| e.contains("nexo") || e.contains("version"))
+        )));
     }
 
     #[test]
@@ -454,18 +435,14 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let outside_dir = outside.path().join("evil");
         fs::create_dir_all(&outside_dir).unwrap();
-        let manifest =
-            "[plugin]\nid = \"evil\"\nversion = \"0.1.0\"\nname = \"x\"\n";
+        let manifest = "[plugin]\nid = \"evil\"\nversion = \"0.1.0\"\nname = \"x\"\n";
         fs::write(outside_dir.join(MANIFEST_FILENAME), manifest).unwrap();
 
         let inside = tempfile::tempdir().unwrap();
         let symlink_at = inside.path().join("evil");
         std::os::unix::fs::symlink(&outside_dir, &symlink_at).unwrap();
 
-        let snap = discover(
-            &cfg(vec![inside.path().to_path_buf()]),
-            &current_v(),
-        );
+        let snap = discover(&cfg(vec![inside.path().to_path_buf()]), &current_v());
         assert_eq!(snap.plugins.len(), 0);
         // walker ignores symlinks entirely when follow_links=false
         // (the entry is reported as a symlink, not descended).
@@ -483,13 +460,11 @@ mod tests {
             &current_v(),
         );
         assert_eq!(snap.plugins.len(), 0);
-        assert!(
-            snap.last_report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::UnresolvedEnvVar { var_name, .. }
-                    if var_name == "NEXO_TEST_DISCOVER_NONEXISTENT"
-            ))
-        );
+        assert!(snap.last_report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::UnresolvedEnvVar { var_name, .. }
+                if var_name == "NEXO_TEST_DISCOVER_NONEXISTENT"
+        )));
     }
 
     #[test]
@@ -509,8 +484,7 @@ mod tests {
         let t = PluginTreeBuilder::new();
         let nested = t.root().join("a").join("nested").join("deep");
         fs::create_dir_all(&nested).unwrap();
-        let manifest =
-            "[plugin]\nid = \"deep\"\nversion = \"0.1.0\"\nname = \"x\"\n";
+        let manifest = "[plugin]\nid = \"deep\"\nversion = \"0.1.0\"\nname = \"x\"\n";
         fs::write(nested.join(MANIFEST_FILENAME), manifest).unwrap();
         let snap = discover(&cfg(vec![t.root().to_path_buf()]), &current_v());
         assert!(snap.plugins.is_empty());

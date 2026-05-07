@@ -127,10 +127,7 @@ mod tests {
     fn notify_method_constant_is_stable() {
         // Operators key admin-ui subscriptions on this string —
         // changing it is a breaking wire change.
-        assert_eq!(
-            MICROAPP_ERROR_NOTIFY_METHOD,
-            "nexo/notify/microapp_error"
-        );
+        assert_eq!(MICROAPP_ERROR_NOTIFY_METHOD, "nexo/notify/microapp_error");
     }
 
     #[test]
@@ -139,8 +136,7 @@ mod tests {
         assert_eq!(json, "\"init_timeout\"");
         let json = serde_json::to_string(&MicroappErrorKind::HandlerPanic).unwrap();
         assert_eq!(json, "\"handler_panic\"");
-        let json = serde_json::to_string(&MicroappErrorKind::CapabilityDenied)
-            .unwrap();
+        let json = serde_json::to_string(&MicroappErrorKind::CapabilityDenied).unwrap();
         assert_eq!(json, "\"capability_denied\"");
         let json = serde_json::to_string(&MicroappErrorKind::Exit).unwrap();
         assert_eq!(json, "\"exit\"");
@@ -167,11 +163,9 @@ mod tests {
             microapp_id: "agent-creator".into(),
             kind: MicroappErrorKind::HandlerPanic,
             correlation_id: Some("12".into()),
-            occurred_at: chrono::DateTime::parse_from_rfc3339(
-                "2026-05-02T12:00:00Z",
-            )
-            .unwrap()
-            .with_timezone(&Utc),
+            occurred_at: chrono::DateTime::parse_from_rfc3339("2026-05-02T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
             summary: "tool 'register' panicked: index out of bounds".into(),
             stack_trace: Some("at handler.rs:42\nat dispatch.rs:118".into()),
         };

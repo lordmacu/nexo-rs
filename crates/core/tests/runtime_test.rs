@@ -149,9 +149,9 @@ fn make_config(
         channels: None,
         auto_approve: false,
         extract_memories: None,
-            event_subscribers: Vec::new(),
-            tenant_id: None,
-            extensions_config: std::collections::BTreeMap::new(),
+        event_subscribers: Vec::new(),
+        tenant_id: None,
+        extensions_config: std::collections::BTreeMap::new(),
     }
 }
 
@@ -511,7 +511,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
@@ -576,7 +576,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,

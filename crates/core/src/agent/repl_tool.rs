@@ -96,9 +96,7 @@ impl ToolHandler for ReplTool {
                 // restart. An empty list inherits (registry decides).
                 let effective = ctx.effective_policy();
                 let binding_allow = &effective.repl.allowed_runtimes;
-                if !binding_allow.is_empty()
-                    && !binding_allow.iter().any(|r| r == runtime)
-                {
+                if !binding_allow.is_empty() && !binding_allow.iter().any(|r| r == runtime) {
                     return Err(anyhow!(
                         "runtime '{}' not in this binding's allowed_runtimes ({:?})",
                         runtime,

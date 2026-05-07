@@ -104,10 +104,7 @@ pub struct ExtractMemories {
 }
 
 impl ExtractMemories {
-    pub fn new(
-        config: ExtractMemoriesConfig,
-        llm: Arc<dyn ExtractMemoriesLlm>,
-    ) -> Self {
+    pub fn new(config: ExtractMemoriesConfig, llm: Arc<dyn ExtractMemoriesLlm>) -> Self {
         Self {
             config,
             state: Mutex::new(ExtractMemoriesState::new()),
@@ -276,7 +273,10 @@ impl ExtractMemories {
             if let Some(pending) = this.take_pending() {
                 debug!("ExtractMemories: draining coalesced extraction");
                 let start = Instant::now();
-                match this.run_extraction(&pending.messages_text, &pending.memory_dir).await {
+                match this
+                    .run_extraction(&pending.messages_text, &pending.memory_dir)
+                    .await
+                {
                     Ok(n) => {
                         this.record_success(None);
                         info!(memories_saved = n, "ExtractMemories coalesced ok");
@@ -293,11 +293,7 @@ impl ExtractMemories {
 
     // ── Core extraction ──────────────────────────────────────────
 
-    async fn run_extraction(
-        &self,
-        messages_text: &str,
-        memory_dir: &Path,
-    ) -> Result<u32, String> {
+    async fn run_extraction(&self, messages_text: &str, memory_dir: &Path) -> Result<u32, String> {
         // 1. Scan existing memory manifest.
         let manifest = scan_memory_manifest(memory_dir).unwrap_or_default();
 
@@ -397,10 +393,7 @@ pub fn scan_memory_manifest(memory_dir: &Path) -> Result<String, io::Error> {
             continue;
         }
         // Skip MEMORY.md — it's the index, not a memory.
-        if path
-            .file_name()
-            .map_or(false, |n| n == "MEMORY.md")
-        {
+        if path.file_name().map_or(false, |n| n == "MEMORY.md") {
             continue;
         }
 
@@ -415,10 +408,7 @@ pub fn scan_memory_manifest(memory_dir: &Path) -> Result<String, io::Error> {
                     .get("name")
                     .and_then(|s| s.as_str())
                     .unwrap_or(file_name.trim_end_matches(".md"));
-                let desc = fm
-                    .get("description")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let desc = fm.get("description").and_then(|s| s.as_str()).unwrap_or("");
                 lines.push(format!("- [{mem_type}] {file_name}: {desc}"));
             }
             Ok(None) => {
@@ -436,7 +426,9 @@ pub fn scan_memory_manifest(memory_dir: &Path) -> Result<String, io::Error> {
 
 /// Parse minimal YAML frontmatter from a markdown file.
 /// Returns `None` if the file has no frontmatter (no opening `---`).
-fn read_frontmatter(path: &Path) -> Result<Option<serde_json::Map<String, serde_json::Value>>, io::Error> {
+fn read_frontmatter(
+    path: &Path,
+) -> Result<Option<serde_json::Map<String, serde_json::Value>>, io::Error> {
     let content = fs::read_to_string(path)?;
     let mut lines = content.lines();
 
@@ -458,10 +450,8 @@ fn read_frontmatter(path: &Path) -> Result<Option<serde_json::Map<String, serde_
     }
 
     let yaml_str = yaml_lines.join("\n");
-    let map: serde_json::Map<String, serde_json::Value> =
-        serde_yaml::from_str(&yaml_str).map_err(|e| {
-            io::Error::new(io::ErrorKind::InvalidData, format!("yaml parse: {e}"))
-        })?;
+    let map: serde_json::Map<String, serde_json::Value> = serde_yaml::from_str(&yaml_str)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("yaml parse: {e}")))?;
 
     Ok(Some(map))
 }
@@ -511,7 +501,8 @@ fn resolve_memory_path(memory_dir: &Path, file_path: &str) -> Result<PathBuf, St
     if file_path.contains('\u{FF0E}')
         || file_path.contains('\u{FF0F}')
         || file_path.contains('\u{FF3C}')
-        || file_path.contains('\u{2215}') // division slash
+        || file_path.contains('\u{2215}')
+    // division slash
     {
         return Err(format!("unicode traversal rejected: {file_path}"));
     }
@@ -555,9 +546,7 @@ fn resolve_memory_path(memory_dir: &Path, file_path: &str) -> Result<PathBuf, St
                     match parent.canonicalize() {
                         Ok(real_parent) => {
                             if !real_parent.starts_with(memory_dir) {
-                                return Err(format!(
-                                    "symlink escape in parent of: {file_path}"
-                                ));
+                                return Err(format!("symlink escape in parent of: {file_path}"));
                             }
                             break; // parent is safe
                         }
@@ -881,8 +870,7 @@ mod tests {
 
     #[test]
     fn scan_manifest_nonexistent_dir() {
-        let manifest = scan_memory_manifest(Path::new("/tmp/nonexistent-memdir-77-5"))
-            .unwrap();
+        let manifest = scan_memory_manifest(Path::new("/tmp/nonexistent-memdir-77-5")).unwrap();
         assert!(manifest.is_empty());
     }
 
@@ -901,11 +889,20 @@ mod tests {
         .unwrap();
 
         let manifest = scan_memory_manifest(dir.path()).unwrap();
-        assert!(manifest.contains("preferences.md"), "missing preferences: {manifest}");
-        assert!(manifest.contains("dark mode"), "missing description: {manifest}");
+        assert!(
+            manifest.contains("preferences.md"),
+            "missing preferences: {manifest}"
+        );
+        assert!(
+            manifest.contains("dark mode"),
+            "missing description: {manifest}"
+        );
         assert!(manifest.contains("[user]"), "missing type tag: {manifest}");
         assert!(manifest.contains("deploy.md"), "missing deploy: {manifest}");
-        assert!(manifest.contains("[project]"), "missing project type: {manifest}");
+        assert!(
+            manifest.contains("[project]"),
+            "missing project type: {manifest}"
+        );
     }
 
     #[test]
@@ -927,17 +924,30 @@ mod tests {
             !manifest.contains("MEMORY.md"),
             "MEMORY.md should be excluded: {manifest}"
         );
-        assert!(manifest.contains("preferences.md"), "should list preferences: {manifest}");
+        assert!(
+            manifest.contains("preferences.md"),
+            "should list preferences: {manifest}"
+        );
     }
 
     #[test]
     fn scan_manifest_file_without_frontmatter() {
         let dir = TempDir::new().unwrap();
-        fs::write(dir.path().join("notes.md"), "Just some notes.\nNo frontmatter here.").unwrap();
+        fs::write(
+            dir.path().join("notes.md"),
+            "Just some notes.\nNo frontmatter here.",
+        )
+        .unwrap();
 
         let manifest = scan_memory_manifest(dir.path()).unwrap();
-        assert!(manifest.contains("[unknown]"), "should tag as unknown: {manifest}");
-        assert!(manifest.contains("notes.md"), "should list the file: {manifest}");
+        assert!(
+            manifest.contains("[unknown]"),
+            "should tag as unknown: {manifest}"
+        );
+        assert!(
+            manifest.contains("notes.md"),
+            "should list the file: {manifest}"
+        );
     }
 
     // ── Memory-write detection ────────────────────────────────────
@@ -974,7 +984,10 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
     #[test]
     fn has_memory_writes_write_outside_memory_dir() {
         let text = r#"Write to /tmp/some-other-file.txt"#;
-        assert!(!has_memory_writes_in_text(text, Path::new("/home/user/memory")));
+        assert!(!has_memory_writes_in_text(
+            text,
+            Path::new("/home/user/memory")
+        ));
     }
 
     // ── Path resolution ───────────────────────────────────────────
@@ -1044,7 +1057,10 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
     }
 
     fn make_extractor(config: ExtractMemoriesConfig) -> Arc<ExtractMemories> {
-        Arc::new(ExtractMemories::new(config, Arc::new(NoopExtractMemoriesLlm::new())))
+        Arc::new(ExtractMemories::new(
+            config,
+            Arc::new(NoopExtractMemoriesLlm::new()),
+        ))
     }
 
     #[test]
@@ -1183,16 +1199,12 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
 
     #[test]
     fn resolve_memory_path_rejects_unicode_fullwidth_dots() {
-        assert!(
-            resolve_memory_path(Path::new("/mem"), "foo/\u{FF0E}\u{FF0E}/bar.md").is_err()
-        );
+        assert!(resolve_memory_path(Path::new("/mem"), "foo/\u{FF0E}\u{FF0E}/bar.md").is_err());
     }
 
     #[test]
     fn resolve_memory_path_rejects_unicode_fullwidth_slash() {
-        assert!(
-            resolve_memory_path(Path::new("/mem"), "foo\u{FF0F}bar.md").is_err()
-        );
+        assert!(resolve_memory_path(Path::new("/mem"), "foo\u{FF0F}bar.md").is_err());
     }
 
     #[test]
@@ -1205,9 +1217,7 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
 
     #[tokio::test]
     async fn llm_client_adapter_chat_round_trips() {
-        use nexo_llm::{
-            ChatRequest, ChatResponse, FinishReason, ResponseContent, TokenUsage,
-        };
+        use nexo_llm::{ChatRequest, ChatResponse, FinishReason, ResponseContent, TokenUsage};
         use std::sync::Mutex;
 
         struct MockLlm {

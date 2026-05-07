@@ -32,7 +32,6 @@ pub use auto_dream::{
     build_extra, AutoDreamRunner, DreamContext, RunOutcome, RunReason, SkipReason,
 };
 pub use boot::{build_runner, default_dream_db_path, default_memory_dir, BootDeps};
-pub use tools::{register_dream_now_tool, DreamNowTool, DREAM_NOW_TOOL_NAME};
 pub use config::AutoDreamConfig;
 pub use consolidation_lock::{is_pid_running, list_sessions_touched_since, ConsolidationLock};
 pub use consolidation_prompt::{
@@ -40,3 +39,4 @@ pub use consolidation_prompt::{
 };
 pub use dream_progress_watcher::{DreamProgressWatcher, ProgressResult};
 pub use error::AutoDreamError;
+pub use tools::{register_dream_now_tool, DreamNowTool, DREAM_NOW_TOOL_NAME};

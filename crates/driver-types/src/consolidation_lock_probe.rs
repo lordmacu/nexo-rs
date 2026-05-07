@@ -53,8 +53,8 @@ pub trait ConsolidationLockProbe: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     /// Trait-object-safety smoke test: must coerce to
     /// `Arc<dyn ConsolidationLockProbe>` and dispatch through the vtable.

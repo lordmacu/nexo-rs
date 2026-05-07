@@ -264,18 +264,12 @@ impl NatsAgentEventEmitter {
 /// wrong subject. Live broadcast sinks still surface them.
 pub fn agent_event_subject(prefix: &str, event: &AgentEventKind) -> Option<String> {
     let (agent_id, kind): (&str, &str) = match event {
-        AgentEventKind::TranscriptAppended { agent_id, .. } => {
-            (agent_id, "transcript_appended")
-        }
+        AgentEventKind::TranscriptAppended { agent_id, .. } => (agent_id, "transcript_appended"),
         AgentEventKind::PendingInboundsDropped { agent_id, .. } => {
             (agent_id, "pending_inbounds_dropped")
         }
-        AgentEventKind::EscalationRequested { agent_id, .. } => {
-            (agent_id, "escalation_requested")
-        }
-        AgentEventKind::EscalationResolved { agent_id, .. } => {
-            (agent_id, "escalation_resolved")
-        }
+        AgentEventKind::EscalationRequested { agent_id, .. } => (agent_id, "escalation_requested"),
+        AgentEventKind::EscalationResolved { agent_id, .. } => (agent_id, "escalation_resolved"),
         AgentEventKind::ProcessingStateChanged { agent_id, .. } => {
             (agent_id, "processing_state_changed")
         }
@@ -392,10 +386,7 @@ mod tests {
         // surviving frame. Subscribers handle this by calling
         // agent_events/read with their last-seen seq.
         let resync = rx.recv().await.unwrap();
-        assert!(matches!(
-            resync,
-            AgentEventKind::TranscriptAppended { .. }
-        ));
+        assert!(matches!(resync, AgentEventKind::TranscriptAppended { .. }));
     }
 
     #[tokio::test]
@@ -471,9 +462,7 @@ mod tests {
     // ── Phase 82.11.bridge — `agent_event_subject` ──────────────
 
     use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};
-    use nexo_tool_meta::admin::processing::{
-        ProcessingControlState, ProcessingScope,
-    };
+    use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 
     fn convo(agent: &str) -> ProcessingScope {
         ProcessingScope::Conversation {

@@ -218,11 +218,17 @@ mod tests {
         let s = build_snapshotter(tmp.path());
         seed_memdir(&tmp.path().join("memdir/ana"));
 
-        let m1 = s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+        let m1 = s
+            .snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
         // Force a strict ordering by sleeping past the millisecond
         // boundary the timestamp uses.
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-        let m2 = s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+        let m2 = s
+            .snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
 
         let metas = s.list(&"ana".into(), "default").await.unwrap();
         assert_eq!(metas.len(), 2);
@@ -270,6 +276,9 @@ mod tests {
         let s = build_snapshotter(tmp.path());
         let err = s.list(&"ana".into(), "BAD").await.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("tenant") || msg.contains("[a-z0-9_-]"), "{msg}");
+        assert!(
+            msg.contains("tenant") || msg.contains("[a-z0-9_-]"),
+            "{msg}"
+        );
     }
 }

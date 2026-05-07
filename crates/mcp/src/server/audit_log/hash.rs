@@ -168,7 +168,10 @@ mod tests {
 
         // Bash (per-tool override = no redact) → no hash.
         let (hash_bash, size_bash) = compute_args_metrics(&args, &cfg, "bash");
-        assert!(hash_bash.is_none(), "per-tool override (false) wins for bash");
+        assert!(
+            hash_bash.is_none(),
+            "per-tool override (false) wins for bash"
+        );
         assert!(size_bash > 0);
 
         // Other tool (no override) → falls back to global redact=true → hash.

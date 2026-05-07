@@ -244,7 +244,10 @@ mod tests {
             .await
             .unwrap();
 
-        let d = s.diff(&"ana".into(), "default", m1.id, m2.id).await.unwrap();
+        let d = s
+            .diff(&"ana".into(), "default", m1.id, m2.id)
+            .await
+            .unwrap();
         assert_eq!(d.git_summary.commits_between, 1);
         // No SQLite or state artifacts in either bundle, so both
         // sides should report zero in those summaries.

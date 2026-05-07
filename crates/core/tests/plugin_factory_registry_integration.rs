@@ -13,8 +13,7 @@ use semver::Version;
 
 use nexo_config::{AgentsConfig, PluginDiscoveryConfig};
 use nexo_core::agent::nexo_plugin_registry::{
-    wire_plugin_registry, BoxError, InitOutcome, PluginFactory,
-    PluginFactoryRegistry,
+    wire_plugin_registry, BoxError, InitOutcome, PluginFactory, PluginFactoryRegistry,
 };
 
 fn write_plugin_tree(root: &std::path::Path, plugin_id: &str) {
@@ -47,8 +46,7 @@ async fn factory_driven_path_records_failed_outcome_for_registered_plugin() {
     // PluginInitContext.
     let mut registry = PluginFactoryRegistry::new();
     let factory: PluginFactory = Box::new(|_m| {
-        let err: BoxError =
-            Box::new(std::io::Error::other("factory deliberately failed"));
+        let err: BoxError = Box::new(std::io::Error::other("factory deliberately failed"));
         Err(err)
     });
     registry.register("factory_demo", factory).unwrap();
@@ -76,9 +74,9 @@ async fn factory_driven_path_records_failed_outcome_for_registered_plugin() {
                 "expected boxed source in error message: {error}"
             );
         }
-        other => panic!(
-            "factory_demo registered → must be Failed (closure errored), got {other:?}"
-        ),
+        other => {
+            panic!("factory_demo registered → must be Failed (closure errored), got {other:?}")
+        }
     }
 }
 
@@ -96,15 +94,7 @@ async fn factory_none_path_preserves_no_handle_default() {
 
     // None → behaves identical to pre-81.12.0: every plugin
     // records NoHandle (no factory consulted).
-    let wire = wire_plugin_registry(
-        &mut agents,
-        &cfg,
-        &version,
-        &[],
-        &BTreeSet::new(),
-        None,
-    )
-    .await;
+    let wire = wire_plugin_registry(&mut agents, &cfg, &version, &[], &BTreeSet::new(), None).await;
 
     let snap = wire.registry.snapshot();
     assert!(matches!(

@@ -190,13 +190,8 @@ pub async fn run_turn_loop(params: TurnLoopParams) -> Result<TurnLoopResult, For
                 messages.push(asst);
 
                 for call in calls {
-                    let result_str = dispatch_one(
-                        &*tool_filter,
-                        &*tool_dispatcher,
-                        &call,
-                        &fork_label,
-                    )
-                    .await;
+                    let result_str =
+                        dispatch_one(&*tool_filter, &*tool_dispatcher, &call, &fork_label).await;
                     let result_msg =
                         ChatMessage::tool_result(call.id.clone(), call.name.clone(), result_str);
                     if let Some(cb) = &on_message {
@@ -252,7 +247,10 @@ async fn dispatch_one(
         );
         return filter.denial_message(&call.name);
     }
-    match dispatcher.dispatch(&call.name, call.arguments.clone()).await {
+    match dispatcher
+        .dispatch(&call.name, call.arguments.clone())
+        .await
+    {
         Ok(s) => s,
         Err(e) => format!("Error: {e}"),
     }

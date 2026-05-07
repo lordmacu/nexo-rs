@@ -58,9 +58,7 @@ impl ForkHandle {
     /// Take the completion future, marking the handle consumed. Calling
     /// twice returns `None` the second time. Awaiting the returned
     /// future drives the fork to completion.
-    pub fn take_completion(
-        &mut self,
-    ) -> Option<BoxFuture<'static, Result<ForkResult, ForkError>>> {
+    pub fn take_completion(&mut self) -> Option<BoxFuture<'static, Result<ForkResult, ForkError>>> {
         self.consumed.store(true, Ordering::Release);
         self.completion.take()
     }
@@ -224,12 +222,8 @@ mod tests {
 
     #[tokio::test]
     async fn take_completion_then_await_succeeds() {
-        let mut handle = ForkHandle::new(
-            Uuid::new_v4(),
-            None,
-            ok_future(),
-            CancellationToken::new(),
-        );
+        let mut handle =
+            ForkHandle::new(Uuid::new_v4(), None, ok_future(), CancellationToken::new());
         let fut = handle.take_completion().expect("first take returns Some");
         let result = fut.await.unwrap();
         assert_eq!(result.final_text.as_deref(), Some("done"));
@@ -274,12 +268,7 @@ mod tests {
     fn drop_without_consume_cancels_abort() {
         let abort = CancellationToken::new();
         {
-            let _handle = ForkHandle::new(
-                Uuid::new_v4(),
-                None,
-                ok_future(),
-                abort.clone(),
-            );
+            let _handle = ForkHandle::new(Uuid::new_v4(), None, ok_future(), abort.clone());
             // not awaited, not consumed
         }
         assert!(
@@ -288,7 +277,12 @@ mod tests {
         );
     }
 
-    fn fork_result_with(final_text: Option<&str>, prompt: u32, completion: u32, turns: u32) -> ForkResult {
+    fn fork_result_with(
+        final_text: Option<&str>,
+        prompt: u32,
+        completion: u32,
+        turns: u32,
+    ) -> ForkResult {
         ForkResult {
             messages: vec![],
             total_usage: TokenUsage {
@@ -317,12 +311,7 @@ mod tests {
 
     #[test]
     fn to_task_notification_auto_summary_uses_first_line() {
-        let r = fork_result_with(
-            Some("Header line first\nBody line second"),
-            0,
-            0,
-            1,
-        );
+        let r = fork_result_with(Some("Header line first\nBody line second"), 0, 0, 1);
         let n = r.to_task_notification("g", None, 0);
         assert_eq!(n.summary, "Header line first");
     }
@@ -388,12 +377,7 @@ mod tests {
     fn drop_after_consume_does_not_cancel_abort() {
         let abort = CancellationToken::new();
         {
-            let handle = ForkHandle::new(
-                Uuid::new_v4(),
-                None,
-                ok_future(),
-                abort.clone(),
-            );
+            let handle = ForkHandle::new(Uuid::new_v4(), None, ok_future(), abort.clone());
             handle.mark_consumed();
         }
         assert!(

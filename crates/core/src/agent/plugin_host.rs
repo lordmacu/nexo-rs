@@ -56,8 +56,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use nexo_broker::AnyBroker;
-use nexo_driver_permission::AdvisorRegistry;
 use nexo_config::LlmConfig;
+use nexo_driver_permission::AdvisorRegistry;
 use nexo_llm::LlmRegistry;
 use nexo_memory::LongTermMemory;
 use nexo_plugin_manifest::PluginManifest;
@@ -92,10 +92,7 @@ pub trait NexoPlugin: Send + Sync + 'static {
     /// Errors propagate to the registry, which logs the failure
     /// and skips the plugin (other plugins continue). The daemon
     /// stays up.
-    async fn init(
-        &self,
-        ctx: &mut PluginInitContext<'_>,
-    ) -> Result<(), PluginInitError>;
+    async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError>;
 
     /// Called on graceful shutdown. Default no-op for stateless
     /// plugins. Plugins with persistent state (DB connections,
@@ -190,8 +187,7 @@ pub struct PluginInitContext<'a> {
     /// `ctx.channel_adapter_registry.register(Arc::new(MyAdapter), self.manifest().plugin.id.clone())?;`
     /// First-registers-wins-rest-rejected — see
     /// [`crate::agent::channel_adapter::ChannelAdapterRegistrationError`].
-    pub channel_adapter_registry:
-        Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
+    pub channel_adapter_registry: Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
 
     /// Phase 81.4 — pre-loaded + pre-validated plugin config
     /// from `<config_dir>/plugins/<plugin_id>/*.yaml`. Always at
@@ -229,9 +225,7 @@ impl PluginInitContext<'_> {
 /// variant; freeform errors land in `Other`.
 #[derive(Debug, thiserror::Error)]
 pub enum PluginInitError {
-    #[error(
-        "plugin `{plugin_id}` requires capability `{capability}` not provided by daemon"
-    )]
+    #[error("plugin `{plugin_id}` requires capability `{capability}` not provided by daemon")]
     MissingNexoCapability {
         plugin_id: String,
         capability: String,
@@ -285,10 +279,7 @@ pub enum PluginInitError {
 #[derive(Debug, thiserror::Error)]
 pub enum PluginShutdownError {
     #[error("plugin `{plugin_id}` shutdown timeout after {timeout_ms}ms")]
-    Timeout {
-        plugin_id: String,
-        timeout_ms: u64,
-    },
+    Timeout { plugin_id: String, timeout_ms: u64 },
 
     #[error("plugin `{plugin_id}` shutdown error")]
     Other {
@@ -358,20 +349,18 @@ min_nexo_version = ">=0.1.0"
         fn manifest(&self) -> &PluginManifest {
             &self.manifest
         }
-        async fn init(
-            &self,
-            _ctx: &mut PluginInitContext<'_>,
-        ) -> Result<(), PluginInitError> {
+        async fn init(&self, _ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
             self.init_called.store(true, Ordering::SeqCst);
             // Clone the outcome shape since PluginInitError isn't Clone.
             match &self.init_outcome {
                 Ok(()) => Ok(()),
-                Err(PluginInitError::Config { plugin_id, source: _ }) => {
-                    Err(PluginInitError::Config {
-                        plugin_id: plugin_id.clone(),
-                        source: anyhow::anyhow!("simulated config failure"),
-                    })
-                }
+                Err(PluginInitError::Config {
+                    plugin_id,
+                    source: _,
+                }) => Err(PluginInitError::Config {
+                    plugin_id: plugin_id.clone(),
+                    source: anyhow::anyhow!("simulated config failure"),
+                }),
                 Err(_) => Err(PluginInitError::Other {
                     plugin_id: "test_plugin".into(),
                     source: anyhow::anyhow!("unexpected variant"),
@@ -395,10 +384,7 @@ min_nexo_version = ">=0.1.0"
         fn manifest(&self) -> &PluginManifest {
             &self.manifest
         }
-        async fn init(
-            &self,
-            _ctx: &mut PluginInitContext<'_>,
-        ) -> Result<(), PluginInitError> {
+        async fn init(&self, _ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
             Ok(())
         }
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
@@ -451,8 +437,7 @@ min_nexo_version = ">=0.1.0"
         let plugin = SlowShutdownPlugin {
             manifest: parse_manifest(),
         };
-        let result =
-            tokio::time::timeout(Duration::from_millis(50), plugin.shutdown()).await;
+        let result = tokio::time::timeout(Duration::from_millis(50), plugin.shutdown()).await;
         assert!(
             result.is_err(),
             "tokio::time::timeout must elapse before slow shutdown completes"
@@ -536,8 +521,14 @@ min_nexo_version = ">=0.1.0"
         // small + pure.
         let cfg = config_dir.join("plugins").join("marketing");
         let state = state_root.join("plugins").join("marketing");
-        assert_eq!(cfg, PathBuf::from("/tmp/nexo-test/config/plugins/marketing"));
-        assert_eq!(state, PathBuf::from("/tmp/nexo-test/state/plugins/marketing"));
+        assert_eq!(
+            cfg,
+            PathBuf::from("/tmp/nexo-test/config/plugins/marketing")
+        );
+        assert_eq!(
+            state,
+            PathBuf::from("/tmp/nexo-test/state/plugins/marketing")
+        );
     }
 
     #[test]

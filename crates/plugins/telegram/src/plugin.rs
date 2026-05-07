@@ -1629,11 +1629,10 @@ mod nexo_plugin_tests {
     #[test]
     fn factory_builder_produces_usable_handle() {
         let cfg = test_telegram_config(None);
-        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
-            Box::new(move |_m| {
-                let plugin: Arc<dyn NexoPlugin> = Arc::new(TelegramPlugin::new(cfg.clone()));
-                Ok(plugin)
-            });
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = Box::new(move |_m| {
+            let plugin: Arc<dyn NexoPlugin> = Arc::new(TelegramPlugin::new(cfg.clone()));
+            Ok(plugin)
+        });
         let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
         match factory(&m) {
             Ok(handle) => assert_eq!(handle.manifest().plugin.id, "telegram"),
@@ -1671,9 +1670,6 @@ mod nexo_plugin_tests {
         assert_ne!(legacy_a.name(), legacy_b.name());
         assert_eq!(nexo_a.manifest().plugin.id, "telegram");
         assert_eq!(nexo_b.manifest().plugin.id, "telegram");
-        assert_eq!(
-            nexo_a.manifest().plugin.id,
-            nexo_b.manifest().plugin.id
-        );
+        assert_eq!(nexo_a.manifest().plugin.id, nexo_b.manifest().plugin.id);
     }
 }

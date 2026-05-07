@@ -45,10 +45,7 @@ pub mod schema {
             required: true,
             secret: false,
             default: None,
-            help: Some(
-                "Dashboard → Account → Group. Numeric string (10-20 digits)."
-                    .into(),
-            ),
+            help: Some("Dashboard → Account → Group. Numeric string (10-20 digits).".into()),
             validation: Some(FieldValidation::Regex {
                 pattern: "^[0-9]{10,20}$".into(),
                 hint: "10-20 digits, numeric only".into(),
@@ -95,10 +92,7 @@ pub mod schema {
         select(
             "key_kind",
             "Tipo de key",
-            &[
-                ("api", "API key (sk-…)"),
-                ("plan", "Token Plan (sk-cp-…)"),
-            ],
+            &[("api", "API key (sk-…)"), ("plan", "Token Plan (sk-cp-…)")],
             Some("api"),
             Some("plan = Coding/Token Plan key — uses Anthropic-flavor wire."),
         )
@@ -299,10 +293,7 @@ impl LlmRegistry {
     /// post-construction. Internal `RwLock` write-locks briefly.
     pub fn register(&self, factory: Box<dyn LlmProviderFactory>) -> anyhow::Result<()> {
         let name = factory.name().to_string();
-        let mut guard = self
-            .factories
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
         if guard.contains_key(&name) {
             anyhow::bail!("LLM provider '{name}' already registered");
         }
@@ -314,18 +305,12 @@ impl LlmRegistry {
     /// the remote-LLM rollback path on partial registration
     /// failure. Returns `true` when removed; `false` when absent.
     pub fn unregister(&self, name: &str) -> bool {
-        let mut guard = self
-            .factories
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
         guard.remove(name).is_some()
     }
 
     pub fn names(&self) -> Vec<String> {
-        let guard = self
-            .factories
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
         let mut names: Vec<String> = guard.keys().cloned().collect();
         names.sort_unstable();
         names
@@ -338,21 +323,14 @@ impl LlmRegistry {
     /// that called `register` post-Arc (Phase 81.25). Operator UIs
     /// use this to render a "no custom" provider dropdown.
     pub fn catalog(&self) -> Vec<LlmProviderCatalogEntry> {
-        let guard = self
-            .factories
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
         let mut out: Vec<LlmProviderCatalogEntry> = guard
             .values()
             .map(|f| LlmProviderCatalogEntry {
                 id: f.name().to_string(),
                 default_base_url: f.default_base_url().to_string(),
                 default_env_var: f.default_env_var().to_string(),
-                models: f
-                    .known_models()
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect(),
+                models: f.known_models().iter().map(|s| (*s).to_string()).collect(),
                 credential_schema: f.credential_schema(),
                 supported_auth_modes: f.supported_auth_modes(),
                 supports_models_probe: f.supports_models_probe(),
@@ -418,10 +396,7 @@ impl LlmRegistry {
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or(&agent_model.provider);
-        let guard = self
-            .factories
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
         let factory = guard.get(factory_id).ok_or_else(|| {
             anyhow::anyhow!(
                 "LLM provider instance '{}' references factory '{}' which is not registered (known: {:?})",
@@ -435,10 +410,7 @@ impl LlmRegistry {
 
     /// Helper used inside `build_for_tenant` so we don't double-
     /// lock the RwLock when constructing the diagnostic.
-    fn names_locked(
-        &self,
-        guard: &HashMap<String, Box<dyn LlmProviderFactory>>,
-    ) -> Vec<String> {
+    fn names_locked(&self, guard: &HashMap<String, Box<dyn LlmProviderFactory>>) -> Vec<String> {
         let mut names: Vec<String> = guard.keys().cloned().collect();
         names.sort_unstable();
         names
@@ -463,10 +435,7 @@ impl LlmRegistry {
     /// - Single read-lock on the factories table for the entire
     ///   walk; fast even with hundreds of instances.
     pub fn validate_config(&self, llm_cfg: &LlmConfig) -> Result<(), Vec<String>> {
-        let guard = self
-            .factories
-            .read()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
         let mut errors: Vec<String> = Vec::new();
         let known: Vec<String> = self.names_locked(&guard);
 
@@ -493,9 +462,7 @@ impl LlmRegistry {
                 {
                     format!("references factory_type '{factory_id}'")
                 } else {
-                    format!(
-                        "has no factory_type and id '{factory_id}' is not a registered factory"
-                    )
+                    format!("has no factory_type and id '{factory_id}' is not a registered factory")
                 };
                 errors.push(format!(
                     "{prefix} {factory_clause} (known factories: {known:?})"
@@ -613,7 +580,9 @@ mod tests {
             auth: None,
             api_flavor: None,
             embedding_model: None,
-            safety_settings: None, factory_type: None, api_key_secret_id: None,
+            safety_settings: None,
+            factory_type: None,
+            api_key_secret_id: None,
         }
     }
 
@@ -759,10 +728,7 @@ mod tests {
 
     /// Build an `LlmConfig` with a single instance whose YAML key
     /// can differ from its factory_type.
-    fn cfg_with_instance(
-        instance_id: &str,
-        factory_type: Option<&str>,
-    ) -> LlmConfig {
+    fn cfg_with_instance(instance_id: &str, factory_type: Option<&str>) -> LlmConfig {
         let mut cfg = provider_cfg();
         cfg.factory_type = factory_type.map(String::from);
         let mut providers = HashMap::new();
@@ -815,7 +781,8 @@ mod tests {
             provider: "minimax".into(),
             model: "m1".into(),
         };
-        r.build(&cfg, &model).expect("blank factory_type -> instance_id fallback");
+        r.build(&cfg, &model)
+            .expect("blank factory_type -> instance_id fallback");
     }
 
     #[test]
@@ -881,8 +848,7 @@ mod tests {
             tenants: HashMap::new(),
         };
         // 1: legacy id matches factory ✓
-        cfg.providers
-            .insert("minimax".to_string(), provider_cfg());
+        cfg.providers.insert("minimax".to_string(), provider_cfg());
         // 2: factory_type unknown ✗
         let mut a = provider_cfg();
         a.factory_type = Some("nope".to_string());
@@ -967,7 +933,10 @@ mod tests {
             .iter()
             .find(|d| d.name == "setup_token")
             .expect("setup_token descriptor present");
-        let dep = setup.depends_on.as_ref().expect("setup_token depends_on auth_mode");
+        let dep = setup
+            .depends_on
+            .as_ref()
+            .expect("setup_token depends_on auth_mode");
         assert_eq!(dep.field, "auth_mode");
         assert!(dep.any_of.iter().any(|v| v == "setup_token"));
     }

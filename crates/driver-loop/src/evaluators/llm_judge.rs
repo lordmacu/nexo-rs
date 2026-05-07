@@ -339,9 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn evaluator_pass_yields_met_verdict() {
-        let e = evaluator(vec![Ok(
-            r#"{"verdict":"pass","reasons":[]}"#.to_string()
-        )]);
+        let e = evaluator(vec![Ok(r#"{"verdict":"pass","reasons":[]}"#.to_string())]);
         let crit = vec![AcceptanceCriterion::llm_judge("must add null check")];
         let v = e
             .evaluate(&crit, std::path::Path::new("."))
@@ -402,9 +400,7 @@ mod tests {
         // always passes). If the mix routes wrong, the scripted
         // backend exhausts its queue and panics on the second
         // `remove(0)`.
-        let e = evaluator(vec![Ok(
-            r#"{"verdict":"pass","reasons":[]}"#.to_string()
-        )]);
+        let e = evaluator(vec![Ok(r#"{"verdict":"pass","reasons":[]}"#.to_string())]);
         let crit = vec![
             AcceptanceCriterion::llm_judge("must add null check"),
             AcceptanceCriterion::shell("cargo test"),

@@ -695,38 +695,107 @@ mod tests {
 
     #[test]
     fn voice_picker_es_family() {
-        assert_eq!(default_voice_for_locale(Some(&loc("es-AR"))), "es-AR-ElenaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-MX"))), "es-MX-DaliaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-ES"))), "es-ES-ElviraNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-CO"))), "es-CO-SalomeNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-PE"))), "es-PE-CamilaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-CL"))), "es-CL-CatalinaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("es-US"))), "es-US-PalomaNeural");
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-AR"))),
+            "es-AR-ElenaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-MX"))),
+            "es-MX-DaliaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-ES"))),
+            "es-ES-ElviraNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-CO"))),
+            "es-CO-SalomeNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-PE"))),
+            "es-PE-CamilaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-CL"))),
+            "es-CL-CatalinaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es-US"))),
+            "es-US-PalomaNeural"
+        );
         // Language-only `es` falls back to MX.
-        assert_eq!(default_voice_for_locale(Some(&loc("es"))), "es-MX-DaliaNeural");
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("es"))),
+            "es-MX-DaliaNeural"
+        );
     }
 
     #[test]
     fn voice_picker_en_family() {
-        assert_eq!(default_voice_for_locale(Some(&loc("en-US"))), "en-US-AriaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("en-GB"))), "en-GB-SoniaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("en-AU"))), "en-AU-NatashaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("en-CA"))), "en-CA-ClaraNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("en"))), "en-US-AriaNeural");
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("en-US"))),
+            "en-US-AriaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("en-GB"))),
+            "en-GB-SoniaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("en-AU"))),
+            "en-AU-NatashaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("en-CA"))),
+            "en-CA-ClaraNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("en"))),
+            "en-US-AriaNeural"
+        );
     }
 
     #[test]
     fn voice_picker_pt_fr_it_de_ja_zh() {
-        assert_eq!(default_voice_for_locale(Some(&loc("pt-BR"))), "pt-BR-FranciscaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("pt-PT"))), "pt-PT-RaquelNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("pt"))), "pt-BR-FranciscaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("fr-FR"))), "fr-FR-DeniseNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("fr-CA"))), "fr-CA-SylvieNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("fr"))), "fr-FR-DeniseNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("it-IT"))), "it-IT-ElsaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("de-DE"))), "de-DE-KatjaNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("ja-JP"))), "ja-JP-NanamiNeural");
-        assert_eq!(default_voice_for_locale(Some(&loc("zh-CN"))), "zh-CN-XiaoxiaoNeural");
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("pt-BR"))),
+            "pt-BR-FranciscaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("pt-PT"))),
+            "pt-PT-RaquelNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("pt"))),
+            "pt-BR-FranciscaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("fr-FR"))),
+            "fr-FR-DeniseNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("fr-CA"))),
+            "fr-CA-SylvieNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("fr"))),
+            "fr-FR-DeniseNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("it-IT"))),
+            "it-IT-ElsaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("de-DE"))),
+            "de-DE-KatjaNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("ja-JP"))),
+            "ja-JP-NanamiNeural"
+        );
+        assert_eq!(
+            default_voice_for_locale(Some(&loc("zh-CN"))),
+            "zh-CN-XiaoxiaoNeural"
+        );
     }
 
     #[test]
@@ -739,9 +808,18 @@ mod tests {
     #[test]
     fn voice_mode_es_ar_uses_voseo() {
         let addendum = voice_mode_addendum(Some(&loc("es-AR")));
-        assert!(addendum.contains("Pensá"), "es-AR voice addendum must use voseo (`Pensá`)");
-        assert!(addendum.contains("Tenés"), "es-AR voice addendum must use voseo (`Tenés`)");
-        assert!(addendum.contains("Marcá"), "es-AR voice addendum must use voseo (`Marcá`)");
+        assert!(
+            addendum.contains("Pensá"),
+            "es-AR voice addendum must use voseo (`Pensá`)"
+        );
+        assert!(
+            addendum.contains("Tenés"),
+            "es-AR voice addendum must use voseo (`Tenés`)"
+        );
+        assert!(
+            addendum.contains("Marcá"),
+            "es-AR voice addendum must use voseo (`Marcá`)"
+        );
     }
 
     #[test]
@@ -750,10 +828,22 @@ mod tests {
         // the Argentine flavour by accident. The Latam-neutral template
         // must NOT contain voseo verbs.
         let addendum = voice_mode_addendum(Some(&loc("es-MX")));
-        assert!(addendum.contains("Piensa"), "es-MX must use tuteo (`Piensa`)");
-        assert!(!addendum.contains("Pensá"), "es-MX must NOT use voseo (`Pensá`)");
-        assert!(!addendum.contains("Marcá"), "es-MX must NOT use voseo (`Marcá`)");
-        assert!(addendum.contains("Tienes"), "es-MX must use tuteo (`Tienes`)");
+        assert!(
+            addendum.contains("Piensa"),
+            "es-MX must use tuteo (`Piensa`)"
+        );
+        assert!(
+            !addendum.contains("Pensá"),
+            "es-MX must NOT use voseo (`Pensá`)"
+        );
+        assert!(
+            !addendum.contains("Marcá"),
+            "es-MX must NOT use voseo (`Marcá`)"
+        );
+        assert!(
+            addendum.contains("Tienes"),
+            "es-MX must use tuteo (`Tienes`)"
+        );
         // `es` (language-only) routes to the same Latam template.
         let lang_only = voice_mode_addendum(Some(&loc("es")));
         assert_eq!(addendum, lang_only);
@@ -762,24 +852,35 @@ mod tests {
     #[test]
     fn voice_mode_es_es_uses_castellano() {
         let addendum = voice_mode_addendum(Some(&loc("es-ES")));
-        assert!(addendum.contains("vosotros") || addendum.contains("os preocupe"),
-            "es-ES must reference castellano `vosotros`");
-        assert!(addendum.contains("vale") || addendum.contains("genial"),
-            "es-ES must include castellano vocabulary cues");
+        assert!(
+            addendum.contains("vosotros") || addendum.contains("os preocupe"),
+            "es-ES must reference castellano `vosotros`"
+        );
+        assert!(
+            addendum.contains("vale") || addendum.contains("genial"),
+            "es-ES must include castellano vocabulary cues"
+        );
     }
 
     #[test]
     fn voice_mode_none_uses_latam_neutral() {
         let none = voice_mode_addendum(None);
         let latam = voice_mode_addendum(Some(&loc("es-MX")));
-        assert_eq!(none, latam, "None falls back to Latam-neutral, not legacy voseo");
+        assert_eq!(
+            none, latam,
+            "None falls back to Latam-neutral, not legacy voseo"
+        );
     }
 
     #[test]
     fn voice_mode_en_gb_uses_british_spelling_cue() {
         let addendum = voice_mode_addendum(Some(&loc("en-GB")));
-        assert!(addendum.contains("colour") || addendum.contains("organise") || addendum.contains("centre"),
-            "en-GB must include British spelling cue");
+        assert!(
+            addendum.contains("colour")
+                || addendum.contains("organise")
+                || addendum.contains("centre"),
+            "en-GB must include British spelling cue"
+        );
     }
 
     // ── Style addendum ─────────────────────────────────────────
@@ -835,14 +936,9 @@ mod tests {
         // Smoke-test the full closed enum surface — every locale
         // the parser accepts must produce Some(_) here.
         let codes = [
-            "es-AR", "es-MX", "es-ES", "es-CO", "es-PE", "es-CL", "es-US", "es",
-            "en-US", "en-GB", "en-AU", "en-CA", "en",
-            "pt-BR", "pt-PT", "pt",
-            "fr-FR", "fr-CA", "fr",
-            "it-IT", "it",
-            "de-DE", "de",
-            "ja-JP", "ja",
-            "zh-CN", "zh",
+            "es-AR", "es-MX", "es-ES", "es-CO", "es-PE", "es-CL", "es-US", "es", "en-US", "en-GB",
+            "en-AU", "en-CA", "en", "pt-BR", "pt-PT", "pt", "fr-FR", "fr-CA", "fr", "it-IT", "it",
+            "de-DE", "de", "ja-JP", "ja", "zh-CN", "zh",
         ];
         for code in codes {
             let l = loc(code);

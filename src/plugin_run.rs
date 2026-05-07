@@ -126,18 +126,16 @@ pub fn resolve_local_plugin(
         return Err(PluginRunError::NotAPluginPath { path: abs });
     };
 
-    let body = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        PluginRunError::ManifestInvalid {
+    let body =
+        std::fs::read_to_string(&manifest_path).map_err(|e| PluginRunError::ManifestInvalid {
             path: manifest_path.clone(),
             reason: format!("read failed: {e}"),
-        }
-    })?;
-    let manifest = PluginManifest::from_str(&body).map_err(|e| {
-        PluginRunError::ManifestInvalid {
+        })?;
+    let manifest =
+        PluginManifest::from_str(&body).map_err(|e| PluginRunError::ManifestInvalid {
             path: manifest_path.clone(),
             reason: e.to_string(),
-        }
-    })?;
+        })?;
 
     let entrypoint_command = manifest
         .plugin
@@ -217,9 +215,7 @@ pub fn print_pre_boot_banner(override_: &PluginRunOverride, json: bool) {
         override_.plugin_id
     );
     if override_.no_daemon_config {
-        eprintln!(
-            "→ Standalone mode: cfg.agents cleared; plugin runs for inspection"
-        );
+        eprintln!("→ Standalone mode: cfg.agents cleared; plugin runs for inspection");
     }
 }
 
@@ -239,7 +235,9 @@ pub fn emit_error(err: &PluginRunError, json: bool, path: Option<PathBuf>) -> i3
         eprintln!("✗ Plugin run failed: {}", err);
         match err {
             PluginRunError::PathNotFound { .. } => {
-                eprintln!("  Hint: pass a path to a plugin directory or its nexo-plugin.toml file.");
+                eprintln!(
+                    "  Hint: pass a path to a plugin directory or its nexo-plugin.toml file."
+                );
             }
             PluginRunError::NotAPluginPath { .. } => {
                 eprintln!("  Hint: the directory must contain a nexo-plugin.toml at its root.");
@@ -250,9 +248,7 @@ pub fn emit_error(err: &PluginRunError, json: bool, path: Option<PathBuf>) -> i3
                 );
             }
             PluginRunError::WatchDeferred => {
-                eprintln!(
-                    "  Hint: re-run without --watch. File-watching ships in Phase 31.7.b."
-                );
+                eprintln!("  Hint: re-run without --watch. File-watching ships in Phase 31.7.b.");
             }
             _ => {}
         }
@@ -369,8 +365,10 @@ args = []
 
     #[test]
     fn apply_search_path_prepend_inserts_at_head() {
-        let mut search_paths =
-            vec![PathBuf::from("/etc/nexo/plugins"), PathBuf::from("/usr/local")];
+        let mut search_paths = vec![
+            PathBuf::from("/etc/nexo/plugins"),
+            PathBuf::from("/usr/local"),
+        ];
         let plugin_root = PathBuf::from("/tmp/local");
         apply_search_path_prepend(&mut search_paths, &plugin_root);
         assert_eq!(search_paths.len(), 3);
@@ -380,8 +378,10 @@ args = []
 
     #[test]
     fn apply_search_path_prepend_is_idempotent_for_head_match() {
-        let mut search_paths =
-            vec![PathBuf::from("/tmp/local"), PathBuf::from("/etc/nexo/plugins")];
+        let mut search_paths = vec![
+            PathBuf::from("/tmp/local"),
+            PathBuf::from("/etc/nexo/plugins"),
+        ];
         apply_search_path_prepend(&mut search_paths, &PathBuf::from("/tmp/local"));
         assert_eq!(
             search_paths.len(),

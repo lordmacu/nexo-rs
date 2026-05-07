@@ -179,10 +179,7 @@ impl<'a> HumanTakeover<'a> {
     /// `-32602 session_id_required_with_summary` from the
     /// daemon — surface it to the operator UI as "open the
     /// conversation first".
-    pub async fn release(
-        self,
-        summary_for_agent: Option<String>,
-    ) -> Result<(), AdminError> {
+    pub async fn release(self, summary_for_agent: Option<String>) -> Result<(), AdminError> {
         let mut params = json!({
             "scope": self.scope,
             "operator_token_hash": self.operator_token_hash,
@@ -290,20 +287,11 @@ mod tests {
         let captured_clone = captured.clone();
 
         let task = async move {
-            let takeover = HumanTakeover::engage(
-                &admin_for_calls,
-                convo(),
-                "h0",
-                Some("operator".into()),
-            )
-            .await?;
+            let takeover =
+                HumanTakeover::engage(&admin_for_calls, convo(), "h0", Some("operator".into()))
+                    .await?;
             takeover
-                .send_reply(
-                    "whatsapp",
-                    "wa.0",
-                    "wa.55",
-                    SendReplyArgs::text("hello"),
-                )
+                .send_reply("whatsapp", "wa.0", "wa.55", SendReplyArgs::text("hello"))
                 .await?;
             takeover.release(None).await
         };
@@ -352,8 +340,7 @@ mod tests {
         let session_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
 
         let task = async move {
-            let takeover =
-                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
+            let takeover = HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
             takeover
                 .send_reply(
                     "whatsapp",
@@ -403,10 +390,9 @@ mod tests {
         let session_id = Uuid::parse_str("44444444-4444-4444-8444-444444444444").unwrap();
 
         let task = async move {
-            let takeover =
-                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
-                    .await?
-                    .with_session(session_id);
+            let takeover = HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
+                .await?
+                .with_session(session_id);
             takeover
                 .release(Some("cliente confirmó dirección".into()))
                 .await
@@ -453,10 +439,9 @@ mod tests {
         let session_id = Uuid::parse_str("55555555-5555-4555-8555-555555555555").unwrap();
 
         let task = async move {
-            let takeover =
-                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
-                    .await?
-                    .with_session(session_id);
+            let takeover = HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
+                .await?
+                .with_session(session_id);
             takeover.release(None).await
         };
 
@@ -494,8 +479,7 @@ mod tests {
         let captured_clone = captured.clone();
 
         let task = async move {
-            let takeover =
-                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
+            let takeover = HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
             takeover
                 .send_reply("whatsapp", "wa.0", "wa.55", SendReplyArgs::text("hi"))
                 .await?;

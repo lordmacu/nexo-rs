@@ -234,10 +234,7 @@ pub trait DreamRunStore: Send + Sync + 'static {
 
     /// Cascade-delete on agent_handles drop. Matches Phase 72
     /// pattern. Returns count deleted.
-    async fn drop_for_goal(
-        &self,
-        goal_id: GoalId,
-    ) -> Result<u64, AgentRegistryStoreError>;
+    async fn drop_for_goal(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError>;
 }
 
 /// SQLite-backed [`DreamRunStore`].
@@ -353,20 +350,16 @@ fn row_to_dream_run(row: &sqlx::sqlite::SqliteRow) -> Result<DreamRunRow, AgentR
     let prior_mtime_ms: Option<i64> = row.try_get("prior_mtime_ms")?;
 
     let files_touched_json: String = row.try_get("files_touched")?;
-    let files_touched: Vec<PathBuf> = serde_json::from_str(&files_touched_json).map_err(|e| {
-        AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-    })?;
+    let files_touched: Vec<PathBuf> = serde_json::from_str(&files_touched_json)
+        .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
 
     let turns_json: String = row.try_get("turns")?;
-    let turns: Vec<DreamTurn> = serde_json::from_str(&turns_json).map_err(|e| {
-        AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-    })?;
+    let turns: Vec<DreamTurn> = serde_json::from_str(&turns_json)
+        .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
 
     let started_secs: i64 = row.try_get("started_at")?;
     let started_at = from_unix_secs(started_secs).ok_or_else(|| {
-        AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(
-            "invalid started_at unix epoch".into(),
-        ))
+        AgentRegistryStoreError::Sqlx(sqlx::Error::Decode("invalid started_at unix epoch".into()))
     })?;
 
     let ended_secs: Option<i64> = row.try_get("ended_at")?;
@@ -402,12 +395,10 @@ fn row_to_dream_run(row: &sqlx::sqlite::SqliteRow) -> Result<DreamRunRow, AgentR
 #[async_trait]
 impl DreamRunStore for SqliteDreamRunStore {
     async fn insert(&self, row: &DreamRunRow) -> Result<(), AgentRegistryStoreError> {
-        let files_json = serde_json::to_string(&row.files_touched).map_err(|e| {
-            AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-        })?;
-        let turns_json = serde_json::to_string(&row.turns).map_err(|e| {
-            AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-        })?;
+        let files_json = serde_json::to_string(&row.files_touched)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
+        let turns_json = serde_json::to_string(&row.turns)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
 
         sqlx::query(
             "INSERT OR IGNORE INTO dream_runs \
@@ -483,10 +474,8 @@ impl DreamRunStore for SqliteDreamRunStore {
             return Ok(0);
         };
 
-        let mut current: Vec<PathBuf> =
-            serde_json::from_str(&current_json).map_err(|e| {
-                AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-            })?;
+        let mut current: Vec<PathBuf> = serde_json::from_str(&current_json)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
         let seen: HashSet<PathBuf> = current.iter().cloned().collect();
         let mut new_count = 0u64;
         for p in paths {
@@ -501,9 +490,8 @@ impl DreamRunStore for SqliteDreamRunStore {
             return Ok(0);
         }
 
-        let new_json = serde_json::to_string(&current).map_err(|e| {
-            AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-        })?;
+        let new_json = serde_json::to_string(&current)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
         sqlx::query("UPDATE dream_runs SET files_touched = ? WHERE id = ?")
             .bind(&new_json)
             .bind(id.to_string())
@@ -528,20 +516,17 @@ impl DreamRunStore for SqliteDreamRunStore {
 
         let mut tx = self.pool.begin().await?;
 
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT turns FROM dream_runs WHERE id = ?")
-                .bind(id.to_string())
-                .fetch_optional(&mut *tx)
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT turns FROM dream_runs WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
         let Some((current_json,)) = row else {
             tx.rollback().await?;
             return Ok(false);
         };
 
-        let mut current: Vec<DreamTurn> =
-            serde_json::from_str(&current_json).map_err(|e| {
-                AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-            })?;
+        let mut current: Vec<DreamTurn> = serde_json::from_str(&current_json)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
         current.push(turn.clone());
 
         let trimmed = if current.len() > MAX_TURNS {
@@ -550,9 +535,8 @@ impl DreamRunStore for SqliteDreamRunStore {
             current
         };
 
-        let new_json = serde_json::to_string(&trimmed).map_err(|e| {
-            AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e)))
-        })?;
+        let new_json = serde_json::to_string(&trimmed)
+            .map_err(|e| AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(Box::new(e))))?;
         sqlx::query("UPDATE dream_runs SET turns = ? WHERE id = ?")
             .bind(&new_json)
             .bind(id.to_string())
@@ -591,12 +575,10 @@ impl DreamRunStore for SqliteDreamRunStore {
 
     async fn tail(&self, n: usize) -> Result<Vec<DreamRunRow>, AgentRegistryStoreError> {
         let limit = n.min(TAIL_HARD_CAP) as i64;
-        let rows = sqlx::query(
-            "SELECT * FROM dream_runs ORDER BY started_at DESC LIMIT ?",
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query("SELECT * FROM dream_runs ORDER BY started_at DESC LIMIT ?")
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.iter().map(row_to_dream_run).collect()
     }
 
@@ -637,10 +619,7 @@ impl DreamRunStore for SqliteDreamRunStore {
         Ok(flipped)
     }
 
-    async fn drop_for_goal(
-        &self,
-        goal_id: GoalId,
-    ) -> Result<u64, AgentRegistryStoreError> {
+    async fn drop_for_goal(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError> {
         let result = sqlx::query("DELETE FROM dream_runs WHERE goal_id = ?")
             .bind(goal_id.0.to_string())
             .execute(&self.pool)
@@ -850,17 +829,18 @@ mod tests {
         let row = mk_row(GoalId(Uuid::new_v4()), 1, "x");
         store.insert(&row).await.unwrap();
         let n1 = store
-            .append_files_touched(
-                row.id,
-                &[PathBuf::from("/a"), PathBuf::from("/b")],
-            )
+            .append_files_touched(row.id, &[PathBuf::from("/a"), PathBuf::from("/b")])
             .await
             .unwrap();
         assert_eq!(n1, 2);
         let n2 = store
             .append_files_touched(
                 row.id,
-                &[PathBuf::from("/b"), PathBuf::from("/c"), PathBuf::from("/a")],
+                &[
+                    PathBuf::from("/b"),
+                    PathBuf::from("/c"),
+                    PathBuf::from("/a"),
+                ],
             )
             .await
             .unwrap();
@@ -961,7 +941,10 @@ mod tests {
         assert_eq!(got.turns.len(), MAX_TURNS);
         // Newest 30 retained — first kept turn is "turn 5".
         assert_eq!(got.turns[0].text, "turn 5");
-        assert_eq!(got.turns[MAX_TURNS - 1].text, format!("turn {}", MAX_TURNS + 4));
+        assert_eq!(
+            got.turns[MAX_TURNS - 1].text,
+            format!("turn {}", MAX_TURNS + 4)
+        );
     }
 
     // ── reattach + drop_for_goal (step 8) ──

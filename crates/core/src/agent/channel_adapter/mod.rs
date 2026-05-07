@@ -119,10 +119,8 @@ pub trait ChannelAdapter: Send + Sync + 'static {
 
     /// Send one outbound message. Returns a stamped ack on
     /// success; typed error on failure.
-    async fn send_outbound(
-        &self,
-        msg: OutboundMessage,
-    ) -> Result<OutboundAck, ChannelAdapterError>;
+    async fn send_outbound(&self, msg: OutboundMessage)
+        -> Result<OutboundAck, ChannelAdapterError>;
 }
 
 /// Process-wide registry of channel adapters. Boot-time only —
@@ -169,13 +167,11 @@ impl ChannelAdapterRegistry {
         let registered_by = registered_by.into();
         let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
         match guard.get(&kind) {
-            Some(prior) => Err(
-                ChannelAdapterRegistrationError::KindAlreadyRegistered {
-                    kind,
-                    prior_registered_by: prior.registered_by.clone(),
-                    attempted_by: registered_by,
-                },
-            ),
+            Some(prior) => Err(ChannelAdapterRegistrationError::KindAlreadyRegistered {
+                kind,
+                prior_registered_by: prior.registered_by.clone(),
+                attempted_by: registered_by,
+            }),
             None => {
                 guard.insert(
                     kind,
@@ -360,9 +356,7 @@ mod tests {
                 url: "https://x/y.png".into(),
                 caption: Some("alt".into()),
             },
-            OutboundMessage::Custom(
-                serde_json::json!({"discord_embed": {"title": "x"}}),
-            ),
+            OutboundMessage::Custom(serde_json::json!({"discord_embed": {"title": "x"}})),
         ];
         for case in cases {
             let s = serde_json::to_string(&case).unwrap();

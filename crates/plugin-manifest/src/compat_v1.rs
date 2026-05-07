@@ -224,12 +224,15 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         required: legacy.capabilities.admin.required,
         optional: legacy.capabilities.admin.optional,
     };
-    let http_server = legacy.capabilities.http_server.map(|h| HttpServerCapability {
-        port: h.port,
-        bind: h.bind,
-        token_env: h.token_env,
-        health_path: h.health_path,
-    });
+    let http_server = legacy
+        .capabilities
+        .http_server
+        .map(|h| HttpServerCapability {
+            port: h.port,
+            bind: h.bind,
+            token_env: h.token_env,
+            health_path: h.health_path,
+        });
 
     // Capabilities.tools/hooks/channels/providers/pollers — these
     // are runtime-registration informational lists in v1. v2 uses
@@ -470,7 +473,10 @@ command = "./agent-creator"
         assert!(was_v1);
         assert_eq!(manifest.manifest_version, 2);
         assert_eq!(manifest.plugin.id, "agent-creator");
-        assert_eq!(manifest.plugin.entrypoint.command.as_deref(), Some("./agent-creator"));
+        assert_eq!(
+            manifest.plugin.entrypoint.command.as_deref(),
+            Some("./agent-creator")
+        );
     }
 
     #[test]
@@ -568,7 +574,10 @@ repository = "https://github.com/x/y"
         let (m, _) = try_parse_v2_or_v1(raw).unwrap();
         assert_eq!(m.plugin.meta.author.as_deref(), Some("Cristian"));
         assert_eq!(m.plugin.meta.license.as_deref(), Some("MIT"));
-        assert_eq!(m.plugin.meta.homepage.as_deref(), Some("https://example.com"));
+        assert_eq!(
+            m.plugin.meta.homepage.as_deref(),
+            Some("https://example.com")
+        );
         assert_eq!(
             m.plugin.meta.repository.as_deref(),
             Some("https://github.com/x/y")

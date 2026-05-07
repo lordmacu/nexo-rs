@@ -26,9 +26,7 @@ use uuid::Uuid;
 use super::agent_events::{AgentEventEmitter, NoopAgentEventEmitter};
 use super::redaction::Redactor;
 use super::transcripts_index::TranscriptsIndex;
-use nexo_tool_meta::admin::agent_events::{
-    AgentEventKind, TranscriptRole as WireTranscriptRole,
-};
+use nexo_tool_meta::admin::agent_events::{AgentEventKind, TranscriptRole as WireTranscriptRole};
 pub const TRANSCRIPT_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -499,8 +497,12 @@ mod tests {
         let second = rx.recv().await?;
         match (&first, &second) {
             (
-                AgentEventKind::TranscriptAppended { seq: 0, body: b1, .. },
-                AgentEventKind::TranscriptAppended { seq: 1, body: b2, .. },
+                AgentEventKind::TranscriptAppended {
+                    seq: 0, body: b1, ..
+                },
+                AgentEventKind::TranscriptAppended {
+                    seq: 1, body: b2, ..
+                },
             ) => {
                 assert!(b1.contains("[REDACTED:"), "first body redacted: {b1}");
                 assert!(!b1.contains("sk-abcdef"), "raw secret leaked: {b1}");

@@ -14,9 +14,7 @@ use serde::Serialize;
 
 use nexo_config::AgentsConfig;
 
-use super::report::{
-    DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
-};
+use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 use super::NexoPluginRegistrySnapshot;
 
 /// Outcome of [`merge_plugin_contributed_agents`]. The caller folds
@@ -80,8 +78,7 @@ pub fn merge_plugin_contributed_agents(
     for plugin in &snapshot.plugins {
         let plugin_id = plugin.manifest.plugin.id.clone();
         let allow_override = plugin.manifest.plugin.agents.allow_override;
-        let contributes_dir = match &plugin.manifest.plugin.agents.contributes_dir
-        {
+        let contributes_dir = match &plugin.manifest.plugin.agents.contributes_dir {
             Some(p) => p.clone(),
             None => continue,
         };
@@ -157,13 +154,8 @@ pub fn merge_plugin_contributed_agents(
                         // agents.yaml / agents.d/.
                         if allow_override {
                             base.agents[idx] = agent;
-                            plugin_origin
-                                .insert(agent_id.clone(), plugin_id.clone());
-                            record_attribution(
-                                &mut report,
-                                &plugin_id,
-                                &agent_id,
-                            );
+                            plugin_origin.insert(agent_id.clone(), plugin_id.clone());
+                            record_attribution(&mut report, &plugin_id, &agent_id);
                             report.conflicts.push(AgentMergeConflict {
                                 agent_id,
                                 plugin_ids: vec![plugin_id.clone()],
@@ -179,15 +171,12 @@ pub fn merge_plugin_contributed_agents(
                     }
                     Some(idx) => {
                         // Earlier plugin already contributed this id.
-                        let earlier =
-                            plugin_origin.get(&agent_id).cloned().unwrap_or_default();
+                        let earlier = plugin_origin.get(&agent_id).cloned().unwrap_or_default();
                         base.agents[idx] = agent;
                         plugin_origin.insert(agent_id.clone(), plugin_id.clone());
                         // Re-attribute: agent_id now belongs to current plugin.
                         // Remove from earlier plugin's contributed list.
-                        if let Some(list) =
-                            report.contributed_agents_per_plugin.get_mut(&earlier)
-                        {
+                        if let Some(list) = report.contributed_agents_per_plugin.get_mut(&earlier) {
                             list.retain(|a| a != &agent_id);
                         }
                         record_attribution(&mut report, &plugin_id, &agent_id);
@@ -287,8 +276,7 @@ mod tests {
         }
 
         fn discovered(&self) -> DiscoveredPlugin {
-            let raw = fs::read_to_string(self.root.path().join("nexo-plugin.toml"))
-                .unwrap();
+            let raw = fs::read_to_string(self.root.path().join("nexo-plugin.toml")).unwrap();
             let manifest: PluginManifest = toml::from_str(&raw).unwrap();
             DiscoveredPlugin {
                 manifest,
@@ -326,7 +314,10 @@ mod tests {
         let report = merge_plugin_contributed_agents(&snap, &mut base);
         assert_eq!(base.agents.len(), 1);
         assert_eq!(base.agents[0].id, "triager");
-        assert_eq!(report.attribution.get("triager"), Some(&"alpha".to_string()));
+        assert_eq!(
+            report.attribution.get("triager"),
+            Some(&"alpha".to_string())
+        );
         assert_eq!(report.conflicts.len(), 0);
     }
 
@@ -340,7 +331,10 @@ mod tests {
         assert_eq!(base.agents.len(), 1);
         assert_eq!(base.agents[0].system_prompt, "operator");
         assert_eq!(report.conflicts.len(), 1);
-        assert_eq!(report.conflicts[0].resolution, MergeResolution::OperatorWins);
+        assert_eq!(
+            report.conflicts[0].resolution,
+            MergeResolution::OperatorWins
+        );
         assert!(!report.attribution.contains_key("shared"));
     }
 
@@ -393,12 +387,10 @@ mod tests {
         let report = merge_plugin_contributed_agents(&snap, &mut base);
         assert_eq!(base.agents.len(), 1);
         assert_eq!(base.agents[0].id, "good");
-        assert!(
-            report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::ManifestParseError { .. }
-            ))
-        );
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|d| matches!(&d.kind, DiscoveryDiagnosticKind::ManifestParseError { .. })));
     }
 
     #[test]
@@ -416,7 +408,10 @@ mod tests {
             assert_eq!(report.attribution.get(id), Some(&"alpha".to_string()));
         }
         assert_eq!(
-            report.contributed_agents_per_plugin.get("alpha").map(|v| v.len()),
+            report
+                .contributed_agents_per_plugin
+                .get("alpha")
+                .map(|v| v.len()),
             Some(3)
         );
     }

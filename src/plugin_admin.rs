@@ -27,9 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
-use nexo_ext_installer::{
-    resolve_release, InstallError, PluginCoords, DEFAULT_GITHUB_API_BASE,
-};
+use nexo_ext_installer::{resolve_release, InstallError, PluginCoords, DEFAULT_GITHUB_API_BASE};
 use nexo_plugin_manifest::PluginManifest;
 use serde::{Deserialize, Serialize};
 
@@ -173,8 +171,13 @@ pub fn write_install_metadata(plugin_dir: &Path, meta: &InstallMetadata) -> Resu
         .map_err(|e| AdminError::Io(format!("serialize metadata: {e}")))?;
     std::fs::write(&tmp, body.as_bytes())
         .map_err(|e| AdminError::Io(format!("write {}: {e}", tmp.display())))?;
-    std::fs::rename(&tmp, &dest)
-        .map_err(|e| AdminError::Io(format!("rename {} -> {}: {e}", tmp.display(), dest.display())))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| {
+        AdminError::Io(format!(
+            "rename {} -> {}: {e}",
+            tmp.display(),
+            dest.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -302,11 +305,7 @@ fn discovered_to_entry(d: DiscoveredPlugin) -> PluginListEntry {
     }
 }
 
-pub async fn run_plugin_list(
-    config_dir: &Path,
-    include_orphan: bool,
-    json: bool,
-) -> Result<i32> {
+pub async fn run_plugin_list(config_dir: &Path, include_orphan: bool, json: bool) -> Result<i32> {
     let cfg = match nexo_config::AppConfig::load(config_dir) {
         Ok(c) => c,
         Err(e) => {
@@ -437,10 +436,7 @@ pub async fn run_plugin_upgrade(
     };
 
     let discovered = discover_installed_plugins(&cfg.plugins.discovery.search_paths);
-    let installed = match discovered
-        .into_iter()
-        .find(|d| d.manifest.plugin.id == id)
-    {
+    let installed = match discovered.into_iter().find(|d| d.manifest.plugin.id == id) {
         Some(d) => d,
         None => return Ok(emit_admin_error(&AdminError::PluginNotFound { id }, json)),
     };
@@ -577,10 +573,7 @@ pub async fn run_plugin_remove(
     };
 
     let discovered = discover_installed_plugins(&cfg.plugins.discovery.search_paths);
-    let installed = match discovered
-        .into_iter()
-        .find(|d| d.manifest.plugin.id == id)
-    {
+    let installed = match discovered.into_iter().find(|d| d.manifest.plugin.id == id) {
         Some(d) => d,
         None => return Ok(emit_admin_error(&AdminError::PluginNotFound { id }, json)),
     };
@@ -639,8 +632,7 @@ pub async fn run_plugin_remove(
         }
     }
 
-    let lifecycle_emitted =
-        emit_lifecycle_removed_event(&cfg, &id, &version, &plugin_dir).await;
+    let lifecycle_emitted = emit_lifecycle_removed_event(&cfg, &id, &version, &plugin_dir).await;
 
     let report = PluginRemoveReport {
         ok: true,
@@ -655,7 +647,11 @@ pub async fn run_plugin_remove(
     if json {
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
-        eprintln!("✓ Plugin `{}` removed from {}", id, report.plugin_dir.display());
+        eprintln!(
+            "✓ Plugin `{}` removed from {}",
+            id,
+            report.plugin_dir.display()
+        );
         if cache_purged {
             eprintln!("✓ Cache purged");
         }
@@ -872,7 +868,10 @@ mod tests {
     #[test]
     fn admin_error_kind_maps_all_variants() {
         let cases: Vec<(AdminError, &'static str)> = vec![
-            (AdminError::PluginNotFound { id: "x".into() }, "PluginNotFound"),
+            (
+                AdminError::PluginNotFound { id: "x".into() },
+                "PluginNotFound",
+            ),
             (
                 AdminError::NoInstallMetadata { id: "x".into() },
                 "NoInstallMetadata",
@@ -907,7 +906,10 @@ mod tests {
                 },
                 "DowngradeRefused",
             ),
-            (AdminError::NeedsYesConfirm { id: "x".into() }, "NeedsYesConfirm"),
+            (
+                AdminError::NeedsYesConfirm { id: "x".into() },
+                "NeedsYesConfirm",
+            ),
             (
                 AdminError::Resolve(InstallError::Http("x".into())),
                 "Resolve",
@@ -923,12 +925,11 @@ mod tests {
         let p = PathBuf::from("/plugins/foo-0.1.0");
         let a = aside_path(&p);
         assert_ne!(a, p);
-        assert!(
-            a.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("foo-0.1.0.removing-")
-        );
+        assert!(a
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("foo-0.1.0.removing-"));
     }
 
     #[test]

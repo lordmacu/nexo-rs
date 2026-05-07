@@ -176,8 +176,7 @@ impl SandboxRunner {
         };
 
         // Linux + bwrap available — build argv.
-        let bwrap_args =
-            build_bwrap_args(plugin_id, sandbox, state_dir, cmd, args)?;
+        let bwrap_args = build_bwrap_args(plugin_id, sandbox, state_dir, cmd, args)?;
         Ok(WrappedCommand {
             program: bwrap.clone(),
             args: bwrap_args,
@@ -234,9 +233,7 @@ pub enum SandboxError {
     )]
     UnsupportedPlatformAndRequired { plugin_id: String },
 
-    #[error(
-        "plugin `{plugin_id}`: sandbox path resolution failed for `{path}`: {reason}"
-    )]
+    #[error("plugin `{plugin_id}`: sandbox path resolution failed for `{path}`: {reason}")]
     PathResolutionFailed {
         plugin_id: String,
         path: String,
@@ -393,9 +390,7 @@ fn validate_resolved_path(
             reason: "resolved path is not absolute".into(),
         });
     }
-    if let Some(denylisted) =
-        path_under_or_equals_denylist(resolved, SANDBOX_DENYLIST_HOST_PATHS)
-    {
+    if let Some(denylisted) = path_under_or_equals_denylist(resolved, SANDBOX_DENYLIST_HOST_PATHS) {
         return Err(SandboxError::ResolvedPathHitsDenylist {
             plugin_id: plugin_id.to_string(),
             original: original.to_string(),
@@ -483,9 +478,7 @@ min_nexo_version = ">=0.0.0"
 
     #[test]
     fn wrap_host_network_without_capability_errors() {
-        let m = manifest_with_sandbox(
-            "[plugin.sandbox]\nenabled = true\nnetwork = \"host\"",
-        );
+        let m = manifest_with_sandbox("[plugin.sandbox]\nenabled = true\nnetwork = \"host\"");
         let runner = fresh_runner();
         let err = runner
             .wrap_command(&m, Path::new("/state"), "/bin/echo", &[])
@@ -498,9 +491,7 @@ min_nexo_version = ">=0.0.0"
 
     #[test]
     fn wrap_host_network_with_capability_passes() {
-        let m = manifest_with_sandbox(
-            "[plugin.sandbox]\nenabled = true\nnetwork = \"host\"",
-        );
+        let m = manifest_with_sandbox("[plugin.sandbox]\nenabled = true\nnetwork = \"host\"");
         let runner = SandboxRunner::for_test(Some("/usr/bin/bwrap".into()), true, false);
         // On macOS the platform branch may downgrade to raw — we
         // only assert the host-net check passed (no error).
@@ -555,8 +546,7 @@ min_nexo_version = ">=0.0.0"
             fs_write_paths: vec![],
             drop_user: false,
         };
-        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[])
-            .unwrap();
+        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[]).unwrap();
         assert!(
             argv.iter().any(|a| *a == OsString::from("--unshare-net")),
             "deny mode must include --unshare-net: {argv:?}"
@@ -572,8 +562,7 @@ min_nexo_version = ">=0.0.0"
             fs_write_paths: vec![],
             drop_user: false,
         };
-        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[])
-            .unwrap();
+        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[]).unwrap();
         assert!(
             !argv.iter().any(|a| *a == OsString::from("--unshare-net")),
             "host mode must omit --unshare-net: {argv:?}"
@@ -589,8 +578,7 @@ min_nexo_version = ">=0.0.0"
             fs_write_paths: vec![],
             drop_user: true,
         };
-        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[])
-            .unwrap();
+        let argv = build_bwrap_args("p", &sandbox, Path::new("/state"), "/bin/echo", &[]).unwrap();
         // Find `--uid` followed by 65534.
         let uid_pos = argv.iter().position(|a| *a == OsString::from("--uid"));
         assert!(uid_pos.is_some());
@@ -634,10 +622,13 @@ min_nexo_version = ">=0.0.0"
         let sandbox = SandboxSection::default();
         let mut s = sandbox;
         s.enabled = true;
-        let argv = build_bwrap_args("p", &s, Path::new("/state"), "/usr/bin/python3", &[
-            "-c".into(),
-            "print(1)".into(),
-        ])
+        let argv = build_bwrap_args(
+            "p",
+            &s,
+            Path::new("/state"),
+            "/usr/bin/python3",
+            &["-c".into(), "print(1)".into()],
+        )
         .unwrap();
         let dd_pos = argv
             .iter()
@@ -652,8 +643,7 @@ min_nexo_version = ">=0.0.0"
     fn validate_resolved_path_rejects_denylist_after_state_dir_expansion() {
         // state_dir resolves to a denylisted path — operator
         // misconfig caught at spawn time.
-        let err = validate_resolved_path("p", "${state_dir}", "/etc/shadow")
-            .unwrap_err();
+        let err = validate_resolved_path("p", "${state_dir}", "/etc/shadow").unwrap_err();
         assert!(
             matches!(err, SandboxError::ResolvedPathHitsDenylist { .. }),
             "{err:?}"

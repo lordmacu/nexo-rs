@@ -127,11 +127,7 @@ impl RetentionWorker {
                 }
             }
 
-            match self
-                .snapshotter
-                .list(&agent_id, &tenant)
-                .await
-            {
+            match self.snapshotter.list(&agent_id, &tenant).await {
                 Ok(metas) => {
                     let now_ms = chrono::Utc::now().timestamp_millis();
                     let max_age_ms = (self.config.max_age_days as i64) * 86_400_000;
@@ -151,11 +147,7 @@ impl RetentionWorker {
                         if over_count == 0 && !too_old {
                             break;
                         }
-                        match self
-                            .snapshotter
-                            .delete(&agent_id, &tenant, oldest.id)
-                            .await
-                        {
+                        match self.snapshotter.delete(&agent_id, &tenant, oldest.id).await {
                             Ok(()) => {
                                 report.bundles_deleted += 1;
                                 if over_count > 0 {
@@ -314,7 +306,9 @@ mod tests {
         seed_memdir(&tmp.path().join("memdir/ana"));
 
         for _ in 0..5u32 {
-            s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+            s.snapshot(SnapshotRequest::cli("ana", "default"))
+                .await
+                .unwrap();
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         let cfg = RetentionConfig {
@@ -358,7 +352,10 @@ mod tests {
         let s = Arc::new(build(tmp.path())) as Arc<dyn MemorySnapshotter>;
         seed_memdir(&tmp.path().join("memdir/ana"));
 
-        let _ = s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+        let _ = s
+            .snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
         // Simulate two crashes leaving staging dirs behind.
         let dir = snapshots_dir(tmp.path(), "default", "ana").unwrap();
         fs::create_dir(dir.join(".staging-deadbeef")).unwrap();
@@ -386,8 +383,12 @@ mod tests {
         let s = Arc::new(build(tmp.path())) as Arc<dyn MemorySnapshotter>;
         seed_memdir(&tmp.path().join("memdir/ana"));
         seed_memdir(&tmp.path().join("memdir/otro"));
-        s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
-        s.snapshot(SnapshotRequest::cli("otro", "acme")).await.unwrap();
+        s.snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
+        s.snapshot(SnapshotRequest::cli("otro", "acme"))
+            .await
+            .unwrap();
 
         let mut found = scan_agents(tmp.path()).unwrap();
         found.sort();
@@ -405,7 +406,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = Arc::new(build(tmp.path())) as Arc<dyn MemorySnapshotter>;
         seed_memdir(&tmp.path().join("memdir/ana"));
-        let _ = s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+        let _ = s
+            .snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
         // Drop a staging dir to verify the initial sweep removes it.
         let dir = snapshots_dir(tmp.path(), "default", "ana").unwrap();
         fs::create_dir(dir.join(".staging-orphan")).unwrap();

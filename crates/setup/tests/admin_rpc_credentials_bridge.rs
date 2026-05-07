@@ -50,10 +50,8 @@ async fn telegram_register_persists_yaml_writes_secret_binds_agent_then_revokes(
     let agents_yaml_path = seed_agent_yaml(&config_dir, "kate");
     let agents_yaml = Arc::new(AgentsYamlPatcher::new(agents_yaml_path.clone()));
     let cred_store = Arc::new(FilesystemCredentialStore::new(secrets_dir.clone()));
-    let telegram_persister = TelegramPersister::new(
-        plugins_dir.join("telegram.yaml"),
-        secrets_dir.clone(),
-    );
+    let telegram_persister =
+        TelegramPersister::new(plugins_dir.join("telegram.yaml"), secrets_dir.clone());
 
     let reload_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = Arc::clone(&reload_count);
@@ -89,7 +87,9 @@ async fn telegram_register_persists_yaml_writes_secret_binds_agent_then_revokes(
         )
         .await;
     let err_dbg = format!("{:?}", resp.error);
-    let body = resp.result.unwrap_or_else(|| panic!("register OK; err={err_dbg}"));
+    let body = resp
+        .result
+        .unwrap_or_else(|| panic!("register OK; err={err_dbg}"));
     assert_eq!(body["summary"]["channel"], "telegram");
     assert_eq!(body["summary"]["instance"], "kate");
     assert_eq!(body["summary"]["agent_ids"][0], "kate");
@@ -150,9 +150,8 @@ async fn telegram_register_persists_yaml_writes_secret_binds_agent_then_revokes(
         .get("agents")
         .and_then(serde_yaml::Value::as_sequence)
         .and_then(|seq| {
-            seq.iter().find(|e| {
-                e.get("id").and_then(serde_yaml::Value::as_str) == Some("kate")
-            })
+            seq.iter()
+                .find(|e| e.get("id").and_then(serde_yaml::Value::as_str) == Some("kate"))
         })
         .expect("kate entry");
     let bindings = agent_entry
@@ -161,7 +160,9 @@ async fn telegram_register_persists_yaml_writes_secret_binds_agent_then_revokes(
         .expect("inbound_bindings sequence");
     assert_eq!(bindings.len(), 1);
     assert_eq!(
-        bindings[0].get("plugin").and_then(serde_yaml::Value::as_str),
+        bindings[0]
+            .get("plugin")
+            .and_then(serde_yaml::Value::as_str),
         Some("telegram")
     );
     assert_eq!(
@@ -210,9 +211,8 @@ async fn telegram_register_persists_yaml_writes_secret_binds_agent_then_revokes(
         .get("agents")
         .and_then(serde_yaml::Value::as_sequence)
         .and_then(|seq| {
-            seq.iter().find(|e| {
-                e.get("id").and_then(serde_yaml::Value::as_str) == Some("kate")
-            })
+            seq.iter()
+                .find(|e| e.get("id").and_then(serde_yaml::Value::as_str) == Some("kate"))
         })
         .expect("kate entry");
     let bindings_after = kate_after
@@ -232,8 +232,7 @@ async fn email_register_persists_yaml_and_toml_secret_with_imap_metadata() {
     let agents_yaml_path = seed_agent_yaml(&config_dir, "ana");
     let agents_yaml = Arc::new(AgentsYamlPatcher::new(agents_yaml_path));
     let cred_store = Arc::new(FilesystemCredentialStore::new(secrets_dir.clone()));
-    let email_persister =
-        EmailPersister::new(plugins_dir.join("email.yaml"), secrets_dir.clone());
+    let email_persister = EmailPersister::new(plugins_dir.join("email.yaml"), secrets_dir.clone());
 
     let reload_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = Arc::clone(&reload_count);
@@ -267,7 +266,9 @@ async fn email_register_persists_yaml_and_toml_secret_with_imap_metadata() {
         )
         .await;
     let err_dbg = format!("{:?}", resp.error);
-    let body = resp.result.unwrap_or_else(|| panic!("register OK; err={err_dbg}"));
+    let body = resp
+        .result
+        .unwrap_or_else(|| panic!("register OK; err={err_dbg}"));
     assert_eq!(body["summary"]["channel"], "email");
     // Probe ran but failed (port 1 is unreachable); register
     // still succeeds end-to-end.
@@ -284,11 +285,7 @@ async fn email_register_persists_yaml_and_toml_secret_with_imap_metadata() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&toml_path)
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = std::fs::metadata(&toml_path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
 
@@ -302,7 +299,9 @@ async fn email_register_persists_yaml_and_toml_secret_with_imap_metadata() {
         .unwrap();
     assert_eq!(accounts.len(), 1);
     assert_eq!(
-        accounts[0].get("address").and_then(serde_yaml::Value::as_str),
+        accounts[0]
+            .get("address")
+            .and_then(serde_yaml::Value::as_str),
         Some("ops@example.com")
     );
     assert_eq!(

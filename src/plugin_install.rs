@@ -149,7 +149,10 @@ fn resolve_dest_root(
     }
     if let Some(first) = cfg.plugins.discovery.search_paths.first() {
         std::fs::create_dir_all(first).with_context(|| {
-            format!("create plugins.discovery.search_paths[0] {}", first.display())
+            format!(
+                "create plugins.discovery.search_paths[0] {}",
+                first.display()
+            )
         })?;
         return Ok(first.clone());
     }
@@ -213,7 +216,8 @@ async fn download_to_cache(
         .bytes()
         .await
         .map_err(|e| VerifyError::Io(format!("read body of {url}: {e}")))?;
-    std::fs::write(dest, &bytes).map_err(|e| VerifyError::Io(format!("write {}: {e}", dest.display())))?;
+    std::fs::write(dest, &bytes)
+        .map_err(|e| VerifyError::Io(format!("write {}: {e}", dest.display())))?;
     Ok(())
 }
 
@@ -334,9 +338,8 @@ pub async fn run_plugin_install(
         let report = PluginInstallErrorReport {
             ok: false,
             kind: "FlagsConflict",
-            error:
-                "--require-signature and --skip-signature-verify are mutually exclusive"
-                    .to_string(),
+            error: "--require-signature and --skip-signature-verify are mutually exclusive"
+                .to_string(),
             available: None,
         };
         if json {
@@ -365,8 +368,12 @@ pub async fn run_plugin_install(
         Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
     };
 
-    let (effective_mode, matched_policy) =
-        resolve_effective_mode(&trusted, &coords.owner, require_signature, skip_signature_verify);
+    let (effective_mode, matched_policy) = resolve_effective_mode(
+        &trusted,
+        &coords.owner,
+        require_signature,
+        skip_signature_verify,
+    );
 
     if !json {
         eprintln!(
@@ -606,10 +613,7 @@ pub async fn run_plugin_install(
             extracted.plugin_dir.display()
         );
     } else {
-        eprintln!(
-            "✓ Plugin installed at {}",
-            extracted.plugin_dir.display()
-        );
+        eprintln!("✓ Plugin installed at {}", extracted.plugin_dir.display());
         if signature_verified {
             if let Some(identity) = &signature_identity {
                 eprintln!("✓ Signature verified (identity: {})", identity);
@@ -643,15 +647,11 @@ fn emit_install_error_and_exit(err: &InstallError, json: bool) -> i32 {
         match err {
             InstallError::TargetNotFound { available, .. } => {
                 eprintln!("  Available targets: {}", available.join(", "));
-                eprintln!(
-                    "  Hint: pass --target=<other-triple> or set NEXO_INSTALL_TARGET, or"
-                );
+                eprintln!("  Hint: pass --target=<other-triple> or set NEXO_INSTALL_TARGET, or");
                 eprintln!("  ask the plugin author to publish a build for your target.");
             }
             InstallError::Http(msg) if msg.contains("rate limit") => {
-                eprintln!(
-                    "  Hint: set NEXO_GITHUB_TOKEN env to bypass anonymous rate limit."
-                );
+                eprintln!("  Hint: set NEXO_GITHUB_TOKEN env to bypass anonymous rate limit.");
             }
             InstallError::Http(_) => {
                 eprintln!("  Hint: verify <owner>/<repo>@<tag> exists on GitHub.");
@@ -703,14 +703,10 @@ fn emit_verify_error_and_exit(err: &VerifyError, json: bool) -> i32 {
                 eprintln!(
                     "  Hint: ask the plugin author to publish cosign signing material, or relax"
                 );
-                eprintln!(
-                    "  trusted_keys.toml `mode` for this owner to `warn`."
-                );
+                eprintln!("  trusted_keys.toml `mode` for this owner to `warn`.");
             }
             VerifyError::CosignFailed { .. } => {
-                eprintln!(
-                    "  Hint: the certificate's identity did not match `identity_regexp` in"
-                );
+                eprintln!("  Hint: the certificate's identity did not match `identity_regexp` in");
                 eprintln!(
                     "  trusted_keys.toml. Check the publisher workflow URL or update the regex."
                 );
@@ -853,10 +849,7 @@ mod tests {
                 },
                 "TarballTooLarge",
             ),
-            (
-                ExtractError::TooManyEntries { limit: 0 },
-                "TooManyEntries",
-            ),
+            (ExtractError::TooManyEntries { limit: 0 }, "TooManyEntries"),
             (
                 ExtractError::EntryTooLarge {
                     path: "x".into(),
@@ -1015,9 +1008,7 @@ mod tests {
                 "CosignNotFound",
             ),
             (
-                VerifyError::CosignFailed {
-                    stderr: "x".into(),
-                },
+                VerifyError::CosignFailed { stderr: "x".into() },
                 "CosignFailed",
             ),
             (VerifyError::Io("x".into()), "VerifyIo"),

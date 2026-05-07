@@ -21,11 +21,11 @@ use tokio_util::sync::CancellationToken as TokioCancel;
 use crate::acceptance::{AcceptanceEvaluator, NoopAcceptanceEvaluator};
 use crate::attempt::{run_attempt, AttemptContext};
 use crate::compact_store::NoopCompactSummaryStore;
-use crate::extract_memories::ExtractMemories;
-use crate::post_compact_cleanup::PostCompactCleanup;
 use crate::error::DriverError;
 use crate::events::{DriverEvent, DriverEventSink, NoopEventSink};
+use crate::extract_memories::ExtractMemories;
 use crate::mcp_config::write_mcp_config;
+use crate::post_compact_cleanup::PostCompactCleanup;
 use crate::proactive::{build_tick_prompt, wait_for_wake, ScheduledWake, WakeResult};
 use crate::replay::{
     DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
@@ -104,9 +104,7 @@ pub struct DriverOrchestrator {
     /// `T: Sized` and `dyn AutoDreamHook` is unsized; per-turn
     /// read cost = one uncontended lock acquire + an O(1) hash
     /// lookup, negligible vs the rest of a turn.
-    auto_dream: std::sync::Mutex<
-        std::collections::HashMap<String, Arc<dyn AutoDreamHook>>,
-    >,
+    auto_dream: std::sync::Mutex<std::collections::HashMap<String, Arc<dyn AutoDreamHook>>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -314,23 +312,14 @@ impl DriverOrchestrator {
         agent_id: String,
         hook: Arc<dyn AutoDreamHook>,
     ) -> Option<Arc<dyn AutoDreamHook>> {
-        let mut guard = self
-            .auto_dream
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
         guard.insert(agent_id, hook)
     }
 
     /// Phase 80.1.b.b.b.c — atomically remove the runner for
     /// `agent_id`. Returns the removed hook if one was registered.
-    pub fn unregister_auto_dream(
-        &self,
-        agent_id: &str,
-    ) -> Option<Arc<dyn AutoDreamHook>> {
-        let mut guard = self
-            .auto_dream
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+    pub fn unregister_auto_dream(&self, agent_id: &str) -> Option<Arc<dyn AutoDreamHook>> {
+        let mut guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
         guard.remove(agent_id)
     }
 
@@ -338,10 +327,7 @@ impl DriverOrchestrator {
     /// currently have a runner registered. Used by tests +
     /// admin-ui observability; the sort makes assertions stable.
     pub fn auto_dream_agents(&self) -> Vec<String> {
-        let guard = self
-            .auto_dream
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
         let mut ids: Vec<String> = guard.keys().cloned().collect();
         ids.sort();
         ids
@@ -373,10 +359,7 @@ impl DriverOrchestrator {
                 "DriverOrchestrator::set_auto_dream is deprecated; use register_auto_dream(agent_id, hook) for per-agent routing"
             );
         });
-        let mut guard = self
-            .auto_dream
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
         match hook {
             Some(h) => {
                 guard.insert("_default".to_string(), h);
@@ -434,7 +417,7 @@ impl DriverOrchestrator {
                 max_tokens: u64::MAX,
                 max_consecutive_denies: u32::MAX,
                 max_consecutive_errors: u32::MAX,
-            max_consecutive_413: 2,
+                max_consecutive_413: 2,
             });
         if new_max > entry.value().max_turns {
             entry.value_mut().max_turns = new_max;
@@ -563,18 +546,21 @@ impl DriverOrchestrator {
         let mut total_turns: u32 = 0;
         // Phase 67.9 + 77.2 compact-policy state.
         // Phase 77.3 — load prior compact summary for session resume.
-        let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> =
-            match self.compact_store.load(&goal.id.0.to_string(), &goal_id).await {
-                Ok(Some(prior)) => {
-                    let mut e = serde_json::Map::new();
-                    e.insert(
-                        "compact_summary".into(),
-                        serde_json::Value::String(prior.summary),
-                    );
-                    Some(e)
-                }
-                _ => None,
-            };
+        let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> = match self
+            .compact_store
+            .load(&goal.id.0.to_string(), &goal_id)
+            .await
+        {
+            Ok(Some(prior)) => {
+                let mut e = serde_json::Map::new();
+                e.insert(
+                    "compact_summary".into(),
+                    serde_json::Value::String(prior.summary),
+                );
+                Some(e)
+            }
+            _ => None,
+        };
         let mut last_was_compact = false;
         // Phase 77.3 — token count before the compact turn (captured at
         // schedule time, consumed in the compact-turn handler for
@@ -723,7 +709,10 @@ impl DriverOrchestrator {
                     AttemptOutcome::Done | AttemptOutcome::NeedsRetry { .. }
                 );
                 if compact_ok {
-                    self.compact_breaker.lock().unwrap().record_success(total_turns);
+                    self.compact_breaker
+                        .lock()
+                        .unwrap()
+                        .record_success(total_turns);
                 } else {
                     self.compact_breaker.lock().unwrap().record_failure();
                 }
@@ -770,8 +759,8 @@ impl DriverOrchestrator {
                     if let (Some(ref extract), Some(ref memory_dir)) =
                         (&self.extract_memories, &self.memory_dir)
                     {
-                        cleanup = cleanup
-                            .with_extract_memories(Arc::clone(extract), memory_dir.clone());
+                        cleanup =
+                            cleanup.with_extract_memories(Arc::clone(extract), memory_dir.clone());
                     }
                     cleanup.run().await;
                 }
@@ -849,10 +838,7 @@ impl DriverOrchestrator {
             // metadata after agent removal).
             let owning_agent_id = goal.agent_id().unwrap_or("").to_string();
             let ad_opt: Option<Arc<dyn AutoDreamHook>> = {
-                let map = self
-                    .auto_dream
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
+                let map = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
                 if owning_agent_id.is_empty() {
                     if !map.is_empty() {
                         tracing::warn!(
@@ -889,8 +875,7 @@ impl DriverOrchestrator {
                     kairos_active: false, // Phase 80.15 future
                     remote_mode: false,
                 };
-                let outcome_kind: AutoDreamOutcomeKind =
-                    ad.check_and_run(&dream_ctx).await;
+                let outcome_kind: AutoDreamOutcomeKind = ad.check_and_run(&dream_ctx).await;
                 let _ = self
                     .event_sink
                     .publish(DriverEvent::AutoDreamOutcome {

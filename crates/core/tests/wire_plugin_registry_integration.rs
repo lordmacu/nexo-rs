@@ -9,9 +9,7 @@ use std::fs;
 use semver::Version;
 
 use nexo_config::{AgentsConfig, PluginDiscoveryConfig};
-use nexo_core::agent::nexo_plugin_registry::{
-    wire_plugin_registry, InitOutcome,
-};
+use nexo_core::agent::nexo_plugin_registry::{wire_plugin_registry, InitOutcome};
 
 fn write_plugin_tree(root: &std::path::Path, plugin_id: &str) {
     fs::create_dir_all(root).unwrap();

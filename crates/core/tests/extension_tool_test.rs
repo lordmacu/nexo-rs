@@ -122,9 +122,9 @@ fn agent_cfg() -> Arc<AgentConfig> {
         channels: None,
         auto_approve: false,
         extract_memories: None,
-            event_subscribers: Vec::new(),
-            tenant_id: None,
-            extensions_config: std::collections::BTreeMap::new(),
+        event_subscribers: Vec::new(),
+        tenant_id: None,
+        extensions_config: std::collections::BTreeMap::new(),
     })
 }
 
@@ -187,8 +187,8 @@ async fn extension_tool_passthrough_emits_nexo_binding_block() {
     // `plugin.toml` (Phase 11.5 follow-up).
     let pid = manifest.id();
     let desc = rt.handshake().tools[0].clone();
-    let handler = ExtensionTool::new(pid, desc.name.clone(), Arc::clone(&rt))
-        .with_context_passthrough(true);
+    let handler =
+        ExtensionTool::new(pid, desc.name.clone(), Arc::clone(&rt)).with_context_passthrough(true);
 
     // Simulate what the runtime intake does when an inbound message
     // matches a Phase 17 binding: AgentContext gets a populated

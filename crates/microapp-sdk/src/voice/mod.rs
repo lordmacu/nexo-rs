@@ -31,9 +31,7 @@ pub mod tts;
 
 use thiserror::Error;
 
-pub use locale_addenda::{
-    default_voice_for_locale, language_style_addendum, voice_mode_addendum,
-};
+pub use locale_addenda::{default_voice_for_locale, language_style_addendum, voice_mode_addendum};
 pub use store::{VoiceModeRow, VoiceModeStore, DEFAULT_VOICE_ID};
 pub use tts::{
     synthesize_voice_note, transcode_mp3_to_opus_ogg, EdgeTtsProvider, TtsProvider, VoiceNote,

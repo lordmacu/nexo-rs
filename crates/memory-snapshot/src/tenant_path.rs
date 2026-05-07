@@ -100,7 +100,11 @@ pub fn snapshot_bundle_path(
     encrypted: bool,
 ) -> Result<PathBuf, SnapshotError> {
     let dir = snapshots_dir(state_root, tenant, agent_id)?;
-    let suffix = if encrypted { ".tar.zst.age" } else { ".tar.zst" };
+    let suffix = if encrypted {
+        ".tar.zst.age"
+    } else {
+        ".tar.zst"
+    };
     Ok(dir.join(format!("{}{}", id.as_filename(), suffix)))
 }
 

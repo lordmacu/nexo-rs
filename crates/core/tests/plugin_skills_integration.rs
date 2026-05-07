@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use nexo_core::agent::nexo_plugin_registry::{
-    merge_plugin_contributed_skills, DiscoveredPlugin,
-    NexoPluginRegistrySnapshot, PluginDiscoveryReport,
+    merge_plugin_contributed_skills, DiscoveredPlugin, NexoPluginRegistrySnapshot,
+    PluginDiscoveryReport,
 };
 use nexo_core::agent::skills::SkillLoader;
 use nexo_plugin_manifest::PluginManifest;
@@ -33,8 +33,7 @@ fn write_manifest(dir: &std::path::Path, plugin_id: &str) {
 fn write_skill(plugin_root: &std::path::Path, name: &str, body: &str) {
     let skill_dir = plugin_root.join("skills").join(name);
     fs::create_dir_all(&skill_dir).unwrap();
-    let content =
-        format!("---\ndescription: integration test skill\n---\n\n{body}\n");
+    let content = format!("---\ndescription: integration test skill\n---\n\n{body}\n");
     fs::write(skill_dir.join("SKILL.md"), content).unwrap();
 }
 
@@ -73,14 +72,10 @@ async fn merge_then_skill_loader_round_trip() {
     // every skill resolves via plugin_roots.
     let operator_root = tempfile::tempdir().unwrap();
     let plugin_roots: Vec<_> = report.skill_roots.values().cloned().collect();
-    let loader =
-        SkillLoader::new(operator_root.path()).with_plugin_roots(plugin_roots);
+    let loader = SkillLoader::new(operator_root.path()).with_plugin_roots(plugin_roots);
 
     let loaded = loader
-        .load_many(&[
-            "alpha_skill".to_string(),
-            "beta_skill".to_string(),
-        ])
+        .load_many(&["alpha_skill".to_string(), "beta_skill".to_string()])
         .await;
     assert_eq!(loaded.len(), 2);
     let names: Vec<&str> = loaded.iter().map(|s| s.name.as_str()).collect();

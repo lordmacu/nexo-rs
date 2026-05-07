@@ -445,12 +445,18 @@ model:
         );
         let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(cfg.extensions_config.len(), 2);
-        let etb = cfg.extensions_config.get("ventas-etb").expect("ventas-etb config");
+        let etb = cfg
+            .extensions_config
+            .get("ventas-etb")
+            .expect("ventas-etb config");
         let regional = etb.get("regional").and_then(|v| v.as_str());
         assert_eq!(regional, Some("bogota"));
         let phone = etb.get("asesor_phone").and_then(|v| v.as_str());
         assert_eq!(phone, Some("573115728852"));
-        let another = cfg.extensions_config.get("another-app").expect("another-app");
+        let another = cfg
+            .extensions_config
+            .get("another-app")
+            .expect("another-app");
         assert_eq!(another.get("enabled").and_then(|v| v.as_bool()), Some(true));
     }
 
@@ -473,7 +479,9 @@ model:
             minimal_yaml()
         );
         let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
-        let ad = cfg.auto_dream.expect("auto_dream block should populate field");
+        let ad = cfg
+            .auto_dream
+            .expect("auto_dream block should populate field");
         assert!(ad.enabled);
         assert_eq!(ad.min_hours, std::time::Duration::from_secs(25 * 3600));
         assert_eq!(ad.min_sessions, 7);
@@ -483,10 +491,7 @@ model:
     /// from absent block (Some(cfg) with cfg.enabled=false vs None).
     #[test]
     fn agent_config_yaml_with_auto_dream_disabled_explicit() {
-        let yaml = format!(
-            "{}auto_dream:\n  enabled: false\n",
-            minimal_yaml()
-        );
+        let yaml = format!("{}auto_dream:\n  enabled: false\n", minimal_yaml());
         let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
         let ad = cfg.auto_dream.expect("auto_dream block present");
         assert!(!ad.enabled);
@@ -999,7 +1004,6 @@ fn default_debounce_ms() -> u64 {
 fn default_queue_cap() -> usize {
     32
 }
-
 
 #[cfg(test)]
 mod rate_limit_yaml_tests {

@@ -539,10 +539,7 @@ mod tests {
         let suffix: String = std::iter::repeat('X').take(82).collect();
         let key = format!("github_pat_{suffix}");
         let m = scanner.scan(&key);
-        assert!(
-            has_rule(&m, "github-fine-grained-pat"),
-            "got: {m:?}"
-        );
+        assert!(has_rule(&m, "github-fine-grained-pat"), "got: {m:?}");
     }
 
     #[test]
@@ -572,10 +569,7 @@ mod tests {
         let scanner = SecretScanner::new();
         let key = "sk-ant-admin01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaAA";
         let m = scanner.scan(key);
-        assert!(
-            has_rule(&m, "anthropic-admin-api-key"),
-            "got: {m:?}"
-        );
+        assert!(has_rule(&m, "anthropic-admin-api-key"), "got: {m:?}");
     }
 
     #[test]
@@ -639,7 +633,10 @@ mod tests {
     #[test]
     fn detects_digitalocean_pat() {
         let scanner = SecretScanner::new();
-        let key = tk(&["dop_v1", "_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"]);
+        let key = tk(&[
+            "dop_v1",
+            "_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        ]);
         let m = scanner.scan(&key);
         assert!(has_rule(&m, "digitalocean-pat"), "got: {m:?}");
     }
@@ -655,7 +652,10 @@ mod tests {
     #[test]
     fn detects_sentry_user_token() {
         let scanner = SecretScanner::new();
-        let key = tk(&["sntryu", "_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]);
+        let key = tk(&[
+            "sntryu",
+            "_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ]);
         let m = scanner.scan(&key);
         assert!(has_rule(&m, "sentry-user-token"), "got: {m:?}");
     }
@@ -699,7 +699,8 @@ mod tests {
     #[test]
     fn dedup_by_rule_id() {
         let scanner = SecretScanner::new();
-        let content = &(tk(&["ghp", "_abcdefghijklmnopqrstuvwxyz1234567890"]) + " ghp_999999999999999999999999999999999999");
+        let content = &(tk(&["ghp", "_abcdefghijklmnopqrstuvwxyz1234567890"])
+            + " ghp_999999999999999999999999999999999999");
         let m = scanner.scan(content);
         let github_count = m.iter().filter(|h| h.rule_id == "github-pat").count();
         assert_eq!(
@@ -723,7 +724,10 @@ mod tests {
         // AWS at offset ~0, GitHub at offset ~45
         let content = "AKIAIOSFODNN7EXAMPLE some text ghp_abcdefghijklmnopqrstuvwxyz1234567890";
         let m = scanner.scan(content);
-        assert!(m[0].offset <= m[1].offset, "expected ordered by offset, got: {m:?}");
+        assert!(
+            m[0].offset <= m[1].offset,
+            "expected ordered by offset, got: {m:?}"
+        );
     }
 
     // ── Scanner: false positive tests ──
@@ -731,9 +735,8 @@ mod tests {
     #[test]
     fn no_false_positive_english_text() {
         let scanner = SecretScanner::new();
-        let m = scanner.scan(
-            "The quick brown fox jumps over the lazy dog. This is a normal sentence.",
-        );
+        let m =
+            scanner.scan("The quick brown fox jumps over the lazy dog. This is a normal sentence.");
         assert!(m.is_empty(), "expected no matches, got: {m:?}");
     }
 
@@ -766,7 +769,11 @@ mod tests {
         let result = guard.check(&tk(&["ghp", "_abcdefghijklmnopqrstuvwxyz1234567890"]));
         assert!(result.is_err(), "expected block, got: {result:?}");
         let err = result.unwrap_err();
-        assert!(err.labels.contains("GitHub PAT"), "got labels: {}", err.labels);
+        assert!(
+            err.labels.contains("GitHub PAT"),
+            "got labels: {}",
+            err.labels
+        );
         assert!(
             err.rule_ids.contains(&"github-pat"),
             "got rule_ids: {:?}",
@@ -842,8 +849,7 @@ mod tests {
 
     #[test]
     fn guard_with_enabled_false_passes_all() {
-        let guard =
-            SecretGuard::new(SecretScanner::new(), OnSecret::Block).with_enabled(false);
+        let guard = SecretGuard::new(SecretScanner::new(), OnSecret::Block).with_enabled(false);
         let result = guard.check(&tk(&["ghp", "_abcdefghijklmnopqrstuvwxyz1234567890"]));
         assert!(result.is_ok());
     }

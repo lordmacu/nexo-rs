@@ -30,9 +30,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use nexo_config::types::llm::{LlmAuthConfig, LlmProviderConfig, RateLimitConfig};
 use nexo_core::agent::admin_rpc::dispatcher::AdminRpcError;
-use nexo_core::agent::admin_rpc::domains::llm_providers::{
-    LlmProvidersProbe, LlmYamlPatcher,
-};
+use nexo_core::agent::admin_rpc::domains::llm_providers::{LlmProvidersProbe, LlmYamlPatcher};
 use nexo_llm::anthropic::resolve_auth as resolve_anthropic_auth;
 use nexo_tool_meta::admin::llm_providers::{
     AuthMode, LlmProviderProbeDraftInput, LlmProviderProbeResponse,
@@ -443,7 +441,10 @@ struct ParsedModels {
 
 fn parse_models_payload(body: &[u8]) -> ParsedModels {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
-    let data = parsed.as_ref().and_then(|v| v.get("data")).and_then(|d| d.as_array());
+    let data = parsed
+        .as_ref()
+        .and_then(|v| v.get("data"))
+        .and_then(|d| d.as_array());
     let count = data.map(|a| a.len());
     let names = data.map(|arr| {
         arr.iter()
@@ -614,11 +615,13 @@ mod tests {
         assert_eq!(p.count, Some(3));
         assert_eq!(
             p.names.as_deref(),
-            Some(&[
-                "gpt-4o".to_string(),
-                "gpt-4o-mini".to_string(),
-                "gpt-4-turbo".to_string(),
-            ][..])
+            Some(
+                &[
+                    "gpt-4o".to_string(),
+                    "gpt-4o-mini".to_string(),
+                    "gpt-4-turbo".to_string(),
+                ][..]
+            )
         );
     }
 

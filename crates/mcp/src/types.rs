@@ -353,7 +353,9 @@ mod tests {
         assert!(c.tools);
         // experimental is preserved as-is, not flattened.
         assert!(c.experimental.is_object());
-        assert!(crate::channel::has_channel_capability(Some(&c.experimental)));
+        assert!(crate::channel::has_channel_capability(Some(
+            &c.experimental
+        )));
         assert!(crate::channel::has_channel_permission_capability(Some(
             &c.experimental
         )));
@@ -366,7 +368,9 @@ mod tests {
         let j = serde_json::json!({"tools": {}});
         let c: McpCapabilities = serde_json::from_value(j).unwrap();
         assert!(c.experimental.is_null());
-        assert!(!crate::channel::has_channel_capability(Some(&c.experimental)));
+        assert!(!crate::channel::has_channel_capability(Some(
+            &c.experimental
+        )));
     }
 
     #[test]

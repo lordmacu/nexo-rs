@@ -231,10 +231,11 @@ pub fn verify_signature(
 
     match spec.algorithm {
         SignatureAlgorithm::HmacSha256 => {
-            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-                .map_err(|_| RejectReason::InvalidSignature {
+            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|_| {
+                RejectReason::InvalidSignature {
                     algorithm: spec.algorithm,
-                })?;
+                }
+            })?;
             mac.update(body);
             let want = mac.finalize().into_bytes();
             let got = hex::decode(stripped).map_err(|_| RejectReason::InvalidSignature {
@@ -254,10 +255,11 @@ pub fn verify_signature(
             }
         }
         SignatureAlgorithm::HmacSha1 => {
-            let mut mac = Hmac::<Sha1>::new_from_slice(secret.as_bytes())
-                .map_err(|_| RejectReason::InvalidSignature {
+            let mut mac = Hmac::<Sha1>::new_from_slice(secret.as_bytes()).map_err(|_| {
+                RejectReason::InvalidSignature {
                     algorithm: spec.algorithm,
-                })?;
+                }
+            })?;
             mac.update(body);
             let want = mac.finalize().into_bytes();
             let got = hex::decode(stripped).map_err(|_| RejectReason::InvalidSignature {
@@ -452,16 +454,17 @@ impl WebhookHandler {
         }
 
         // 2. Signature.
-        let header_value = lookup_header_ci(headers, &self.config.signature.header)
-            .ok_or_else(|| RejectReason::MissingSignatureHeader {
-                header: self.config.signature.header.clone(),
-            })?;
-        let secret =
-            std::env::var(&self.config.signature.secret_env).map_err(|_| {
-                RejectReason::SecretMissing {
-                    var: self.config.signature.secret_env.clone(),
+        let header_value =
+            lookup_header_ci(headers, &self.config.signature.header).ok_or_else(|| {
+                RejectReason::MissingSignatureHeader {
+                    header: self.config.signature.header.clone(),
                 }
             })?;
+        let secret = std::env::var(&self.config.signature.secret_env).map_err(|_| {
+            RejectReason::SecretMissing {
+                var: self.config.signature.secret_env.clone(),
+            }
+        })?;
         verify_signature(&self.config.signature, &secret, header_value, &body)?;
 
         // 3. Event kind.
@@ -496,10 +499,7 @@ impl WebhookHandler {
     }
 }
 
-fn lookup_header_ci<'a>(
-    headers: &'a HashMap<String, String>,
-    name: &str,
-) -> Option<&'a str> {
+fn lookup_header_ci<'a>(headers: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
     let lower = name.to_ascii_lowercase();
     for (k, v) in headers {
         if k.to_ascii_lowercase() == lower {
@@ -513,8 +513,7 @@ fn lookup_header_ci<'a>(
 /// pulling the full `base64` crate at this dep level when the
 /// `hex` crate already covers our hex needs.
 fn base64_encode(bytes: &[u8]) -> String {
-    const CHARS: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(((bytes.len() + 2) / 3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
@@ -669,8 +668,7 @@ mod tests {
             prefix: "".into(),
             secret_env: "_".into(),
         };
-        verify_signature(&spec, "exact-shared-token", "exact-shared-token", b"any")
-            .unwrap();
+        verify_signature(&spec, "exact-shared-token", "exact-shared-token", b"any").unwrap();
     }
 
     #[test]
@@ -811,10 +809,7 @@ mod tests {
         let body = Bytes::from_static(b"{}");
         let headers = HashMap::new();
         let err = h.handle(&headers, body).unwrap_err();
-        assert!(matches!(
-            err,
-            RejectReason::MissingSignatureHeader { .. }
-        ));
+        assert!(matches!(err, RejectReason::MissingSignatureHeader { .. }));
     }
 
     #[test]
@@ -871,10 +866,7 @@ mod tests {
         assert_eq!(evt.source_id, "github");
         assert_eq!(evt.event_kind, "pull_request");
         assert_eq!(evt.topic, "webhook.github.pull_request");
-        assert_eq!(
-            evt.payload,
-            serde_json::json!({"action": "opened"})
-        );
+        assert_eq!(evt.payload, serde_json::json!({"action": "opened"}));
     }
 
     #[test]

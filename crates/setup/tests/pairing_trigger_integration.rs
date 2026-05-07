@@ -24,9 +24,7 @@ use nexo_core::agent::admin_rpc::pairing_trigger::{
     PairingTriggerError,
 };
 use nexo_core::agent::admin_rpc::{AdminRpcDispatcher, CapabilitySet};
-use nexo_setup::admin_adapters::{
-    DeferredPairingNotifier, InMemoryPairingChallengeStore,
-};
+use nexo_setup::admin_adapters::{DeferredPairingNotifier, InMemoryPairingChallengeStore};
 use nexo_tool_meta::admin::pairing::{PairingState, PairingStatusParams};
 use serde_json::json;
 use std::time::Duration;
@@ -35,7 +33,10 @@ use uuid::Uuid;
 
 fn grants(microapp: &str, caps: &[&str]) -> Arc<CapabilitySet> {
     let mut g: HashMap<String, HashSet<String>> = HashMap::new();
-    g.insert(microapp.into(), caps.iter().map(|c| c.to_string()).collect());
+    g.insert(
+        microapp.into(),
+        caps.iter().map(|c| c.to_string()).collect(),
+    );
     CapabilitySet::from_grants(g)
 }
 
@@ -74,10 +75,7 @@ impl PairingChannelTrigger for MockTrigger {
     fn channel_id(&self) -> &str {
         &self.channel
     }
-    async fn start(
-        &self,
-        ctx: PairingContext,
-    ) -> Result<PairingHandle, PairingTriggerError> {
+    async fn start(&self, ctx: PairingContext) -> Result<PairingHandle, PairingTriggerError> {
         self.called.fetch_add(1, Ordering::Relaxed);
         if let Some(kind) = self.error {
             return Err(match kind {
@@ -242,7 +240,10 @@ async fn pairing_cancel_aborts_handle_and_flips_store_to_cancelled() {
         .await;
     let status_value = status.result.expect("status ok");
     let state_str = status_value.get("state").and_then(|v| v.as_str()).unwrap();
-    assert_eq!(state_str, format!("{:?}", PairingState::Cancelled).to_lowercase());
+    assert_eq!(
+        state_str,
+        format!("{:?}", PairingState::Cancelled).to_lowercase()
+    );
 }
 
 /// Minimal local mirror of `PairingCancelParams` with only the

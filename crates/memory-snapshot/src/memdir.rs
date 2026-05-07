@@ -27,11 +27,7 @@ pub fn enumerate_memdir_files(memdir: &Path) -> std::io::Result<Vec<(PathBuf, St
     Ok(out)
 }
 
-fn walk(
-    base: &Path,
-    cur: &Path,
-    out: &mut Vec<(PathBuf, String)>,
-) -> std::io::Result<()> {
+fn walk(base: &Path, cur: &Path, out: &mut Vec<(PathBuf, String)>) -> std::io::Result<()> {
     for entry in std::fs::read_dir(cur)? {
         let entry = entry?;
         let path = entry.path();

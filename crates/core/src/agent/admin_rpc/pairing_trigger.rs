@@ -238,7 +238,9 @@ mod tests {
 
     #[test]
     fn channel_id_returns_stable_string() {
-        let trigger = FixedChannelTrigger { channel: "whatsapp" };
+        let trigger = FixedChannelTrigger {
+            channel: "whatsapp",
+        };
         assert_eq!(trigger.channel_id(), "whatsapp");
     }
 
@@ -247,7 +249,9 @@ mod tests {
         let mut triggers: PairingChannelTriggers = HashMap::new();
         triggers.insert(
             "whatsapp".into(),
-            Arc::new(FixedChannelTrigger { channel: "whatsapp" }),
+            Arc::new(FixedChannelTrigger {
+                channel: "whatsapp",
+            }),
         );
         assert_eq!(triggers.len(), 1);
         assert!(triggers.contains_key("whatsapp"));

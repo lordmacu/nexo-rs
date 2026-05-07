@@ -108,9 +108,8 @@ impl AdvisorRegistry {
         let mut lines: Vec<String> = Vec::new();
         for advisor in &self.advisors {
             let id = advisor.id().to_string();
-            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                advisor.advise(tool_name, input)
-            }));
+            let result =
+                std::panic::catch_unwind(AssertUnwindSafe(|| advisor.advise(tool_name, input)));
             match result {
                 Ok(Some(text)) => {
                     for line in text.lines() {
@@ -269,7 +268,9 @@ mod tests {
             id: "ok",
             text: Some("survived".into()),
         }));
-        let out = reg.gather("X", &json!({})).expect("non-panic line expected");
+        let out = reg
+            .gather("X", &json!({}))
+            .expect("non-panic line expected");
         assert!(
             out.contains("[ok] survived"),
             "post-panic advisor must still fire: {out:?}"

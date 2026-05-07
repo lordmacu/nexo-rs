@@ -47,13 +47,11 @@ use tokio::sync::{oneshot, Mutex};
 /// Outbound: runtime → server. The runtime emits this when a
 /// permission prompt opens AND the server has declared the
 /// permission capability.
-pub const PERMISSION_REQUEST_METHOD: &str =
-    "notifications/nexo/channel/permission_request";
+pub const PERMISSION_REQUEST_METHOD: &str = "notifications/nexo/channel/permission_request";
 
 /// Inbound: server → runtime. The server emits this *after*
 /// parsing the user's reply on its underlying platform.
-pub const PERMISSION_RESPONSE_METHOD: &str =
-    "notifications/nexo/channel/permission";
+pub const PERMISSION_RESPONSE_METHOD: &str = "notifications/nexo/channel/permission";
 
 /// Schema version embedded in [`PermissionRequestParams`] so
 /// servers can react to a future breaking change. Bump when the
@@ -156,9 +154,8 @@ const ID_ALPHABET: &[u8; 25] = b"abcdefghijkmnopqrstuvwxyz";
 /// the obvious tier. If a generated ID contains any of these,
 /// the helper re-hashes with a salt suffix.
 const ID_AVOID_SUBSTRINGS: &[&str] = &[
-    "fuck", "shit", "cunt", "cock", "dick", "twat", "piss", "crap", "bitch", "whore",
-    "ass", "tit", "cum", "fag", "dyke", "nig", "kike", "rape", "nazi", "damn",
-    "poo", "pee", "wank", "anus",
+    "fuck", "shit", "cunt", "cock", "dick", "twat", "piss", "crap", "bitch", "whore", "ass", "tit",
+    "cum", "fag", "dyke", "nig", "kike", "rape", "nazi", "damn", "poo", "pee", "wank", "anus",
 ];
 
 /// FNV-1a 32-bit hash → base-25 5-letter encode. Not crypto.
@@ -254,10 +251,7 @@ pub fn parse_permission_reply(text: &str) -> Option<(PermissionBehavior, String)
     if id.len() != 5 {
         return None;
     }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_lowercase() && c != 'l')
-    {
+    if !id.chars().all(|c| c.is_ascii_lowercase() && c != 'l') {
         return None;
     }
     Some((behavior, id.to_string()))
@@ -392,8 +386,8 @@ pub fn parse_permission_response(
         .get("behavior")
         .and_then(|v| v.as_str())
         .ok_or(PermissionParseError::InvalidBehavior)?;
-    let behavior = PermissionBehavior::parse(behavior_raw)
-        .ok_or(PermissionParseError::InvalidBehavior)?;
+    let behavior =
+        PermissionBehavior::parse(behavior_raw).ok_or(PermissionParseError::InvalidBehavior)?;
     Ok(PermissionResponseParams {
         request_id: request_id.to_string(),
         behavior,
@@ -450,8 +444,8 @@ impl<C: McpClient + 'static> PermissionRelayDispatcher for McpPermissionRelayDis
         _server_name: &str,
         params: &PermissionRequestParams,
     ) -> Result<(), DispatchError> {
-        let payload = serde_json::to_value(params)
-            .map_err(|e| DispatchError::Serialise(e.to_string()))?;
+        let payload =
+            serde_json::to_value(params).map_err(|e| DispatchError::Serialise(e.to_string()))?;
         self.client
             .send_notification(PERMISSION_REQUEST_METHOD, payload)
             .await
@@ -471,9 +465,7 @@ pub struct ClientResolverDispatcher {
 }
 
 impl ClientResolverDispatcher {
-    pub fn new(
-        resolver: Arc<dyn Fn(&str) -> Option<Arc<dyn McpClient>> + Send + Sync>,
-    ) -> Self {
+    pub fn new(resolver: Arc<dyn Fn(&str) -> Option<Arc<dyn McpClient>> + Send + Sync>) -> Self {
         Self { resolver }
     }
 }
@@ -551,8 +543,8 @@ impl PermissionRelayDispatcher for ClientResolverDispatcher {
     ) -> Result<(), DispatchError> {
         let client = (self.resolver)(server_name)
             .ok_or_else(|| DispatchError::UnknownServer(server_name.to_string()))?;
-        let payload = serde_json::to_value(params)
-            .map_err(|e| DispatchError::Serialise(e.to_string()))?;
+        let payload =
+            serde_json::to_value(params).map_err(|e| DispatchError::Serialise(e.to_string()))?;
         client
             .send_notification(PERMISSION_REQUEST_METHOD, payload)
             .await
@@ -774,8 +766,7 @@ mod tests {
             "request_id": "abcde",
             "behavior": "allow"
         });
-        let got =
-            parse_permission_response(PERMISSION_RESPONSE_METHOD, &params).unwrap();
+        let got = parse_permission_response(PERMISSION_RESPONSE_METHOD, &params).unwrap();
         assert_eq!(got.request_id, "abcde");
         assert_eq!(got.behavior, PermissionBehavior::Allow);
     }
@@ -783,24 +774,21 @@ mod tests {
     #[test]
     fn parse_response_rejects_unknown_method() {
         let params = serde_json::json!({});
-        let err =
-            parse_permission_response("notifications/something", &params).unwrap_err();
+        let err = parse_permission_response("notifications/something", &params).unwrap_err();
         assert!(matches!(err, PermissionParseError::UnexpectedMethod(_)));
     }
 
     #[test]
     fn parse_response_rejects_missing_request_id() {
         let params = serde_json::json!({"behavior": "allow"});
-        let err = parse_permission_response(PERMISSION_RESPONSE_METHOD, &params)
-            .unwrap_err();
+        let err = parse_permission_response(PERMISSION_RESPONSE_METHOD, &params).unwrap_err();
         assert_eq!(err, PermissionParseError::MissingRequestId);
     }
 
     #[test]
     fn parse_response_rejects_unknown_behavior() {
         let params = serde_json::json!({"request_id": "x", "behavior": "maybe"});
-        let err = parse_permission_response(PERMISSION_RESPONSE_METHOD, &params)
-            .unwrap_err();
+        let err = parse_permission_response(PERMISSION_RESPONSE_METHOD, &params).unwrap_err();
         assert_eq!(err, PermissionParseError::InvalidBehavior);
     }
 

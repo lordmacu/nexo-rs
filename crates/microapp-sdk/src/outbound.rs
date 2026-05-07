@@ -116,9 +116,7 @@ mod tests {
     #[tokio::test]
     async fn send_text_stub_returns_transport_error() {
         let d = OutboundDispatcher::new_stub();
-        let r = d
-            .send_text("whatsapp", "personal", "+5491100", "hi")
-            .await;
+        let r = d.send_text("whatsapp", "personal", "+5491100", "hi").await;
         assert!(matches!(r, Err(DispatchError::Transport(_))));
     }
 

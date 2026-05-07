@@ -104,10 +104,7 @@ impl RemoteVectorBackend {
 
         if self.stdin_tx.send(frame).await.is_err() {
             self.pending.remove(&id);
-            anyhow::bail!(
-                "backend {} stdin closed for {method}",
-                self.name
-            );
+            anyhow::bail!("backend {} stdin closed for {method}", self.name);
         }
 
         match tokio::time::timeout(timeout, rx).await {
@@ -148,25 +145,19 @@ impl RemoteVectorBackend {
         let backend = &self.name;
 
         match code {
-            -32601 => anyhow::anyhow!(
-                "backend {backend} method not implemented: {message}"
-            ),
+            -32601 => anyhow::anyhow!("backend {backend} method not implemented: {message}"),
             -33301 => {
                 let coll = data
                     .get("collection")
                     .and_then(|v| v.as_str())
                     .unwrap_or("?")
                     .to_string();
-                anyhow::anyhow!(
-                    "collection {coll} not found on backend {backend}"
-                )
+                anyhow::anyhow!("collection {coll} not found on backend {backend}")
             }
             -33302 => {
                 let expected = data.get("expected").and_then(|v| v.as_u64()).unwrap_or(0);
                 let got = data.get("got").and_then(|v| v.as_u64()).unwrap_or(0);
-                anyhow::anyhow!(
-                    "dimension mismatch: expected {expected}, got {got}"
-                )
+                anyhow::anyhow!("dimension mismatch: expected {expected}, got {got}")
             }
             -33303 => {
                 let secs = data
@@ -176,9 +167,7 @@ impl RemoteVectorBackend {
                 anyhow::anyhow!("rate limited; retry after {secs}s")
             }
             -33304 => anyhow::anyhow!("write failed: {message}"),
-            _ => anyhow::anyhow!(
-                "backend {backend} {method} error code {code}: {message}"
-            ),
+            _ => anyhow::anyhow!("backend {backend} {method} error code {code}: {message}"),
         }
     }
 }
@@ -235,11 +224,7 @@ impl VectorBackend for RemoteVectorBackend {
             .map_err(|e| anyhow::anyhow!("decode Vec<VectorMatch>: {e}"))
     }
 
-    async fn delete(
-        &self,
-        collection: &str,
-        ids: Vec<String>,
-    ) -> anyhow::Result<DeleteAck> {
+    async fn delete(&self, collection: &str, ids: Vec<String>) -> anyhow::Result<DeleteAck> {
         let result = self
             .send_request(
                 "memory.vector_delete",
@@ -417,11 +402,7 @@ mod tests {
         let (backend, mut stdin_rx, pending) = build();
         let task = tokio::spawn({
             let backend = backend.clone();
-            async move {
-                backend
-                    .delete("kb", vec!["r1".into(), "r2".into()])
-                    .await
-            }
+            async move { backend.delete("kb", vec!["r1".into(), "r2".into()]).await }
         });
         let frame = stdin_rx.recv().await.expect("frame");
         assert_eq!(frame["method"], "memory.vector_delete");

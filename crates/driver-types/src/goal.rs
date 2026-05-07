@@ -176,8 +176,7 @@ impl BudgetGuards {
             && usage.consecutive_errors >= self.max_consecutive_errors
         {
             Some(BudgetAxis::ConsecutiveErrors)
-        } else if self.max_consecutive_413 > 0
-            && usage.consecutive_413 >= self.max_consecutive_413
+        } else if self.max_consecutive_413 > 0 && usage.consecutive_413 >= self.max_consecutive_413
         {
             Some(BudgetAxis::Consecutive413)
         } else {

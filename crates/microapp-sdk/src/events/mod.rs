@@ -64,13 +64,9 @@ pub enum EventsError {
     InvalidTable(String),
 }
 
-pub use broadcast::{
-    build_persisting_listener, EventBroadcastState, DEFAULT_BROADCAST_CAPACITY,
-};
+pub use broadcast::{build_persisting_listener, EventBroadcastState, DEFAULT_BROADCAST_CAPACITY};
 pub use metadata::EventMetadata;
-pub use store::{
-    EventStore, ListFilter, DEFAULT_LIST_LIMIT, DEFAULT_TABLE, MAX_LIST_LIMIT,
-};
+pub use store::{EventStore, ListFilter, DEFAULT_LIST_LIMIT, DEFAULT_TABLE, MAX_LIST_LIMIT};
 pub use sweep::{
     spawn_sweep_loop, SweepConfig, SweepHandle, DEFAULT_MAX_ROWS, DEFAULT_RETENTION_DAYS,
     DEFAULT_SWEEP_INTERVAL_SECS,

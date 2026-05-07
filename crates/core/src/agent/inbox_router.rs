@@ -442,7 +442,8 @@ mod tests {
         let msg = mk_msg("researcher", "via broker");
         let payload = serde_json::to_value(&msg).unwrap();
         let topic = format!("{}.{}", INBOX_SUBJECT_PREFIX, goal.0);
-        broker.publish(&topic, Event::new(&topic, "test", payload))
+        broker
+            .publish(&topic, Event::new(&topic, "test", payload))
             .await
             .unwrap();
 

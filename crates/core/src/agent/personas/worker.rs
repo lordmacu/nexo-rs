@@ -175,11 +175,7 @@ mod tests {
 
     #[test]
     fn explicit_tool_surface_lists_each_tool_sorted() {
-        let tools: Vec<String> = vec![
-            "WebFetch".into(),
-            "BashTool".into(),
-            "FileEdit".into(),
-        ];
+        let tools: Vec<String> = vec!["WebFetch".into(), "BashTool".into(), "FileEdit".into()];
         let prompt = worker_system_prompt(WorkerPromptCtx::from_tools(&tools));
         // Sorted: BashTool < FileEdit < WebFetch
         let bash_idx = prompt.find("`BashTool`").unwrap();

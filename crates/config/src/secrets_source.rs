@@ -58,10 +58,9 @@ impl InMemorySecretsSource {
 
 impl SecretsSource for InMemorySecretsSource {
     fn read(&self, id: &str) -> io::Result<String> {
-        self.entries
-            .get(id)
-            .cloned()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("secret {id} not found")))
+        self.entries.get(id).cloned().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, format!("secret {id} not found"))
+        })
     }
 }
 
@@ -108,8 +107,7 @@ mod tests {
         let arc: std::sync::Arc<dyn SecretsSource> =
             std::sync::Arc::new(InMemorySecretsSource::new().with("k", "v"));
         assert_eq!(arc.read("k").unwrap(), "v");
-        let boxed: Box<dyn SecretsSource> =
-            Box::new(InMemorySecretsSource::new().with("k", "v"));
+        let boxed: Box<dyn SecretsSource> = Box::new(InMemorySecretsSource::new().with("k", "v"));
         assert_eq!(boxed.read("k").unwrap(), "v");
     }
 }

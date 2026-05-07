@@ -83,11 +83,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
     }
 
     /// Phase 83.8.12.6 — delete under a tenant scope.
-    async fn delete_for_tenant(
-        &self,
-        _tenant_id: &str,
-        _name: &str,
-    ) -> anyhow::Result<bool> {
+    async fn delete_for_tenant(&self, _tenant_id: &str, _name: &str) -> anyhow::Result<bool> {
         Err(anyhow::anyhow!(
             "delete_for_tenant not implemented for this SkillsStore"
         ))
@@ -184,9 +180,7 @@ pub async fn list(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
     let skills = match skills {
         Ok(v) => v,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "skills_store.list: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("skills_store.list: {e}")))
         }
     };
     let response = SkillsListResponse { skills };
@@ -220,9 +214,7 @@ pub async fn get(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
     let skill = match skill {
         Ok(s) => s,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "skills_store.get: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("skills_store.get: {e}")))
         }
     };
     let response = SkillsGetResponse { skill };
@@ -308,10 +300,10 @@ pub async fn delete(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
-    use std::sync::Mutex;
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     #[derive(Debug, Default, Clone)]
     struct InMemoryStore {
@@ -339,10 +331,7 @@ mod tests {
         async fn get(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
             Ok(self.rows.lock().unwrap().get(name).cloned())
         }
-        async fn upsert(
-            &self,
-            params: SkillsUpsertParams,
-        ) -> anyhow::Result<(SkillRecord, bool)> {
+        async fn upsert(&self, params: SkillsUpsertParams) -> anyhow::Result<(SkillRecord, bool)> {
             let mut rows = self.rows.lock().unwrap();
             let created = !rows.contains_key(&params.name);
             let record = SkillRecord {
@@ -443,11 +432,7 @@ mod tests {
     async fn body_too_large_rejected() {
         let s = store();
         let big = "x".repeat(MAX_SKILL_BODY_BYTES + 1);
-        let r = upsert(
-            s.as_ref(),
-            json!({ "name": "big", "body": big }),
-        )
-        .await;
+        let r = upsert(s.as_ref(), json!({ "name": "big", "body": big })).await;
         let e = r.error.expect("body cap should reject");
         assert_eq!(e.code(), -32602);
     }
@@ -495,8 +480,19 @@ mod tests {
 
     #[test]
     fn validate_skill_name_rejects_dots_slashes_uppercase_underscores() {
-        for name in ["", "Weather", "../escape", "foo/bar", "foo_bar", "foo.bar", "-foo"] {
-            assert!(validate_skill_name(name).is_err(), "{name} should be invalid");
+        for name in [
+            "",
+            "Weather",
+            "../escape",
+            "foo/bar",
+            "foo_bar",
+            "foo.bar",
+            "-foo",
+        ] {
+            assert!(
+                validate_skill_name(name).is_err(),
+                "{name} should be invalid"
+            );
         }
     }
 }

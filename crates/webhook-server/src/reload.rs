@@ -84,10 +84,7 @@ impl ReevaluateReport {
 /// separately to get the new `Router` + `RouterState`; this
 /// function does NOT mutate anything — it's a pure-fn comparator
 /// so the caller can swap atomically via `ArcSwap`.
-pub fn reevaluate(
-    previous: &Arc<RouterState>,
-    new_cfg: &WebhookServerConfig,
-) -> ReevaluateReport {
+pub fn reevaluate(previous: &Arc<RouterState>, new_cfg: &WebhookServerConfig) -> ReevaluateReport {
     let mut kept = Vec::new();
     let mut added = Vec::new();
     let mut evicted = Vec::new();
@@ -154,9 +151,7 @@ pub fn reevaluate(
 
     // Walk new → flag any not seen in previous as added.
     for s in &new_cfg.sources {
-        if !previous.sources.contains_key(&s.source.id)
-            && !added.contains(&s.source.id)
-        {
+        if !previous.sources.contains_key(&s.source.id) && !added.contains(&s.source.id) {
             added.push(s.source.id.clone());
         }
     }

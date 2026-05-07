@@ -84,6 +84,13 @@ mod tests {
         assert!(def.description.contains("send_to_peer"));
         // No required params.
         let req = def.parameters.get("required");
-        assert!(req.is_none() || req.unwrap().as_array().map(|a| a.is_empty()).unwrap_or(true));
+        assert!(
+            req.is_none()
+                || req
+                    .unwrap()
+                    .as_array()
+                    .map(|a| a.is_empty())
+                    .unwrap_or(true)
+        );
     }
 }

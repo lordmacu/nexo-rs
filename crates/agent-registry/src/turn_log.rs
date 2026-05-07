@@ -212,10 +212,9 @@ impl SqliteTurnLogStore {
         // pre-existing `recipient` column on the same module): we
         // tolerate the "duplicate column" error so migrate() stays
         // safe to call on every boot.
-        let alter_source =
-            sqlx::query("ALTER TABLE goal_turns ADD COLUMN source TEXT")
-                .execute(pool)
-                .await;
+        let alter_source = sqlx::query("ALTER TABLE goal_turns ADD COLUMN source TEXT")
+            .execute(pool)
+            .await;
         if let Err(e) = alter_source {
             let msg = e.to_string();
             if !msg.contains("duplicate column") {
@@ -233,10 +232,9 @@ impl SqliteTurnLogStore {
         // multi-tenant audit isolation. Same idempotent
         // ALTER pattern as `source` above so migrate() stays
         // safe to call on every boot.
-        let alter_account =
-            sqlx::query("ALTER TABLE goal_turns ADD COLUMN account_id TEXT")
-                .execute(pool)
-                .await;
+        let alter_account = sqlx::query("ALTER TABLE goal_turns ADD COLUMN account_id TEXT")
+            .execute(pool)
+            .await;
         if let Err(e) = alter_account {
             let msg = e.to_string();
             if !msg.contains("duplicate column") {
@@ -324,7 +322,20 @@ impl TurnLogStore for SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
+        for (
+            gid,
+            idx,
+            ts,
+            outcome,
+            decision,
+            summary,
+            diff_stat,
+            error,
+            raw_json,
+            source,
+            account_id,
+        ) in rows
+        {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -391,7 +402,20 @@ impl TurnLogStore for SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
+        for (
+            gid,
+            idx,
+            ts,
+            outcome,
+            decision,
+            summary,
+            diff_stat,
+            error,
+            raw_json,
+            source,
+            account_id,
+        ) in rows
+        {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -459,7 +483,20 @@ impl SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
+        for (
+            gid,
+            idx,
+            ts,
+            outcome,
+            decision,
+            summary,
+            diff_stat,
+            error,
+            raw_json,
+            source,
+            account_id,
+        ) in rows
+        {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -687,11 +724,7 @@ mod tests {
             .await
             .unwrap();
         let rows = store
-            .tail_for_account(
-                "tenant-a",
-                Utc.timestamp_opt(0, 0).unwrap(),
-                100,
-            )
+            .tail_for_account("tenant-a", Utc.timestamp_opt(0, 0).unwrap(), 100)
             .await
             .unwrap();
         assert_eq!(rows.len(), 2);
@@ -734,11 +767,7 @@ mod tests {
             .await
             .unwrap();
         let tenant_view = store
-            .tail_for_account(
-                "tenant-a",
-                Utc.timestamp_opt(0, 0).unwrap(),
-                100,
-            )
+            .tail_for_account("tenant-a", Utc.timestamp_opt(0, 0).unwrap(), 100)
             .await
             .unwrap();
         assert_eq!(tenant_view.len(), 1, "legacy NULL row excluded");

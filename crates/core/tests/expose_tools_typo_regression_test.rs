@@ -159,8 +159,7 @@ fn every_snapshot_name_resolves_via_lookup() {
 /// tool, keeping the bidirectional source-of-truth invariant.
 #[test]
 fn every_catalog_name_in_snapshot() {
-    let snapshot: HashSet<&'static str> =
-        KNOWN_CANONICAL_NAMES_SNAPSHOT.iter().copied().collect();
+    let snapshot: HashSet<&'static str> = KNOWN_CANONICAL_NAMES_SNAPSHOT.iter().copied().collect();
     let mut missing: Vec<&'static str> = EXPOSABLE_TOOLS
         .iter()
         .map(|e| e.name)
@@ -185,8 +184,7 @@ fn every_catalog_name_in_snapshot() {
 /// resolution mistake.
 #[test]
 fn snapshot_has_no_duplicates() {
-    let unique: HashSet<&'static str> =
-        KNOWN_CANONICAL_NAMES_SNAPSHOT.iter().copied().collect();
+    let unique: HashSet<&'static str> = KNOWN_CANONICAL_NAMES_SNAPSHOT.iter().copied().collect();
     assert_eq!(
         unique.len(),
         KNOWN_CANONICAL_NAMES_SNAPSHOT.len(),

@@ -146,8 +146,7 @@ struct Inner {
     /// the matching entry's `delta_tx`; the response handler
     /// resolves `final_tx` AND removes the entry so `delta_tx`
     /// closes (signalling end-of-stream to the consumer).
-    streaming_pending:
-        Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
+    streaming_pending: Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
 
     /// Phase 81.29 — tool catalog advertised by the subprocess
     /// at initialize-reply time. `register_remote_tool_handlers`
@@ -199,10 +198,8 @@ impl SubprocessNexoPlugin {
     pub async fn register_remote_vector_backends(
         &self,
         registry: &Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
-    ) -> Result<
-        Vec<String>,
-        crate::agent::vector_backend_registry::VectorBackendRegistrationError,
-    > {
+    ) -> Result<Vec<String>, crate::agent::vector_backend_registry::VectorBackendRegistrationError>
+    {
         let backends = self.cached_manifest.plugin.extends.memory_backends.clone();
         if backends.is_empty() {
             return Ok(Vec::new());
@@ -258,10 +255,7 @@ impl SubprocessNexoPlugin {
     pub async fn register_remote_hook_handlers(
         &self,
         hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
-    ) -> Result<
-        Vec<String>,
-        crate::agent::hook_remote::HookHandlerRegistrationError,
-    > {
+    ) -> Result<Vec<String>, crate::agent::hook_remote::HookHandlerRegistrationError> {
         let hooks = self.cached_manifest.plugin.extends.hooks.clone();
         if hooks.is_empty() {
             return Ok(Vec::new());
@@ -311,10 +305,7 @@ impl SubprocessNexoPlugin {
     pub async fn register_remote_tool_handlers(
         &self,
         scoped_registry: &Arc<crate::agent::scoped_tool_registry::ScopedToolRegistry>,
-    ) -> Result<
-        Vec<String>,
-        crate::agent::tool_remote::ToolHandlerRegistrationError,
-    > {
+    ) -> Result<Vec<String>, crate::agent::tool_remote::ToolHandlerRegistrationError> {
         let declared = self.cached_manifest.plugin.extends.tools.clone();
         if declared.is_empty() {
             return Ok(Vec::new());
@@ -342,10 +333,7 @@ impl SubprocessNexoPlugin {
             // Manifest declared but child did not advertise →
             // already warned at handshake. Skip silently here so
             // the registry doesn't accumulate dead handlers.
-            let def_match = advertised
-                .iter()
-                .find(|d| d.name == tool_name)
-                .cloned();
+            let def_match = advertised.iter().find(|d| d.name == tool_name).cloned();
             let def = match def_match {
                 Some(d) => d,
                 None => continue,
@@ -392,10 +380,7 @@ impl SubprocessNexoPlugin {
     pub async fn register_remote_llm_providers(
         &self,
         llm_registry: &Arc<nexo_llm::LlmRegistry>,
-    ) -> Result<
-        Vec<String>,
-        crate::agent::llm_remote::LlmProviderRegistrationError,
-    > {
+    ) -> Result<Vec<String>, crate::agent::llm_remote::LlmProviderRegistrationError> {
         let providers = self.cached_manifest.plugin.extends.llm_providers.clone();
         if providers.is_empty() {
             return Ok(Vec::new());
@@ -457,10 +442,7 @@ impl SubprocessNexoPlugin {
     pub async fn register_remote_channel_adapters(
         &self,
         channel_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
-    ) -> Result<
-        Vec<String>,
-        crate::agent::channel_adapter::ChannelAdapterRegistrationError,
-    > {
+    ) -> Result<Vec<String>, crate::agent::channel_adapter::ChannelAdapterRegistrationError> {
         let kinds = self.cached_manifest.plugin.extends.channels.clone();
         if kinds.is_empty() {
             return Ok(Vec::new());
@@ -538,9 +520,7 @@ impl SubprocessNexoPlugin {
         // hard failure at boot rather than silent confusion.
         for key in entry.env.keys() {
             if key.starts_with("NEXO_") {
-                anyhow::bail!(
-                    "manifest entrypoint.env may not redefine reserved nexo env `{key}`"
-                );
+                anyhow::bail!("manifest entrypoint.env may not redefine reserved nexo env `{key}`");
             }
         }
 
@@ -555,15 +535,8 @@ impl SubprocessNexoPlugin {
             match (runner_guard.as_ref(), state_guard.as_ref()) {
                 (Some(runner), Some(state_dir)) => {
                     let wrapped = runner
-                        .wrap_command(
-                            &self.cached_manifest,
-                            state_dir,
-                            &command,
-                            &entry.args,
-                        )
-                        .map_err(|e| {
-                            anyhow::anyhow!("sandbox setup failed: {e}")
-                        })?;
+                        .wrap_command(&self.cached_manifest, state_dir, &command, &entry.args)
+                        .map_err(|e| anyhow::anyhow!("sandbox setup failed: {e}"))?;
                     if let Some(diag) = &wrapped.diagnostic {
                         tracing::warn!(
                             target: "plugin.sandbox",
@@ -621,15 +594,13 @@ impl SubprocessNexoPlugin {
         // bridge wires up) can poll `try_wait` while shutdown can
         // still `take()` for reaping. Mutex contention is cheap:
         // one half-second poll vs single take on shutdown.
-        let child_handle: Arc<Mutex<Option<Child>>> =
-            Arc::new(Mutex::new(Some(child)));
+        let child_handle: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(Some(child)));
 
         let cancel = ctx_shutdown.child_token();
         let pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>> =
             Arc::new(DashMap::new());
-        let streaming_pending: Arc<
-            DashMap<u64, crate::agent::llm_remote::StreamingPending>,
-        > = Arc::new(DashMap::new());
+        let streaming_pending: Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>> =
+            Arc::new(DashMap::new());
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Value>(STDIN_CHANNEL_DEPTH);
 
         // Stdin writer task — single consumer of stdin_rx, writes
@@ -821,10 +792,7 @@ impl SubprocessNexoPlugin {
                 // (initialize / shutdown / future). No id =
                 // notification.
                 let id_val = parsed.get("id").cloned();
-                let method_str = parsed
-                    .get("method")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let method_str = parsed.get("method").and_then(|v| v.as_str()).unwrap_or("");
                 if id_val.is_some() && !method_str.is_empty() {
                     // Phase 81.20.a — incoming child request.
                     // Dispatch + write response back via stdin_tx.
@@ -833,8 +801,7 @@ impl SubprocessNexoPlugin {
                     // is None (boot still racing or no broker), we
                     // return -32603 "service not yet wired".
                     let id_for_reply = id_val.clone().unwrap_or(Value::Null);
-                    let params =
-                        parsed.get("params").cloned().unwrap_or(Value::Null);
+                    let params = parsed.get("params").cloned().unwrap_or(Value::Null);
                     let response = match reader_bridge.get() {
                         Some(bridge) => {
                             handle_child_request(
@@ -847,10 +814,7 @@ impl SubprocessNexoPlugin {
                             )
                             .await
                         }
-                        None => Err((
-                            -32603,
-                            "host services not yet wired".to_string(),
-                        )),
+                        None => Err((-32603, "host services not yet wired".to_string())),
                     };
                     let frame = match response {
                         Ok(result) => json!({
@@ -893,15 +857,14 @@ impl SubprocessNexoPlugin {
                         let payload = if let Some(err) = parsed.get("error") {
                             Err(err.to_string())
                         } else {
-                            let result =
-                                parsed.get("result").cloned().unwrap_or(Value::Null);
+                            let result = parsed.get("result").cloned().unwrap_or(Value::Null);
                             match serde_json::from_value::<
                                 crate::agent::llm_remote::wire::WireChatResponse,
                             >(result)
                             {
-                                Ok(wire) => Ok(
-                                    crate::agent::llm_remote::wire::wire_to_response(wire),
-                                ),
+                                Ok(wire) => {
+                                    Ok(crate::agent::llm_remote::wire::wire_to_response(wire))
+                                }
                                 Err(e) => Err(format!("decode WireChatResponse: {e}")),
                             }
                         };
@@ -940,10 +903,7 @@ impl SubprocessNexoPlugin {
                         .get("params")
                         .and_then(|p| p.get("request_id"))
                         .and_then(|v| v.as_u64());
-                    let chunk_value = parsed
-                        .get("params")
-                        .and_then(|p| p.get("chunk"))
-                        .cloned();
+                    let chunk_value = parsed.get("params").and_then(|p| p.get("chunk")).cloned();
                     let (Some(rid), Some(chunk_value)) = (request_id, chunk_value) else {
                         tracing::warn!(
                             plugin = %reader_plugin_id,
@@ -1028,9 +988,7 @@ impl SubprocessNexoPlugin {
         let returned_id = result
             .pointer("/manifest/plugin/id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                anyhow::anyhow!("initialize reply missing manifest.plugin.id")
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("initialize reply missing manifest.plugin.id"))?;
         if returned_id != self.cached_manifest.plugin.id {
             cancel.cancel();
             kill_handle(&child_handle).await;
@@ -1049,46 +1007,43 @@ impl SubprocessNexoPlugin {
         // not authorize). Manifest entries WITHOUT an advertised
         // counterpart are tolerated but logged at warn — they will
         // surface as -33401 ToolNotFound at first agent-loop call.
-        let declared_tools: Vec<crate::agent::tool_remote::RemoteToolDef> =
-            match result.pointer("/tools") {
-                Some(Value::Array(arr)) => {
-                    let mut out = Vec::with_capacity(arr.len());
-                    for item in arr {
-                        let def: crate::agent::tool_remote::RemoteToolDef =
-                            serde_json::from_value(item.clone()).map_err(|e| {
-                                anyhow::anyhow!(
-                                    "initialize reply tools[]: malformed entry: {e}"
-                                )
-                            })?;
-                        if !self
-                            .cached_manifest
-                            .plugin
-                            .extends
-                            .tools
-                            .iter()
-                            .any(|t| t == &def.name)
-                        {
-                            cancel.cancel();
-                            kill_handle(&child_handle).await;
-                            anyhow::bail!(
+        let declared_tools: Vec<crate::agent::tool_remote::RemoteToolDef> = match result
+            .pointer("/tools")
+        {
+            Some(Value::Array(arr)) => {
+                let mut out = Vec::with_capacity(arr.len());
+                for item in arr {
+                    let def: crate::agent::tool_remote::RemoteToolDef =
+                        serde_json::from_value(item.clone()).map_err(|e| {
+                            anyhow::anyhow!("initialize reply tools[]: malformed entry: {e}")
+                        })?;
+                    if !self
+                        .cached_manifest
+                        .plugin
+                        .extends
+                        .tools
+                        .iter()
+                        .any(|t| t == &def.name)
+                    {
+                        cancel.cancel();
+                        kill_handle(&child_handle).await;
+                        anyhow::bail!(
                                 "initialize reply advertises undeclared tool `{}` (not in extends.tools = {:?})",
                                 def.name,
                                 self.cached_manifest.plugin.extends.tools
                             );
-                        }
-                        out.push(def);
                     }
-                    out
+                    out.push(def);
                 }
-                Some(_) => {
-                    cancel.cancel();
-                    kill_handle(&child_handle).await;
-                    anyhow::bail!(
-                        "initialize reply field `tools` must be an array if present"
-                    );
-                }
-                None => Vec::new(),
-            };
+                out
+            }
+            Some(_) => {
+                cancel.cancel();
+                kill_handle(&child_handle).await;
+                anyhow::bail!("initialize reply field `tools` must be an array if present");
+            }
+            None => Vec::new(),
+        };
         for t in &self.cached_manifest.plugin.extends.tools {
             if !declared_tools.iter().any(|d| &d.name == t) {
                 tracing::warn!(
@@ -1126,8 +1081,7 @@ impl SubprocessNexoPlugin {
         // one-shot reminder so operators know the manifest field
         // landed but the behavior they expected is deferred to
         // 81.21.b.b.
-        let supervisor_respawn_requested =
-            self.cached_manifest.plugin.supervisor.respawn;
+        let supervisor_respawn_requested = self.cached_manifest.plugin.supervisor.respawn;
         let supervisor_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(500));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1182,17 +1136,14 @@ impl SubprocessNexoPlugin {
                             );
                         }
                         if let Some(broker) = supervisor_broker.as_ref() {
-                            let topic = format!(
-                                "plugin.lifecycle.{}.crashed",
-                                supervisor_plugin_id
-                            );
+                            let topic =
+                                format!("plugin.lifecycle.{}.crashed", supervisor_plugin_id);
                             let payload = json!({
                                 "plugin_id": supervisor_plugin_id,
                                 "exit_code": exit_code,
                                 "stderr_tail": stderr_tail_drained,
                             });
-                            let event =
-                                Event::new(&topic, "plugin.supervisor", payload);
+                            let event = Event::new(&topic, "plugin.supervisor", payload);
                             if let Err(e) = broker.publish(&topic, event).await {
                                 tracing::warn!(
                                     target: "plugin.supervisor",
@@ -1221,8 +1172,12 @@ impl SubprocessNexoPlugin {
             }
         });
 
-        let mut tasks =
-            vec![writer_handle, reader_handle, stderr_handle, supervisor_handle];
+        let mut tasks = vec![
+            writer_handle,
+            reader_handle,
+            stderr_handle,
+            supervisor_handle,
+        ];
         if let Some(broker) = broker {
             let kinds: Vec<String> = self
                 .cached_manifest
@@ -1489,37 +1444,30 @@ async fn handle_memory_recall(
     let agent_id = params
         .get("agent_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (-32602, "missing or invalid `agent_id` (string)".to_string())
-        })?;
+        .ok_or_else(|| (-32602, "missing or invalid `agent_id` (string)".to_string()))?;
     let query = params
         .get("query")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (-32602, "missing or invalid `query` (string)".to_string())
-        })?;
-    let limit_u64 = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(10);
+        .ok_or_else(|| (-32602, "missing or invalid `query` (string)".to_string()))?;
+    let limit_u64 = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
     // Hard cap to prevent a malicious / buggy plugin from asking
     // for unbounded results. Same defensive shape as Phase 80.4
     // tail caps.
     let limit: usize = (limit_u64 as usize).min(1000);
-    let entries = memory
-        .recall(agent_id, query, limit)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                plugin_id,
-                agent_id,
-                error = %e,
-                "memory.recall: backend returned error"
-            );
-            (-32603, format!("memory recall failed: {e}"))
-        })?;
+    let entries = memory.recall(agent_id, query, limit).await.map_err(|e| {
+        tracing::warn!(
+            plugin_id,
+            agent_id,
+            error = %e,
+            "memory.recall: backend returned error"
+        );
+        (-32603, format!("memory recall failed: {e}"))
+    })?;
     let entries_json = serde_json::to_value(&entries).map_err(|e| {
-        (-32603, format!("memory.recall: serialize entries failed: {e}"))
+        (
+            -32603,
+            format!("memory.recall: serialize entries failed: {e}"),
+        )
     })?;
     Ok(json!({ "entries": entries_json }))
 }
@@ -1568,17 +1516,16 @@ async fn handle_llm_complete(
     let provider = params
         .get("provider")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (-32602, "missing or invalid `provider` (string)".to_string())
-        })?;
+        .ok_or_else(|| (-32602, "missing or invalid `provider` (string)".to_string()))?;
     let model = params
         .get("model")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            (-32602, "missing or invalid `model` (string)".to_string())
-        })?;
+        .ok_or_else(|| (-32602, "missing or invalid `model` (string)".to_string()))?;
     let messages_val = params.get("messages").ok_or_else(|| {
-        (-32602, "missing `messages` (array of {role, content})".to_string())
+        (
+            -32602,
+            "missing `messages` (array of {role, content})".to_string(),
+        )
     })?;
     let messages: Vec<ChatMessage> = serde_json::from_value(messages_val.clone())
         .map_err(|e| {
@@ -1622,19 +1569,16 @@ async fn handle_llm_complete(
         model: model.to_string(),
     };
 
-    let client = llm
-        .registry
-        .build(&llm.config, &model_cfg)
-        .map_err(|e| {
-            tracing::warn!(
-                plugin_id,
-                provider,
-                model,
-                error = %e,
-                "llm.complete: client build failed"
-            );
-            (-32603, format!("llm client build failed: {e}"))
-        })?;
+    let client = llm.registry.build(&llm.config, &model_cfg).map_err(|e| {
+        tracing::warn!(
+            plugin_id,
+            provider,
+            model,
+            error = %e,
+            "llm.complete: client build failed"
+        );
+        (-32603, format!("llm client build failed: {e}"))
+    })?;
 
     let mut req = ChatRequest::new(model.to_string(), messages);
     req.max_tokens = max_tokens;
@@ -1792,10 +1736,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
         &self.cached_manifest
     }
 
-    async fn init(
-        &self,
-        ctx: &mut PluginInitContext<'_>,
-    ) -> Result<(), PluginInitError> {
+    async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
         // Phase 81.22 — stash the sandbox runner + plugin state
         // dir so `spawn_and_handshake` can wrap the child Command
         // with bwrap argv when the manifest declares
@@ -1890,7 +1831,6 @@ pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1965,9 +1905,7 @@ RUST_LOG = "info"
 
     #[tokio::test]
     async fn init_fails_when_command_not_found() {
-        let m = manifest_with_entrypoint(Some(
-            "/definitely/does/not/exist/nexo-plugin-test-bin",
-        ));
+        let m = manifest_with_entrypoint(Some("/definitely/does/not/exist/nexo-plugin-test-bin"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
         let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
@@ -1983,10 +1921,10 @@ RUST_LOG = "info"
     #[tokio::test]
     async fn init_fails_when_env_collides_with_nexo_reserved() {
         let mut m = manifest_with_entrypoint(Some("/bin/true"));
-        m.plugin.entrypoint.env.insert(
-            "NEXO_STATE_ROOT".to_string(),
-            "/tmp/evil".to_string(),
-        );
+        m.plugin
+            .entrypoint
+            .env
+            .insert("NEXO_STATE_ROOT".to_string(), "/tmp/evil".to_string());
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
         let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
@@ -2166,11 +2104,7 @@ sleep 5
         // handshake + no panic on the bridge tasks. The richer
         // assertion ships with `bridge_forwards_valid_child_publish_*`.
         std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
-        let path = write_bridge_mock_script(
-            "nexo-bridge-test-subscribe",
-            "test_plugin",
-            None,
-        );
+        let path = write_bridge_mock_script("nexo-bridge-test-subscribe", "test_plugin", None);
         let m = manifest_with_channel(path.to_str().unwrap(), "slack");
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
@@ -2268,15 +2202,13 @@ sleep 5
         // no bridge cell set. Verifies tests can still drive the
         // handshake shape without standing up a broker.
         std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
-        let path = write_bridge_mock_script(
-            "nexo-bridge-test-none",
-            "test_plugin",
-            None,
-        );
+        let path = write_bridge_mock_script("nexo-bridge-test-none", "test_plugin", None);
         let m = manifest_with_channel(path.to_str().unwrap(), "slack");
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None, None, None).await;
+        let res = plugin
+            .spawn_and_handshake(cancel.clone(), None, None, None)
+            .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
         // 81.23 + 81.21 — writer + stdout reader + stderr reader
@@ -2329,7 +2261,9 @@ sleep 5
         let m = manifest_with_entrypoint(Some(path.to_str().unwrap()));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None, None, None).await;
+        let res = plugin
+            .spawn_and_handshake(cancel.clone(), None, None, None)
+            .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
         let inner = res.expect("handshake must succeed with stderr piped");
@@ -2413,17 +2347,10 @@ exit 7
             .get("stderr_tail")
             .and_then(|v| v.as_array())
             .expect("stderr_tail field must be an array");
-        let lines: Vec<&str> = stderr_tail
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
+        let lines: Vec<&str> = stderr_tail.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(
             lines,
-            vec![
-                "diag line 1",
-                "diag line 2",
-                "fatal: simulated crash cause"
-            ]
+            vec!["diag line 1", "diag line 2", "fatal: simulated crash cause"]
         );
         cancel.cancel();
     }
@@ -2450,8 +2377,8 @@ stderr_tail_lines = {}
 "#,
             SUPERVISOR_STDERR_TAIL_MAX + 1
         );
-        let manifest: PluginManifest =
-            toml::from_str(&toml_str).expect("manifest parses (cap is enforced at validate time, not parse)");
+        let manifest: PluginManifest = toml::from_str(&toml_str)
+            .expect("manifest parses (cap is enforced at validate time, not parse)");
         let mut errors = Vec::new();
         nexo_plugin_manifest::validate::run_all(
             &manifest,
@@ -2575,12 +2502,7 @@ stderr_tail_lines = {}
         };
 
         // Missing agent_id
-        let r = handle_memory_recall(
-            &bridge,
-            "test_plugin",
-            &json!({"query": "x"}),
-        )
-        .await;
+        let r = handle_memory_recall(&bridge, "test_plugin", &json!({"query": "x"})).await;
         match r {
             Err((-32602, msg)) => assert!(msg.contains("agent_id")),
             other => panic!("expected -32602 missing agent_id, got {other:?}"),
@@ -2615,7 +2537,11 @@ stderr_tail_lines = {}
             "model": "x",
             "messages": [{"role":"user","content":"hi"}],
         });
-        match { let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8); let _dummy_id = json!(99); handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await } {
+        match {
+            let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8);
+            let _dummy_id = json!(99);
+            handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await
+        } {
             Ok(v) => panic!("expected -32603, got Ok({v:?})"),
             Err((code, msg)) => {
                 assert_eq!(code, -32603);
@@ -2639,7 +2565,12 @@ stderr_tail_lines = {}
             memory: None,
             llm: Some(LlmServices {
                 registry: Arc::new(LlmRegistry::new()),
-                config: Arc::new(LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+                config: Arc::new(LlmConfig {
+                    providers: std::collections::HashMap::new(),
+                    retry: Default::default(),
+                    context_optimization: Default::default(),
+                    tenants: std::collections::HashMap::new(),
+                }),
             }),
         };
 
@@ -2719,7 +2650,12 @@ stderr_tail_lines = {}
             memory: None,
             llm: Some(LlmServices {
                 registry: Arc::new(LlmRegistry::new()), // empty — no providers
-                config: Arc::new(LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+                config: Arc::new(LlmConfig {
+                    providers: std::collections::HashMap::new(),
+                    retry: Default::default(),
+                    context_optimization: Default::default(),
+                    tenants: std::collections::HashMap::new(),
+                }),
             }),
         };
         let params = json!({
@@ -2727,13 +2663,16 @@ stderr_tail_lines = {}
             "model": "x",
             "messages": [{"role":"user","content":"hi"}],
         });
-        match { let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8); let _dummy_id = json!(99); handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await } {
+        match {
+            let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8);
+            let _dummy_id = json!(99);
+            handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await
+        } {
             Ok(v) => panic!("expected -32603, got Ok({v:?})"),
             Err((code, msg)) => {
                 assert_eq!(code, -32603);
                 assert!(
-                    msg.contains("client build failed")
-                        || msg.contains("nonexistent_provider"),
+                    msg.contains("client build failed") || msg.contains("nonexistent_provider"),
                     "msg should mention build failure, got: {msg}"
                 );
             }

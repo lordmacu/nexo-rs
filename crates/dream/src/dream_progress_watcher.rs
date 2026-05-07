@@ -57,11 +57,7 @@ struct ProgressState {
 }
 
 impl DreamProgressWatcher {
-    pub fn new(
-        run_id: Uuid,
-        audit: Arc<dyn DreamRunStore>,
-        memory_dir: PathBuf,
-    ) -> Self {
+    pub fn new(run_id: Uuid, audit: Arc<dyn DreamRunStore>, memory_dir: PathBuf) -> Self {
         Self {
             run_id,
             audit,
@@ -215,11 +211,7 @@ mod tests {
         ChatMessage::assistant(text)
     }
 
-    fn assistant_msg_tool_call(
-        text: &str,
-        tool: &str,
-        file_path: &str,
-    ) -> ChatMessage {
+    fn assistant_msg_tool_call(text: &str, tool: &str, file_path: &str) -> ChatMessage {
         ChatMessage::assistant_tool_calls(
             vec![ToolCall {
                 id: "c1".into(),
@@ -234,14 +226,14 @@ mod tests {
     async fn ignores_user_messages() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
-        let watcher = DreamProgressWatcher::new(
-            run_id,
-            store.clone(),
-            tmp.path().canonicalize().unwrap(),
-        );
+        let watcher =
+            DreamProgressWatcher::new(run_id, store.clone(), tmp.path().canonicalize().unwrap());
 
         watcher.on_message(&ChatMessage::user("hello")).await;
         let row = store.get(run_id).await.unwrap().unwrap();
@@ -253,16 +245,18 @@ mod tests {
     async fn appends_turn_with_text_only() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
-        let watcher = DreamProgressWatcher::new(
-            run_id,
-            store.clone(),
-            tmp.path().canonicalize().unwrap(),
-        );
+        let watcher =
+            DreamProgressWatcher::new(run_id, store.clone(), tmp.path().canonicalize().unwrap());
 
-        watcher.on_message(&assistant_msg_text("thinking out loud")).await;
+        watcher
+            .on_message(&assistant_msg_text("thinking out loud"))
+            .await;
         let row = store.get(run_id).await.unwrap().unwrap();
         assert_eq!(row.turns.len(), 1);
         assert_eq!(row.turns[0].text, "thinking out loud");
@@ -273,14 +267,14 @@ mod tests {
     async fn counts_tool_uses_in_turn() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
-        let watcher = DreamProgressWatcher::new(
-            run_id,
-            store.clone(),
-            tmp.path().canonicalize().unwrap(),
-        );
+        let watcher =
+            DreamProgressWatcher::new(run_id, store.clone(), tmp.path().canonicalize().unwrap());
 
         let msg = ChatMessage::assistant_tool_calls(
             vec![
@@ -306,15 +300,17 @@ mod tests {
     async fn collects_file_edit_inside_memdir() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let memdir = tmp.path().canonicalize().unwrap();
         let inside = memdir.join("topic.md");
         fs::write(&inside, "x").unwrap();
 
-        let watcher =
-            DreamProgressWatcher::new(run_id, store.clone(), memdir.clone());
+        let watcher = DreamProgressWatcher::new(run_id, store.clone(), memdir.clone());
 
         let path_str = inside.to_string_lossy().into_owned();
         watcher
@@ -335,12 +331,18 @@ mod tests {
     async fn flags_escape_outside_memdir() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let memdir = tmp.path().canonicalize().unwrap();
         // /tmp is outside memdir.
-        let outside = std::env::temp_dir().canonicalize().unwrap().join("escape_test_dream.md");
+        let outside = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join("escape_test_dream.md");
         fs::write(&outside, "x").unwrap();
 
         let watcher = DreamProgressWatcher::new(run_id, store.clone(), memdir);
@@ -365,7 +367,10 @@ mod tests {
     async fn ignores_non_edit_tools() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let memdir = tmp.path().canonicalize().unwrap();
@@ -388,7 +393,10 @@ mod tests {
     async fn dedupes_repeated_paths() {
         let store = mk_store().await;
         let run_id = Uuid::new_v4();
-        store.insert(&mk_row(run_id, GoalId(Uuid::new_v4()))).await.unwrap();
+        store
+            .insert(&mk_row(run_id, GoalId(Uuid::new_v4())))
+            .await
+            .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let memdir = tmp.path().canonicalize().unwrap();
@@ -396,8 +404,7 @@ mod tests {
         fs::write(&inside, "x").unwrap();
         let path_str = inside.to_string_lossy().into_owned();
 
-        let watcher =
-            DreamProgressWatcher::new(run_id, store.clone(), memdir);
+        let watcher = DreamProgressWatcher::new(run_id, store.clone(), memdir);
         watcher
             .on_message(&assistant_msg_tool_call("e1", "FileEdit", &path_str))
             .await;

@@ -57,11 +57,10 @@ pub use error::ManifestError;
 pub use manifest::{
     AdminCapabilities, AdvisorsSection, AgentsSection, Capabilities, Capability,
     CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection,
-    ContractsSection, EntrypointSection, ExtendsSection, GateKind, GateRisk,
-    HttpServerCapability, MetaSection, PluginManifest, PluginSection, RequiresSection,
-    SkillsSection, SupervisorSection, ToolsSection, UiHint, UiSection,
-    CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME,
-    SUPERVISOR_STDERR_TAIL_MAX,
+    ContractsSection, EntrypointSection, ExtendsSection, GateKind, GateRisk, HttpServerCapability,
+    MetaSection, PluginManifest, PluginSection, RequiresSection, SkillsSection, SupervisorSection,
+    ToolsSection, UiHint, UiSection, CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS,
+    PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
 };
 pub use sandbox::{
     contains_state_dir_token, path_under_or_equals_denylist, SandboxNetwork, SandboxPathKind,

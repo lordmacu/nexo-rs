@@ -75,10 +75,9 @@ async fn register_auto_dream_returns_previous_when_overwriting() {
     let orch = build_orch().await;
     let first: Arc<dyn AutoDreamHook> = Arc::new(DummyHook);
     let second: Arc<dyn AutoDreamHook> = Arc::new(DummyHook);
-    assert!(
-        orch.register_auto_dream("ana".to_string(), first.clone())
-            .is_none()
-    );
+    assert!(orch
+        .register_auto_dream("ana".to_string(), first.clone())
+        .is_none());
     let prev = orch.register_auto_dream("ana".to_string(), second);
     assert!(prev.is_some(), "overwrite must return the displaced hook");
     assert!(Arc::ptr_eq(&prev.unwrap(), &first));

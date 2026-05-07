@@ -247,10 +247,7 @@ fn is_tts_safe(ch: char) -> bool {
 }
 
 fn is_safe_punct(ch: char) -> bool {
-    matches!(
-        ch,
-        '.' | ',' | '?' | '¿' | '!' | '¡' | ';' | ':' | '\''
-    )
+    matches!(ch, '.' | ',' | '?' | '¿' | '!' | '¡' | ';' | ':' | '\'')
 }
 
 #[cfg(test)]
@@ -259,7 +256,10 @@ mod tests {
 
     #[test]
     fn strip_drops_emoji_keeps_accents() {
-        assert_eq!(strip_emojis_for_tts("hola 👋 cómo estás"), "hola cómo estás");
+        assert_eq!(
+            strip_emojis_for_tts("hola 👋 cómo estás"),
+            "hola cómo estás"
+        );
         assert_eq!(strip_emojis_for_tts("✅ ok"), " ok");
         assert_eq!(strip_emojis_for_tts("100%"), "100 ");
         assert_eq!(strip_emojis_for_tts("¿qué tal?"), "¿qué tal?");

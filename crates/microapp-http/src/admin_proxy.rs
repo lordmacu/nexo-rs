@@ -130,10 +130,7 @@ mod tests {
     #[tokio::test]
     async fn proxies_method_and_params_to_daemon() {
         let mock = MockAdminRpc::new();
-        mock.on(
-            "nexo/admin/agents/list",
-            json!({"agents": [{"id": "ana"}]}),
-        );
+        mock.on("nexo/admin/agents/list", json!({"agents": [{"id": "ana"}]}));
         let app = router_with_mock(&mock);
         let res = app
             .oneshot(post_admin("nexo/admin/agents/list", json!({})))

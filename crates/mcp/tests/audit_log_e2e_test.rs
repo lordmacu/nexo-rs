@@ -211,9 +211,7 @@ async fn tools_call_audit_row_records_args_hash_and_size() {
     );
 
     let payload = serde_json::json!({"name":"toggle","arguments":{"mode":"ok"}});
-    let outcome = d
-        .dispatch("tools/call", payload, &ctx_for("acme"))
-        .await;
+    let outcome = d.dispatch("tools/call", payload, &ctx_for("acme")).await;
     assert!(matches!(outcome, DispatchOutcome::Reply(_)));
 
     writer.drain(Duration::from_secs(2)).await;
@@ -225,7 +223,8 @@ async fn tools_call_audit_row_records_args_hash_and_size() {
     let hash = row.args_hash.as_deref().expect("args_hash must be Some");
     assert_eq!(hash.len(), 16, "expected 16 chars, got `{hash}`");
     assert!(
-        hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        hash.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "expected lowercase hex, got `{hash}`"
     );
 

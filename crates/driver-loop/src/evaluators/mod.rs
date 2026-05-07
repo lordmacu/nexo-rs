@@ -8,6 +8,5 @@
 pub mod llm_judge;
 
 pub use llm_judge::{
-    parse_judge_response, LlmJudgeEvaluator, JudgeBackend, JudgeError, JudgeResponse,
-    JudgeVerdict,
+    parse_judge_response, JudgeBackend, JudgeError, JudgeResponse, JudgeVerdict, LlmJudgeEvaluator,
 };

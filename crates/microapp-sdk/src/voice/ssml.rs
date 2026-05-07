@@ -64,16 +64,13 @@ pub fn strip_voice_markers(input: &str) -> String {
 
 static RE_PAUSE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\[pause=(\d{1,5})ms\]").expect("re_pause"));
-static RE_EM: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[em\](.*?)\[/em\]").expect("re_em"));
+static RE_EM: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[em\](.*?)\[/em\]").expect("re_em"));
 static RE_STRONG: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\[strong\](.*?)\[/strong\]").expect("re_strong"));
 static RE_SPELL: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\[spell\](.*?)\[/spell\]").expect("re_spell"));
-static RE_SLOW: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[slow\](.*?)\[/slow\]").expect("re_slow"));
-static RE_FAST: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\[fast\](.*?)\[/fast\]").expect("re_fast"));
+static RE_SLOW: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[slow\](.*?)\[/slow\]").expect("re_slow"));
+static RE_FAST: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[fast\](.*?)\[/fast\]").expect("re_fast"));
 // Markdown emphasis the LLM emits out of habit — mapped to SSML
 // so the audio actually reflects it. Bold (`**X**`, `__X__`) →
 // strong; italic (`*X*`, `_X_`) → moderate. Bold runs first so
@@ -85,16 +82,20 @@ static RE_FAST: Lazy<Regex> =
 //   - No newline inside — markdown emphasis is line-local.
 //   - Italic single-underscore requires non-underscore boundaries
 //     so we don't mangle `snake_case_idents`.
-static RE_MD_BOLD_STARS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\*\*([^*\n][^*\n]{0,198}?[^*\n\s]|[^*\n\s])\*\*").expect("re_md_bold_stars"));
-static RE_MD_BOLD_UNDER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"__([^_\n][^_\n]{0,198}?[^_\n\s]|[^_\n\s])__").expect("re_md_bold_under"));
-static RE_MD_ITAL_STARS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:^|[\s(¡¿])\*([^*\s][^*\n]{0,198}?[^*\s])\*(?:[\s.,;:!?)¡¿]|$)")
-        .expect("re_md_ital_stars"));
-static RE_MD_ITAL_UNDER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:^|[\s(¡¿])_([^_\s][^_\n]{0,198}?[^_\s])_(?:[\s.,;:!?)¡¿]|$)")
-        .expect("re_md_ital_under"));
+static RE_MD_BOLD_STARS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\*\*([^*\n][^*\n]{0,198}?[^*\n\s]|[^*\n\s])\*\*").expect("re_md_bold_stars")
+});
+static RE_MD_BOLD_UNDER: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"__([^_\n][^_\n]{0,198}?[^_\n\s]|[^_\n\s])__").expect("re_md_bold_under")
+});
+static RE_MD_ITAL_STARS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:^|[\s(¡¿])\*([^*\s][^*\n]{0,198}?[^*\s])\*(?:[\s.,;:!?)¡¿]|$)")
+        .expect("re_md_ital_stars")
+});
+static RE_MD_ITAL_UNDER: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:^|[\s(¡¿])_([^_\s][^_\n]{0,198}?[^_\s])_(?:[\s.,;:!?)¡¿]|$)")
+        .expect("re_md_ital_under")
+});
 
 fn translate_markers(input: &str) -> String {
     let mut s = input.to_string();
@@ -126,10 +127,7 @@ fn translate_markers(input: &str) -> String {
         .into_owned();
     s = RE_SPELL
         .replace_all(&s, |c: &Captures<'_>| {
-            format!(
-                r#"<say-as interpret-as="characters">{}</say-as>"#,
-                &c[1]
-            )
+            format!(r#"<say-as interpret-as="characters">{}</say-as>"#, &c[1])
         })
         .into_owned();
     s = RE_SLOW
@@ -167,9 +165,7 @@ fn translate_markers(input: &str) -> String {
             let inner = &c[1];
             let lead = full.chars().next().unwrap_or(' ');
             let trail = full.chars().last().unwrap_or(' ');
-            format!(
-                r#"{lead}<prosody volume="+15%" rate="-3%">{inner}</prosody>{trail}"#
-            )
+            format!(r#"{lead}<prosody volume="+15%" rate="-3%">{inner}</prosody>{trail}"#)
         })
         .into_owned();
     s = RE_MD_ITAL_UNDER
@@ -178,9 +174,7 @@ fn translate_markers(input: &str) -> String {
             let inner = &c[1];
             let lead = full.chars().next().unwrap_or(' ');
             let trail = full.chars().last().unwrap_or(' ');
-            format!(
-                r#"{lead}<prosody volume="+15%" rate="-3%">{inner}</prosody>{trail}"#
-            )
+            format!(r#"{lead}<prosody volume="+15%" rate="-3%">{inner}</prosody>{trail}"#)
         })
         .into_owned();
     s
@@ -190,33 +184,28 @@ fn translate_markers(input: &str) -> String {
 
 // ISO date `2026-05-05` — must be flanked by non-alphanumeric so
 // we don't grab IDs or hashes.
-static RE_DATE_ISO: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(\d{4}-\d{2}-\d{2})\b").expect("re_date_iso")
-});
+static RE_DATE_ISO: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(\d{4}-\d{2}-\d{2})\b").expect("re_date_iso"));
 // `dd/mm/yyyy` — Spanish convention.
-static RE_DATE_SLASH: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(\d{1,2}/\d{1,2}/\d{4})\b").expect("re_date_slash")
-});
+static RE_DATE_SLASH: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(\d{1,2}/\d{1,2}/\d{4})\b").expect("re_date_slash"));
 // Currency with $ / € prefix and optional thousands separators.
 static RE_CURRENCY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(\$|€|£|US\$|COP\s|USD\s)\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)")
         .expect("re_currency")
 });
 // 4+ digit cardinal — small numbers Edge already reads fine.
-static RE_BIG_NUMBER: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(\d{4,})\b").expect("re_big_number")
-});
+static RE_BIG_NUMBER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(\d{4,})\b").expect("re_big_number"));
 // 3+ uppercase ASCII letters in a row, surrounded by non-letter.
 // Catches `SIC`, `DIJIN`, `SAT`, but skips inflected words like
 // `BANCO` (we exempt it via the explicit denylist below).
-static RE_ACRONYM: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b([A-Z]{3,6})\b").expect("re_acronym")
-});
+static RE_ACRONYM: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Z]{3,6})\b").expect("re_acronym"));
 
 const ACRONYM_DENYLIST: &[&str] = &[
     // Common Spanish all-caps words that aren't acronyms.
-    "BANCO", "BANCOS", "PARA", "ESTO", "ESTA", "ESTAR", "DIJO",
-    "TODO", "TODOS", "PERO", "AHORA", "DESDE", "HASTA",
+    "BANCO", "BANCOS", "PARA", "ESTO", "ESTA", "ESTAR", "DIJO", "TODO", "TODOS", "PERO", "AHORA",
+    "DESDE", "HASTA",
 ];
 
 fn auto_detect(input: &str) -> String {
@@ -440,9 +429,9 @@ mod tests {
     #[test]
     fn markdown_underline_bold_translates_to_strong_prosody() {
         let out = translate_markers("__importante__ aquí");
-        assert!(out.contains(
-            r#"<prosody volume="+25%" rate="-7%" pitch="+8%">importante</prosody>"#
-        ));
+        assert!(
+            out.contains(r#"<prosody volume="+25%" rate="-7%" pitch="+8%">importante</prosody>"#)
+        );
     }
 
     #[test]

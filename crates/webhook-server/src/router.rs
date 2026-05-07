@@ -119,9 +119,7 @@ pub fn build_router(
         };
 
         let rate_limit = match rl {
-            Some(rl_cfg) if rl_cfg.is_active() => {
-                Some(Arc::new(ClientBucketMap::new(rl_cfg)))
-            }
+            Some(rl_cfg) if rl_cfg.is_active() => Some(Arc::new(ClientBucketMap::new(rl_cfg))),
             _ => None,
         };
 
@@ -189,7 +187,12 @@ async fn handle_request(
                     source_id = %ctx.source.source_id,
                     "concurrency cap reached"
                 );
-                return (StatusCode::SERVICE_UNAVAILABLE, [("Retry-After", "1")], "busy").into_response();
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [("Retry-After", "1")],
+                    "busy",
+                )
+                    .into_response();
             }
         }
     } else {
@@ -197,9 +200,7 @@ async fn handle_request(
     };
 
     // Resolve client IP for rate-limit key + envelope.
-    let xff = headers
-        .get("x-forwarded-for")
-        .and_then(|h| h.to_str().ok());
+    let xff = headers.get("x-forwarded-for").and_then(|h| h.to_str().ok());
     let real_ip = headers.get("x-real-ip").and_then(|h| h.to_str().ok());
     let client_ip = resolve_request_client_ip(
         socket.ip(),
@@ -254,11 +255,8 @@ async fn handle_request(
 
     // Gate 6 — dispatch.
     let topic = handled.topic.clone();
-    let envelope = nexo_webhook_receiver::envelope_from_handled(
-        handled,
-        &envelope_headers,
-        Some(client_ip),
-    );
+    let envelope =
+        nexo_webhook_receiver::envelope_from_handled(handled, &envelope_headers, Some(client_ip));
     match ctx.dispatcher.dispatch(&topic, envelope).await {
         Ok(()) => (StatusCode::NO_CONTENT, "").into_response(),
         Err(nexo_webhook_receiver::DispatchError::Broker(e)) => {
@@ -293,11 +291,10 @@ async fn handle_request(
 fn map_reject(r: &RejectReason) -> (StatusCode, String) {
     match r {
         RejectReason::OversizedBody { .. } => (StatusCode::PAYLOAD_TOO_LARGE, r.to_string()),
-        RejectReason::MissingSignatureHeader { .. }
-        | RejectReason::InvalidSignature { .. } => (StatusCode::UNAUTHORIZED, r.to_string()),
-        RejectReason::SecretMissing { .. } => {
-            (StatusCode::INTERNAL_SERVER_ERROR, r.to_string())
+        RejectReason::MissingSignatureHeader { .. } | RejectReason::InvalidSignature { .. } => {
+            (StatusCode::UNAUTHORIZED, r.to_string())
         }
+        RejectReason::SecretMissing { .. } => (StatusCode::INTERNAL_SERVER_ERROR, r.to_string()),
         RejectReason::MissingEventKind { .. }
         | RejectReason::InvalidBodyJson { .. }
         | RejectReason::InvalidEventKindForSubject { .. } => {
@@ -314,12 +311,12 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use nexo_config::types::channels::ChannelRateLimit;
+    use nexo_config::types::webhook_receiver::WebhookSourceWithLimits;
     use nexo_webhook_receiver::{
         EventKindSource, RecordingWebhookDispatcher, SignatureAlgorithm, SignatureSpec,
         WebhookSourceConfig,
     };
-    use nexo_config::types::channels::ChannelRateLimit;
-    use nexo_config::types::webhook_receiver::WebhookSourceWithLimits;
     use tower::ServiceExt;
 
     fn mk_cfg(secret_env: &str) -> WebhookServerConfig {
@@ -351,8 +348,7 @@ mod tests {
     fn hmac_sha256_hex(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
         mac.update(body);
         hex::encode(mac.finalize().into_bytes())
     }
@@ -508,12 +504,8 @@ mod tests {
         };
 
         // First request consumed the only token.
-        let resp1 = oneshot_with_peer(
-            router.clone(),
-            mk_req(),
-            "127.0.0.1:9000".parse().unwrap(),
-        )
-        .await;
+        let resp1 =
+            oneshot_with_peer(router.clone(), mk_req(), "127.0.0.1:9000".parse().unwrap()).await;
         assert_eq!(resp1.status(), StatusCode::NO_CONTENT);
 
         // Second request: rate-limit drop.

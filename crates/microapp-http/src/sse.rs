@@ -172,10 +172,7 @@ mod tests {
     /// frames separated by blank lines. Each entry returned is
     /// the raw frame text including `event:` / `data:` lines.
     async fn drain_frames(res: axum::response::Response) -> Vec<String> {
-        let bytes = BodyExt::collect(res.into_body())
-            .await
-            .unwrap()
-            .to_bytes();
+        let bytes = BodyExt::collect(res.into_body()).await.unwrap().to_bytes();
         let body = String::from_utf8_lossy(&bytes).to_string();
         body.split("\n\n")
             .filter(|s| !s.trim().is_empty() && !s.trim().starts_with(":"))
@@ -229,13 +226,27 @@ mod tests {
         tokio::spawn(async move {
             // Small delay so the request has time to subscribe.
             tokio::time::sleep(Duration::from_millis(20)).await;
-            let _ = publisher.send(Tick { id: 1, terminal: false }); // filtered out
-            let _ = publisher.send(Tick { id: 2, terminal: false }); // pass
-            let _ = publisher.send(Tick { id: 4, terminal: true }); // pass + terminate
+            let _ = publisher.send(Tick {
+                id: 1,
+                terminal: false,
+            }); // filtered out
+            let _ = publisher.send(Tick {
+                id: 2,
+                terminal: false,
+            }); // pass
+            let _ = publisher.send(Tick {
+                id: 4,
+                terminal: true,
+            }); // pass + terminate
         });
 
         let res = app
-            .oneshot(Request::builder().uri("/stream").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -281,13 +292,24 @@ mod tests {
             // attaching.
             tokio::time::sleep(Duration::from_millis(20)).await;
             for i in 0..6u32 {
-                let _ = publisher.send(Tick { id: i, terminal: false });
+                let _ = publisher.send(Tick {
+                    id: i,
+                    terminal: false,
+                });
             }
-            let _ = publisher.send(Tick { id: 99, terminal: true });
+            let _ = publisher.send(Tick {
+                id: 99,
+                terminal: true,
+            });
         });
 
         let res = app
-            .oneshot(Request::builder().uri("/stream").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let frames = drain_frames(res).await;
@@ -340,7 +362,12 @@ mod tests {
         drop(tx_arc);
 
         let res = app
-            .oneshot(Request::builder().uri("/stream").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         // No frames produced; the body simply ends. We just check

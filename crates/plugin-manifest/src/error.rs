@@ -22,25 +22,16 @@ pub enum ManifestError {
     Parse(#[from] toml::de::Error),
 
     #[error("plugin id `{id}` invalid: {reason}")]
-    IdInvalid {
-        id: String,
-        reason: &'static str,
-    },
+    IdInvalid { id: String, reason: &'static str },
 
     #[error("field `{field}` version `{value}` invalid")]
-    VersionInvalid {
-        field: &'static str,
-        value: String,
-    },
+    VersionInvalid { field: &'static str, value: String },
 
     #[error(
         "min_nexo_version `{required}` does not match current daemon version `{current}`; \
          upgrade the daemon or downgrade the plugin"
     )]
-    MinNexoVersionMismatch {
-        required: String,
-        current: String,
-    },
+    MinNexoVersionMismatch { required: String, current: String },
 
     #[error(
         "tool `{tool_name}` violates namespace policy: must start with `{plugin_id}_`. \
@@ -55,19 +46,13 @@ pub enum ManifestError {
         "path field `{field}` `{path}` rejected: contains `..` (traversal not allowed). \
          Use a path inside the plugin root."
     )]
-    PathTraversal {
-        field: &'static str,
-        path: String,
-    },
+    PathTraversal { field: &'static str, path: String },
 
     #[error(
         "path field `{field}` `{path}` rejected: must be relative, not absolute. \
          Paths resolve relative to the plugin root."
     )]
-    PathAbsoluteForbidden {
-        field: &'static str,
-        path: String,
-    },
+    PathAbsoluteForbidden { field: &'static str, path: String },
 
     #[error(
         "capability `{capability:?}` declared in `capabilities.provides` but the corresponding \
@@ -82,19 +67,13 @@ pub enum ManifestError {
         "tool `{tool_name}` listed in `tools.deferred` but not in `tools.expose`. \
          Deferred tools must be exposed."
     )]
-    DeferredNotInExpose {
-        tool_name: String,
-    },
+    DeferredNotInExpose { tool_name: String },
 
     #[error("duplicate capability gate env_var `{env_var}` (each gate must be unique)")]
-    DuplicateGateEnvVar {
-        env_var: String,
-    },
+    DuplicateGateEnvVar { env_var: String },
 
     #[error("invalid channel kind `{kind}`: must match `^[a-z][a-z0-9_]{{0,31}}$`")]
-    ChannelKindInvalid {
-        kind: String,
-    },
+    ChannelKindInvalid { kind: String },
 
     #[error("plugin name must not be empty")]
     NameEmpty,
@@ -106,16 +85,11 @@ pub enum ManifestError {
         "supervisor.stderr_tail_lines `{value}` exceeds cap `{max}`. \
          Lower the value to prevent unbounded ring-buffer memory."
     )]
-    SupervisorStderrTailExceedsCap {
-        value: usize,
-        max: usize,
-    },
+    SupervisorStderrTailExceedsCap { value: usize, max: usize },
 
     /// Phase 81.28 — entry in `[plugin.extends].<section>` does
     /// not match the id regex (`^[a-z][a-z0-9_]{0,31}$`).
-    #[error(
-        "[plugin.extends].{section} id `{id}` invalid: {reason}"
-    )]
+    #[error("[plugin.extends].{section} id `{id}` invalid: {reason}")]
     ExtendsIdInvalid {
         section: &'static str,
         id: String,
@@ -124,13 +98,8 @@ pub enum ManifestError {
 
     /// Phase 81.28 — same id appears more than once within a
     /// single `[plugin.extends].<section>` list.
-    #[error(
-        "[plugin.extends].{section} contains duplicate id `{id}`"
-    )]
-    ExtendsDuplicate {
-        section: &'static str,
-        id: String,
-    },
+    #[error("[plugin.extends].{section} contains duplicate id `{id}`")]
+    ExtendsDuplicate { section: &'static str, id: String },
 
     /// Phase 81.28 — same id appears in two or more
     /// `[plugin.extends]` lists. Each id must occupy at most one
@@ -179,9 +148,7 @@ pub enum ManifestError {
     #[error(
         "[plugin.sandbox].fs_read_paths entry `{path}` rejected: `${{state_dir}}` token only allowed in fs_write_paths."
     )]
-    SandboxInvalidStateDirInterpolation {
-        path: String,
-    },
+    SandboxInvalidStateDirInterpolation { path: String },
 
     /// Phase 81.22 — manifest declares `network = \"host\"` but
     /// the operator-side capability `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`

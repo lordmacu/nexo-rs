@@ -29,9 +29,7 @@ pub fn list(yaml: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     let agent_ids = match yaml.list_agent_ids() {
         Ok(ids) => ids,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "agents.yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("agents.yaml read: {e}")));
         }
     };
     let mut entries: Vec<ChannelEntry> = Vec::new();
@@ -59,19 +57,14 @@ pub fn list(yaml: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
             .then_with(|| a.server_name.cmp(&b.server_name))
     });
     AdminRpcResult::ok(
-        serde_json::to_value(ChannelsListResponse { entries })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(ChannelsListResponse { entries }).unwrap_or(Value::Null),
     )
 }
 
 /// `nexo/admin/channels/approve` — append a new entry. Idempotent
 /// — if `(agent_id, server_name)` is already approved, the
 /// existing entry is returned unchanged (no yaml write).
-pub fn approve(
-    yaml: &dyn YamlPatcher,
-    params: Value,
-    reload_signal: &dyn Fn(),
-) -> AdminRpcResult {
+pub fn approve(yaml: &dyn YamlPatcher, params: Value, reload_signal: &dyn Fn()) -> AdminRpcResult {
     let input: ChannelsApproveInput = match serde_json::from_value(params) {
         Ok(i) => i,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
@@ -86,9 +79,7 @@ pub fn approve(
         Ok(Some(Value::Array(arr))) => arr,
         Ok(_) => Vec::new(),
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read: {e}")));
         }
     };
     let already = existing.iter().any(|e| {
@@ -106,23 +97,14 @@ pub fn approve(
         if let Some(allow) = &input.allowlist {
             entry_obj.insert(
                 "allowlist".into(),
-                Value::Array(
-                    allow
-                        .iter()
-                        .map(|i| Value::Number((*i).into()))
-                        .collect(),
-                ),
+                Value::Array(allow.iter().map(|i| Value::Number((*i).into())).collect()),
             );
         }
         updated.push(Value::Object(entry_obj));
-        if let Err(e) = yaml.upsert_agent_field(
-            &input.agent_id,
-            "channels.approved",
-            Value::Array(updated),
-        ) {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+        if let Err(e) =
+            yaml.upsert_agent_field(&input.agent_id, "channels.approved", Value::Array(updated))
+        {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
         reload_signal();
     }
@@ -139,11 +121,7 @@ pub fn approve(
 
 /// `nexo/admin/channels/revoke` — remove the entry from
 /// `channels.approved`.
-pub fn revoke(
-    yaml: &dyn YamlPatcher,
-    params: Value,
-    reload_signal: &dyn Fn(),
-) -> AdminRpcResult {
+pub fn revoke(yaml: &dyn YamlPatcher, params: Value, reload_signal: &dyn Fn()) -> AdminRpcResult {
     let p: ChannelsRevokeParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
@@ -152,9 +130,7 @@ pub fn revoke(
         Ok(Some(Value::Array(arr))) => arr,
         Ok(_) => Vec::new(),
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read: {e}")));
         }
     };
     let before = existing.len();
@@ -168,20 +144,15 @@ pub fn revoke(
         .collect();
     let removed = filtered.len() < before;
     if removed {
-        if let Err(e) = yaml.upsert_agent_field(
-            &p.agent_id,
-            "channels.approved",
-            Value::Array(filtered),
-        ) {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+        if let Err(e) =
+            yaml.upsert_agent_field(&p.agent_id, "channels.approved", Value::Array(filtered))
+        {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
         reload_signal();
     }
     AdminRpcResult::ok(
-        serde_json::to_value(ChannelsRevokeResponse { removed })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(ChannelsRevokeResponse { removed }).unwrap_or(Value::Null),
     )
 }
 
@@ -194,9 +165,7 @@ pub fn doctor(yaml: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     let agent_ids = match yaml.list_agent_ids() {
         Ok(ids) => ids,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "agents.yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("agents.yaml read: {e}")));
         }
     };
     let mut verdicts: Vec<ChannelDoctorVerdict> = Vec::new();
@@ -228,21 +197,17 @@ pub fn doctor(yaml: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
         }
     }
     AdminRpcResult::ok(
-        serde_json::to_value(ChannelDoctorReport { verdicts })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(ChannelDoctorReport { verdicts }).unwrap_or(Value::Null),
     )
 }
 
 fn parse_channel_entry(agent_id: &str, value: &Value) -> Option<ChannelEntry> {
     let server_name = value.get("server_name")?.as_str()?.to_string();
-    let allowlist = value
-        .get("allowlist")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_u64().map(|n| n as usize))
-                .collect::<Vec<_>>()
-        });
+    let allowlist = value.get("allowlist").and_then(Value::as_array).map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_u64().map(|n| n as usize))
+            .collect::<Vec<_>>()
+    });
     Some(ChannelEntry {
         agent_id: agent_id.to_string(),
         server_name,
@@ -289,12 +254,7 @@ mod tests {
                 .get(id)
                 .and_then(|m| m.get(dotted).cloned()))
         }
-        fn upsert_agent_field(
-            &self,
-            id: &str,
-            dotted: &str,
-            value: Value,
-        ) -> anyhow::Result<()> {
+        fn upsert_agent_field(&self, id: &str, dotted: &str, value: Value) -> anyhow::Result<()> {
             self.agents
                 .lock()
                 .unwrap()
@@ -404,10 +364,7 @@ mod tests {
             &|| {},
         );
 
-        let result = list(
-            &yaml,
-            serde_json::json!({ "agent_id": "ana" }),
-        );
+        let result = list(&yaml, serde_json::json!({ "agent_id": "ana" }));
         let response: ChannelsListResponse =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(response.entries.len(), 1);
@@ -423,8 +380,7 @@ mod tests {
             &|| {},
         );
         let result = doctor(&yaml, Value::Null);
-        let report: ChannelDoctorReport =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let report: ChannelDoctorReport = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(report.verdicts.len(), 1);
         assert_eq!(report.verdicts[0].status, "ok");
         assert_eq!(report.verdicts[0].agent_id, "ana");

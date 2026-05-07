@@ -40,8 +40,7 @@ pub async fn spawn_server(
     let bind_addr = listener.local_addr()?;
     tracing::info!(addr = %bind_addr, "webhook receiver listening");
 
-    let app = router
-        .into_make_service_with_connect_info::<SocketAddr>();
+    let app = router.into_make_service_with_connect_info::<SocketAddr>();
 
     let cancel_for_shutdown = cancel.clone();
     let join = tokio::spawn(async move {
@@ -103,8 +102,7 @@ mod tests {
     fn hmac_sha256_hex(secret: &str, body: &[u8]) -> String {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
         mac.update(body);
         hex::encode(mac.finalize().into_bytes())
     }

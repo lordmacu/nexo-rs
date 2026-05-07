@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use nexo_driver_claude::{MemoryBindingStore, SessionBindingStore, SqliteBindingStore};
-use nexo_driver_types::DefaultCompactPolicy;
 use nexo_driver_loop::{
     AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator, DriverConfig,
     DriverOrchestrator, GitWorktreeMode, NoopEventSink, WorkspaceManager,
 };
 use nexo_driver_permission::{AllowAllDecider, DenyAllDecider, PermissionDecider};
+use nexo_driver_types::DefaultCompactPolicy;
 use nexo_driver_types::Goal;
 
 #[tokio::main]

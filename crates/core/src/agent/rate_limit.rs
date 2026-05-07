@@ -377,7 +377,11 @@ mod tests {
         let mut patterns = HashMap::new();
         patterns.insert(
             "memory_*".to_string(),
-            ToolRateLimitConfig { rps: 1.0, burst: 1, essential_deny_on_miss: false },
+            ToolRateLimitConfig {
+                rps: 1.0,
+                burst: 1,
+                essential_deny_on_miss: false,
+            },
         );
         patterns.insert(
             "_default".to_string(),
@@ -401,7 +405,11 @@ mod tests {
         let mut patterns = HashMap::new();
         patterns.insert(
             "mcp_*".to_string(),
-            ToolRateLimitConfig { rps: 1.0, burst: 1, essential_deny_on_miss: false },
+            ToolRateLimitConfig {
+                rps: 1.0,
+                burst: 1,
+                essential_deny_on_miss: false,
+            },
         );
         let rl = ToolRateLimiter::new(ToolRateLimitsConfig { patterns });
         assert!(rl.try_acquire("a", "mcp_fs_read").await);
@@ -427,7 +435,9 @@ mod tests {
                 essential_deny_on_miss: false,
             },
         );
-        let over_a = ToolRateLimitsConfig { patterns: over_a_patterns };
+        let over_a = ToolRateLimitsConfig {
+            patterns: over_a_patterns,
+        };
 
         // Binding A: cap 1, second call denied.
         assert!(
@@ -462,7 +472,9 @@ mod tests {
                 essential_deny_on_miss: false,
             },
         );
-        let rl = ToolRateLimiter::new(ToolRateLimitsConfig { patterns: global_patterns });
+        let rl = ToolRateLimiter::new(ToolRateLimitsConfig {
+            patterns: global_patterns,
+        });
 
         let mut over_patterns = HashMap::new();
         over_patterns.insert(
@@ -473,7 +485,9 @@ mod tests {
                 essential_deny_on_miss: false,
             },
         );
-        let over = ToolRateLimitsConfig { patterns: over_patterns };
+        let over = ToolRateLimitsConfig {
+            patterns: over_patterns,
+        };
 
         // `read_state` does NOT match override pattern; per-binding
         // semantic = unlimited (NOT fall back to global `_default`).

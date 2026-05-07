@@ -32,15 +32,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use chrono::Utc;
-use nexo_agent_registry::{
-    DreamPhase, DreamRunRow, DreamRunStatus, DreamRunStore,
-};
-use nexo_driver_types::{
-    AutoDreamHook, AutoDreamOutcomeKind, DreamContextLite, GoalId,
-};
+use nexo_agent_registry::{DreamPhase, DreamRunRow, DreamRunStatus, DreamRunStore};
+use nexo_driver_types::{AutoDreamHook, AutoDreamOutcomeKind, DreamContextLite, GoalId};
 use nexo_fork::{
-    AutoMemFilter, CacheSafeParams, DefaultForkSubagent, DelegateMode,
-    ForkParams, ForkSubagent, QuerySource, ToolDispatcher,
+    AutoMemFilter, CacheSafeParams, DefaultForkSubagent, DelegateMode, ForkParams, ForkSubagent,
+    QuerySource, ToolDispatcher,
 };
 use nexo_llm::types::{ChatMessage, ToolDef};
 use nexo_llm::LlmClient;
@@ -49,9 +45,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::AutoDreamConfig;
-use crate::consolidation_lock::{
-    list_sessions_touched_since, ConsolidationLock,
-};
+use crate::consolidation_lock::{list_sessions_touched_since, ConsolidationLock};
 use crate::consolidation_prompt::ConsolidationPromptBuilder;
 use crate::dream_progress_watcher::DreamProgressWatcher;
 use crate::error::AutoDreamError;
@@ -161,8 +155,7 @@ pub struct AutoDreamRunner {
     /// when `files_touched.is_empty()` — no point recording an
     /// empty commit (the audit row in `dream_runs.db` already
     /// captures the run regardless).
-    git_checkpointer:
-        Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
+    git_checkpointer: Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
     /// Optional pre-dream snapshot sink. When wired, the runner
     /// captures a point-in-time bundle of the agent's memory before
     /// the fork-pass mutates anything, so a corrupt dream can be
@@ -170,8 +163,7 @@ pub struct AutoDreamRunner {
     /// `tracing::warn!` and the dream proceeds without the anchor —
     /// operators who want a hard gate enforce that at the boot wire,
     /// not here.
-    pre_dream_snapshot:
-        Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
+    pre_dream_snapshot: Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
     /// Tenant scope passed to the pre-dream snapshot hook. Defaults
     /// to `"default"` for single-tenant deployments; multi-tenant
     /// SaaS wires the per-binding tenant at boot via
@@ -367,9 +359,7 @@ impl AutoDreamRunner {
         // Gate 6: scan throttle (mirror leak `:143-150`).
         let now_secs = now_ms / 1000;
         let last_scan = self.last_session_scan_at.load(Ordering::Relaxed);
-        if !force
-            && now_secs - last_scan < cfg.scan_interval.as_secs() as i64
-        {
+        if !force && now_secs - last_scan < cfg.scan_interval.as_secs() as i64 {
             return RunOutcome::Skipped {
                 gate: SkipReason::ScanThrottle,
             };
@@ -439,11 +429,9 @@ impl AutoDreamRunner {
 
         // Build prompt extra block — verbatim leak `:216-221`.
         let extra = build_extra(&sessions);
-        let prompt = ConsolidationPromptBuilder::new(
-            self.memory_dir.clone(),
-            ctx.transcript_dir.clone(),
-        )
-        .build(&extra);
+        let prompt =
+            ConsolidationPromptBuilder::new(self.memory_dir.clone(), ctx.transcript_dir.clone())
+                .build(&extra);
 
         // Insert audit row.
         let run_id = Uuid::new_v4();
@@ -478,11 +466,7 @@ impl AutoDreamRunner {
         if let Some(hook) = &self.pre_dream_snapshot {
             let agent_id = self.parent_ctx_template.agent_id.clone();
             if let Err(e) = hook
-                .snapshot_before_dream(
-                    &agent_id,
-                    &self.pre_dream_tenant,
-                    &run_id.to_string(),
-                )
+                .snapshot_before_dream(&agent_id, &self.pre_dream_tenant, &run_id.to_string())
                 .await
             {
                 warn!(
@@ -594,10 +578,7 @@ impl AutoDreamRunner {
                 // Update phase to Updating if any edits landed (mirror
                 // leak `DreamTask.ts:96`).
                 if !progress.touched.is_empty() {
-                    let _ = self
-                        .audit
-                        .update_phase(run_id, DreamPhase::Updating)
-                        .await;
+                    let _ = self.audit.update_phase(run_id, DreamPhase::Updating).await;
                 }
 
                 let _ = self
@@ -696,10 +677,7 @@ impl AutoDreamRunner {
 
 #[async_trait]
 impl AutoDreamHook for AutoDreamRunner {
-    async fn check_and_run(
-        &self,
-        lite: &DreamContextLite,
-    ) -> AutoDreamOutcomeKind {
+    async fn check_and_run(&self, lite: &DreamContextLite) -> AutoDreamOutcomeKind {
         let ctx = DreamContext {
             goal_id: lite.goal_id,
             session_id: lite.session_id.clone(),
@@ -721,9 +699,7 @@ pub fn run_outcome_to_kind(outcome: &RunOutcome) -> AutoDreamOutcomeKind {
             SkipReason::Disabled => AutoDreamOutcomeKind::SkippedDisabled,
             SkipReason::KairosActive => AutoDreamOutcomeKind::SkippedKairosActive,
             SkipReason::RemoteMode => AutoDreamOutcomeKind::SkippedRemoteMode,
-            SkipReason::AutoMemoryDisabled => {
-                AutoDreamOutcomeKind::SkippedAutoMemoryDisabled
-            }
+            SkipReason::AutoMemoryDisabled => AutoDreamOutcomeKind::SkippedAutoMemoryDisabled,
             SkipReason::TimeGate => AutoDreamOutcomeKind::SkippedTimeGate,
             SkipReason::ScanThrottle => AutoDreamOutcomeKind::SkippedScanThrottle,
             SkipReason::SessionGate => AutoDreamOutcomeKind::SkippedSessionGate,
@@ -788,8 +764,8 @@ mod tests {
     use nexo_agent_registry::SqliteDreamRunStore;
     use nexo_broker::AnyBroker;
     use nexo_config::types::agents::{
-        AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig,
-        ModelConfig, OutboundAllowlistConfig, WorkspaceGitConfig,
+        AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
+        OutboundAllowlistConfig, WorkspaceGitConfig,
     };
     use nexo_core::agent::AgentContext;
     use nexo_core::session::SessionManager;
@@ -912,8 +888,7 @@ mod tests {
         async fn stream<'a>(
             &'a self,
             _: ChatRequest,
-        ) -> anyhow::Result<futures::stream::BoxStream<'a, anyhow::Result<StreamChunk>>>
-        {
+        ) -> anyhow::Result<futures::stream::BoxStream<'a, anyhow::Result<StreamChunk>>> {
             anyhow::bail!("stream not used")
         }
     }
@@ -921,11 +896,7 @@ mod tests {
     struct NoopDispatcher;
     #[async_trait]
     impl ToolDispatcher for NoopDispatcher {
-        async fn dispatch(
-            &self,
-            _name: &str,
-            _args: serde_json::Value,
-        ) -> Result<String, String> {
+        async fn dispatch(&self, _name: &str, _args: serde_json::Value) -> Result<String, String> {
             Ok(String::new())
         }
     }
@@ -958,10 +929,11 @@ mod tests {
     impl ForkSubagent for MockFork {
         async fn fork(&self, _params: ForkParams) -> Result<ForkHandle, ForkError> {
             let mut g = self.result.lock().await;
-            let r = g.take().unwrap_or_else(|| Err(ForkError::Internal("exhausted".into())));
+            let r = g
+                .take()
+                .unwrap_or_else(|| Err(ForkError::Internal("exhausted".into())));
             let abort = CancellationToken::new();
-            let fut: BoxFuture<'static, Result<ForkResult, ForkError>> =
-                Box::pin(ready(r));
+            let fut: BoxFuture<'static, Result<ForkResult, ForkError>> = Box::pin(ready(r));
             Ok(ForkHandle::new(Uuid::new_v4(), None, fut, abort))
         }
     }
@@ -985,8 +957,7 @@ mod tests {
         memory_dir: PathBuf,
         fork: Arc<dyn ForkSubagent>,
     ) -> AutoDreamRunner {
-        let lock =
-            Arc::new(ConsolidationLock::new(&memory_dir, cfg.holder_stale).unwrap());
+        let lock = Arc::new(ConsolidationLock::new(&memory_dir, cfg.holder_stale).unwrap());
         let audit: Arc<dyn DreamRunStore> =
             Arc::new(SqliteDreamRunStore::open_memory().await.unwrap());
         AutoDreamRunner::new(
@@ -1034,8 +1005,7 @@ mod tests {
     async fn gate_kairos_active_returns_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let runner =
-            mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
+        let runner = mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
         let ctx = mk_dream_ctx(&dir, true, false);
         let outcome = runner.check_and_run(&ctx).await;
         assert!(matches!(
@@ -1050,8 +1020,7 @@ mod tests {
     async fn gate_remote_mode_returns_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let runner =
-            mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
+        let runner = mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
         let ctx = mk_dream_ctx(&dir, false, true);
         let outcome = runner.check_and_run(&ctx).await;
         assert!(matches!(
@@ -1067,8 +1036,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
         // No sessions in transcript_dir → count 0 < min_sessions=5.
-        let runner =
-            mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
+        let runner = mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
         let ctx = mk_dream_ctx(&dir, false, false);
         let outcome = runner.check_and_run(&ctx).await;
         // Time gate passes (last_at == 0, 24h+ since epoch); session
@@ -1085,8 +1053,7 @@ mod tests {
     async fn force_run_bypasses_session_gate() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let runner =
-            mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
+        let runner = mk_runner_with_fork(enabled_cfg(), dir.clone(), MockFork::ok()).await;
         let ctx = mk_dream_ctx(&dir, false, false);
         let outcome = runner.run_forced(&ctx).await;
         assert!(matches!(outcome, RunOutcome::Completed { .. }));
@@ -1188,7 +1155,11 @@ mod tests {
         let ctx = mk_dream_ctx(&dir, false, false);
         let outcome = runner.run_forced(&ctx).await;
         match outcome {
-            RunOutcome::TimedOut { run_id, timeout_secs, .. } => {
+            RunOutcome::TimedOut {
+                run_id,
+                timeout_secs,
+                ..
+            } => {
                 assert_eq!(timeout_secs, 5);
                 let row = audit.get(run_id).await.unwrap().unwrap();
                 assert_eq!(row.status, DreamRunStatus::Killed);
@@ -1216,8 +1187,7 @@ mod tests {
         // Pre-write the lock with live PID + back-date mtime to 1.5h ago.
         let our_pid = std::process::id().to_string();
         tokio::fs::write(lock.path(), &our_pid).await.unwrap();
-        let one_and_half_hour_ago = SystemTime::now()
-            - std::time::Duration::from_secs(90 * 60);
+        let one_and_half_hour_ago = SystemTime::now() - std::time::Duration::from_secs(90 * 60);
         let path_clone = lock.path().to_path_buf();
         tokio::task::spawn_blocking(move || {
             filetime::set_file_mtime(
@@ -1295,11 +1265,7 @@ mod tests {
 
     #[async_trait]
     impl nexo_driver_types::MemoryCheckpointer for RecordingCheckpointer {
-        async fn checkpoint(
-            &self,
-            subject: String,
-            body: String,
-        ) -> Result<(), String> {
+        async fn checkpoint(&self, subject: String, body: String) -> Result<(), String> {
             self.calls.fetch_add(1, StdOrdering::SeqCst);
             self.log
                 .lock()
@@ -1353,11 +1319,7 @@ mod tests {
         let transcripts = tmp.path().join("transcripts");
         std::fs::create_dir_all(&transcripts).unwrap();
         for i in 0..6 {
-            std::fs::write(
-                transcripts.join(format!("session_{i}.jsonl")),
-                "stub",
-            )
-            .unwrap();
+            std::fs::write(transcripts.join(format!("session_{i}.jsonl")), "stub").unwrap();
         }
 
         let cfg = AutoDreamConfig {
@@ -1394,11 +1356,7 @@ mod tests {
         let transcripts = tmp.path().join("transcripts");
         std::fs::create_dir_all(&transcripts).unwrap();
         for i in 0..6 {
-            std::fs::write(
-                transcripts.join(format!("session_{i}.jsonl")),
-                "stub",
-            )
-            .unwrap();
+            std::fs::write(transcripts.join(format!("session_{i}.jsonl")), "stub").unwrap();
         }
         let cfg = AutoDreamConfig {
             min_hours: std::time::Duration::from_secs(0),

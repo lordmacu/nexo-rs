@@ -188,14 +188,29 @@ mod tests {
         let prompt = build_extract_prompt(10, "");
         // Must mention the four types
         assert!(prompt.contains("<name>user</name>"), "missing user type");
-        assert!(prompt.contains("<name>feedback</name>"), "missing feedback type");
-        assert!(prompt.contains("<name>project</name>"), "missing project type");
-        assert!(prompt.contains("<name>reference</name>"), "missing reference type");
+        assert!(
+            prompt.contains("<name>feedback</name>"),
+            "missing feedback type"
+        );
+        assert!(
+            prompt.contains("<name>project</name>"),
+            "missing project type"
+        );
+        assert!(
+            prompt.contains("<name>reference</name>"),
+            "missing reference type"
+        );
         // Must include what-not-to-save
-        assert!(prompt.contains("What NOT to save"), "missing exclusion list");
+        assert!(
+            prompt.contains("What NOT to save"),
+            "missing exclusion list"
+        );
         // Must include frontmatter format
         assert!(prompt.contains("---"), "missing frontmatter example");
-        assert!(prompt.contains("name: {{memory name}}"), "missing frontmatter name");
+        assert!(
+            prompt.contains("name: {{memory name}}"),
+            "missing frontmatter name"
+        );
         // Must include save instructions
         assert!(prompt.contains("two-step process"), "missing save steps");
     }
@@ -204,7 +219,10 @@ mod tests {
     fn prompt_includes_manifest_when_provided() {
         let manifest = "- [user] preferences.md: user likes dark mode";
         let prompt = build_extract_prompt(5, manifest);
-        assert!(prompt.contains("Existing memory files"), "missing manifest header");
+        assert!(
+            prompt.contains("Existing memory files"),
+            "missing manifest header"
+        );
         assert!(prompt.contains("preferences.md"), "missing manifest entry");
         assert!(
             prompt.contains("update an existing file rather than creating a duplicate"),
@@ -215,6 +233,9 @@ mod tests {
     #[test]
     fn prompt_no_manifest_when_empty() {
         let prompt = build_extract_prompt(5, "");
-        assert!(!prompt.contains("Existing memory files"), "should not have manifest header");
+        assert!(
+            !prompt.contains("Existing memory files"),
+            "should not have manifest header"
+        );
     }
 }

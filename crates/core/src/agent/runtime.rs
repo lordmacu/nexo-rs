@@ -1,6 +1,6 @@
+use super::admin_rpc::domains::processing::ProcessingControlStore;
 use super::agent::Agent;
 use super::agent_events::AgentEventEmitter;
-use super::admin_rpc::domains::processing::ProcessingControlStore;
 use super::behavior::{AgentBehavior, AgentTurnControl};
 use super::context::AgentContext;
 use super::effective::EffectiveBindingPolicy;
@@ -8,11 +8,6 @@ use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
 use super::types::{InboundMedia, InboundMessage, MessagePriority, RunTrigger};
-use nexo_tool_meta::admin::agent_events::AgentEventKind;
-use nexo_tool_meta::admin::processing::{
-    PendingInbound, ProcessingControlState, ProcessingScope,
-};
-use nexo_tool_meta::InboundMessageMeta;
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::session::SessionManager;
@@ -23,6 +18,9 @@ use nexo_broker::{AnyBroker, BrokerHandle};
 use nexo_config::types::agents::InboundBinding;
 use nexo_driver_loop::proactive::{build_tick_prompt, ScheduledWake};
 use nexo_memory::LongTermMemory;
+use nexo_tool_meta::admin::agent_events::AgentEventKind;
+use nexo_tool_meta::admin::processing::{PendingInbound, ProcessingControlState, ProcessingScope};
+use nexo_tool_meta::InboundMessageMeta;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::mem;
@@ -239,10 +237,7 @@ impl AgentRuntime {
     /// the very next message. Without this builder, the
     /// runtime processes every inbound regardless of operator
     /// pause state (legacy / tests).
-    pub fn with_processing_store(
-        mut self,
-        store: Arc<dyn ProcessingControlStore>,
-    ) -> Self {
+    pub fn with_processing_store(mut self, store: Arc<dyn ProcessingControlStore>) -> Self {
         self.processing_store = Some(store);
         self
     }
@@ -253,10 +248,7 @@ impl AgentRuntime {
     /// `BroadcastAgentEventEmitter` Phase 82.11 already plumbs
     /// to `TranscriptWriter`. `None` keeps eviction silent
     /// (tracing only).
-    pub fn with_event_emitter(
-        mut self,
-        emitter: Arc<dyn AgentEventEmitter>,
-    ) -> Self {
+    pub fn with_event_emitter(mut self, emitter: Arc<dyn AgentEventEmitter>) -> Self {
         self.event_emitter = Some(emitter);
         self
     }
@@ -1977,8 +1969,8 @@ mod tests {
             "msg_id": "wa.ABCD1234",
             "timestamp": 1_756_700_096_i64,
         });
-        let meta = extract_inbound_meta(&payload, Some("+5491100"), false)
-            .expect("meta should build");
+        let meta =
+            extract_inbound_meta(&payload, Some("+5491100"), false).expect("meta should build");
         assert_eq!(meta.kind, nexo_tool_meta::InboundKind::ExternalUser);
         assert_eq!(meta.sender_id.as_deref(), Some("+5491100"));
         assert_eq!(meta.msg_id.as_deref(), Some("wa.ABCD1234"));
@@ -1996,8 +1988,8 @@ mod tests {
             "reply_to": "wa.PREV0001",
             "timestamp": 1_756_700_096_i64,
         });
-        let meta = extract_inbound_meta(&payload, Some("+5491100"), true)
-            .expect("meta should build");
+        let meta =
+            extract_inbound_meta(&payload, Some("+5491100"), true).expect("meta should build");
         assert!(meta.has_media);
         assert_eq!(meta.reply_to_msg_id.as_deref(), Some("wa.PREV0001"));
     }
@@ -2014,9 +2006,13 @@ mod tests {
         // sender — synthesise a stable id so dedupe consumers always
         // have a key.
         let payload = serde_json::json!({"from": "+5491100"});
-        let meta = extract_inbound_meta(&payload, Some("+5491100"), false)
-            .expect("meta should build");
-        assert!(meta.msg_id.as_deref().unwrap().starts_with("synth.+5491100."));
+        let meta =
+            extract_inbound_meta(&payload, Some("+5491100"), false).expect("meta should build");
+        assert!(meta
+            .msg_id
+            .as_deref()
+            .unwrap()
+            .starts_with("synth.+5491100."));
     }
 
     #[test]
@@ -2032,13 +2028,10 @@ mod tests {
             "inbound_kind": "internal_system",
             "timestamp": 1_756_700_096_i64,
         });
-        let meta = extract_inbound_meta(&payload, Some("cron.daily"), false)
-            .expect("meta should build");
+        let meta =
+            extract_inbound_meta(&payload, Some("cron.daily"), false).expect("meta should build");
         assert_eq!(meta.kind, nexo_tool_meta::InboundKind::InternalSystem);
-        assert!(
-            meta.sender_id.is_none(),
-            "internal_system clears sender_id"
-        );
+        assert!(meta.sender_id.is_none(), "internal_system clears sender_id");
         assert_eq!(meta.msg_id.as_deref(), Some("evt.123"));
     }
 
@@ -2073,10 +2066,8 @@ mod tests {
         tick.trigger = RunTrigger::Tick;
         tick.source_plugin = "proactive".to_string();
         tick.priority = MessagePriority::Later;
-        tick.inbound = Some(
-            nexo_tool_meta::InboundMessageMeta::internal_system()
-                .with_ts(chrono::Utc::now()),
-        );
+        tick.inbound =
+            Some(nexo_tool_meta::InboundMessageMeta::internal_system().with_ts(chrono::Utc::now()));
         let imeta = tick.inbound.as_ref().unwrap();
         assert_eq!(imeta.kind, nexo_tool_meta::InboundKind::InternalSystem);
         assert!(imeta.sender_id.is_none());
@@ -2092,8 +2083,7 @@ mod tests {
             "msg_id": "y",
             "inbound_kind": "future_kind_v3",
         });
-        let meta = extract_inbound_meta(&payload, Some("x"), false)
-            .expect("meta should build");
+        let meta = extract_inbound_meta(&payload, Some("x"), false).expect("meta should build");
         assert_eq!(meta.kind, nexo_tool_meta::InboundKind::ExternalUser);
     }
 
@@ -2106,8 +2096,8 @@ mod tests {
             "msg_id": "tg.msg.7",
             "timestamp": 1_756_700_096_i64,
         });
-        let meta = extract_inbound_meta(&payload, Some("tg.user_42"), false)
-            .expect("meta should build");
+        let meta =
+            extract_inbound_meta(&payload, Some("tg.user_42"), false).expect("meta should build");
         assert_eq!(meta.sender_id.as_deref(), Some("tg.user_42"));
         assert_eq!(meta.msg_id.as_deref(), Some("tg.msg.7"));
     }

@@ -155,8 +155,7 @@ pub struct LlmProvidersDeleteResponse {
 /// operator confirms the API key is accepted + enumerates live
 /// models WITHOUT polluting the daemon's persisted state on a
 /// failed key.
-pub const LLM_PROVIDERS_PROBE_DRAFT_METHOD: &str =
-    "nexo/admin/llm_providers/probe_draft";
+pub const LLM_PROVIDERS_PROBE_DRAFT_METHOD: &str = "nexo/admin/llm_providers/probe_draft";
 
 /// Params for [`LLM_PROVIDERS_PROBE_DRAFT_METHOD`].
 ///
@@ -196,12 +195,10 @@ pub struct LlmProviderProbeDraftInput {
 // ──────────────────────────────────────────────────────────────────
 
 /// JSON-RPC method that initiates an OAuth flow.
-pub const LLM_PROVIDERS_OAUTH_START_METHOD: &str =
-    "nexo/admin/llm_providers/oauth_start";
+pub const LLM_PROVIDERS_OAUTH_START_METHOD: &str = "nexo/admin/llm_providers/oauth_start";
 
 /// JSON-RPC method that finalises an OAuth flow.
-pub const LLM_PROVIDERS_OAUTH_FINISH_METHOD: &str =
-    "nexo/admin/llm_providers/oauth_finish";
+pub const LLM_PROVIDERS_OAUTH_FINISH_METHOD: &str = "nexo/admin/llm_providers/oauth_finish";
 
 /// Params for [`LLM_PROVIDERS_OAUTH_START_METHOD`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -798,7 +795,10 @@ mod schema_tests {
         let mut fields: BTreeMap<String, String> = BTreeMap::new();
         assert!(!d.satisfied(&fields), "missing key ⇒ unsatisfied");
         fields.insert("auth_mode".into(), "oauth_auth_code".into());
-        assert!(!d.satisfied(&fields), "value not in allow-list ⇒ unsatisfied");
+        assert!(
+            !d.satisfied(&fields),
+            "value not in allow-list ⇒ unsatisfied"
+        );
         fields.insert("auth_mode".into(), "setup_token".into());
         assert!(d.satisfied(&fields), "value in allow-list ⇒ satisfied");
     }
@@ -949,9 +949,6 @@ mod tests {
 
     #[test]
     fn probe_method_constant() {
-        assert_eq!(
-            LLM_PROVIDERS_PROBE_METHOD,
-            "nexo/admin/llm_providers/probe"
-        );
+        assert_eq!(LLM_PROVIDERS_PROBE_METHOD, "nexo/admin/llm_providers/probe");
     }
 }

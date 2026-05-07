@@ -125,9 +125,7 @@ mod tests {
     use super::*;
 
     fn write_skill(root: &Path, parts: &[&str], body: &str) {
-        let dir = parts
-            .iter()
-            .fold(root.to_path_buf(), |acc, p| acc.join(p));
+        let dir = parts.iter().fold(root.to_path_buf(), |acc, p| acc.join(p));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"), body).unwrap();
     }
@@ -144,7 +142,11 @@ mod tests {
         // Source gone.
         assert!(!tmp.path().join("weather").exists());
         // Destination populated.
-        let new = tmp.path().join("__global__").join("weather").join("SKILL.md");
+        let new = tmp
+            .path()
+            .join("__global__")
+            .join("weather")
+            .join("SKILL.md");
         assert!(new.exists());
         assert_eq!(fs::read_to_string(new).unwrap(), "Legacy weather.");
     }
@@ -224,7 +226,12 @@ mod tests {
         let report = migrate_legacy_skills_to_global(tmp.path()).unwrap();
         assert_eq!(report.moved, 3);
         for name in ["weather", "finance", "devops"] {
-            assert!(tmp.path().join("__global__").join(name).join("SKILL.md").exists());
+            assert!(tmp
+                .path()
+                .join("__global__")
+                .join(name)
+                .join("SKILL.md")
+                .exists());
             assert!(!tmp.path().join(name).exists());
         }
     }

@@ -89,11 +89,7 @@ pub trait VectorBackend: Send + Sync + 'static {
         query: VectorQuery,
     ) -> anyhow::Result<Vec<VectorMatch>>;
 
-    async fn delete(
-        &self,
-        collection: &str,
-        ids: Vec<String>,
-    ) -> anyhow::Result<DeleteAck>;
+    async fn delete(&self, collection: &str, ids: Vec<String>) -> anyhow::Result<DeleteAck>;
 }
 
 // ── Tests ────────────────────────────────────────────────────────

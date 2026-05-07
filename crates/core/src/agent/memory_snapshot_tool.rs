@@ -20,9 +20,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nexo_llm::ToolDef;
-use nexo_memory_snapshot::{
-    MemorySnapshotter, SnapshotRequest,
-};
+use nexo_memory_snapshot::{MemorySnapshotter, SnapshotRequest};
 use serde_json::{json, Value};
 
 use super::context::AgentContext;
@@ -164,10 +162,7 @@ mod tests {
 
     #[async_trait]
     impl MemorySnapshotter for CapturingSnapshotter {
-        async fn snapshot(
-            &self,
-            req: SnapshotRequest,
-        ) -> Result<SnapshotMeta, SnapshotError> {
+        async fn snapshot(&self, req: SnapshotRequest) -> Result<SnapshotMeta, SnapshotError> {
             *self.last_label.lock().unwrap() = req.label.clone();
             *self.last_redact.lock().unwrap() = Some(req.redact_secrets);
             *self.last_created_by.lock().unwrap() = Some(req.created_by.clone());
@@ -186,10 +181,7 @@ mod tests {
                 redactions_applied: req.redact_secrets,
             })
         }
-        async fn restore(
-            &self,
-            _req: RestoreRequest,
-        ) -> Result<RestoreReport, SnapshotError> {
+        async fn restore(&self, _req: RestoreRequest) -> Result<RestoreReport, SnapshotError> {
             unimplemented!()
         }
         async fn list(
@@ -319,11 +311,11 @@ mod tests {
             .await
             .unwrap();
         assert!(out.get("snapshot_id").is_some());
-        assert_eq!(out.get("bundle_size_bytes").and_then(|v| v.as_u64()), Some(4096));
         assert_eq!(
-            inner.last_label.lock().unwrap().as_deref(),
-            Some("manual")
+            out.get("bundle_size_bytes").and_then(|v| v.as_u64()),
+            Some(4096)
         );
+        assert_eq!(inner.last_label.lock().unwrap().as_deref(), Some("manual"));
         assert_eq!(*inner.last_redact.lock().unwrap(), Some(true));
         assert_eq!(
             inner.last_created_by.lock().unwrap().as_deref(),
@@ -357,10 +349,7 @@ mod tests {
         }
         #[async_trait]
         impl MemorySnapshotter for TenantCapture {
-            async fn snapshot(
-                &self,
-                req: SnapshotRequest,
-            ) -> Result<SnapshotMeta, SnapshotError> {
+            async fn snapshot(&self, req: SnapshotRequest) -> Result<SnapshotMeta, SnapshotError> {
                 *self.last_tenant.lock().unwrap() = Some(req.tenant.clone());
                 Ok(SnapshotMeta {
                     id: SnapshotId::new(),
@@ -377,17 +366,10 @@ mod tests {
                     redactions_applied: false,
                 })
             }
-            async fn restore(
-                &self,
-                _: RestoreRequest,
-            ) -> Result<RestoreReport, SnapshotError> {
+            async fn restore(&self, _: RestoreRequest) -> Result<RestoreReport, SnapshotError> {
                 unimplemented!()
             }
-            async fn list(
-                &self,
-                _: &AgentId,
-                _: &str,
-            ) -> Result<Vec<SnapshotMeta>, SnapshotError> {
+            async fn list(&self, _: &AgentId, _: &str) -> Result<Vec<SnapshotMeta>, SnapshotError> {
                 Ok(Vec::new())
             }
             async fn diff(
@@ -424,8 +406,8 @@ mod tests {
         let cap = Arc::new(TenantCapture {
             last_tenant: Mutex::new(None),
         });
-        let tool = MemorySnapshotTool::new(cap.clone() as Arc<dyn MemorySnapshotter>)
-            .with_tenant("acme");
+        let tool =
+            MemorySnapshotTool::new(cap.clone() as Arc<dyn MemorySnapshotter>).with_tenant("acme");
         tool.call(&ctx(), json!({})).await.unwrap();
         assert_eq!(cap.last_tenant.lock().unwrap().as_deref(), Some("acme"));
     }

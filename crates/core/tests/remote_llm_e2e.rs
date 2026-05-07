@@ -131,10 +131,7 @@ async fn llm_chat_round_trips_via_mock_subprocess() {
     let outcomes = &snap.last_report.init_outcomes;
     match outcomes.get("remote_llm_plugin") {
         Some(InitOutcome::Ok { duration_ms: _ }) => {}
-        other => panic!(
-            "expected Ok outcome for remote_llm_plugin, got {:?}",
-            other
-        ),
+        other => panic!("expected Ok outcome for remote_llm_plugin, got {:?}", other),
     }
 
     // Resolve the provider via the registry → RemoteLlmClient.
@@ -152,7 +149,9 @@ async fn llm_chat_round_trips_via_mock_subprocess() {
             auth: None,
             api_flavor: None,
             embedding_model: None,
-            safety_settings: Default::default(), factory_type: None, api_key_secret_id: None,
+            safety_settings: Default::default(),
+            factory_type: None,
+            api_key_secret_id: None,
         },
     );
     let llm_cfg = LlmConfig {

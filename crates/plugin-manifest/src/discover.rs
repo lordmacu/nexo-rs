@@ -98,6 +98,9 @@ mod tests {
     fn filenames_const_lists_canonical_first() {
         // Locking the order — flipping it would silently swap
         // the priority + alter operator-visible behaviour.
-        assert_eq!(PLUGIN_MANIFEST_FILENAMES, &["plugin.toml", "nexo-plugin.toml"]);
+        assert_eq!(
+            PLUGIN_MANIFEST_FILENAMES,
+            &["plugin.toml", "nexo-plugin.toml"]
+        );
     }
 }

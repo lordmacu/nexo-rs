@@ -70,11 +70,10 @@ impl DreamNowTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: DREAM_NOW_TOOL_NAME.into(),
-            description:
-                "Force a memory consolidation pass now, bypassing time/session gates. \
+            description: "Force a memory consolidation pass now, bypassing time/session gates. \
                  Use when you've just learned a lot and want it consolidated into long-term memory \
                  immediately, instead of waiting for the next scheduled pass."
-                    .into(),
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -306,8 +305,7 @@ mod tests {
         async fn stream<'a>(
             &'a self,
             _: ChatRequest,
-        ) -> anyhow::Result<futures::stream::BoxStream<'a, anyhow::Result<StreamChunk>>>
-        {
+        ) -> anyhow::Result<futures::stream::BoxStream<'a, anyhow::Result<StreamChunk>>> {
             anyhow::bail!("stream not used")
         }
     }
@@ -315,11 +313,7 @@ mod tests {
     struct NoopDispatcher;
     #[async_trait]
     impl ToolDispatcher for NoopDispatcher {
-        async fn dispatch(
-            &self,
-            _name: &str,
-            _args: serde_json::Value,
-        ) -> Result<String, String> {
+        async fn dispatch(&self, _name: &str, _args: serde_json::Value) -> Result<String, String> {
             Ok(String::new())
         }
     }

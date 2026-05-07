@@ -5,9 +5,7 @@
 //! consumes.
 
 use nexo_broker::{AnyBroker, BrokerHandle, LocalBroker};
-use nexo_core::agent::admin_rpc::channel_outbound::{
-    ChannelOutboundDispatcher, OutboundMessage,
-};
+use nexo_core::agent::admin_rpc::channel_outbound::{ChannelOutboundDispatcher, OutboundMessage};
 use nexo_setup::admin_adapters::{BrokerOutboundDispatcher, WhatsAppTranslator};
 use serde_json::json;
 use std::time::Duration;
@@ -20,8 +18,8 @@ async fn takeover_send_round_trips_through_broker_to_whatsapp_topic() {
         .await
         .expect("subscribe");
 
-    let dispatcher = BrokerOutboundDispatcher::new(broker)
-        .with_translator(Box::new(WhatsAppTranslator));
+    let dispatcher =
+        BrokerOutboundDispatcher::new(broker).with_translator(Box::new(WhatsAppTranslator));
 
     let msg = OutboundMessage {
         channel: "whatsapp".into(),
@@ -58,8 +56,8 @@ async fn dispatcher_publishes_on_default_account_to_base_topic() {
         .await
         .expect("subscribe");
 
-    let dispatcher = BrokerOutboundDispatcher::new(broker)
-        .with_translator(Box::new(WhatsAppTranslator));
+    let dispatcher =
+        BrokerOutboundDispatcher::new(broker).with_translator(Box::new(WhatsAppTranslator));
 
     let msg = OutboundMessage {
         channel: "whatsapp".into(),

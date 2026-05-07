@@ -80,10 +80,7 @@ pub trait MicroCompactPolicy: Send + Sync + 'static {
     /// `Some(decision)` when the tool result identified by
     /// `(call_id, body_byte_size, turn_index)` should be replaced
     /// by the marker. `None` to leave the tool result intact.
-    async fn classify(
-        &self,
-        ctx: &MicroCompactContext<'_>,
-    ) -> Option<MicroCompactDecision>;
+    async fn classify(&self, ctx: &MicroCompactContext<'_>) -> Option<MicroCompactDecision>;
 }
 
 /// Inputs the micro-compact policy needs per call.
@@ -132,10 +129,7 @@ impl Default for DefaultMicroCompactPolicy {
 
 #[async_trait]
 impl MicroCompactPolicy for DefaultMicroCompactPolicy {
-    async fn classify(
-        &self,
-        ctx: &MicroCompactContext<'_>,
-    ) -> Option<MicroCompactDecision> {
+    async fn classify(&self, ctx: &MicroCompactContext<'_>) -> Option<MicroCompactDecision> {
         if !self.enabled {
             return None;
         }
@@ -230,9 +224,7 @@ impl CompactPolicy for DefaultCompactPolicy {
 
         // ── age trigger ─────────────────────────────────────────────
         if let Some(auto) = ctx.auto_config {
-            if auto.max_age_minutes > 0
-                && ctx.session_age_minutes >= auto.max_age_minutes
-            {
+            if auto.max_age_minutes > 0 && ctx.session_age_minutes >= auto.max_age_minutes {
                 let focus: String = ctx
                     .goal_description
                     .chars()
@@ -365,9 +357,7 @@ mod tests {
         // token_pct=0 means no token trigger from auto; falls back to
         // legacy threshold=0.7. 190K/200K = 0.95 ≥ 0.7, so it fires.
         let r = p
-            .classify(&ctx(
-                &usage, 200_000, 6, None, "goal X", 10, Some(&auto),
-            ))
+            .classify(&ctx(&usage, 200_000, 6, None, "goal X", 10, Some(&auto)))
             .await;
         assert!(r.is_some(), "legacy threshold 0.7 should fire at 95%");
     }
@@ -398,7 +388,15 @@ mod tests {
         let auto = auto_cfg(0.80, 120);
         let usage = BudgetUsage::default();
         assert!(p
-            .classify(&ctx(&usage, 200_000, 6, None, "young goal", 30, Some(&auto)))
+            .classify(&ctx(
+                &usage,
+                200_000,
+                6,
+                None,
+                "young goal",
+                30,
+                Some(&auto)
+            ))
             .await
             .is_none());
     }
@@ -435,7 +433,15 @@ mod tests {
             ..Default::default()
         };
         let r = p
-            .classify(&ctx(&usage, 200_000, 6, None, "hot old goal", 200, Some(&auto)))
+            .classify(&ctx(
+                &usage,
+                200_000,
+                6,
+                None,
+                "hot old goal",
+                200,
+                Some(&auto),
+            ))
             .await;
         let (_focus, trigger) = r.expect("should fire");
         assert!(
@@ -469,7 +475,10 @@ mod tests {
             tokens: 999_999,
             ..Default::default()
         };
-        assert!(p.classify(&ctx(&usage, 0, 9, None, "x", 999, None)).await.is_none());
+        assert!(p
+            .classify(&ctx(&usage, 0, 9, None, "x", 999, None))
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -689,9 +698,15 @@ impl Default for ExtractMemoriesConfig {
     }
 }
 
-fn default_extract_throttle() -> u32 { 1 }
-fn default_extract_max_turns() -> u32 { 5 }
-fn default_extract_max_failures() -> u32 { 3 }
+fn default_extract_throttle() -> u32 {
+    1
+}
+fn default_extract_max_turns() -> u32 {
+    5
+}
+fn default_extract_max_failures() -> u32 {
+    3
+}
 
 #[cfg(test)]
 mod micro_compact_tests {
@@ -792,8 +807,8 @@ mod micro_compact_tests {
             "after_tokens": 20000,
             "stored_at": "2026-04-01T12:00:00Z"
         }"#;
-        let s: CompactSummary = serde_json::from_str(pre_85_2_json)
-            .expect("pre-85.2 payload must load");
+        let s: CompactSummary =
+            serde_json::from_str(pre_85_2_json).expect("pre-85.2 payload must load");
         assert_eq!(s.agent_id, "ana");
         assert!(s.cache_pin_keys.is_empty());
         assert!(s.truncated_tool_results.is_empty());
@@ -807,11 +822,9 @@ mod micro_compact_tests {
             turn_index: 12,
             before_tokens: 80_000,
             after_tokens: 20_000,
-            stored_at: chrono::DateTime::parse_from_rfc3339(
-                "2026-04-01T12:00:00Z",
-            )
-            .unwrap()
-            .with_timezone(&chrono::Utc),
+            stored_at: chrono::DateTime::parse_from_rfc3339("2026-04-01T12:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
             cache_pin_keys: vec!["sys".into(), "tools".into()],
             truncated_tool_results: vec![TruncatedToolResult {
                 call_id: "c-7".into(),

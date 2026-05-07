@@ -89,15 +89,15 @@ where
     SweepHandle { task, shutdown }
 }
 
-async fn sweep_loop<T>(
-    store: Arc<EventStore<T>>,
-    cfg: SweepConfig,
-    shutdown: CancellationToken,
-) where
+async fn sweep_loop<T>(store: Arc<EventStore<T>>, cfg: SweepConfig, shutdown: CancellationToken)
+where
     T: EventMetadata + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     // Eager first pass.
-    match store.sweep_retention(cfg.retention_days, cfg.max_rows).await {
+    match store
+        .sweep_retention(cfg.retention_days, cfg.max_rows)
+        .await
+    {
         Ok(n) if n > 0 => {
             tracing::info!(deleted = n, "events sweep (eager) ran");
         }

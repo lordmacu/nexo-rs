@@ -172,10 +172,7 @@ pub const SANDBOX_DENYLIST_HOME_SUBPATHS: &[&str] = &[
 /// Plus a "path covers root" guard: any literal `/` in the
 /// allowlist matches every denylist entry, since `/` is the
 /// parent of everything.
-pub fn path_under_or_equals_denylist<'a>(
-    path: &str,
-    denylist: &'a [&'a str],
-) -> Option<&'a str> {
+pub fn path_under_or_equals_denylist<'a>(path: &str, denylist: &'a [&'a str]) -> Option<&'a str> {
     if path == "/" {
         return Some("/");
     }
@@ -252,28 +249,20 @@ mod tests {
 
     #[test]
     fn denylist_path_exact_match() {
-        let hit = path_under_or_equals_denylist(
-            "/etc/shadow",
-            SANDBOX_DENYLIST_HOST_PATHS,
-        );
+        let hit = path_under_or_equals_denylist("/etc/shadow", SANDBOX_DENYLIST_HOST_PATHS);
         assert_eq!(hit, Some("/etc/shadow"));
     }
 
     #[test]
     fn denylist_path_under_match() {
-        let hit = path_under_or_equals_denylist(
-            "/etc/sudoers.d/myrule",
-            SANDBOX_DENYLIST_HOST_PATHS,
-        );
+        let hit =
+            path_under_or_equals_denylist("/etc/sudoers.d/myrule", SANDBOX_DENYLIST_HOST_PATHS);
         assert_eq!(hit, Some("/etc/sudoers.d"));
     }
 
     #[test]
     fn denylist_root_covers_everything() {
-        let hit = path_under_or_equals_denylist(
-            "/",
-            SANDBOX_DENYLIST_HOST_PATHS,
-        );
+        let hit = path_under_or_equals_denylist("/", SANDBOX_DENYLIST_HOST_PATHS);
         assert_eq!(hit, Some("/"));
     }
 
@@ -282,16 +271,11 @@ mod tests {
         // Operator tries to allowlist `/etc` — every denylist
         // entry under `/etc` (shadow, sudoers, sudoers.d) is
         // a child of the allowlist entry, so reject.
-        let hit = path_under_or_equals_denylist(
-            "/etc",
-            SANDBOX_DENYLIST_HOST_PATHS,
-        );
+        let hit = path_under_or_equals_denylist("/etc", SANDBOX_DENYLIST_HOST_PATHS);
         assert!(hit.is_some());
         let matched = hit.unwrap();
         assert!(
-            matched == "/etc/shadow"
-                || matched == "/etc/sudoers"
-                || matched == "/etc/sudoers.d",
+            matched == "/etc/shadow" || matched == "/etc/sudoers" || matched == "/etc/sudoers.d",
             "expected an /etc/* denylist entry, got {}",
             matched
         );
@@ -307,10 +291,7 @@ mod tests {
 
         // sibling paths don't match — `/etc/shadow` should not
         // hit on `/etc/shadow_backup`.
-        let hit = path_under_or_equals_denylist(
-            "/etc/shadow_backup",
-            SANDBOX_DENYLIST_HOST_PATHS,
-        );
+        let hit = path_under_or_equals_denylist("/etc/shadow_backup", SANDBOX_DENYLIST_HOST_PATHS);
         assert!(hit.is_none());
     }
 

@@ -230,7 +230,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
@@ -353,7 +353,13 @@ mod tests {
 
     use crate::agent::context::BindingContext;
 
-    fn full_binding(agent: &str, session: Uuid, channel: &str, account: &str, mcp: Option<&str>) -> BindingContext {
+    fn full_binding(
+        agent: &str,
+        session: Uuid,
+        channel: &str,
+        account: &str,
+        mcp: Option<&str>,
+    ) -> BindingContext {
         let mut b = BindingContext::agent_only(agent);
         b.session_id = Some(session);
         b.channel = Some(channel.into());
@@ -368,7 +374,13 @@ mod tests {
     #[tokio::test]
     async fn step5_inject_meta_with_binding_writes_nested_namespace() {
         let mut ctx = test_ctx("ana", Some(Uuid::nil()));
-        ctx.binding = Some(full_binding("ana", Uuid::nil(), "whatsapp", "personal", None));
+        ctx.binding = Some(full_binding(
+            "ana",
+            Uuid::nil(),
+            "whatsapp",
+            "personal",
+            None,
+        ));
         let args = serde_json::json!({"to": "+5491100", "body": "hi"});
         let out = inject_context_meta(true, &ctx, args, "ventas-etb", "etb_register_lead");
 
@@ -394,9 +406,14 @@ mod tests {
     #[tokio::test]
     async fn step5_inject_meta_with_mcp_channel_source_emits_field() {
         let mut ctx = test_ctx("ana", Some(Uuid::nil()));
-        ctx.binding = Some(full_binding("ana", Uuid::nil(), "telegram", "kate_tg", Some("slack")));
-        let out =
-            inject_context_meta(true, &ctx, serde_json::json!({}), "marketing", "send_drip");
+        ctx.binding = Some(full_binding(
+            "ana",
+            Uuid::nil(),
+            "telegram",
+            "kate_tg",
+            Some("slack"),
+        ));
+        let out = inject_context_meta(true, &ctx, serde_json::json!({}), "marketing", "send_drip");
         let binding = &out["_meta"]["nexo"]["binding"];
         assert_eq!(binding["mcp_channel_source"], "slack");
     }
@@ -407,8 +424,7 @@ mod tests {
         // bootstrap, tests). Legacy flat block still emitted;
         // nested `nexo` block omitted to keep the wire compact.
         let ctx = test_ctx("delegation", None);
-        let out =
-            inject_context_meta(true, &ctx, serde_json::json!({}), "anything", "method");
+        let out = inject_context_meta(true, &ctx, serde_json::json!({}), "anything", "method");
         assert_eq!(out["_meta"]["agent_id"], "delegation");
         assert!(out["_meta"]["session_id"].is_null());
         assert!(out["_meta"].get("nexo").is_none());

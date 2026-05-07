@@ -86,9 +86,9 @@ fn agent_cfg() -> AgentConfig {
         channels: None,
         auto_approve: false,
         extract_memories: None,
-            event_subscribers: Vec::new(),
-            tenant_id: None,
-            extensions_config: std::collections::BTreeMap::new(),
+        event_subscribers: Vec::new(),
+        tenant_id: None,
+        extensions_config: std::collections::BTreeMap::new(),
     }
 }
 

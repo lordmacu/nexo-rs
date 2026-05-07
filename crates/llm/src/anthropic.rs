@@ -24,7 +24,6 @@ use crate::client::LlmClient;
 use crate::prompt_block::{CachePolicy, PromptBlock};
 use crate::rate_limiter::RateLimiter;
 use crate::registry::{schema, LlmProviderFactory};
-use nexo_tool_meta::admin::llm_providers::{AuthMode, CredentialFieldDescriptor};
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
 use crate::stream::{
     ensure_event_stream, parse_anthropic_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
@@ -33,6 +32,7 @@ use crate::types::{
     Attachment, AttachmentData, CacheUsage, ChatRequest, ChatResponse, ChatRole, FinishReason,
     ResponseContent, TokenUsage, ToolCall, ToolChoice,
 };
+use nexo_tool_meta::admin::llm_providers::{AuthMode, CredentialFieldDescriptor};
 
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_API_VERSION: &str = "2023-06-01";
@@ -299,7 +299,14 @@ fn fingerprint_auth(value: &str) -> String {
         return format!("len={len}");
     }
     let prefix: String = value.chars().take(8).collect();
-    let suffix: String = value.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{prefix}…{suffix} len={len}")
 }
 
@@ -413,11 +420,10 @@ impl AnthropicClient {
         if status == 429 {
             let headers = response.headers().clone();
             let retry_after_ms = parse_retry_after(&headers).unwrap_or(60_000);
-            let rate_limit_info =
-                crate::rate_limit_info::extract_rate_limit_info(
-                    &headers,
-                    crate::rate_limit_info::LlmProvider::Anthropic,
-                );
+            let rate_limit_info = crate::rate_limit_info::extract_rate_limit_info(
+                &headers,
+                crate::rate_limit_info::LlmProvider::Anthropic,
+            );
             // Log human-readable quota message so operators see what
             // limit was hit and when it resets — not just the delay.
             if let Some(info) = &rate_limit_info {

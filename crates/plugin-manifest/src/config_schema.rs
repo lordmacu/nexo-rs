@@ -64,12 +64,7 @@ pub fn validate_config(config: &Value, schema: &Value) -> Vec<ConfigSchemaError>
     errors
 }
 
-fn validate_at(
-    value: &Value,
-    schema: &Value,
-    pointer: &str,
-    errors: &mut Vec<ConfigSchemaError>,
-) {
+fn validate_at(value: &Value, schema: &Value, pointer: &str, errors: &mut Vec<ConfigSchemaError>) {
     let Some(schema_obj) = schema.as_object() else {
         return;
     };
@@ -106,9 +101,7 @@ fn validate_at(
         value.as_object(),
         schema_obj.get("type").and_then(|v| v.as_str()),
     ) {
-        if let Some(required) =
-            schema_obj.get("required").and_then(|v| v.as_array())
-        {
+        if let Some(required) = schema_obj.get("required").and_then(|v| v.as_array()) {
             for r in required {
                 if let Some(name) = r.as_str() {
                     if !map.contains_key(name) {
@@ -137,9 +130,7 @@ fn validate_at(
                     if !allow_extra {
                         errors.push(ConfigSchemaError::new(
                             child_ptr,
-                            format!(
-                                "unknown field `{k}` (additionalProperties: false)"
-                            ),
+                            format!("unknown field `{k}` (additionalProperties: false)"),
                         ));
                     }
                 }

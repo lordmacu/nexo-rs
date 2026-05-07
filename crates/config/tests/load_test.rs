@@ -450,7 +450,10 @@ fn memory_snapshot_omitted_uses_defaults() {
     assert!(snap.events.mutation_publish_enabled);
     assert_eq!(snap.events.lifecycle_subject_prefix, "nexo.memory.snapshot");
     assert_eq!(snap.events.mutation_subject_prefix, "nexo.memory.mutated");
-    assert!(snap.root.is_empty(), "default empty root falls back to nexo_state_dir() at boot");
+    assert!(
+        snap.root.is_empty(),
+        "default empty root falls back to nexo_state_dir() at boot"
+    );
     assert!(snap.memdir_root.is_empty());
     assert!(snap.sqlite_root.is_empty());
 }

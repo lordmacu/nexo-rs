@@ -212,11 +212,10 @@ mod tests {
             HookOutcome::Continue => {}
             HookOutcome::Abort { .. } => {}
             HookOutcome::Block { .. } => {}
-            HookOutcome::Transform { .. } => {}
-            // Within the defining crate `#[non_exhaustive]` does
-            // not require a wildcard; this lock-down test fails
-            // to compile if a future variant lands without
-            // updating this match.
+            HookOutcome::Transform { .. } => {} // Within the defining crate `#[non_exhaustive]` does
+                                                // not require a wildcard; this lock-down test fails
+                                                // to compile if a future variant lands without
+                                                // updating this match.
         }
     }
 

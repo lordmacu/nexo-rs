@@ -19,9 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nexo_tool_meta::admin::agent_events::AgentEventKind;
-use nexo_tool_meta::admin::processing::{
-    PendingInbound, ProcessingControlState, ProcessingScope,
-};
+use nexo_tool_meta::admin::processing::{PendingInbound, ProcessingControlState, ProcessingScope};
 
 use crate::agent::admin_rpc::channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundMessage,
@@ -45,10 +43,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
     /// `Ok(ProcessingControlState::AgentActive)` rather than
     /// `Err`. Lets `state` calls cost zero allocations on the
     /// happy path.
-    async fn get(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<ProcessingControlState>;
+    async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<ProcessingControlState>;
 
     /// Set the state for `scope`. Returns `true` when the
     /// state actually changed (so handlers populate the
@@ -96,10 +91,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
     /// empty vec so legacy stores keep `resume()` working
     /// without forcing the override (resume just won't replay
     /// anything).
-    async fn drain_pending(
-        &self,
-        _scope: &ProcessingScope,
-    ) -> anyhow::Result<Vec<PendingInbound>> {
+    async fn drain_pending(&self, _scope: &ProcessingScope) -> anyhow::Result<Vec<PendingInbound>> {
         Ok(Vec::new())
     }
 
@@ -107,10 +99,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
     /// without draining. Used by operator UIs to surface a
     /// "N inbounds pending" badge. Default impl returns 0
     /// (legacy store has no buffer).
-    async fn pending_depth(
-        &self,
-        _scope: &ProcessingScope,
-    ) -> anyhow::Result<usize> {
+    async fn pending_depth(&self, _scope: &ProcessingScope) -> anyhow::Result<usize> {
         Ok(0)
     }
 }
@@ -119,9 +108,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
 /// arms. Kept as a free function so handlers stay small + the
 /// error wording is exercised in tests.
 pub fn err_not_implemented(method: &str, detail: &str) -> AdminRpcError {
-    AdminRpcError::MethodNotFound(format!(
-        "not_implemented: {method} — {detail}"
-    ))
+    AdminRpcError::MethodNotFound(format!("not_implemented: {method} — {detail}"))
 }
 
 /// `nexo/admin/processing/state` — read the current state for
@@ -178,12 +165,10 @@ pub async fn pause(
         }
     };
     if !p.scope.is_v0_supported() {
-        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-            err_not_implemented(
-                "nexo/admin/processing/pause",
-                "v0 routes only Conversation scope",
-            ),
-        );
+        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(err_not_implemented(
+            "nexo/admin/processing/pause",
+            "v0 routes only Conversation scope",
+        ));
     }
     let prev_state = match store.get(&p.scope).await {
         Ok(s) => s,
@@ -265,12 +250,10 @@ pub async fn resume(
         }
     };
     if !p.scope.is_v0_supported() {
-        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-            err_not_implemented(
-                "nexo/admin/processing/resume",
-                "v0 routes only Conversation scope",
-            ),
-        );
+        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(err_not_implemented(
+            "nexo/admin/processing/resume",
+            "v0 routes only Conversation scope",
+        ));
     }
     // Phase 82.13.b.2 — validate summary BEFORE clearing state
     // so the operator gets a clear error and the pause stays
@@ -280,9 +263,7 @@ pub async fn resume(
     if let Some(summary) = &p.summary_for_agent {
         if p.session_id.is_none() {
             return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-                AdminRpcError::InvalidParams(
-                    "session_id_required_with_summary".into(),
-                ),
+                AdminRpcError::InvalidParams("session_id_required_with_summary".into()),
             );
         }
         let trimmed = summary.trim();
@@ -332,11 +313,7 @@ pub async fn resume(
     // logged but does NOT roll back the resume — the alternative
     // (operator gets stuck in a paused state because their
     // optional summary couldn't persist) is worse.
-    let transcript_stamped = match (
-        p.summary_for_agent.as_ref(),
-        p.session_id,
-        appender,
-    ) {
+    let transcript_stamped = match (p.summary_for_agent.as_ref(), p.session_id, appender) {
         (Some(summary), Some(session_id), Some(app)) => {
             let entry = TranscriptEntry {
                 role: TranscriptRole::System,
@@ -393,9 +370,7 @@ pub async fn resume(
                     sender_id: Some(it.from_contact_id.clone()),
                     message_id: it.message_id,
                 };
-                if let Err(e) =
-                    app.append(p.scope.agent_id(), session_id, entry).await
-                {
+                if let Err(e) = app.append(p.scope.agent_id(), session_id, entry).await {
                     tracing::warn!(
                         error = %e,
                         agent = %p.scope.agent_id(),
@@ -458,20 +433,16 @@ pub async fn intervention(
         }
     };
     if !p.scope.is_v0_supported() {
-        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-            err_not_implemented(
-                "nexo/admin/processing/intervention",
-                "v0 routes only Conversation scope",
-            ),
-        );
+        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(err_not_implemented(
+            "nexo/admin/processing/intervention",
+            "v0 routes only Conversation scope",
+        ));
     }
     if !p.action.is_v0_supported() {
-        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-            err_not_implemented(
-                "nexo/admin/processing/intervention",
-                "v0 routes only Reply action",
-            ),
-        );
+        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(err_not_implemented(
+            "nexo/admin/processing/intervention",
+            "v0 routes only Reply action",
+        ));
     }
     // Refuse intervention on a non-paused scope so operators
     // never accidentally double-respond. Audit log surfaces
@@ -480,10 +451,7 @@ pub async fn intervention(
         Ok(ProcessingControlState::PausedByOperator { .. }) => {}
         Ok(_) => {
             return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-                AdminRpcError::InvalidParams(format!(
-                    "scope_not_paused: {}",
-                    p.scope.agent_id()
-                )),
+                AdminRpcError::InvalidParams(format!("scope_not_paused: {}", p.scope.agent_id())),
             )
         }
         Err(e) => {
@@ -513,9 +481,7 @@ pub async fn intervention(
         } => {
             let Some(disp) = outbound else {
                 return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-                    AdminRpcError::Internal(
-                        "channel_outbound dispatcher not configured".into(),
-                    ),
+                    AdminRpcError::Internal("channel_outbound dispatcher not configured".into()),
                 );
             };
             let msg = OutboundMessage {
@@ -531,9 +497,7 @@ pub async fn intervention(
                 Ok(ack) => ack.outbound_message_id,
                 Err(ChannelOutboundError::ChannelUnavailable(name)) => {
                     return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-                        AdminRpcError::Internal(format!(
-                            "channel_unavailable: {name}"
-                        )),
+                        AdminRpcError::Internal(format!("channel_unavailable: {name}")),
                     )
                 }
                 Err(ChannelOutboundError::InvalidParams(msg)) => {
@@ -626,10 +590,7 @@ mod tests {
 
     #[async_trait]
     impl ChannelOutboundDispatcher for CapturingOutbound {
-        async fn send(
-            &self,
-            msg: OutboundMessage,
-        ) -> Result<OutboundAck, ChannelOutboundError> {
+        async fn send(&self, msg: OutboundMessage) -> Result<OutboundAck, ChannelOutboundError> {
             self.sent.lock().unwrap().push(msg);
             Ok(OutboundAck {
                 outbound_message_id: self.respond_with_id.clone(),
@@ -644,19 +605,13 @@ mod tests {
         /// path. Tests seed this directly via `push_pending` to
         /// drive the drain branch of `resume()`.
         pending: Mutex<
-            std::collections::HashMap<
-                ProcessingScope,
-                std::collections::VecDeque<PendingInbound>,
-            >,
+            std::collections::HashMap<ProcessingScope, std::collections::VecDeque<PendingInbound>>,
         >,
     }
 
     #[async_trait]
     impl ProcessingControlStore for MockStore {
-        async fn get(
-            &self,
-            scope: &ProcessingScope,
-        ) -> anyhow::Result<ProcessingControlState> {
+        async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<ProcessingControlState> {
             Ok(self
                 .rows
                 .lock()
@@ -918,9 +873,7 @@ mod tests {
     /// touching disk.
     #[derive(Debug, Default)]
     struct RecordingAppender {
-        captured: std::sync::Mutex<
-            Vec<(String, uuid::Uuid, super::TranscriptEntry)>,
-        >,
+        captured: std::sync::Mutex<Vec<(String, uuid::Uuid, super::TranscriptEntry)>>,
         fail: bool,
     }
 
@@ -1559,10 +1512,7 @@ mod tests {
             contact_id: "wa.99".into(),
             mcp_channel_source: None,
         };
-        store
-            .push_pending(&other_scope, pending(99))
-            .await
-            .unwrap();
+        store.push_pending(&other_scope, pending(99)).await.unwrap();
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
@@ -1795,8 +1745,7 @@ mod tests {
     async fn pause_emits_processing_state_changed_with_prev_active() {
         let store = MockStore::default();
         let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
-        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
-            captured.clone();
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> = captured.clone();
         let _ = pause(
             &store,
             Some(&emitter),
@@ -1831,8 +1780,7 @@ mod tests {
     async fn pause_skips_emit_when_already_paused() {
         let store = MockStore::default();
         let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
-        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
-            captured.clone();
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> = captured.clone();
         let params = serde_json::json!({
             "scope": convo(),
             "operator_token_hash": "abcdef0123456789",
@@ -1851,8 +1799,7 @@ mod tests {
     async fn resume_emits_processing_state_changed_with_prev_paused() {
         let store = MockStore::default();
         let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
-        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
-            captured.clone();
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> = captured.clone();
         let _ = pause(
             &store,
             Some(&emitter),
@@ -1894,8 +1841,7 @@ mod tests {
     async fn resume_skips_emit_when_already_active() {
         let store = MockStore::default();
         let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
-        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
-            captured.clone();
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> = captured.clone();
         // No prior pause — resume on AgentActive must not emit.
         let _ = resume(
             &store,

@@ -178,10 +178,7 @@ impl ForkSubagent for DefaultForkSubagent {
                         })?
                         .map(ForkResult::from_turn_loop)
                 });
-                Box::pin(async move {
-                    join.await
-                        .map_err(|e| ForkError::Internal(e.to_string()))?
-                })
+                Box::pin(async move { join.await.map_err(|e| ForkError::Internal(e.to_string()))? })
             }
         };
 

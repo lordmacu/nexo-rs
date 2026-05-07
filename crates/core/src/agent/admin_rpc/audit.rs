@@ -158,10 +158,7 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
         if let Some(obj) = params.as_object() {
             let mut redacted = obj.clone();
             if redacted.contains_key("value") {
-                redacted.insert(
-                    "value".into(),
-                    Value::String("<redacted>".into()),
-                );
+                redacted.insert("value".into(), Value::String("<redacted>".into()));
             }
             return Value::Object(redacted);
         }
@@ -242,9 +239,7 @@ fn redact_secret_keys(value: &Value) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(redact_secret_keys).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(redact_secret_keys).collect()),
         other => other.clone(),
     }
 }
@@ -520,10 +515,7 @@ mod tests {
         });
         let redacted = redact_for_audit("nexo/admin/credentials/register", &original);
         // Nested key inside metadata.imap.
-        assert_eq!(
-            redacted["metadata"]["imap"]["password"],
-            "<redacted>"
-        );
+        assert_eq!(redacted["metadata"]["imap"]["password"], "<redacted>");
         // Top-level metadata.api_key.
         assert_eq!(redacted["metadata"]["api_key"], "<redacted>");
         // Non-secret fields preserved.

@@ -84,10 +84,7 @@ impl DefaultRedactionPolicy {
             Rule::build("anthropic-api-key", r"sk-ant-[A-Za-z0-9_\-]{40,}"),
             Rule::build("openai-api-key", r"sk-[A-Za-z0-9]{20,}"),
             Rule::build("aws-access-key-id", r"AKIA[0-9A-Z]{16}"),
-            Rule::build(
-                "github-token",
-                r"\bgh[pousr]_[A-Za-z0-9]{30,}\b",
-            ),
+            Rule::build("github-token", r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
             Rule::build("slack-token", r"xox[baprs]-[A-Za-z0-9\-]{10,}"),
             Rule::build(
                 "bearer-token",
@@ -156,7 +153,14 @@ pub fn redact_staging_dir(
             continue;
         }
         visited_any = true;
-        walk_redact(staging_dir, &dir, policy, &mut total, &mut rules_set, &mut artifacts)?;
+        walk_redact(
+            staging_dir,
+            &dir,
+            policy,
+            &mut total,
+            &mut rules_set,
+            &mut artifacts,
+        )?;
     }
 
     if !visited_any {

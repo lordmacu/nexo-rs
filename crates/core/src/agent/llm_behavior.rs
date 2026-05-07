@@ -13,11 +13,11 @@ use crate::telemetry::{
 use async_trait::async_trait;
 use chrono::Utc;
 use nexo_broker::{BrokerHandle, Event};
+use nexo_driver_types::{GoalId, MemoryExtractor};
 use nexo_llm::{
     collect_stream, Attachment, CachePolicy, ChatMessage, ChatRequest, ChatRole, LlmClient,
     ResponseContent,
 };
-use nexo_driver_types::{GoalId, MemoryExtractor};
 use nexo_memory::EmailFollowupEntry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -647,9 +647,8 @@ impl LlmAgentBehavior {
                         Some(reply_value) => {
                             match serde_json::from_value::<
                                 nexo_tool_meta::reply_kind::OutboundReplyKind,
-                            >(
-                                reply_value.clone()
-                            ) {
+                            >(reply_value.clone())
+                            {
                                 Ok(next) => {
                                     tracing::info!(
                                         agent_id = %ctx.agent_id,
@@ -1021,9 +1020,7 @@ impl LlmAgentBehavior {
                 .and_then(|over| {
                     over.patterns
                         .iter()
-                        .find(|(p, _)| {
-                            super::rate_limit::glob_matches(p, &call.name)
-                        })
+                        .find(|(p, _)| super::rate_limit::glob_matches(p, &call.name))
                         .or_else(|| over.patterns.get_key_value("_default"))
                         .map(|(_, spec)| spec.rps)
                 })
@@ -1245,9 +1242,7 @@ impl LlmAgentBehavior {
                 let redactor = ctx
                     .redactor
                     .clone()
-                    .unwrap_or_else(|| {
-                        std::sync::Arc::new(super::redaction::Redactor::disabled())
-                    });
+                    .unwrap_or_else(|| std::sync::Arc::new(super::redaction::Redactor::disabled()));
                 let mut writer = TranscriptWriter::with_extras(
                     transcripts_dir,
                     &ctx.agent_id,
@@ -1342,23 +1337,22 @@ impl LlmAgentBehavior {
                     "skills configured but skills_dir is empty; skipping skill injection"
                 );
             } else {
-                let loader =
-                    SkillLoader::new(skills_dir)
-                        .with_overrides(ctx.config.skill_overrides.clone())
-                        // Phase 83.8.12.6.runtime — tenant-scoped
-                        // skill resolution: per-tenant skills
-                        // (`<root>/<tenant_id>/<name>/`) win over
-                        // global, and legacy `<root>/<name>/`
-                        // remains as fallback for un-migrated
-                        // deployments.
-                        .with_tenant_id(ctx.config.tenant_id.clone())
-                        // Phase 81.9 — append plugin-contributed
-                        // skill roots from `wire_plugin_registry`.
-                        // Operator-priority is preserved because
-                        // `candidate_paths` searches the operator
-                        // chain (tenant + global + legacy) before
-                        // any plugin root.
-                        .with_plugin_roots(self.plugin_skill_roots.clone());
+                let loader = SkillLoader::new(skills_dir)
+                    .with_overrides(ctx.config.skill_overrides.clone())
+                    // Phase 83.8.12.6.runtime — tenant-scoped
+                    // skill resolution: per-tenant skills
+                    // (`<root>/<tenant_id>/<name>/`) win over
+                    // global, and legacy `<root>/<name>/`
+                    // remains as fallback for un-migrated
+                    // deployments.
+                    .with_tenant_id(ctx.config.tenant_id.clone())
+                    // Phase 81.9 — append plugin-contributed
+                    // skill roots from `wire_plugin_registry`.
+                    // Operator-priority is preserved because
+                    // `candidate_paths` searches the operator
+                    // chain (tenant + global + legacy) before
+                    // any plugin root.
+                    .with_plugin_roots(self.plugin_skill_roots.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     skills_section = Some(blocks);
@@ -1502,10 +1496,7 @@ impl LlmAgentBehavior {
         // with conditional instructions.
         if !per_turn_system_addenda.is_empty() {
             let merged = per_turn_system_addenda.join("\n\n");
-            system_blocks.push(nexo_llm::PromptBlock::plain(
-                "per_turn_addendum",
-                merged,
-            ));
+            system_blocks.push(nexo_llm::PromptBlock::plain("per_turn_addendum", merged));
         }
         // Legacy flat string for providers that don't honor
         // `system_blocks` (and as a back-compat path when prompt_cache
@@ -1576,8 +1567,7 @@ impl LlmAgentBehavior {
             };
 
             // ── Phase 77.2 autoCompact triggers ───────────────────
-            let token_trigger =
-                est >= self.compaction_runtime.compact_at_tokens;
+            let token_trigger = est >= self.compaction_runtime.compact_at_tokens;
             let age_minutes = chrono::Utc::now()
                 .signed_duration_since(session.created_at)
                 .num_minutes()
@@ -1603,9 +1593,7 @@ impl LlmAgentBehavior {
                 None => true,
             };
 
-            let should_compact = (token_trigger || age_trigger)
-                && !breaker_tripped
-                && min_gap_ok;
+            let should_compact = (token_trigger || age_trigger) && !breaker_tripped && min_gap_ok;
 
             if should_compact {
                 if let Some(boundary) = super::compaction::find_safe_boundary(
@@ -2253,10 +2241,7 @@ impl LlmAgentBehavior {
                     instance: msg.source_instance.clone(),
                     recipient: msg.sender_id.clone(),
                     tenant_id: ctx.config.tenant_id.clone(),
-                    conversation_key: format!(
-                        "{}:session:{}",
-                        ctx.agent_id, msg.session_id
-                    ),
+                    conversation_key: format!("{}:session:{}", ctx.agent_id, msg.session_id),
                     language: ctx.config.language.clone(),
                 };
                 let mut current_reply =
@@ -2310,7 +2295,8 @@ impl LlmAgentBehavior {
                     }
                 }
                 let final_reply = current_reply;
-                let payload = build_outbound_payload(&final_reply, msg.sender_id.as_deref(), msg.session_id);
+                let payload =
+                    build_outbound_payload(&final_reply, msg.sender_id.as_deref(), msg.session_id);
                 let mut event = Event::new(&topic, &ctx.agent_id, payload);
                 event.session_id = Some(msg.session_id);
                 ctx.broker.publish(&topic, event).await?;
@@ -2432,10 +2418,8 @@ impl AgentBehavior for LlmAgentBehavior {
             tick.priority = MessagePriority::Later;
             // Phase 82.5 — followup ticks are scheduler-driven
             // (no end-user) → InternalSystem.
-            tick.inbound = Some(
-                nexo_tool_meta::InboundMessageMeta::internal_system()
-                    .with_ts(Utc::now()),
-            );
+            tick.inbound =
+                Some(nexo_tool_meta::InboundMessageMeta::internal_system().with_ts(Utc::now()));
 
             match self.run_turn(ctx, tick, false).await {
                 Ok(_) => {
@@ -2818,7 +2802,8 @@ mod tests {
         ) {
             self.extract_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            *self.last_extract.lock().unwrap() = Some((goal_id, turn_index, messages_text, memory_dir));
+            *self.last_extract.lock().unwrap() =
+                Some((goal_id, turn_index, messages_text, memory_dir));
         }
     }
 
@@ -2826,10 +2811,7 @@ mod tests {
         struct DummyClient;
         #[async_trait]
         impl LlmClient for DummyClient {
-            async fn chat(
-                &self,
-                _req: ChatRequest,
-            ) -> anyhow::Result<nexo_llm::ChatResponse> {
+            async fn chat(&self, _req: ChatRequest) -> anyhow::Result<nexo_llm::ChatResponse> {
                 anyhow::bail!("dummy client — unused in M4 tests")
             }
             fn model_id(&self) -> &str {
@@ -2872,13 +2854,9 @@ mod tests {
             "transcript".into(),
             std::path::PathBuf::from("/tmp/nexo-test/memory"),
         );
+        assert_eq!(mock.tick_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(
-            mock.tick_count.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
-        assert_eq!(
-            mock.extract_count
-                .load(std::sync::atomic::Ordering::SeqCst),
+            mock.extract_count.load(std::sync::atomic::Ordering::SeqCst),
             1
         );
         let last = mock.last_extract.lock().unwrap().clone().unwrap();

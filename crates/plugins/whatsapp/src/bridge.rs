@@ -161,14 +161,10 @@ pub fn build_handler(
                 if let Some((variant, _, _)) = crate::media::variant_of_content(content) {
                     let is_audio = matches!(
                         variant,
-                        crate::media::MediaVariant::Audio
-                            | crate::media::MediaVariant::VoiceNote
+                        crate::media::MediaVariant::Audio | crate::media::MediaVariant::VoiceNote
                     );
                     if is_audio {
-                        match crate::media::download_inbound_to_disk(
-                            &session, &cfg, &ctx.msg,
-                        )
-                        .await
+                        match crate::media::download_inbound_to_disk(&session, &cfg, &ctx.msg).await
                         {
                             Ok(downloaded) => audio_attachment = downloaded,
                             Err(e) => tracing::warn!(

@@ -1053,8 +1053,8 @@ mod drift_tests {
         "TELEGRAM_MEDIA_DIR",
         "CLOUDFLARED_BINARY",
         // Plugin endpoint / identity overrides (non-destructive).
-        "CDP_URL",     // browser plugin: Chrome DevTools URL.
-        "NATS_URL",    // broker URL pin.
+        "CDP_URL",  // browser plugin: Chrome DevTools URL.
+        "NATS_URL", // broker URL pin.
         // Test / mock infra (gated by `#[cfg(test)]` in practice; the
         // scanner is regex-only so it picks them up regardless).
         "MOCK_MODE",

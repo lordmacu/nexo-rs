@@ -11,8 +11,7 @@ use async_trait::async_trait;
 
 use nexo_broker::AnyBroker;
 use nexo_core::agent::channel_adapter::{
-    ChannelAdapter, ChannelAdapterError, ChannelAdapterRegistry,
-    OutboundAck, OutboundMessage,
+    ChannelAdapter, ChannelAdapterError, ChannelAdapterRegistry, OutboundAck, OutboundMessage,
 };
 
 struct MockSmsAdapter {

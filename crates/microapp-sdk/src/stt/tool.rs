@@ -97,9 +97,7 @@ impl ToolHandler for InboundTransformHandler {
         let media = match parsed.media {
             Some(m) => m,
             None => {
-                tracing::debug!(
-                    "stt: passthrough (no media on inbound)"
-                );
+                tracing::debug!("stt: passthrough (no media on inbound)");
                 return Ok(ToolReply::ok_json(
                     json!({ "ok": true, "passthrough": true }),
                 ));

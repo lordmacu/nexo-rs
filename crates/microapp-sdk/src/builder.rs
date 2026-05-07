@@ -22,7 +22,8 @@ type NotificationHandler = Arc<dyn Fn(Value) + Send + Sync>;
 /// in.
 pub type HandlerRegistry = Handlers;
 
-type InitCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = SdkResult<()>> + Send>> + Send>>;
+type InitCallback =
+    Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = SdkResult<()>> + Send>> + Send>>;
 type ShutdownCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>>;
 /// Phase 83.4.b.handle — fires once with the live `AdminClient`
 /// right before the dispatch loop enters its read loop. Microapp
@@ -30,8 +31,7 @@ type ShutdownCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> 
 /// parallel tasks (HTTP server, background workers, etc.) that
 /// run alongside the stdio loop.
 #[cfg(feature = "admin")]
-type AdminReadyCallback =
-    Box<dyn FnOnce(Arc<crate::admin::AdminClient>) + Send>;
+type AdminReadyCallback = Box<dyn FnOnce(Arc<crate::admin::AdminClient>) + Send>;
 
 /// Builder for a Phase 11 stdio microapp.
 ///
@@ -164,11 +164,7 @@ impl Microapp {
     ///     });
     /// // ... spawn a task consuming `rx` ...
     /// ```
-    pub fn with_notification_listener<F>(
-        mut self,
-        method: impl Into<String>,
-        handler: F,
-    ) -> Self
+    pub fn with_notification_listener<F>(mut self, method: impl Into<String>, handler: F) -> Self
     where
         F: Fn(Value) + Send + Sync + 'static,
     {
@@ -255,11 +251,9 @@ impl Microapp {
         let handlers = {
             let mut h = handlers;
             if self.admin_enabled {
-                let sender = std::sync::Arc::new(
-                    crate::admin::WriterAdminSender::new(writer.clone()),
-                );
-                let client =
-                    std::sync::Arc::new(crate::admin::AdminClient::new(sender));
+                let sender =
+                    std::sync::Arc::new(crate::admin::WriterAdminSender::new(writer.clone()));
+                let client = std::sync::Arc::new(crate::admin::AdminClient::new(sender));
                 // Phase 83.4.b.handle — hand a clone to any
                 // registered listener BEFORE entering the
                 // dispatch loop so parallel tasks (HTTP servers,
@@ -347,7 +341,10 @@ mod tests {
         let writer = Vec::new();
         let _ = app.run_with(reader, writer).await;
         // Callback fired — we have a live client.
-        assert!(rx.await.is_ok(), "on_admin_ready must fire before run_with returns");
+        assert!(
+            rx.await.is_ok(),
+            "on_admin_ready must fire before run_with returns"
+        );
     }
 
     #[tokio::test]
@@ -363,9 +360,8 @@ mod tests {
                 counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             },
         );
-        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
-            format!("{req}\n").into_bytes(),
-        ));
+        let reader =
+            tokio::io::BufReader::new(std::io::Cursor::new(format!("{req}\n").into_bytes()));
         let writer = Vec::new();
         let _ = app.run_with(reader, writer).await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -382,9 +378,8 @@ mod tests {
                 counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             },
         );
-        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
-            format!("{req}\n").into_bytes(),
-        ));
+        let reader =
+            tokio::io::BufReader::new(std::io::Cursor::new(format!("{req}\n").into_bytes()));
         let _ = app.run_with(reader, Vec::new()).await;
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -402,9 +397,8 @@ mod tests {
                 counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             },
         );
-        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
-            format!("{req}\n").into_bytes(),
-        ));
+        let reader =
+            tokio::io::BufReader::new(std::io::Cursor::new(format!("{req}\n").into_bytes()));
         let _ = app.run_with(reader, Vec::new()).await;
         assert_eq!(
             counter.load(std::sync::atomic::Ordering::SeqCst),
@@ -424,6 +418,9 @@ mod tests {
         let writer = Vec::new();
         let _ = app.run_with(reader, writer).await;
         // Callback was registered but admin is disabled — no fire.
-        assert!(rx.await.is_err(), "callback must not fire without with_admin()");
+        assert!(
+            rx.await.is_err(),
+            "callback must not fire without with_admin()"
+        );
     }
 }

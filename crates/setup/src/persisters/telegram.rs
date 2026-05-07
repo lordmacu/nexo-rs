@@ -81,16 +81,13 @@ impl TelegramPersister {
     /// Atomic file write at mode 0600 on Unix. Mirrors the
     /// pattern used by `crate::secrets_store::FsSecretsStore`.
     fn write_secret(&self, instance: &str, token: &str) -> Result<(), AdminRpcError> {
-        std::fs::create_dir_all(&self.secrets_dir).map_err(|e| {
-            AdminRpcError::Internal(format!("create secrets dir: {e}"))
-        })?;
+        std::fs::create_dir_all(&self.secrets_dir)
+            .map_err(|e| AdminRpcError::Internal(format!("create secrets dir: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &self.secrets_dir,
-                std::fs::Permissions::from_mode(0o700),
-            );
+            let _ =
+                std::fs::set_permissions(&self.secrets_dir, std::fs::Permissions::from_mode(0o700));
         }
         let final_path = self.secret_path(instance);
         let tmp_path = self
@@ -166,7 +163,10 @@ impl TelegramPersister {
                     .into(),
             ),
         );
-        entry.insert(YamlValue::String("polling".into()), YamlValue::Mapping(polling));
+        entry.insert(
+            YamlValue::String("polling".into()),
+            YamlValue::Mapping(polling),
+        );
 
         // allow_agents (defaults to empty = no agent restriction).
         let allow_agents: Vec<YamlValue> = metadata
@@ -210,9 +210,8 @@ impl TelegramPersister {
     /// by `instance`. Atomic via tmp-file + rename.
     fn upsert_yaml_entry(&self, instance: &str, entry: Mapping) -> Result<(), AdminRpcError> {
         if let Some(parent) = self.yaml_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AdminRpcError::Internal(format!("create yaml dir: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AdminRpcError::Internal(format!("create yaml dir: {e}")))?;
         }
         let mut root: YamlValue = if self.yaml_path.exists() {
             let text = std::fs::read_to_string(&self.yaml_path)
@@ -220,16 +219,15 @@ impl TelegramPersister {
             if text.trim().is_empty() {
                 YamlValue::Mapping(Mapping::new())
             } else {
-                serde_yaml::from_str(&text).map_err(|e| {
-                    AdminRpcError::Internal(format!("parse telegram.yaml: {e}"))
-                })?
+                serde_yaml::from_str(&text)
+                    .map_err(|e| AdminRpcError::Internal(format!("parse telegram.yaml: {e}")))?
             }
         } else {
             YamlValue::Mapping(Mapping::new())
         };
-        let map = root.as_mapping_mut().ok_or_else(|| {
-            AdminRpcError::Internal("telegram.yaml root is not a mapping".into())
-        })?;
+        let map = root
+            .as_mapping_mut()
+            .ok_or_else(|| AdminRpcError::Internal("telegram.yaml root is not a mapping".into()))?;
         let existing = map.remove(YamlValue::String("telegram".into()));
         let mut seq: Vec<YamlValue> = match existing {
             Some(YamlValue::Sequence(s)) => s,
@@ -270,8 +268,7 @@ impl TelegramPersister {
         let Some(map) = root.as_mapping_mut() else {
             return Ok(false);
         };
-        let Some(YamlValue::Sequence(mut seq)) =
-            map.remove(YamlValue::String("telegram".into()))
+        let Some(YamlValue::Sequence(mut seq)) = map.remove(YamlValue::String("telegram".into()))
         else {
             return Ok(false);
         };
@@ -509,9 +506,7 @@ mod tests {
     #[test]
     fn validate_shape_rejects_missing_token() {
         let (_d, p) = fixture();
-        let err = p
-            .validate_shape(&json!({}), &HashMap::new())
-            .unwrap_err();
+        let err = p.validate_shape(&json!({}), &HashMap::new()).unwrap_err();
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
 
@@ -607,7 +602,10 @@ mod tests {
             .unwrap();
         assert_eq!(seq.len(), 1);
         let entry = &seq[0];
-        assert_eq!(entry.get("instance").and_then(YamlValue::as_str), Some("kate"));
+        assert_eq!(
+            entry.get("instance").and_then(YamlValue::as_str),
+            Some("kate")
+        );
         assert_eq!(
             entry.get("token").and_then(YamlValue::as_str),
             Some("${file:./secrets/telegram_kate_token.txt}")

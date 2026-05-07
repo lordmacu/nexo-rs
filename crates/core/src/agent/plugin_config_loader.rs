@@ -178,9 +178,7 @@ pub fn load_plugin_config(
             error: e.to_string(),
         })?;
         if !canonical.starts_with(&canonical_dir) {
-            return Err(PluginConfigError::SymlinkEscape {
-                path: path.clone(),
-            });
+            return Err(PluginConfigError::SymlinkEscape { path: path.clone() });
         }
 
         let raw = std::fs::read_to_string(&canonical).map_err(|e| PluginConfigError::FileRead {
@@ -188,11 +186,12 @@ pub fn load_plugin_config(
             error: e.to_string(),
         })?;
 
-        let resolved = nexo_config::env::resolve_placeholders(&raw, &canonical.display().to_string())
-            .map_err(|e| PluginConfigError::EnvResolve {
-                path: canonical.clone(),
-                error: e.to_string(),
-            })?;
+        let resolved =
+            nexo_config::env::resolve_placeholders(&raw, &canonical.display().to_string())
+                .map_err(|e| PluginConfigError::EnvResolve {
+                    path: canonical.clone(),
+                    error: e.to_string(),
+                })?;
 
         let value: Value =
             serde_yaml::from_str(&resolved).map_err(|e| PluginConfigError::YamlParse {
@@ -212,40 +211,40 @@ pub fn load_plugin_config(
         source_files.push(canonical);
     }
 
-    let schema_validated = match manifest.plugin.config.schema_path.as_deref() {
-        None => false,
-        Some(rel) => {
-            let schema_path = plugin_root.join(rel);
-            let schema_bytes = std::fs::read(&schema_path).map_err(|e| {
-                PluginConfigError::SchemaRead {
-                    path: schema_path.clone(),
-                    error: e.to_string(),
+    let schema_validated =
+        match manifest.plugin.config.schema_path.as_deref() {
+            None => false,
+            Some(rel) => {
+                let schema_path = plugin_root.join(rel);
+                let schema_bytes =
+                    std::fs::read(&schema_path).map_err(|e| PluginConfigError::SchemaRead {
+                        path: schema_path.clone(),
+                        error: e.to_string(),
+                    })?;
+                let schema_json: serde_json::Value = serde_json::from_slice(&schema_bytes)
+                    .map_err(|e| PluginConfigError::SchemaParse {
+                        path: schema_path.clone(),
+                        error: e.to_string(),
+                    })?;
+                // Round-trip via JSON string to convert
+                // `serde_yaml::Value` into `serde_json::Value`. Direct
+                // `serde_json::to_value(yaml_val)` works for the
+                // subset we need (mappings + scalars + sequences).
+                let merged_json: serde_json::Value =
+                    yaml_to_json(&merged).map_err(|e| PluginConfigError::YamlParse {
+                        path: schema_path.clone(),
+                        error: format!("merged yaml -> json: {e}"),
+                    })?;
+                let errors = validate_config(&merged_json, &schema_json);
+                if !errors.is_empty() {
+                    return Err(PluginConfigError::SchemaValidation {
+                        schema_path,
+                        errors,
+                    });
                 }
-            })?;
-            let schema_json: serde_json::Value = serde_json::from_slice(&schema_bytes)
-                .map_err(|e| PluginConfigError::SchemaParse {
-                    path: schema_path.clone(),
-                    error: e.to_string(),
-                })?;
-            // Round-trip via JSON string to convert
-            // `serde_yaml::Value` into `serde_json::Value`. Direct
-            // `serde_json::to_value(yaml_val)` works for the
-            // subset we need (mappings + scalars + sequences).
-            let merged_json: serde_json::Value =
-                yaml_to_json(&merged).map_err(|e| PluginConfigError::YamlParse {
-                    path: schema_path.clone(),
-                    error: format!("merged yaml -> json: {e}"),
-                })?;
-            let errors = validate_config(&merged_json, &schema_json);
-            if !errors.is_empty() {
-                return Err(PluginConfigError::SchemaValidation {
-                    schema_path,
-                    errors,
-                });
+                true
             }
-            true
-        }
-    };
+        };
 
     Ok(PluginConfig {
         merged,
@@ -393,7 +392,11 @@ mod tests {
         let plugin_root = tempdir().unwrap();
         let m = manifest("slack", None);
         let pc = load_plugin_config(plugin_root.path(), cfg_dir.path(), &m).unwrap();
-        let channels = pc.merged.get("channels").and_then(Value::as_sequence).unwrap();
+        let channels = pc
+            .merged
+            .get("channels")
+            .and_then(Value::as_sequence)
+            .unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].as_str(), Some("x"));
     }

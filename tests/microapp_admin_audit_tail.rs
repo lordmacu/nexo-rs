@@ -126,7 +126,11 @@ async fn audit_tail_filters_by_result_and_emits_json() {
         ])
         .output()
         .expect("spawn nexo binary");
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     let arr = parsed.as_array().expect("json array");
@@ -155,5 +159,8 @@ async fn audit_tail_rejects_invalid_result_filter() {
         .expect("spawn nexo binary");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("--result must be one of ok|error|denied"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("--result must be one of ok|error|denied"),
+        "stderr: {stderr}"
+    );
 }

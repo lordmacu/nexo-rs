@@ -151,19 +151,13 @@ mod tests {
         });
         assert_eq!(render_template("first: {{tags.0}}", &ctx), "first: alpha");
         assert_eq!(render_template("third: {{tags.2}}", &ctx), "third: gamma");
-        assert_eq!(
-            render_template("oob: {{tags.99}}", &ctx),
-            "oob: <missing>"
-        );
+        assert_eq!(render_template("oob: {{tags.99}}", &ctx), "oob: <missing>");
     }
 
     #[test]
     fn null_leaf_renders_placeholder() {
         let ctx = serde_json::json!({ "value": null });
-        assert_eq!(
-            render_template("v={{value}}", &ctx),
-            "v=<missing>"
-        );
+        assert_eq!(render_template("v={{value}}", &ctx), "v=<missing>");
     }
 
     #[test]
@@ -208,9 +202,6 @@ mod tests {
         // body — render `<missing>` and let the operator fix the
         // path explicitly.
         let ctx = serde_json::json!({ "obj": { "a": 1 } });
-        assert_eq!(
-            render_template("o={{obj}}", &ctx),
-            "o=<missing>"
-        );
+        assert_eq!(render_template("o={{obj}}", &ctx), "o=<missing>");
     }
 }

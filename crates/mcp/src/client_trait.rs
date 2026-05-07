@@ -47,11 +47,7 @@ pub trait McpClient: Send + Sync {
     /// frame down their respective transports. Used by the channel
     /// permission relay dispatcher to emit
     /// `notifications/nexo/channel/permission_request`.
-    async fn send_notification(
-        &self,
-        _method: &str,
-        _params: Value,
-    ) -> Result<(), McpError> {
+    async fn send_notification(&self, _method: &str, _params: Value) -> Result<(), McpError> {
         Err(McpError::Protocol(
             "send_notification not supported by this client".into(),
         ))

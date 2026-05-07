@@ -228,11 +228,14 @@ impl WebhookServerConfig {
             }
             seen_paths.insert(s.source.path.clone(), s.source.id.clone());
             if let Some(rl) = &s.rate_limit {
-                rl.validate(&format!("webhook_receiver.sources[{}].rate_limit", s.source.id))
-                    .map_err(|detail| WebhookConfigError::SourceRateLimit {
-                        id: s.source.id.clone(),
-                        detail,
-                    })?;
+                rl.validate(&format!(
+                    "webhook_receiver.sources[{}].rate_limit",
+                    s.source.id
+                ))
+                .map_err(|detail| WebhookConfigError::SourceRateLimit {
+                    id: s.source.id.clone(),
+                    detail,
+                })?;
             }
             if let Some(cap) = s.concurrency_cap {
                 if cap == 0 {
@@ -466,10 +469,7 @@ mod tests {
         });
         let cfg = WebhookServerConfig {
             enabled: true,
-            default_rate_limit: Some(ChannelRateLimit {
-                rps: 1.0,
-                burst: 2,
-            }),
+            default_rate_limit: Some(ChannelRateLimit { rps: 1.0, burst: 2 }),
             sources: vec![s, mk_source("b", "/b")],
             ..Default::default()
         };

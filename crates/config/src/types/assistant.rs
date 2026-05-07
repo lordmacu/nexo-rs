@@ -38,12 +38,10 @@ impl AssistantConfig {
     pub fn validate(&self) -> Result<(), String> {
         if let Some(text) = &self.system_prompt_addendum {
             if text.trim().is_empty() {
-                return Err(
-                    "assistant_mode.system_prompt_addendum is empty; \
+                return Err("assistant_mode.system_prompt_addendum is empty; \
                      omit the field to use the default, or write a \
                      non-empty override"
-                        .into(),
-                );
+                    .into());
             }
         }
         for name in &self.initial_team {

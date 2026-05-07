@@ -82,7 +82,10 @@ impl SqliteAdminAuditWriter {
             .max_connections(2)
             .connect_with(opts)
             .await?;
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .ok();
         Self::run_ddl(&pool).await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_microapp_admin_audit_microapp
@@ -142,10 +145,9 @@ impl SqliteAdminAuditWriter {
         // Forward-only migration for DBs created before 83.8.12.7.
         // SQLite raises "duplicate column name" if the column
         // already exists — that's the success case.
-        if let Err(e) =
-            sqlx::query("ALTER TABLE microapp_admin_audit ADD COLUMN tenant_id TEXT")
-                .execute(pool)
-                .await
+        if let Err(e) = sqlx::query("ALTER TABLE microapp_admin_audit ADD COLUMN tenant_id TEXT")
+            .execute(pool)
+            .await
         {
             let msg = e.to_string();
             if !msg.contains("duplicate column") {
@@ -177,10 +179,9 @@ impl SqliteAdminAuditWriter {
         deleted += res.rows_affected() as usize;
 
         // 2. Cap-based delete.
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM microapp_admin_audit")
-                .fetch_one(&self.pool)
-                .await?;
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM microapp_admin_audit")
+            .fetch_one(&self.pool)
+            .await?;
         if (total as usize) > max_rows {
             let excess = (total as usize) - max_rows;
             let res = sqlx::query(
@@ -235,7 +236,17 @@ impl SqliteAdminAuditWriter {
 
         let mut q = sqlx::query_as::<
             _,
-            (String, String, String, String, i64, String, Option<i32>, i64, Option<String>),
+            (
+                String,
+                String,
+                String,
+                String,
+                i64,
+                String,
+                Option<i32>,
+                i64,
+                Option<String>,
+            ),
         >(&sql);
         for b in &binds {
             q = q.bind(b);
@@ -357,7 +368,12 @@ pub fn format_rows_as_table(rows: &[AdminAuditRow]) -> String {
         "started_at", "microapp", "method", "result", "dur_ms", "args[..8]",
     )
     .ok();
-    writeln!(out, "{}", "-".repeat(24 + 2 + 20 + 2 + 40 + 2 + 7 + 2 + 7 + 2 + 10)).ok();
+    writeln!(
+        out,
+        "{}",
+        "-".repeat(24 + 2 + 20 + 2 + 40 + 2 + 7 + 2 + 7 + 2 + 10)
+    )
+    .ok();
     for row in rows {
         let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(row.started_at_ms as i64)
             .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string())
@@ -655,10 +671,7 @@ mod tests {
         writer
             .append(sample_row_with_tenant("a", 3_000, "globex"))
             .await;
-        let rows = writer
-            .tail_for_tenant("acme", None, 50)
-            .await
-            .unwrap();
+        let rows = writer.tail_for_tenant("acme", None, 50).await.unwrap();
         assert_eq!(rows.len(), 2);
         // newest first
         assert_eq!(rows[0].started_at_ms, 2_000);
@@ -692,7 +705,11 @@ mod tests {
             .append(sample_row_with_tenant("a", 1_000, "acme"))
             .await;
         let rows = writer.tail_for_tenant("acme", None, 0).await.unwrap();
-        assert_eq!(rows.len(), 1, "limit=0 should be clamped to 1, not return empty");
+        assert_eq!(
+            rows.len(),
+            1,
+            "limit=0 should be clamped to 1, not return empty"
+        );
     }
 
     #[tokio::test]
@@ -715,7 +732,9 @@ mod tests {
         let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
         for i in 0..10u64 {
-            writer.append(sample_row("a", now_ms - (10 - i) * 1000)).await;
+            writer
+                .append(sample_row("a", now_ms - (10 - i) * 1000))
+                .await;
         }
         // Retention generous (none deleted by age); max_rows=3 →
         // 7 oldest deleted.

@@ -107,10 +107,7 @@ mod tests {
 
     #[async_trait]
     impl ChannelOutboundDispatcher for CapturingDispatcher {
-        async fn send(
-            &self,
-            msg: OutboundMessage,
-        ) -> Result<OutboundAck, ChannelOutboundError> {
+        async fn send(&self, msg: OutboundMessage) -> Result<OutboundAck, ChannelOutboundError> {
             self.sent.lock().unwrap().push(msg);
             Ok(OutboundAck {
                 outbound_message_id: self.respond_with_id.clone(),
@@ -123,10 +120,7 @@ mod tests {
 
     #[async_trait]
     impl ChannelOutboundDispatcher for AlwaysFailingDispatcher {
-        async fn send(
-            &self,
-            _msg: OutboundMessage,
-        ) -> Result<OutboundAck, ChannelOutboundError> {
+        async fn send(&self, _msg: OutboundMessage) -> Result<OutboundAck, ChannelOutboundError> {
             Err(ChannelOutboundError::Transport("simulated".into()))
         }
     }

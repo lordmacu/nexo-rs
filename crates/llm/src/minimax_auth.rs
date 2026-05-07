@@ -355,7 +355,9 @@ mod tests {
             }),
             api_flavor: None,
             embedding_model: None,
-            safety_settings: None, factory_type: None, api_key_secret_id: None,
+            safety_settings: None,
+            factory_type: None,
+            api_key_secret_id: None,
         };
         let src = build_auth_source(&cfg).unwrap();
         match src {

@@ -59,8 +59,8 @@ pub trait MemoryCheckpointer: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     /// Trait-object-safety smoke test: must coerce to
     /// `Arc<dyn MemoryCheckpointer>` and dispatch through the vtable.
@@ -69,11 +69,7 @@ mod tests {
         struct Counter(AtomicUsize);
         #[async_trait]
         impl MemoryCheckpointer for Counter {
-            async fn checkpoint(
-                &self,
-                _subject: String,
-                _body: String,
-            ) -> Result<(), String> {
+            async fn checkpoint(&self, _subject: String, _body: String) -> Result<(), String> {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }

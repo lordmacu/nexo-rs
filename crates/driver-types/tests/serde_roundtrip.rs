@@ -22,7 +22,7 @@ fn budget() -> BudgetGuards {
         max_tokens: 250_000,
         max_consecutive_denies: 5,
         max_consecutive_errors: 5,
-            max_consecutive_413: 2,
+        max_consecutive_413: 2,
     }
 }
 

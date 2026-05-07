@@ -58,16 +58,13 @@ pub mod webhook;
 
 pub use binding::{binding_id_render, BindingContext};
 pub use event_source::{
-    format_dispatch_source, format_event_subscriber_source, format_rate_limit_hit,
-    EventSourceMeta,
+    format_dispatch_source, format_event_subscriber_source, format_rate_limit_hit, EventSourceMeta,
 };
 pub use inbound::{InboundKind, InboundMessageMeta};
-pub use microapp_error::{
-    MicroappError, MicroappErrorKind, MICROAPP_ERROR_NOTIFY_METHOD,
-};
 pub use meta::{
     build_meta_value, parse_binding_from_meta, parse_inbound_from_meta, BINDING_KEY, INBOUND_KEY,
     META_KEY, NEXO_NAMESPACE,
 };
+pub use microapp_error::{MicroappError, MicroappErrorKind, MICROAPP_ERROR_NOTIFY_METHOD};
 pub use template::{render_template, MISSING_PLACEHOLDER};
 pub use webhook::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};

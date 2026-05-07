@@ -33,13 +33,11 @@ pub const CHANNEL_NOTIFICATION_METHOD: &str = "notifications/nexo/channel";
 /// Notification method servers MAY emit when they want to relay
 /// permission decisions structurally instead of as free text.
 /// Reserved here for the 80.9.b follow-up; the MVP gate ignores it.
-pub const CHANNEL_PERMISSION_NOTIFICATION_METHOD: &str =
-    "notifications/nexo/channel/permission";
+pub const CHANNEL_PERMISSION_NOTIFICATION_METHOD: &str = "notifications/nexo/channel/permission";
 
 /// Outbound method the runtime emits to ask a channel server to
 /// surface a permission prompt (deferred to 80.9.b).
-pub const CHANNEL_PERMISSION_REQUEST_METHOD: &str =
-    "notifications/nexo/channel/permission_request";
+pub const CHANNEL_PERMISSION_REQUEST_METHOD: &str = "notifications/nexo/channel/permission_request";
 
 /// Capability key in `experimental[...]` that signals the server is
 /// a channel surface. Mirrors the namespace prefix we already use
@@ -66,10 +64,7 @@ pub enum ChannelGateOutcome {
     /// Server failed a gate. Connection stays up; the channel
     /// handler is simply not registered. Each variant is a typed
     /// reason so log lines + `setup doctor` outputs can route on it.
-    Skip {
-        kind: SkipKind,
-        reason: String,
-    },
+    Skip { kind: SkipKind, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,18 +373,14 @@ pub fn parse_channel_notification(
     if method != CHANNEL_NOTIFICATION_METHOD {
         return Err(ChannelParseError::UnexpectedMethod(method.to_string()));
     }
-    let map = params
-        .as_object()
-        .ok_or(ChannelParseError::MissingParams)?;
+    let map = params.as_object().ok_or(ChannelParseError::MissingParams)?;
     let content = map
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or(ChannelParseError::MissingContent)?;
     let mut meta = BTreeMap::new();
     if let Some(raw_meta) = map.get("meta") {
-        let obj = raw_meta
-            .as_object()
-            .ok_or(ChannelParseError::InvalidMeta)?;
+        let obj = raw_meta.as_object().ok_or(ChannelParseError::InvalidMeta)?;
         for (k, v) in obj {
             let s = v.as_str().ok_or(ChannelParseError::InvalidMeta)?;
             if !is_safe_meta_key(k) {
@@ -432,9 +423,9 @@ pub struct ChannelSessionKey(pub String);
 /// influence threading (an `author_name` change must NOT split
 /// the session, otherwise rename storms break threading).
 pub const SESSION_META_KEYS: &[&str] = &[
-    "thread_ts",  // Slack threads
+    "thread_ts", // Slack threads
     "thread_id",
-    "chat_id",    // Telegram, Discord
+    "chat_id", // Telegram, Discord
     "conversation_id",
     "room_id",    // Matrix
     "channel_id", // Discord channels
@@ -598,11 +589,7 @@ impl ChannelRegistry {
             .is_some()
     }
 
-    pub async fn get(
-        &self,
-        binding_id: &str,
-        server_name: &str,
-    ) -> Option<RegisteredChannel> {
+    pub async fn get(&self, binding_id: &str, server_name: &str) -> Option<RegisteredChannel> {
         self.inner
             .read()
             .await
@@ -621,12 +608,7 @@ impl ChannelRegistry {
     }
 
     pub async fn list_all(&self) -> Vec<RegisteredChannel> {
-        self.inner
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect()
+        self.inner.read().await.values().cloned().collect()
     }
 
     pub async fn count(&self) -> usize {
@@ -668,9 +650,7 @@ impl ChannelRegistry {
                 }
                 None => ChannelGateOutcome::Skip {
                     kind: SkipKind::Session,
-                    reason: format!(
-                        "binding {binding_id} no longer present in config"
-                    ),
+                    reason: format!("binding {binding_id} no longer present in config"),
                 },
             };
             match outcome {
@@ -838,10 +818,7 @@ pub enum ChannelInboundLoopHandle {
     Running { join: JoinHandle<()> },
     /// Gate vetoed the loop at startup; no task is spawned, so
     /// callers don't have to manage lifetime for inactive servers.
-    Skipped {
-        kind: SkipKind,
-        reason: String,
-    },
+    Skipped { kind: SkipKind, reason: String },
 }
 
 // ---------------------------------------------------------------
@@ -1143,7 +1120,7 @@ mod tests {
             server_name: "slack",
             capability_declared: false,
             plugin_source: None,
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         match out {
@@ -1160,7 +1137,7 @@ mod tests {
             server_name: "slack",
             capability_declared: true,
             plugin_source: None,
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         match out {
@@ -1183,7 +1160,7 @@ mod tests {
             server_name: "slack",
             capability_declared: true,
             plugin_source: None,
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         match out {
@@ -1198,13 +1175,14 @@ mod tests {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
             outbound_tool_name: None,
-            rate_limit: None,        }]);
+            rate_limit: None,
+        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
             capability_declared: true,
             plugin_source: Some("slack@evil"),
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         match out {
@@ -1223,7 +1201,8 @@ mod tests {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
             outbound_tool_name: None,
-            rate_limit: None,        }]);
+            rate_limit: None,
+        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
@@ -1251,7 +1230,7 @@ mod tests {
             server_name: "slack",
             capability_declared: true,
             plugin_source: None,
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         match out {
@@ -1273,7 +1252,7 @@ mod tests {
             server_name: "slack",
             capability_declared: true,
             plugin_source: None,
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         assert_eq!(out, ChannelGateOutcome::Register);
@@ -1285,13 +1264,14 @@ mod tests {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
             outbound_tool_name: None,
-            rate_limit: None,        }]);
+            rate_limit: None,
+        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
             capability_declared: true,
             plugin_source: Some("slack@anthropic"),
-                        cfg: &cfg,
+            cfg: &cfg,
             binding_allowlist: &allow,
         });
         assert_eq!(out, ChannelGateOutcome::Register);
@@ -1449,18 +1429,16 @@ mod tests {
     #[test]
     fn parse_notification_rejects_missing_content() {
         let params = serde_json::json!({"meta": {}});
-        let err =
-            parse_channel_notification("slack", CHANNEL_NOTIFICATION_METHOD, &params, None)
-                .unwrap_err();
+        let err = parse_channel_notification("slack", CHANNEL_NOTIFICATION_METHOD, &params, None)
+            .unwrap_err();
         assert_eq!(err, ChannelParseError::MissingContent);
     }
 
     #[test]
     fn parse_notification_rejects_non_object_meta() {
         let params = serde_json::json!({"content": "x", "meta": "not_an_object"});
-        let err =
-            parse_channel_notification("slack", CHANNEL_NOTIFICATION_METHOD, &params, None)
-                .unwrap_err();
+        let err = parse_channel_notification("slack", CHANNEL_NOTIFICATION_METHOD, &params, None)
+            .unwrap_err();
         assert_eq!(err, ChannelParseError::InvalidMeta);
     }
 
@@ -1486,13 +1464,9 @@ mod tests {
         };
         let body: String = "y".repeat(200);
         let params = serde_json::json!({"content": body, "meta": {}});
-        let m = parse_channel_notification(
-            "slack",
-            CHANNEL_NOTIFICATION_METHOD,
-            &params,
-            Some(&cfg),
-        )
-        .unwrap();
+        let m =
+            parse_channel_notification("slack", CHANNEL_NOTIFICATION_METHOD, &params, Some(&cfg))
+                .unwrap();
         assert!(m.content.ends_with('…'));
         assert_eq!(m.content.chars().count(), 65);
     }
@@ -1500,8 +1474,8 @@ mod tests {
     #[test]
     fn parse_notification_rejects_empty_server_name() {
         let params = serde_json::json!({"content": "x"});
-        let err = parse_channel_notification("", CHANNEL_NOTIFICATION_METHOD, &params, None)
-            .unwrap_err();
+        let err =
+            parse_channel_notification("", CHANNEL_NOTIFICATION_METHOD, &params, None).unwrap_err();
         assert_eq!(err, ChannelParseError::EmptyServerName);
     }
 
@@ -1717,7 +1691,7 @@ mod tests {
                 server: server.into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         }
@@ -1735,7 +1709,7 @@ mod tests {
             server_name: server.into(),
             binding_id: binding.into(),
             plugin_source: None,
-                        cfg: Arc::new(cfg),
+            cfg: Arc::new(cfg),
             binding_allowlist: Arc::new(vec![server.into()]),
             capability_declared: capability,
             permission_capability: false,
@@ -2078,11 +2052,7 @@ mod tests {
         }
     }
 
-    fn make_inputs(
-        binding: &str,
-        cfg: ChannelsConfig,
-        allowed: &[&str],
-    ) -> ReevaluateInputs {
+    fn make_inputs(binding: &str, cfg: ChannelsConfig, allowed: &[&str]) -> ReevaluateInputs {
         let mut m = std::collections::HashMap::new();
         m.insert(
             binding.to_string(),
@@ -2104,7 +2074,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -2125,7 +2095,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -2146,7 +2116,7 @@ mod tests {
                 server: "telegram".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -2180,7 +2150,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: Some("slack@evil".into()),
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -2203,7 +2173,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -2221,12 +2191,9 @@ mod tests {
     #[tokio::test]
     async fn broker_dispatcher_publishes_to_topic() {
         let broker = AnyBroker::local();
-        let mut sub = nexo_broker::handle::BrokerHandle::subscribe(
-            &broker,
-            "mcp.channel.b.slack",
-        )
-        .await
-        .expect("subscribe");
+        let mut sub = nexo_broker::handle::BrokerHandle::subscribe(&broker, "mcp.channel.b.slack")
+            .await
+            .expect("subscribe");
         let dispatcher = BrokerChannelDispatcher::new(broker);
         let inbound = ChannelInbound {
             server_name: "slack".into(),

@@ -65,8 +65,7 @@ pub struct Handlers {
     /// listener, the handler is invoked with the `params` value.
     /// Errors are swallowed — same best-effort contract as the
     /// daemon-side broadcast emitter (`AgentEventEmitter::emit`).
-    pub notification_listeners:
-        BTreeMap<String, Arc<dyn Fn(Value) + Send + Sync>>,
+    pub notification_listeners: BTreeMap<String, Arc<dyn Fn(Value) + Send + Sync>>,
 }
 
 impl Handlers {
@@ -204,7 +203,8 @@ where
                 Some(handler) => match handler.call(stripped_args, ctx).await {
                     Ok(reply) => write_result(writer, id, reply.into_value()).await?,
                     Err(e) => {
-                        write_error(writer, id, e.code(), &e.to_string(), Some(e.symbolic())).await?
+                        write_error(writer, id, e.code(), &e.to_string(), Some(e.symbolic()))
+                            .await?
                     }
                 },
                 None => {
@@ -234,7 +234,8 @@ where
                         write_result(writer, id, v).await?;
                     }
                     Err(e) => {
-                        write_error(writer, id, e.code(), &e.to_string(), Some(e.symbolic())).await?
+                        write_error(writer, id, e.code(), &e.to_string(), Some(e.symbolic()))
+                            .await?
                     }
                 },
                 None => {

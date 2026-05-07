@@ -363,10 +363,7 @@ mod tests {
     #[test]
     fn parse_block_extracts_from_surrounding_text() {
         let n = sample_completed();
-        let wrapped = format!(
-            "Some preamble.\n\n{}\n\nTrailing chatter.",
-            n.to_xml()
-        );
+        let wrapped = format!("Some preamble.\n\n{}\n\nTrailing chatter.", n.to_xml());
         let parsed = TaskNotification::parse_block(&wrapped).expect("inline parse");
         assert_eq!(parsed, n);
     }
@@ -415,8 +412,7 @@ mod tests {
     fn serde_round_trip_via_json() {
         let n = sample_completed();
         let json = serde_json::to_string(&n).expect("serialize");
-        let back: TaskNotification =
-            serde_json::from_str(&json).expect("deserialize");
+        let back: TaskNotification = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, n);
     }
 

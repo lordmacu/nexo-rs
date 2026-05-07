@@ -363,10 +363,7 @@ mod tests {
 
     #[test]
     fn strip_multiple_env_vars() {
-        assert_eq!(
-            strip_leading_env_vars("A=1 B=2 C=3 cmd arg"),
-            "cmd arg"
-        );
+        assert_eq!(strip_leading_env_vars("A=1 B=2 C=3 cmd arg"), "cmd arg");
     }
 
     #[test]

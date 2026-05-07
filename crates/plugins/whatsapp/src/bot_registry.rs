@@ -31,9 +31,7 @@ static REGISTRY: OnceLock<Arc<DashMap<String, Arc<whatsapp_rs::Session>>>> = Onc
 /// SAME `Arc<DashMap>` so every caller (registration + lookup +
 /// dispatcher handle) shares one map.
 fn map() -> Arc<DashMap<String, Arc<whatsapp_rs::Session>>> {
-    REGISTRY
-        .get_or_init(|| Arc::new(DashMap::new()))
-        .clone()
+    REGISTRY.get_or_init(|| Arc::new(DashMap::new())).clone()
 }
 
 /// Register a paired `Session` under `instance_label`. Overwrites
@@ -134,12 +132,7 @@ impl WaBotHandle for WhatsappBotHandle {
         Ok(bots)
     }
 
-    async fn send_to_bot(
-        &self,
-        agent_id: &str,
-        bot_jid: &str,
-        text: &str,
-    ) -> WaBotResult<String> {
+    async fn send_to_bot(&self, agent_id: &str, bot_jid: &str, text: &str) -> WaBotResult<String> {
         let session = lookup(agent_id)
             .ok_or_else(|| anyhow!("no whatsapp session registered for {agent_id}"))?;
         // Use the dedicated bot path: messageSecret + BotMetadata

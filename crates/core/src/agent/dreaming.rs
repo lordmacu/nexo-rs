@@ -152,8 +152,7 @@ pub struct DreamEngine {
     /// `DreamReport { deferred_for_fork: true, .. }` without touching
     /// memory). Built at boot when the binding has both `dreaming`
     /// AND `auto_dream` enabled.
-    consolidation_probe:
-        Option<std::sync::Arc<dyn nexo_driver_types::ConsolidationLockProbe>>,
+    consolidation_probe: Option<std::sync::Arc<dyn nexo_driver_types::ConsolidationLockProbe>>,
 }
 impl DreamEngine {
     pub fn new(

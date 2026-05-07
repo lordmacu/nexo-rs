@@ -23,9 +23,9 @@ use crate::error::SnapshotError;
 use crate::git_capture::tag_pre_restore;
 use crate::manifest::{ArtifactKind, Manifest, SchemaVersions};
 use crate::meta::RestoreReport;
-use crate::request::{RestoreRequest, SnapshotRequest};
 #[cfg(feature = "snapshot-encryption")]
 use crate::request::DecryptionIdentity;
+use crate::request::{RestoreRequest, SnapshotRequest};
 use crate::snapshotter::MemorySnapshotter;
 use crate::tenant_path::{snapshots_dir, validate_agent_id, validate_tenant};
 
@@ -58,7 +58,10 @@ pub(super) async fn run_restore(
     if !report.manifest_ok {
         return Err(SnapshotError::ChecksumMismatch);
     }
-    if !report.schema_versions.is_supported_by(&SchemaVersions::CURRENT) {
+    if !report
+        .schema_versions
+        .is_supported_by(&SchemaVersions::CURRENT)
+    {
         return Err(SnapshotError::SchemaTooNew {
             bundle: report.schema_versions.manifest,
             runtime: SchemaVersions::CURRENT.manifest,
@@ -339,25 +342,19 @@ fn build_plan(manifest: &Manifest, staging: &Path, _sqlite_dir: &Path) -> Restor
             .iter()
             .find(|a| a.kind == *kind && a.path_in_bundle == format!("sqlite/{db_name}.sqlite"))
         {
-            plan.sqlite_targets.push((
-                (*db_name).to_string(),
-                staging.join(&art.path_in_bundle),
-            ));
+            plan.sqlite_targets
+                .push(((*db_name).to_string(), staging.join(&art.path_in_bundle)));
         }
     }
     for art in &manifest.artifacts {
         match art.kind {
             ArtifactKind::StateExtractCursor => {
-                plan.state_targets.push((
-                    "extract_cursor".into(),
-                    staging.join(&art.path_in_bundle),
-                ));
+                plan.state_targets
+                    .push(("extract_cursor".into(), staging.join(&art.path_in_bundle)));
             }
             ArtifactKind::StateDreamRun => {
-                plan.state_targets.push((
-                    "dream_run".into(),
-                    staging.join(&art.path_in_bundle),
-                ));
+                plan.state_targets
+                    .push(("dream_run".into(), staging.join(&art.path_in_bundle)));
             }
             ArtifactKind::MemoryFile | ArtifactKind::GitBundle => {
                 plan.memdir_artifacts.push(MemdirArtifact {
@@ -391,17 +388,11 @@ fn backup_memdir(
     Ok(Some(bak))
 }
 
-fn restore_memdir(
-    memdir: &Path,
-    _staging: &Path,
-    plan: &RestorePlan,
-) -> Result<(), SnapshotError> {
+fn restore_memdir(memdir: &Path, _staging: &Path, plan: &RestorePlan) -> Result<(), SnapshotError> {
     fs::create_dir_all(memdir)?;
     for art in &plan.memdir_artifacts {
         let rel = if art.is_git {
-            art.in_bundle
-                .strip_prefix("git/")
-                .unwrap_or(&art.in_bundle)
+            art.in_bundle.strip_prefix("git/").unwrap_or(&art.in_bundle)
         } else {
             art.in_bundle
                 .strip_prefix("memory_files/")
@@ -454,8 +445,8 @@ mod tests {
     }
 
     async fn read_marker(db: &Path) -> String {
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display()))
-            .unwrap();
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display())).unwrap();
         let mut conn = opts.connect().await.unwrap();
         let v: String = sqlx::query_scalar("SELECT v FROM t WHERE id = 0")
             .fetch_one(&mut conn)
@@ -495,12 +486,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = build_snapshotter(tmp.path());
         seed_memdir(&tmp.path().join("memdir/ana"), b"# v1\n");
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v1",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v1").await;
 
         let m = s
             .snapshot(SnapshotRequest::cli("ana", "default"))
@@ -509,12 +495,7 @@ mod tests {
 
         // Mutate the live state so we can detect a real restore.
         fs::remove_file(tmp.path().join("sqlite/ana/long_term.sqlite")).unwrap();
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v2",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v2").await;
         fs::write(tmp.path().join("memdir/ana/MEMORY.md"), b"# v2\n").unwrap();
 
         let mut req = RestoreRequest::new("ana", "default", &m.bundle_path);
@@ -540,12 +521,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = build_snapshotter(tmp.path());
         seed_memdir(&tmp.path().join("memdir/ana"), b"# v1\n");
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v1",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v1").await;
 
         let m = s
             .snapshot(SnapshotRequest::cli("ana", "default"))
@@ -554,12 +530,7 @@ mod tests {
 
         // Mutate live state.
         fs::remove_file(tmp.path().join("sqlite/ana/long_term.sqlite")).unwrap();
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v2",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v2").await;
         fs::write(tmp.path().join("memdir/ana/MEMORY.md"), b"# v2\n").unwrap();
 
         let mut req = RestoreRequest::new("ana", "default", &m.bundle_path);
@@ -570,7 +541,9 @@ mod tests {
 
         assert!(!report.dry_run);
         assert!(report.workers_restarted);
-        assert!(report.sqlite_restored_dbs.contains(&"long_term".to_string()));
+        assert!(report
+            .sqlite_restored_dbs
+            .contains(&"long_term".to_string()));
         // SQLite restored.
         assert_eq!(
             read_marker(&tmp.path().join("sqlite/ana/long_term.sqlite")).await,
@@ -591,12 +564,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = build_snapshotter(tmp.path());
         seed_memdir(&tmp.path().join("memdir/ana"), b"# v1\n");
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v1",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v1").await;
 
         let m = s
             .snapshot(SnapshotRequest::cli("ana", "default"))
@@ -604,12 +572,7 @@ mod tests {
             .unwrap();
         // Live state mutates between snapshot and restore.
         fs::remove_file(tmp.path().join("sqlite/ana/long_term.sqlite")).unwrap();
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v2",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v2").await;
 
         let report = s
             .restore(RestoreRequest::new("ana", "default", &m.bundle_path))
@@ -656,12 +619,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let s = build_snapshotter(tmp.path());
         seed_memdir(&tmp.path().join("memdir/ana"), b"# v1\n");
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v1",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v1").await;
 
         let identity = age::x25519::Identity::generate();
         let recipient = identity.to_public().to_string();
@@ -676,12 +634,7 @@ mod tests {
 
         // Mutate live state so the restore is observable.
         std::fs::remove_file(tmp.path().join("sqlite/ana/long_term.sqlite")).unwrap();
-        seed_sqlite(
-            &tmp.path().join("sqlite/ana/long_term.sqlite"),
-            3,
-            "v2",
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("sqlite/ana/long_term.sqlite"), 3, "v2").await;
 
         let mut req = RestoreRequest::new("ana", "default", &m.bundle_path);
         req.auto_pre_snapshot = false;

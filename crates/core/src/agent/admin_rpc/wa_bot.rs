@@ -38,12 +38,7 @@ pub trait WaBotHandle: Send + Sync + 'static {
 
     /// Send a plain-text message from `agent_id`'s paired session
     /// to `bot_jid`. Returns the outbound stanza id.
-    async fn send_to_bot(
-        &self,
-        agent_id: &str,
-        bot_jid: &str,
-        text: &str,
-    ) -> WaBotResult<String>;
+    async fn send_to_bot(&self, agent_id: &str, bot_jid: &str, text: &str) -> WaBotResult<String>;
 }
 
 /// Type-alias for the dispatcher field. `None` when the daemon is

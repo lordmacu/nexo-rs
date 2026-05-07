@@ -61,16 +61,13 @@ impl ChannelSendTool {
     fn resolved_binding_id(&self, ctx: &AgentContext) -> String {
         self.binding_id
             .clone()
-            .unwrap_or_else(|| {
-                super::channel_list_tool::resolve_binding_id(ctx)
-            })
+            .unwrap_or_else(|| super::channel_list_tool::resolve_binding_id(ctx))
     }
 
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: TOOL_NAME.into(),
-            description:
-                "Send an outbound message through a registered MCP channel server \
+            description: "Send an outbound message through a registered MCP channel server \
                  (Slack, Telegram, iMessage, etc.). Resolves the server's outbound \
                  tool by name from the channel registry and invokes it with the \
                  provided arguments. Use `channel_list` first to discover which \
@@ -79,7 +76,7 @@ impl ChannelSendTool {
                  server-defined; common keys are `chat_id`, `thread_ts`, `text`, \
                  `attachments`. The `content` shortcut populates the most common \
                  field name (`text` or `content` depending on the server's schema)."
-                    .into(),
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -168,9 +165,10 @@ impl ToolHandler for ChannelSendTool {
         }
 
         // ---- Gate 5: MCP runtime present ----
-        let mcp = ctx.mcp.as_ref().ok_or_else(|| {
-            anyhow!("channel_send: MCP runtime not wired into this AgentContext")
-        })?;
+        let mcp = ctx
+            .mcp
+            .as_ref()
+            .ok_or_else(|| anyhow!("channel_send: MCP runtime not wired into this AgentContext"))?;
 
         // ---- Invoke ----
         let result = mcp

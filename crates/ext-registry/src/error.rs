@@ -65,9 +65,7 @@ pub enum IndexValidationError {
     /// A URL field used a non-HTTPS scheme. Registry artifacts
     /// MUST be served over HTTPS — operator's install CLI
     /// refuses HTTP downloads.
-    #[error(
-        "ext-registry entry `{id}` field `{field}` `{got}` must use HTTPS"
-    )]
+    #[error("ext-registry entry `{id}` field `{field}` `{got}` must use HTTPS")]
     UrlNotHttps {
         /// Plugin id.
         id: String,

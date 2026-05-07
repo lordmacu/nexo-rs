@@ -203,10 +203,7 @@ async fn serve_file(path: &Path, dist: &Path) -> Response {
     let ct = content_type_for(path);
     let cache = cache_control_for(path, dist);
     (
-        [
-            (header::CONTENT_TYPE, ct),
-            (header::CACHE_CONTROL, cache),
-        ],
+        [(header::CONTENT_TYPE, ct), (header::CACHE_CONTROL, cache)],
         bytes,
     )
         .into_response()
@@ -362,8 +359,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("assets")).unwrap();
         std::fs::write(dir.path().join("index.html"), "<html>SPA</html>").unwrap();
-        let mut f =
-            std::fs::File::create(dir.path().join("assets/index-deadbeef.js")).unwrap();
+        let mut f = std::fs::File::create(dir.path().join("assets/index-deadbeef.js")).unwrap();
         write!(f, "console.log(1);").unwrap();
         let cfg = StaticAssetsConfig {
             dist: dir.path().to_path_buf(),
@@ -379,10 +375,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        assert_eq!(
-            cache_header(&res),
-            "public, max-age=31536000, immutable"
-        );
+        assert_eq!(cache_header(&res), "public, max-age=31536000, immutable");
     }
 
     #[tokio::test]

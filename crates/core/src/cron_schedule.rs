@@ -307,7 +307,11 @@ use nexo_config::types::cron_jitter::CronJitterConfig;
 /// ids fall back to `0.0` (no jitter) so legacy entries don't
 /// break.
 pub fn jitter_frac_from_entry_id(entry_id: &str) -> f64 {
-    let take: String = entry_id.chars().filter(|c| c.is_ascii_hexdigit()).take(8).collect();
+    let take: String = entry_id
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .take(8)
+        .collect();
     if take.len() < 8 {
         return 0.0;
     }
@@ -380,8 +384,7 @@ pub fn apply_one_shot_lead(
         return target_unix;
     }
     let max_lead_ms = cfg.one_shot_max_ms;
-    let lead_window_ms =
-        (jitter_frac_from_entry_id(entry_id) * max_lead_ms as f64) as i64;
+    let lead_window_ms = (jitter_frac_from_entry_id(entry_id) * max_lead_ms as f64) as i64;
     let lead_ms = lead_window_ms.max(cfg.one_shot_floor_ms);
     let result_unix = target_unix - lead_ms / 1000;
     if result_unix <= from_unix {
@@ -1088,8 +1091,13 @@ mod tests {
             recurring_frac: 0.0,
             ..Default::default()
         };
-        let out =
-            apply_recurring_jitter(1_700_000_000, 1_700_000_300, 1_699_999_900, "abcd1234", &cfg);
+        let out = apply_recurring_jitter(
+            1_700_000_000,
+            1_700_000_300,
+            1_699_999_900,
+            "abcd1234",
+            &cfg,
+        );
         assert_eq!(out, 1_700_000_000);
     }
 

@@ -285,10 +285,9 @@ impl LongTermMemory {
 
         // Phase 77.6 — memory_type column for per-type half-life decay.
         // Idempotent: swallow "duplicate column" on re-runs.
-        if let Err(e) =
-            sqlx::query("ALTER TABLE memories ADD COLUMN memory_type TEXT")
-                .execute(&self.pool)
-                .await
+        if let Err(e) = sqlx::query("ALTER TABLE memories ADD COLUMN memory_type TEXT")
+            .execute(&self.pool)
+            .await
         {
             if !is_duplicate_column_error(&e) {
                 return Err(e.into());
@@ -457,9 +456,7 @@ impl LongTermMemory {
     ) -> anyhow::Result<Uuid> {
         // Guard: scan for secrets before committing to SQLite.
         let content_to_store = if let Some(ref guard) = self.guard {
-            guard
-                .check(content)
-                .map_err(|e| anyhow::anyhow!("{}", e))?
+            guard.check(content).map_err(|e| anyhow::anyhow!("{}", e))?
         } else {
             content.to_string()
         };
@@ -591,26 +588,28 @@ impl LongTermMemory {
 
         let entries = rows
             .into_iter()
-            .map(|(id_str, content, tags_json, concept_tags_json, memory_type_str, ts)| {
-                let id = parse_uuid_or_warn(&id_str, "memory.id");
-                let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-                let concept_tags: Vec<String> =
-                    serde_json::from_str(&concept_tags_json).unwrap_or_default();
-                let memory_type = memory_type_str
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .and_then(|s: String| MemoryType::parse(&s));
-                let created_at = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
-                MemoryEntry {
-                    id,
-                    agent_id: agent_id.to_string(),
-                    content,
-                    tags,
-                    concept_tags,
-                    memory_type,
-                    created_at,
-                }
-            })
+            .map(
+                |(id_str, content, tags_json, concept_tags_json, memory_type_str, ts)| {
+                    let id = parse_uuid_or_warn(&id_str, "memory.id");
+                    let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                    let concept_tags: Vec<String> =
+                        serde_json::from_str(&concept_tags_json).unwrap_or_default();
+                    let memory_type = memory_type_str
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .and_then(|s: String| MemoryType::parse(&s));
+                    let created_at = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
+                    MemoryEntry {
+                        id,
+                        agent_id: agent_id.to_string(),
+                        content,
+                        tags,
+                        concept_tags,
+                        memory_type,
+                        created_at,
+                    }
+                },
+            )
             .collect();
 
         Ok(entries)
@@ -782,15 +781,16 @@ impl LongTermMemory {
             if out.len() >= limit {
                 break;
             }
-            let row: Option<(String, String, String, String, Option<String>, i64)> = sqlx::query_as(
-                "SELECT id, agent_id, content, tags, memory_type, created_at
+            let row: Option<(String, String, String, String, Option<String>, i64)> =
+                sqlx::query_as(
+                    "SELECT id, agent_id, content, tags, memory_type, created_at
                  FROM memories
                  WHERE id = ? AND agent_id = ?",
-            )
-            .bind(&id_str)
-            .bind(agent_id)
-            .fetch_optional(&self.pool)
-            .await?;
+                )
+                .bind(&id_str)
+                .bind(agent_id)
+                .fetch_optional(&self.pool)
+                .await?;
             if let Some((id, aid, content, tags_json, memory_type_str, created_at_ms)) = row {
                 let memory_type = memory_type_str
                     .as_deref()
@@ -933,8 +933,7 @@ impl LongTermMemory {
             placeholders.join(",")
         );
 
-        let mut query = sqlx::query_as::<_, (String, i64)>(&sql)
-            .bind(agent_id);
+        let mut query = sqlx::query_as::<_, (String, i64)>(&sql).bind(agent_id);
         for entry in entries {
             query = query.bind(entry.id.to_string());
         }
@@ -1579,12 +1578,11 @@ impl LongTermMemory {
 
     /// Phase 77.6 — look up the memory_type for a single memory entry.
     async fn memory_type_for(&self, memory_id: Uuid) -> anyhow::Result<Option<MemoryType>> {
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT memory_type FROM memories WHERE id = ?",
-        )
-        .bind(memory_id.to_string())
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT memory_type FROM memories WHERE id = ?")
+                .bind(memory_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row
             .and_then(|(s,)| s)
             .as_deref()
@@ -1694,7 +1692,10 @@ impl LongTermMemory {
             .map(|(mid, events)| {
                 // Phase 77.6 — default Project half-life for bulk path.
                 // Per-memory type lookup deferred to avoid N+1 queries.
-                (mid, aggregate_signals(&events, now_ms, MemoryType::Project.half_life_days()))
+                (
+                    mid,
+                    aggregate_signals(&events, now_ms, MemoryType::Project.half_life_days()),
+                )
             })
             .collect())
     }
@@ -1860,7 +1861,11 @@ impl Default for RecallSignals {
     }
 }
 
-fn aggregate_signals(events: &[(String, f64, i64)], now_ms: i64, half_life_days: f64) -> RecallSignals {
+fn aggregate_signals(
+    events: &[(String, f64, i64)],
+    now_ms: i64,
+    half_life_days: f64,
+) -> RecallSignals {
     if events.is_empty() {
         return RecallSignals::default();
     }

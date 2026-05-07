@@ -31,7 +31,11 @@ pub fn init_logging_from_env(crate_name: &str) {
 fn env_key_for(crate_name: &str) -> String {
     let mut out = String::with_capacity(crate_name.len() + 4);
     for c in crate_name.chars() {
-        out.push(if c == '-' { '_' } else { c.to_ascii_uppercase() });
+        out.push(if c == '-' {
+            '_'
+        } else {
+            c.to_ascii_uppercase()
+        });
     }
     out.push_str("_LOG");
     out

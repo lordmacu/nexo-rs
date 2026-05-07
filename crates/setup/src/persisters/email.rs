@@ -51,14 +51,15 @@ impl EmailPersister {
     }
 
     fn secret_path(&self, instance: &str) -> PathBuf {
-        self.secrets_dir.join("email").join(format!("{instance}.toml"))
+        self.secrets_dir
+            .join("email")
+            .join(format!("{instance}.toml"))
     }
 
     fn write_secret_toml(&self, instance: &str, payload: &Value) -> Result<(), AdminRpcError> {
         let dir = self.secrets_dir.join("email");
-        std::fs::create_dir_all(&dir).map_err(|e| {
-            AdminRpcError::Internal(format!("create email secrets dir: {e}"))
-        })?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AdminRpcError::Internal(format!("create email secrets dir: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -80,9 +81,8 @@ impl EmailPersister {
         if let Some(tok) = payload.get("xoauth2_token").and_then(Value::as_str) {
             body.push_str(&format!("xoauth2_token = '{tok}'\n"));
         }
-        std::fs::write(&tmp_path, body.as_bytes()).map_err(|e| {
-            AdminRpcError::Internal(format!("write tmp email secret: {e}"))
-        })?;
+        std::fs::write(&tmp_path, body.as_bytes())
+            .map_err(|e| AdminRpcError::Internal(format!("write tmp email secret: {e}")))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -158,19 +158,17 @@ impl EmailPersister {
             YamlValue::String("inbox".into()),
             YamlValue::String("INBOX".into()),
         );
-        entry.insert(YamlValue::String("folders".into()), YamlValue::Mapping(folders));
+        entry.insert(
+            YamlValue::String("folders".into()),
+            YamlValue::Mapping(folders),
+        );
         Ok(entry)
     }
 
-    fn upsert_yaml_entry(
-        &self,
-        instance: &str,
-        entry: Mapping,
-    ) -> Result<(), AdminRpcError> {
+    fn upsert_yaml_entry(&self, instance: &str, entry: Mapping) -> Result<(), AdminRpcError> {
         if let Some(parent) = self.yaml_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AdminRpcError::Internal(format!("create yaml dir: {e}"))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AdminRpcError::Internal(format!("create yaml dir: {e}")))?;
         }
         let mut root: YamlValue = if self.yaml_path.exists() {
             let text = std::fs::read_to_string(&self.yaml_path)
@@ -184,9 +182,9 @@ impl EmailPersister {
         } else {
             YamlValue::Mapping(Mapping::new())
         };
-        let map = root.as_mapping_mut().ok_or_else(|| {
-            AdminRpcError::Internal("email.yaml root is not a mapping".into())
-        })?;
+        let map = root
+            .as_mapping_mut()
+            .ok_or_else(|| AdminRpcError::Internal("email.yaml root is not a mapping".into()))?;
 
         // Ensure top-level `email` block exists; preserve other
         // top-level fields.
@@ -281,10 +279,7 @@ impl EmailPersister {
                 .map_err(|e| AdminRpcError::Internal(format!("flush yaml: {e}")))?;
         }
         tmp.persist(&self.yaml_path).map_err(|e| {
-            AdminRpcError::Internal(format!(
-                "persist yaml {}: {e}",
-                self.yaml_path.display()
-            ))
+            AdminRpcError::Internal(format!("persist yaml {}: {e}", self.yaml_path.display()))
         })?;
         Ok(())
     }
@@ -327,8 +322,7 @@ impl ChannelCredentialPersister for EmailPersister {
         if let Some(pw) = payload.get("password").and_then(Value::as_str) {
             if pw.contains('\'') {
                 return Err(AdminRpcError::InvalidParams(
-                    "email payload.password cannot contain `'` (TOML literal restriction)"
-                        .into(),
+                    "email payload.password cannot contain `'` (TOML literal restriction)".into(),
                 ));
             }
         }
@@ -555,10 +549,7 @@ mod tests {
     fn validate_shape_rejects_missing_address() {
         let (_d, p) = fixture();
         let err = p
-            .validate_shape(
-                &json!({ "password": "p" }),
-                &full_metadata(),
-            )
+            .validate_shape(&json!({ "password": "p" }), &full_metadata())
             .unwrap_err();
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
@@ -595,10 +586,7 @@ mod tests {
     fn validate_shape_rejects_neither_password_nor_xoauth2() {
         let (_d, p) = fixture();
         let err = p
-            .validate_shape(
-                &json!({ "address": "ops@example.com" }),
-                &full_metadata(),
-            )
+            .validate_shape(&json!({ "address": "ops@example.com" }), &full_metadata())
             .unwrap_err();
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
@@ -642,10 +630,7 @@ mod tests {
             json!({ "host": "h", "port": 587, "tls": "starttls" }),
         );
         let err = p
-            .validate_shape(
-                &json!({ "address": "a@b.c", "password": "p" }),
-                &m,
-            )
+            .validate_shape(&json!({ "address": "a@b.c", "password": "p" }), &m)
             .unwrap_err();
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
@@ -711,7 +696,10 @@ mod tests {
             .unwrap();
         assert_eq!(accounts.len(), 1);
         let entry = &accounts[0];
-        assert_eq!(entry.get("instance").and_then(YamlValue::as_str), Some("ops"));
+        assert_eq!(
+            entry.get("instance").and_then(YamlValue::as_str),
+            Some("ops")
+        );
         assert_eq!(
             entry.get("address").and_then(YamlValue::as_str),
             Some("ops@example.com")
@@ -841,7 +829,10 @@ mod tests {
         );
         let outcome = p.probe(None, &json!({}), &m).await;
         assert!(outcome.probed);
-        assert!(outcome.healthy, "expected TCP-reach check to pass for starttls");
+        assert!(
+            outcome.healthy,
+            "expected TCP-reach check to pass for starttls"
+        );
         assert_eq!(outcome.reason_code.as_deref(), Some(reason_code::OK));
     }
 
