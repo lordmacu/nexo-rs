@@ -416,8 +416,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
             "completion/complete" => {
                 tracing::debug!("mcp completion/complete");
                 let values = match handler.list_tools().await {
-                    Ok(tools) => extract_completion_values(&tools, &params)
-                        .unwrap_or_default(),
+                    Ok(tools) => extract_completion_values(&tools, &params).unwrap_or_default(),
                     Err(e) => {
                         tracing::debug!(error = %e, "completion/complete list_tools failed");
                         Vec::new()
@@ -1032,7 +1031,10 @@ mod tests {
             "argument": { "name": "op" }
         });
         let values = extract_completion_values(&tools, &params);
-        assert_eq!(values, Some(vec!["read".into(), "write".into(), "delete".into()]));
+        assert_eq!(
+            values,
+            Some(vec!["read".into(), "write".into(), "delete".into()])
+        );
     }
 
     #[test]

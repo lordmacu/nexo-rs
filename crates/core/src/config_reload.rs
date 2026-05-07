@@ -168,9 +168,8 @@ impl ConfigReloadCoordinator {
         // yaml-key instances that map to a factory via
         // `factory_type`. Mirror the boot validation path in
         // `src/main.rs::validate_agents_with_providers`.
-        let known_providers = crate::agent::KnownProviders::new(
-            cfg.llm.providers.keys().map(String::as_str),
-        );
+        let known_providers =
+            crate::agent::KnownProviders::new(cfg.llm.providers.keys().map(String::as_str));
         let telegram_instances: &[TelegramPluginConfig] = &cfg.plugins.telegram;
         if let Err(e) = crate::agent::validate_agents_with_providers(
             &cfg.agents.agents,

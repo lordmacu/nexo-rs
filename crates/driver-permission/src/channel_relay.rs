@@ -141,10 +141,7 @@ impl<D> PermissionDecider for ChannelRelayDecider<D>
 where
     D: PermissionDecider + 'static,
 {
-    async fn decide(
-        &self,
-        request: PermissionRequest,
-    ) -> Result<DeciderResponse, PermissionError> {
+    async fn decide(&self, request: PermissionRequest) -> Result<DeciderResponse, PermissionError> {
         let binding_id = request
             .metadata
             .get(METADATA_BINDING_ID)
@@ -377,10 +374,7 @@ mod tests {
             dispatcher.clone(),
         );
         let resp = decider.decide(make_request("tu_a", None)).await.unwrap();
-        assert!(matches!(
-            resp.outcome,
-            PermissionOutcome::AllowOnce { .. }
-        ));
+        assert!(matches!(resp.outcome, PermissionOutcome::AllowOnce { .. }));
         assert_eq!(pending.len().await, 0, "no pending registered");
     }
 
@@ -400,11 +394,11 @@ mod tests {
             pending.clone(),
             dispatcher.clone(),
         );
-        let resp = decider.decide(make_request("tu_b", Some("b"))).await.unwrap();
-        assert!(matches!(
-            resp.outcome,
-            PermissionOutcome::AllowOnce { .. }
-        ));
+        let resp = decider
+            .decide(make_request("tu_b", Some("b")))
+            .await
+            .unwrap();
+        assert!(matches!(resp.outcome, PermissionOutcome::AllowOnce { .. }));
         assert_eq!(pending.len().await, 0);
     }
 
@@ -427,7 +421,10 @@ mod tests {
             pending.clone(),
             dispatcher_dyn,
         );
-        let _ = decider.decide(make_request("tu_c", Some("b"))).await.unwrap();
+        let _ = decider
+            .decide(make_request("tu_c", Some("b")))
+            .await
+            .unwrap();
         // Both servers received the prompt before the inner won.
         assert_eq!(dispatcher.count(), 2);
         // Pending entry was registered then released once inner won.
@@ -499,11 +496,11 @@ mod tests {
             pending.clone(),
             dispatcher,
         );
-        let resp = decider.decide(make_request("tu_e", Some("b"))).await.unwrap();
-        assert!(matches!(
-            resp.outcome,
-            PermissionOutcome::AllowOnce { .. }
-        ));
+        let resp = decider
+            .decide(make_request("tu_e", Some("b")))
+            .await
+            .unwrap();
+        assert!(matches!(resp.outcome, PermissionOutcome::AllowOnce { .. }));
         // Pending entry was cancelled.
         assert_eq!(pending.len().await, 0);
     }
@@ -525,11 +522,11 @@ mod tests {
             pending.clone(),
             dispatcher,
         );
-        let resp = decider.decide(make_request("tu_f", Some("b"))).await.unwrap();
-        assert!(matches!(
-            resp.outcome,
-            PermissionOutcome::AllowOnce { .. }
-        ));
+        let resp = decider
+            .decide(make_request("tu_f", Some("b")))
+            .await
+            .unwrap();
+        assert!(matches!(resp.outcome, PermissionOutcome::AllowOnce { .. }));
     }
 
     #[test]

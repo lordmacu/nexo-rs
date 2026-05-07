@@ -752,16 +752,15 @@ email:
         let creds = Arc::new(EmailCredentialStore::empty());
         let google = Arc::new(GoogleCredentialStore::empty());
         let data_dir = std::env::temp_dir().join("nexo-email-factory-test");
-        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
-            Box::new(move |_m| {
-                let plugin: Arc<dyn NexoPlugin> = Arc::new(EmailPlugin::new(
-                    cfg.clone(),
-                    creds.clone(),
-                    google.clone(),
-                    data_dir.clone(),
-                ));
-                Ok(plugin)
-            });
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = Box::new(move |_m| {
+            let plugin: Arc<dyn NexoPlugin> = Arc::new(EmailPlugin::new(
+                cfg.clone(),
+                creds.clone(),
+                google.clone(),
+                data_dir.clone(),
+            ));
+            Ok(plugin)
+        });
         let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
         match factory(&m) {
             Ok(handle) => assert_eq!(handle.manifest().plugin.id, "email"),

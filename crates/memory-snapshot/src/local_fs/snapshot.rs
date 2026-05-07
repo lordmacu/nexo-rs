@@ -39,8 +39,8 @@ use crate::manifest::{
     MANIFEST_VERSION,
 };
 use crate::memdir::enumerate_memdir_files;
-use crate::redaction::{redact_staging_dir, DefaultRedactionPolicy};
 use crate::meta::SnapshotMeta;
+use crate::redaction::{redact_staging_dir, DefaultRedactionPolicy};
 use crate::request::SnapshotRequest;
 use crate::sqlite_backup::backup_named;
 use crate::tenant_path::{
@@ -70,21 +70,11 @@ pub(super) async fn run_snapshot(
 
     let id = SnapshotId::new();
     let encrypted = req.encrypt.is_some();
-    let bundle_path =
-        snapshot_bundle_path(s.state_root(), &tenant, &agent_id, id, encrypted)?;
+    let bundle_path = snapshot_bundle_path(s.state_root(), &tenant, &agent_id, id, encrypted)?;
     let staging_dir = snapshots_dir_path.join(format!(".staging-{}", id.as_filename()));
     fs::create_dir_all(&staging_dir)?;
 
-    let result = build_bundle(
-        s,
-        &agent_id,
-        &tenant,
-        &req,
-        id,
-        &bundle_path,
-        &staging_dir,
-    )
-    .await;
+    let result = build_bundle(s, &agent_id, &tenant, &req, id, &bundle_path, &staging_dir).await;
 
     // Best-effort cleanup whether we shipped a bundle or not.
     let _ = fs::remove_dir_all(&staging_dir);
@@ -292,9 +282,7 @@ fn build_encryption_meta(
                 let recipient = crate::codec::age_codec::parse_recipient(s)?;
                 Ok(Some(crate::manifest::EncryptionMeta {
                     scheme: "age".to_string(),
-                    recipients_fingerprint: vec![
-                        crate::codec::age_codec::fingerprint(&recipient),
-                    ],
+                    recipients_fingerprint: vec![crate::codec::age_codec::fingerprint(&recipient)],
                 }))
             }
             #[cfg(not(feature = "snapshot-encryption"))]
@@ -409,15 +397,8 @@ mod tests {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = Signature::now("operator", "ops@example.com").unwrap();
-        repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "snapshot:seed",
-            &tree,
-            &[],
-        )
-        .unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "snapshot:seed", &tree, &[])
+            .unwrap();
     }
 
     fn build_snapshotter(state_root: &Path) -> LocalFsSnapshotter {
@@ -436,11 +417,7 @@ mod tests {
 
         let memdir = tmp.path().join("agents-memdir/ana");
         seed_memdir(&memdir);
-        seed_sqlite(
-            &tmp.path().join("agents-sqlite/ana/long_term.sqlite"),
-            10,
-        )
-        .await;
+        seed_sqlite(&tmp.path().join("agents-sqlite/ana/long_term.sqlite"), 10).await;
 
         let req = SnapshotRequest::cli("ana", "default");
         let meta = s.snapshot(req).await.unwrap();
@@ -499,6 +476,9 @@ mod tests {
         req.tenant = "BAD-Tenant".into(); // uppercase rejected
         let err = s.snapshot(req).await.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("tenant") || msg.contains("[a-z0-9_-]"), "{msg}");
+        assert!(
+            msg.contains("tenant") || msg.contains("[a-z0-9_-]"),
+            "{msg}"
+        );
     }
 }

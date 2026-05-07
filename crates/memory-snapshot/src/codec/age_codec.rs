@@ -21,8 +21,7 @@ use crate::error::SnapshotError;
 
 /// Parse a single canonical age recipient string (`age1...`).
 pub fn parse_recipient(s: &str) -> Result<Recipient, SnapshotError> {
-    Recipient::from_str(s)
-        .map_err(|e| SnapshotError::Encryption(format!("recipient parse: {e}")))
+    Recipient::from_str(s).map_err(|e| SnapshotError::Encryption(format!("recipient parse: {e}")))
 }
 
 /// Load every identity (`AGE-SECRET-KEY-1...`) from the given file,
@@ -36,9 +35,8 @@ pub fn load_identities(path: &Path) -> Result<Vec<Identity>, SnapshotError> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let id = Identity::from_str(line).map_err(|e| {
-            SnapshotError::Encryption(format!("identity parse failed: {e}"))
-        })?;
+        let id = Identity::from_str(line)
+            .map_err(|e| SnapshotError::Encryption(format!("identity parse failed: {e}")))?;
         out.push(id);
     }
     if out.is_empty() {
@@ -125,10 +123,8 @@ pub fn decrypt_reader<R: Read + 'static>(
             ));
         }
     };
-    let id_refs: Vec<&dyn age::Identity> = identities
-        .iter()
-        .map(|i| i as &dyn age::Identity)
-        .collect();
+    let id_refs: Vec<&dyn age::Identity> =
+        identities.iter().map(|i| i as &dyn age::Identity).collect();
     let inner = recipients_dec
         .decrypt(id_refs.into_iter())
         .map_err(|e| SnapshotError::Encryption(format!("decrypt: {e}")))?;

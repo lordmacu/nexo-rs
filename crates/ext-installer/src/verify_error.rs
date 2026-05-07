@@ -31,7 +31,9 @@ pub enum VerifyError {
 
     /// Trust policy is `Require` but the resolved release has no
     /// `.sig` + `.cert` assets.
-    #[error("trust policy requires signature for `{owner}`, but release has no .sig + .cert assets")]
+    #[error(
+        "trust policy requires signature for `{owner}`, but release has no .sig + .cert assets"
+    )]
     PolicyRequiresSig {
         /// Repo owner that the policy resolved against.
         owner: String,

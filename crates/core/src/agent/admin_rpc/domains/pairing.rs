@@ -124,9 +124,7 @@ pub fn start(store: &dyn PairingChallengeStore, params: Value) -> AdminRpcResult
     ) {
         Ok(v) => v,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "create_challenge: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("create_challenge: {e}")));
         }
     };
 
@@ -146,16 +144,12 @@ pub fn status(store: &dyn PairingChallengeStore, params: Value) -> AdminRpcResul
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     match store.read_challenge(p.challenge_id) {
-        Ok(Some(status)) => {
-            AdminRpcResult::ok(serde_json::to_value(status).unwrap_or(Value::Null))
-        }
+        Ok(Some(status)) => AdminRpcResult::ok(serde_json::to_value(status).unwrap_or(Value::Null)),
         Ok(None) => AdminRpcResult::err(AdminRpcError::Internal(format!(
             "not_found: challenge `{}` unknown",
             p.challenge_id
         ))),
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "read_challenge: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("read_challenge: {e}"))),
     }
 }
 
@@ -172,7 +166,9 @@ pub async fn start_with_trigger(
     cancel_root: &tokio_util::sync::CancellationToken,
     params: Value,
 ) -> AdminRpcResult {
-    use super::super::pairing_trigger::{PairingContext, PairingTriggerError, PAIRING_DEFAULT_TIMEOUT};
+    use super::super::pairing_trigger::{
+        PairingContext, PairingTriggerError, PAIRING_DEFAULT_TIMEOUT,
+    };
 
     let input: PairingStartInput = match serde_json::from_value(params) {
         Ok(i) => i,
@@ -189,7 +185,8 @@ pub async fn start_with_trigger(
     // garbage row in store; operator gets a clean error.
     let Some(trigger) = triggers.get(&input.channel) else {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
-            "channel `{}` not supported", input.channel
+            "channel `{}` not supported",
+            input.channel
         )));
     };
 
@@ -201,9 +198,7 @@ pub async fn start_with_trigger(
     ) {
         Ok(v) => v,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "create_challenge: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("create_challenge: {e}")));
         }
     };
 
@@ -244,9 +239,7 @@ pub async fn start_with_trigger(
                 PairingTriggerError::Transport(m) => {
                     AdminRpcError::Internal(format!("transport: {m}"))
                 }
-                PairingTriggerError::Internal(err) => {
-                    AdminRpcError::Internal(err.to_string())
-                }
+                PairingTriggerError::Internal(err) => AdminRpcError::Internal(err.to_string()),
             };
             AdminRpcResult::err(admin_err)
         }
@@ -266,9 +259,7 @@ pub fn cancel(
     let cancelled = match store.cancel_challenge(p.challenge_id) {
         Ok(c) => c,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "cancel_challenge: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("cancel_challenge: {e}")));
         }
     };
 
@@ -286,8 +277,7 @@ pub fn cancel(
     }
 
     AdminRpcResult::ok(
-        serde_json::to_value(PairingCancelResponse { cancelled })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(PairingCancelResponse { cancelled }).unwrap_or(Value::Null),
     )
 }
 
@@ -316,11 +306,9 @@ pub fn cancel_with_handles(
 /// Instruction copy per channel. Operator UIs render verbatim.
 fn pairing_instructions_for(channel: &str) -> String {
     match channel {
-        "whatsapp" => {
-            "Open WhatsApp on your phone → Settings → Linked Devices → Link a Device → \
+        "whatsapp" => "Open WhatsApp on your phone → Settings → Linked Devices → Link a Device → \
              scan the QR code shown in the next status update."
-                .into()
-        }
+            .into(),
         // Channel-agnostic fallback for future telegram / email /
         // custom channels — operator UI customises by channel id.
         other => format!(
@@ -384,10 +372,7 @@ mod tests {
             );
             Ok((id, expires))
         }
-        fn read_challenge(
-            &self,
-            challenge_id: Uuid,
-        ) -> anyhow::Result<Option<PairingStatus>> {
+        fn read_challenge(&self, challenge_id: Uuid) -> anyhow::Result<Option<PairingStatus>> {
             Ok(self.challenges.lock().unwrap().get(&challenge_id).cloned())
         }
         fn cancel_challenge(&self, challenge_id: Uuid) -> anyhow::Result<bool> {
@@ -480,7 +465,10 @@ mod tests {
         assert!(response.expires_at_ms > 0);
         assert!(response.instructions.contains("WhatsApp"));
         // State immediately persisted.
-        let read = store.read_challenge(response.challenge_id).unwrap().unwrap();
+        let read = store
+            .read_challenge(response.challenge_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(read.state, PairingState::Pending);
     }
 
@@ -526,8 +514,7 @@ mod tests {
             &*store,
             serde_json::json!({ "challenge_id": response.challenge_id }),
         );
-        let status: PairingStatus =
-            serde_json::from_value(status_result.result.unwrap()).unwrap();
+        let status: PairingStatus = serde_json::from_value(status_result.result.unwrap()).unwrap();
         assert_eq!(status.state, PairingState::QrReady);
         assert_eq!(status.data.qr_ascii.as_deref(), Some("##"));
     }
@@ -535,10 +522,7 @@ mod tests {
     #[test]
     fn pairing_status_unknown_id_returns_not_found() {
         let store = MockStore::new();
-        let result = status(
-            &*store,
-            serde_json::json!({ "challenge_id": Uuid::nil() }),
-        );
+        let result = status(&*store, serde_json::json!({ "challenge_id": Uuid::nil() }));
         let err = result.error.expect("error");
         match err {
             AdminRpcError::Internal(m) => assert!(m.contains("not_found")),
@@ -669,10 +653,7 @@ mod tests {
         fn channel_id(&self) -> &str {
             &self.channel
         }
-        async fn start(
-            &self,
-            ctx: PairingContext,
-        ) -> Result<PairingHandle, PairingTriggerError> {
+        async fn start(&self, ctx: PairingContext) -> Result<PairingHandle, PairingTriggerError> {
             self.called.fetch_add(1, Ordering::Relaxed);
             if let Some(ref e) = self.error {
                 return Err(match e {
@@ -685,9 +666,7 @@ mod tests {
                     PairingTriggerError::InstanceNotConfigured(s) => {
                         PairingTriggerError::InstanceNotConfigured(s.clone())
                     }
-                    PairingTriggerError::Transport(s) => {
-                        PairingTriggerError::Transport(s.clone())
-                    }
+                    PairingTriggerError::Transport(s) => PairingTriggerError::Transport(s.clone()),
                     PairingTriggerError::Internal(_) => {
                         PairingTriggerError::Transport("test internal".into())
                     }
@@ -723,7 +702,11 @@ mod tests {
             whatsapp_start_params("ana"),
         )
         .await;
-        assert!(result.error.is_none(), "expected ok, got {:?}", result.error);
+        assert!(
+            result.error.is_none(),
+            "expected ok, got {:?}",
+            result.error
+        );
         assert_eq!(trigger.called.load(Ordering::Relaxed), 1);
         assert_eq!(handles.len(), 1, "handle must be registered");
     }
@@ -744,7 +727,10 @@ mod tests {
             whatsapp_start_params("ana"),
         )
         .await;
-        assert!(matches!(result.error, Some(AdminRpcError::InvalidParams(_))));
+        assert!(matches!(
+            result.error,
+            Some(AdminRpcError::InvalidParams(_))
+        ));
         assert_eq!(
             store.challenges.lock().unwrap().len(),
             0,
@@ -758,10 +744,8 @@ mod tests {
         let store = MockStore::new();
         let store_dyn: Arc<dyn PairingChallengeStore> = store.clone();
         let mut triggers: PairingChannelTriggers = HashMap::new();
-        let trigger = MockTrigger::rejects(
-            "whatsapp",
-            PairingTriggerError::AlreadyPaired("ana".into()),
-        );
+        let trigger =
+            MockTrigger::rejects("whatsapp", PairingTriggerError::AlreadyPaired("ana".into()));
         triggers.insert("whatsapp".into(), trigger.clone());
         let handles = empty_handles();
         let root = CancellationToken::new();
@@ -774,17 +758,14 @@ mod tests {
             whatsapp_start_params("ana"),
         )
         .await;
-        assert!(matches!(result.error, Some(AdminRpcError::InvalidParams(_))));
+        assert!(matches!(
+            result.error,
+            Some(AdminRpcError::InvalidParams(_))
+        ));
         assert_eq!(trigger.called.load(Ordering::Relaxed), 1);
         assert_eq!(handles.len(), 0, "handle must NOT be registered on reject");
         // Row was created but rolled back to Cancelled.
-        let row = store
-            .challenges
-            .lock()
-            .unwrap()
-            .values()
-            .next()
-            .cloned();
+        let row = store.challenges.lock().unwrap().values().next().cloned();
         assert!(
             matches!(row.map(|r| r.state), Some(PairingState::Cancelled)),
             "store row must be cancelled after rollback",
@@ -816,14 +797,12 @@ mod tests {
         assert!(!observed_cancel.is_cancelled());
 
         let cancel_params = serde_json::to_value(PairingCancelParams { challenge_id }).unwrap();
-        let result = cancel_with_handles(
-            store.as_ref(),
-            None,
-            handles.as_ref(),
-            cancel_params,
-        );
+        let result = cancel_with_handles(store.as_ref(), None, handles.as_ref(), cancel_params);
         assert!(result.error.is_none());
-        assert!(observed_cancel.is_cancelled(), "trigger token must be cancelled");
+        assert!(
+            observed_cancel.is_cancelled(),
+            "trigger token must be cancelled"
+        );
         assert_eq!(handles.len(), 0, "handle entry must be removed");
     }
 
@@ -835,9 +814,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_with_handles_handles_missing_handle_gracefully() {
         let store: Arc<dyn PairingChallengeStore> = MockStore::new();
-        let (id, _) = store
-            .create_challenge("ana", "whatsapp", None, 60)
-            .unwrap();
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
         let handles = empty_handles();
         let cancel_params = serde_json::to_value(PairingCancelParams { challenge_id: id }).unwrap();
         let result = cancel_with_handles(store.as_ref(), None, handles.as_ref(), cancel_params);

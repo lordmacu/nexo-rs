@@ -31,9 +31,7 @@ pub enum ClientEvent {
     /// emitted via
     /// [`crate::channel_permission::PERMISSION_REQUEST_METHOD`].
     /// Phase 80.9.b.
-    ChannelPermissionResponse {
-        params: serde_json::Value,
-    },
+    ChannelPermissionResponse { params: serde_json::Value },
     /// Any other notification method — forwarded verbatim for observers.
     Other(String),
 }

@@ -286,7 +286,10 @@ mod tests {
         for bad in ["github.main", "x*", "x>y", "with space"] {
             let result = mk(bad, "x.>").validate();
             assert!(
-                matches!(result, Err(EventSubscriberConfigError::InvalidIdChar { .. })),
+                matches!(
+                    result,
+                    Err(EventSubscriberConfigError::InvalidIdChar { .. })
+                ),
                 "id `{bad}` should be rejected, got {result:?}"
             );
         }
@@ -305,7 +308,10 @@ mod tests {
         for bad in [">", "plugin.>", "plugin.*.>", "plugin.inbound.event.x"] {
             let result = mk("a", bad).validate();
             assert!(
-                matches!(result, Err(EventSubscriberConfigError::LoopRiskPattern { .. })),
+                matches!(
+                    result,
+                    Err(EventSubscriberConfigError::LoopRiskPattern { .. })
+                ),
                 "pattern `{bad}` should be rejected, got {result:?}"
             );
         }

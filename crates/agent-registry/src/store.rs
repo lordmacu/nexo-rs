@@ -421,9 +421,7 @@ impl SqliteAgentRegistryStore {
     /// gone, no caller waiting. Bg / Daemon / DaemonWorker rows keep
     /// `Running` because the operator expects them to survive across
     /// daemon restarts. Returns the count of rows flipped.
-    pub async fn reattach_running_kind_aware(
-        &self,
-    ) -> Result<u64, AgentRegistryStoreError> {
+    pub async fn reattach_running_kind_aware(&self) -> Result<u64, AgentRegistryStoreError> {
         let now = unix(Utc::now());
         let res = sqlx::query(
             "UPDATE agent_registry \
@@ -565,8 +563,7 @@ mod plan_mode_persistence_tests {
         // Round-trip through serde with the field removed: deserialise
         // must yield Interactive via #[serde(default)].
         let mut h = handle_with_kind(crate::types::SessionKind::Bg);
-        let mut json: serde_json::Value =
-            serde_json::to_value(&h).unwrap();
+        let mut json: serde_json::Value = serde_json::to_value(&h).unwrap();
         // Strip the `kind` field to simulate a pre-80.10 persisted blob.
         json.as_object_mut().unwrap().remove("kind");
         let parsed: AgentHandle = serde_json::from_value(json).unwrap();

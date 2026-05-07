@@ -94,7 +94,10 @@ impl SqliteAgentEventLog {
             .max_connections(2)
             .connect_with(opts)
             .await?;
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .ok();
         Self::run_ddl(&pool).await?;
         Ok(Self { pool })
     }
@@ -208,9 +211,7 @@ fn extract_metadata(event: &AgentEventKind) -> Option<EventMetadata> {
             at_ms: *sent_at_ms,
         }),
         AgentEventKind::PendingInboundsDropped {
-            agent_id,
-            at_ms,
-            ..
+            agent_id, at_ms, ..
         } => Some(EventMetadata {
             kind: "pending_inbounds_dropped",
             agent_id: agent_id.clone(),
@@ -269,9 +270,7 @@ struct EventMetadata {
 impl AgentEventLog for SqliteAgentEventLog {
     async fn append(&self, event: AgentEventKind) -> anyhow::Result<()> {
         let Some(meta) = extract_metadata(&event) else {
-            tracing::warn!(
-                "agent_events_sqlite: skipping unknown event variant"
-            );
+            tracing::warn!("agent_events_sqlite: skipping unknown event variant");
             return Ok(());
         };
         let payload = serde_json::to_string(&event)?;
@@ -303,9 +302,8 @@ impl AgentEventLog for SqliteAgentEventLog {
         // Build query dynamically so the SQL planner picks the
         // best index. Defense-in-depth: we never interpolate
         // user-controlled strings — bindings stay parameterised.
-        let mut sql = String::from(
-            "SELECT payload_json FROM nexo_agent_events WHERE agent_id = ?1",
-        );
+        let mut sql =
+            String::from("SELECT payload_json FROM nexo_agent_events WHERE agent_id = ?1");
         let mut bind_index = 2;
         if filter.kind.is_some() {
             sql.push_str(&format!(" AND kind = ?{bind_index}"));
@@ -319,7 +317,9 @@ impl AgentEventLog for SqliteAgentEventLog {
             sql.push_str(&format!(" AND at_ms >= ?{bind_index}"));
             bind_index += 1;
         }
-        sql.push_str(&format!(" ORDER BY at_ms DESC, id DESC LIMIT ?{bind_index}"));
+        sql.push_str(&format!(
+            " ORDER BY at_ms DESC, id DESC LIMIT ?{bind_index}"
+        ));
 
         let mut q = sqlx::query_as::<_, (String,)>(&sql).bind(&filter.agent_id);
         if let Some(k) = filter.kind.as_deref() {
@@ -369,9 +369,7 @@ mod tests {
     use super::*;
     use nexo_tool_meta::admin::agent_events::TranscriptRole;
     use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};
-    use nexo_tool_meta::admin::processing::{
-        ProcessingControlState, ProcessingScope,
-    };
+    use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
     use uuid::Uuid;
 
     fn convo(agent: &str) -> ProcessingScope {
@@ -398,11 +396,7 @@ mod tests {
         }
     }
 
-    fn pause_changed(
-        agent: &str,
-        at_ms: u64,
-        tenant_id: Option<String>,
-    ) -> AgentEventKind {
+    fn pause_changed(agent: &str, at_ms: u64, tenant_id: Option<String>) -> AgentEventKind {
         let scope = convo(agent);
         AgentEventKind::ProcessingStateChanged {
             agent_id: agent.into(),
@@ -693,7 +687,9 @@ mod tests {
     async fn sweep_retention_is_idempotent_when_nothing_to_drop() {
         let log = SqliteAgentEventLog::open_memory().await.unwrap();
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
-        log.append(pause_changed("ana", now_ms, None)).await.unwrap();
+        log.append(pause_changed("ana", now_ms, None))
+            .await
+            .unwrap();
         let first = log.sweep_retention(90, 100).await.unwrap();
         let second = log.sweep_retention(90, 100).await.unwrap();
         assert_eq!(first, 0);

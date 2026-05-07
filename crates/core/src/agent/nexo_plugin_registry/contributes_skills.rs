@@ -18,9 +18,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use super::report::{
-    DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
-};
+use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 use super::NexoPluginRegistrySnapshot;
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -54,9 +52,7 @@ pub struct SkillConflict {
 /// Walk every loaded plugin's `skills.contributes_dir`, collect the
 /// roots + skill names + conflicts. Pure observation — no skill
 /// content parsing happens here; that's `SkillLoader`'s job.
-pub fn merge_plugin_contributed_skills(
-    snapshot: &NexoPluginRegistrySnapshot,
-) -> SkillsMergeReport {
+pub fn merge_plugin_contributed_skills(snapshot: &NexoPluginRegistrySnapshot) -> SkillsMergeReport {
     let mut report = SkillsMergeReport::default();
     // Track first-seen skill names so collisions can be flagged
     // without losing the original attribution.
@@ -64,11 +60,10 @@ pub fn merge_plugin_contributed_skills(
 
     for plugin in &snapshot.plugins {
         let plugin_id = plugin.manifest.plugin.id.clone();
-        let contributes_dir =
-            match &plugin.manifest.plugin.skills.contributes_dir {
-                Some(p) => p.clone(),
-                None => continue,
-            };
+        let contributes_dir = match &plugin.manifest.plugin.skills.contributes_dir {
+            Some(p) => p.clone(),
+            None => continue,
+        };
 
         let abs_dir = plugin.root_dir.join(&contributes_dir);
         if !abs_dir.exists() {
@@ -104,7 +99,9 @@ pub fn merge_plugin_contributed_skills(
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
-        report.skill_roots.insert(plugin_id.clone(), abs_dir.clone());
+        report
+            .skill_roots
+            .insert(plugin_id.clone(), abs_dir.clone());
 
         for entry in entries {
             let skill_name = match entry.file_name().to_str() {
@@ -126,12 +123,12 @@ pub fn merge_plugin_contributed_skills(
                 .or_default()
                 .push(skill_name.clone());
 
-            if let Some(conflict_idx) = conflict_index.get(&skill_name).copied()
-            {
+            if let Some(conflict_idx) = conflict_index.get(&skill_name).copied() {
                 // Append this plugin id to the existing conflict.
-                report.conflicts[conflict_idx].plugin_ids.push(plugin_id.clone());
-            } else if let Some(prior_plugin) = report.attribution.get(&skill_name)
-            {
+                report.conflicts[conflict_idx]
+                    .plugin_ids
+                    .push(plugin_id.clone());
+            } else if let Some(prior_plugin) = report.attribution.get(&skill_name) {
                 let prior = prior_plugin.clone();
                 let conflict = SkillConflict {
                     skill_name: skill_name.clone(),
@@ -234,8 +231,7 @@ mod tests {
         }
 
         fn discovered(&self) -> DiscoveredPlugin {
-            let raw = fs::read_to_string(self.root.path().join("nexo-plugin.toml"))
-                .unwrap();
+            let raw = fs::read_to_string(self.root.path().join("nexo-plugin.toml")).unwrap();
             let manifest: PluginManifest = toml::from_str(&raw).unwrap();
             DiscoveredPlugin {
                 manifest,
@@ -287,10 +283,7 @@ mod tests {
         // Both plugins indexed.
         assert_eq!(report.skill_roots.len(), 2);
         // First plugin wins attribution.
-        assert_eq!(
-            report.attribution.get("helper"),
-            Some(&"alpha".to_string())
-        );
+        assert_eq!(report.attribution.get("helper"), Some(&"alpha".to_string()));
         // One conflict recorded.
         assert_eq!(report.conflicts.len(), 1);
         assert_eq!(report.conflicts[0].skill_name, "helper");
@@ -308,11 +301,7 @@ mod tests {
         p2.add_skill("dup", "b");
         let p3 = PluginSkillFixture::new("gamma");
         p3.add_skill("dup", "c");
-        let snap = snapshot_with(vec![
-            p1.discovered(),
-            p2.discovered(),
-            p3.discovered(),
-        ]);
+        let snap = snapshot_with(vec![p1.discovered(), p2.discovered(), p3.discovered()]);
         let report = merge_plugin_contributed_skills(&snap);
         assert_eq!(report.conflicts.len(), 1);
         assert_eq!(
@@ -340,13 +329,11 @@ mod tests {
         let snap = snapshot_with(vec![p.discovered()]);
         let report = merge_plugin_contributed_skills(&snap);
         assert!(report.skill_roots.is_empty());
-        assert!(
-            report.diagnostics.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::SearchPathMissing { reason }
-                    if reason.contains("ghost")
-            ))
-        );
+        assert!(report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::SearchPathMissing { reason }
+                if reason.contains("ghost")
+        )));
     }
 
     #[test]

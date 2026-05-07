@@ -27,19 +27,10 @@ pub trait YamlPatcher: Send + Sync {
     fn list_agent_ids(&self) -> anyhow::Result<Vec<String>>;
     /// Read one dotted field (`model.provider`,
     /// `inbound_bindings`, …). `None` when the field is absent.
-    fn read_agent_field(
-        &self,
-        agent_id: &str,
-        dotted: &str,
-    ) -> anyhow::Result<Option<Value>>;
+    fn read_agent_field(&self, agent_id: &str, dotted: &str) -> anyhow::Result<Option<Value>>;
     /// Upsert one dotted field. Atomic via temp+rename in the
     /// production impl.
-    fn upsert_agent_field(
-        &self,
-        agent_id: &str,
-        dotted: &str,
-        value: Value,
-    ) -> anyhow::Result<()>;
+    fn upsert_agent_field(&self, agent_id: &str, dotted: &str, value: Value) -> anyhow::Result<()>;
     /// Remove the entire `agents.yaml.<id>` block.
     fn remove_agent(&self, agent_id: &str) -> anyhow::Result<()>;
 }
@@ -50,9 +41,7 @@ pub fn list(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     let ids = match patcher.list_agent_ids() {
         Ok(ids) => ids,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read failed: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read failed: {e}")));
         }
     };
 
@@ -99,9 +88,7 @@ pub fn get(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
             "not_found: agent `{}` not in yaml",
             p.agent_id
         ))),
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml read failed: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read failed: {e}"))),
     }
 }
 
@@ -119,9 +106,7 @@ pub fn upsert(
     };
 
     if let Err(e) = upsert_yaml(patcher, &input) {
-        return AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml write failed: {e}"
-        )));
+        return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write failed: {e}")));
     }
     reload_signal();
 
@@ -156,8 +141,7 @@ pub fn delete(
     if !existed {
         // Idempotent — return removed=false, NOT an error.
         return AdminRpcResult::ok(
-            serde_json::to_value(AgentsDeleteResponse { removed: false })
-                .unwrap_or(Value::Null),
+            serde_json::to_value(AgentsDeleteResponse { removed: false }).unwrap_or(Value::Null),
         );
     }
 
@@ -165,13 +149,10 @@ pub fn delete(
         Ok(()) => {
             reload_signal();
             AdminRpcResult::ok(
-                serde_json::to_value(AgentsDeleteResponse { removed: true })
-                    .unwrap_or(Value::Null),
+                serde_json::to_value(AgentsDeleteResponse { removed: true }).unwrap_or(Value::Null),
             )
         }
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml remove failed: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("yaml remove failed: {e}"))),
     }
 }
 
@@ -185,16 +166,17 @@ fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> 
 /// `None` for legacy agents (no field) and on any read error
 /// (defense-in-depth: fail closed for cross-tenant filters).
 pub(crate) fn agent_tenant_id(patcher: &dyn YamlPatcher, agent_id: &str) -> Option<String> {
-    match patcher.read_agent_field(agent_id, "tenant_id").ok().flatten() {
+    match patcher
+        .read_agent_field(agent_id, "tenant_id")
+        .ok()
+        .flatten()
+    {
         Some(Value::String(s)) => Some(s),
         _ => None,
     }
 }
 
-fn read_summary(
-    patcher: &dyn YamlPatcher,
-    agent_id: &str,
-) -> anyhow::Result<Option<AgentSummary>> {
+fn read_summary(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Option<AgentSummary>> {
     let provider = match patcher.read_agent_field(agent_id, "model.provider")? {
         Some(Value::String(s)) => s,
         _ => return Ok(None),
@@ -232,10 +214,7 @@ fn has_plugin_binding(patcher: &dyn YamlPatcher, agent_id: &str, plugin: &str) -
     })
 }
 
-fn read_detail(
-    patcher: &dyn YamlPatcher,
-    agent_id: &str,
-) -> anyhow::Result<Option<AgentDetail>> {
+fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Option<AgentDetail>> {
     let Some(Value::String(provider)) = patcher.read_agent_field(agent_id, "model.provider")?
     else {
         return Ok(None);
@@ -280,10 +259,7 @@ fn read_detail(
                 .into_iter()
                 .filter_map(|b| {
                     let plugin = b.get("plugin")?.as_str()?.to_string();
-                    let instance = b
-                        .get("instance")
-                        .and_then(Value::as_str)
-                        .map(String::from);
+                    let instance = b.get("instance").and_then(Value::as_str).map(String::from);
                     Some(BindingSummary { plugin, instance })
                 })
                 .collect(),
@@ -332,18 +308,10 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
         patcher.upsert_agent_field(&input.id, "allowed_tools", arr)?;
     }
     if let Some(prompt) = &input.system_prompt {
-        patcher.upsert_agent_field(
-            &input.id,
-            "system_prompt",
-            Value::String(prompt.clone()),
-        )?;
+        patcher.upsert_agent_field(&input.id, "system_prompt", Value::String(prompt.clone()))?;
     }
     if let Some(language) = &input.language {
-        patcher.upsert_agent_field(
-            &input.id,
-            "language",
-            Value::String(language.clone()),
-        )?;
+        patcher.upsert_agent_field(&input.id, "language", Value::String(language.clone()))?;
     }
     if let Some(transcripts_dir) = &input.transcripts_dir {
         patcher.upsert_agent_field(
@@ -353,15 +321,14 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
         )?;
     }
     if let Some(workspace) = &input.workspace {
-        patcher.upsert_agent_field(
-            &input.id,
-            "workspace",
-            Value::String(workspace.clone()),
-        )?;
+        patcher.upsert_agent_field(&input.id, "workspace", Value::String(workspace.clone()))?;
     }
     if let Some(extra_docs) = &input.extra_docs {
         let arr = Value::Array(
-            extra_docs.iter().map(|s| Value::String(s.clone())).collect(),
+            extra_docs
+                .iter()
+                .map(|s| Value::String(s.clone()))
+                .collect(),
         );
         patcher.upsert_agent_field(&input.id, "extra_docs", arr)?;
     }
@@ -416,11 +383,7 @@ mod tests {
                 "inbound_bindings",
                 serde_json::json!([{ "plugin": "whatsapp", "instance": "personal" }]),
             );
-            me.set(
-                "ana",
-                "system_prompt",
-                Value::String("You are Ana.".into()),
-            );
+            me.set("ana", "system_prompt", Value::String("You are Ana.".into()));
             me.set("ana", "language", Value::String("es".into()));
             // bob: inactive, no bindings
             me.set("bob", "model.provider", Value::String("anthropic".into()));
@@ -455,11 +418,7 @@ mod tests {
             Ok(ids)
         }
 
-        fn read_agent_field(
-            &self,
-            agent_id: &str,
-            dotted: &str,
-        ) -> anyhow::Result<Option<Value>> {
+        fn read_agent_field(&self, agent_id: &str, dotted: &str) -> anyhow::Result<Option<Value>> {
             Ok(self
                 .agents
                 .lock()
@@ -496,8 +455,7 @@ mod tests {
     fn agents_list_returns_yaml_summary_in_alpha_order() {
         let yaml = MockYaml::with_fixture();
         let result = list(&*yaml, Value::Null);
-        let response: AgentsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let response: AgentsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(response.agents.len(), 2);
         assert_eq!(response.agents[0].id, "ana");
         assert!(response.agents[0].active);
@@ -511,8 +469,7 @@ mod tests {
     fn agents_list_active_only_filters_inactive() {
         let yaml = MockYaml::with_fixture();
         let result = list(&*yaml, serde_json::json!({ "active_only": true }));
-        let response: AgentsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let response: AgentsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(response.agents.len(), 1);
         assert_eq!(response.agents[0].id, "ana");
     }
@@ -521,8 +478,7 @@ mod tests {
     fn agents_list_plugin_filter_only_returns_matching_bindings() {
         let yaml = MockYaml::with_fixture();
         let result = list(&*yaml, serde_json::json!({ "plugin_filter": "whatsapp" }));
-        let response: AgentsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let response: AgentsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(response.agents.len(), 1);
         assert_eq!(response.agents[0].id, "ana");
     }
@@ -570,11 +526,7 @@ mod tests {
             workspace: None,
             extra_docs: None,
         };
-        let result = upsert(
-            &*yaml,
-            serde_json::to_value(&input).unwrap(),
-            &reload,
-        );
+        let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(detail.language.as_deref(), Some("en"));
         assert_eq!(count.load(Ordering::Relaxed), 1);
@@ -584,11 +536,7 @@ mod tests {
     fn agents_delete_removes_yaml_block_and_triggers_reload() {
         let yaml = MockYaml::with_fixture();
         let (count, reload) = reload_counter();
-        let result = delete(
-            &*yaml,
-            serde_json::json!({ "agent_id": "bob" }),
-            &reload,
-        );
+        let result = delete(&*yaml, serde_json::json!({ "agent_id": "bob" }), &reload);
         let response: AgentsDeleteResponse =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(response.removed);
@@ -605,11 +553,7 @@ mod tests {
     fn agents_delete_unknown_id_is_idempotent() {
         let yaml = MockYaml::with_fixture();
         let (count, reload) = reload_counter();
-        let result = delete(
-            &*yaml,
-            serde_json::json!({ "agent_id": "ghost" }),
-            &reload,
-        );
+        let result = delete(&*yaml, serde_json::json!({ "agent_id": "ghost" }), &reload);
         let response: AgentsDeleteResponse =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(!response.removed);

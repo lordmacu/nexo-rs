@@ -58,10 +58,7 @@ fn user_entry(text: &str) -> TranscriptEntry {
 #[tokio::test]
 async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
     // --- 1. Build the bootstrap with a granted microapp ----------------
-    let cfg = extensions_cfg_with_grant(
-        "agent-creator",
-        &["agents_crud", "transcripts_subscribe"],
-    );
+    let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud", "transcripts_subscribe"]);
     let mut manifests: BTreeMap<String, AdminCapabilities> = BTreeMap::new();
     manifests.insert(
         "agent-creator".into(),
@@ -171,10 +168,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
     // a frame on its outbound queue.
     let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
     let mut manifests: BTreeMap<String, AdminCapabilities> = BTreeMap::new();
-    manifests.insert(
-        "agent-creator".into(),
-        admin_caps(&["agents_crud"], &[]),
-    );
+    manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
     let dir = tempfile::tempdir().unwrap();
     let bootstrap = AdminRpcBootstrap::build_with_firehose(
         AdminBootstrapInputs {

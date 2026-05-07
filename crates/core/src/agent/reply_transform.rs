@@ -134,7 +134,10 @@ impl OutboundReplyTransformChain {
     /// Stable transformer ids in registration order — surfaced by
     /// admin diagnostics so operators can see what's wired.
     pub fn ids(&self) -> Vec<String> {
-        self.transformers.iter().map(|t| t.id().to_string()).collect()
+        self.transformers
+            .iter()
+            .map(|t| t.id().to_string())
+            .collect()
     }
 
     /// Run the reply through each transformer in order. The first

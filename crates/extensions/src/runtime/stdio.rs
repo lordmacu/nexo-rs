@@ -184,8 +184,7 @@ impl StdioRuntime {
                 .iter()
                 .any(|n| n == &http.token_env)
             {
-                opts.env_passthrough_allowlist
-                    .push(http.token_env.clone());
+                opts.env_passthrough_allowlist.push(http.token_env.clone());
             }
         }
         let (command, args) = match &manifest.transport {
@@ -604,9 +603,7 @@ mod state_root_env_tests {
         let envs: std::collections::HashMap<String, String> = cmd
             .as_std()
             .get_envs()
-            .filter_map(|(k, v)| {
-                Some((k.to_str()?.to_string(), v?.to_str()?.to_string()))
-            })
+            .filter_map(|(k, v)| Some((k.to_str()?.to_string(), v?.to_str()?.to_string())))
             .collect();
 
         let stamped = envs

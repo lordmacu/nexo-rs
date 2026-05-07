@@ -116,7 +116,10 @@ mod tests {
             PathBuf::from("/var/lib/memdir"),
             PathBuf::from("/var/lib/sqlite"),
         );
-        assert_eq!(r.memdir("ana", "default"), PathBuf::from("/var/lib/memdir/ana"));
+        assert_eq!(
+            r.memdir("ana", "default"),
+            PathBuf::from("/var/lib/memdir/ana")
+        );
         assert_eq!(
             r.sqlite_dir("ana", "default"),
             PathBuf::from("/var/lib/sqlite/ana")
@@ -127,22 +130,15 @@ mod tests {
     fn default_resolver_ignores_tenant_for_paths() {
         // Single-tenant fallback never branches on tenant — it falls
         // through whatever the operator set in YAML.
-        let r = DefaultPathResolver::new(
-            PathBuf::from("/x"),
-            PathBuf::from("/y"),
-        );
+        let r = DefaultPathResolver::new(PathBuf::from("/x"), PathBuf::from("/y"));
         assert_eq!(r.memdir("ana", "acme"), r.memdir("ana", "globex"));
     }
 
     #[test]
     fn closure_resolver_routes_per_tenant() {
         let r = ClosureResolver::new(
-            |agent: &str, tenant: &str| {
-                PathBuf::from(format!("/var/{tenant}/memdir/{agent}"))
-            },
-            |agent: &str, tenant: &str| {
-                PathBuf::from(format!("/var/{tenant}/sqlite/{agent}"))
-            },
+            |agent: &str, tenant: &str| PathBuf::from(format!("/var/{tenant}/memdir/{agent}")),
+            |agent: &str, tenant: &str| PathBuf::from(format!("/var/{tenant}/sqlite/{agent}")),
         );
         assert_eq!(
             r.memdir("ana", "acme"),

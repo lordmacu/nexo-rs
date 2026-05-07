@@ -171,10 +171,10 @@ pub fn extract_anthropic_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
     let tiered_resets_at = header_u64(headers, "anthropic-ratelimit-unified-overage-reset");
     let tiered_label = Some("extra usage".to_string());
 
-    let has_fallback_model =
-        headers.get("anthropic-ratelimit-unified-fallback")
-            .and_then(|v| v.to_str().ok())
-            == Some("available");
+    let has_fallback_model = headers
+        .get("anthropic-ratelimit-unified-fallback")
+        .and_then(|v| v.to_str().ok())
+        == Some("available");
 
     let is_using_tiered = status == Some(QuotaStatus::Rejected)
         && matches!(
@@ -182,16 +182,19 @@ pub fn extract_anthropic_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
             Some(QuotaStatus::Allowed) | Some(QuotaStatus::AllowedWarning)
         );
 
-    let retry_after_secs = header_u64(headers, "retry-after")
-        .or_else(|| {
-            // Anthropic also sends `anthropic-ratelimit-requests-reset`
-            header_u64(headers, "anthropic-ratelimit-requests-reset")
-        });
+    let retry_after_secs = header_u64(headers, "retry-after").or_else(|| {
+        // Anthropic also sends `anthropic-ratelimit-requests-reset`
+        header_u64(headers, "anthropic-ratelimit-requests-reset")
+    });
 
-    let surpassed_5h =
-        header_f64(headers, "anthropic-ratelimit-unified-5h-surpassed-threshold");
-    let surpassed_7d =
-        header_f64(headers, "anthropic-ratelimit-unified-7d-surpassed-threshold");
+    let surpassed_5h = header_f64(
+        headers,
+        "anthropic-ratelimit-unified-5h-surpassed-threshold",
+    );
+    let surpassed_7d = header_f64(
+        headers,
+        "anthropic-ratelimit-unified-7d-surpassed-threshold",
+    );
 
     Some(RateLimitInfo {
         provider: Some(LlmProvider::Anthropic),
@@ -360,7 +363,10 @@ pub fn format_rate_limit_message(info: &RateLimitInfo) -> Option<RateLimitMessag
 
 /// Build "You've hit your {limit}" error text.
 fn format_limit_reached(info: &RateLimitInfo) -> (String, String) {
-    let reset_str = info.resets_at.map(|ts| format_reset_time(ts)).unwrap_or_default();
+    let reset_str = info
+        .resets_at
+        .map(|ts| format_reset_time(ts))
+        .unwrap_or_default();
     let reset_suffix = if reset_str.is_empty() {
         String::new()
     } else {
@@ -405,7 +411,10 @@ fn format_early_warning(info: &RateLimitInfo) -> (String, String) {
         .map(|w| w.display_name())
         .unwrap_or("usage limit");
     let used_pct = info.utilization.map(|u| (u * 100.0) as u32).unwrap_or(0);
-    let reset_str = info.resets_at.map(|ts| format_reset_time(ts)).unwrap_or_default();
+    let reset_str = info
+        .resets_at
+        .map(|ts| format_reset_time(ts))
+        .unwrap_or_default();
 
     let text = if !reset_str.is_empty() {
         format!("You've used {used_pct}% of your {limit_name} · resets {reset_str}")
@@ -424,11 +433,11 @@ fn format_early_warning(info: &RateLimitInfo) -> (String, String) {
 
 /// Notification text for when a goal enters tiered/overage mode.
 pub fn format_using_overage(info: &RateLimitInfo) -> String {
-    let reset_str = info.resets_at.map(|ts| format_reset_time(ts)).unwrap_or_default();
-    let limit_name = info
-        .window
-        .map(|w| w.display_name())
-        .unwrap_or("");
+    let reset_str = info
+        .resets_at
+        .map(|ts| format_reset_time(ts))
+        .unwrap_or_default();
+    let limit_name = info.window.map(|w| w.display_name()).unwrap_or("");
 
     if limit_name.is_empty() {
         return "Now using extra usage".into();
@@ -486,17 +495,20 @@ fn parse_openai_reset(s: &str) -> Option<u64> {
     }
     // Duration string like "12.5s" or "2m"
     if let Some(stripped) = s.strip_suffix('s') {
-        stripped.parse::<f64>().ok().map(|v| {
-            Utc::now().timestamp() as u64 + (v.ceil() as u64)
-        })
+        stripped
+            .parse::<f64>()
+            .ok()
+            .map(|v| Utc::now().timestamp() as u64 + (v.ceil() as u64))
     } else if let Some(stripped) = s.strip_suffix('m') {
-        stripped.parse::<f64>().ok().map(|v| {
-            Utc::now().timestamp() as u64 + ((v * 60.0).ceil() as u64)
-        })
+        stripped
+            .parse::<f64>()
+            .ok()
+            .map(|v| Utc::now().timestamp() as u64 + ((v * 60.0).ceil() as u64))
     } else if let Some(stripped) = s.strip_suffix('h') {
-        stripped.parse::<f64>().ok().map(|v| {
-            Utc::now().timestamp() as u64 + ((v * 3600.0).ceil() as u64)
-        })
+        stripped
+            .parse::<f64>()
+            .ok()
+            .map(|v| Utc::now().timestamp() as u64 + ((v * 3600.0).ceil() as u64))
     } else {
         None
     }
@@ -608,10 +620,7 @@ pub fn last_quota_event_for(provider: LlmProvider) -> Option<QuotaEvent> {
 /// a hard rejection. Used by `setup doctor` to render the LLM
 /// quota section.
 pub fn last_quota_events_all() -> Vec<QuotaEvent> {
-    last_quota_map()
-        .iter()
-        .map(|r| r.value().clone())
-        .collect()
+    last_quota_map().iter().map(|r| r.value().clone()).collect()
 }
 
 /// Test-only helper to clear the global cache between cases.

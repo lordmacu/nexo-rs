@@ -17,19 +17,13 @@ use crate::error::AutoDreamError;
 /// [`AutoDreamError`].
 pub fn validate(cfg: &AutoDreamConfig) -> Result<(), AutoDreamError> {
     if cfg.min_hours < Duration::from_secs(60 * 60) {
-        return Err(AutoDreamError::Config(
-            "min_hours must be >= 1h".into(),
-        ));
+        return Err(AutoDreamError::Config("min_hours must be >= 1h".into()));
     }
     if cfg.min_sessions == 0 {
-        return Err(AutoDreamError::Config(
-            "min_sessions must be >= 1".into(),
-        ));
+        return Err(AutoDreamError::Config("min_sessions must be >= 1".into()));
     }
     if cfg.fork_timeout < Duration::from_secs(10) {
-        return Err(AutoDreamError::Config(
-            "fork_timeout must be >= 10s".into(),
-        ));
+        return Err(AutoDreamError::Config("fork_timeout must be >= 10s".into()));
     }
     Ok(())
 }

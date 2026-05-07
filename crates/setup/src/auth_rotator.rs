@@ -22,8 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use nexo_core::agent::admin_rpc::domains::auth::{AuthRotator, TokenRotatedNotifier};
 use nexo_core::agent::admin_rpc::dispatcher::AdminRpcError;
+use nexo_core::agent::admin_rpc::domains::auth::{AuthRotator, TokenRotatedNotifier};
 use nexo_core::agent::agent_events::AgentEventEmitter;
 use nexo_tool_meta::admin::agent_events::{AgentEventKind, SecurityEventKind};
 use nexo_tool_meta::admin::auth::{AuthRotateInput, AuthRotateResponse, REASON_MAX_LEN};
@@ -92,10 +92,7 @@ impl FsAuthRotator {
 
 #[async_trait]
 impl AuthRotator for FsAuthRotator {
-    async fn rotate(
-        &self,
-        input: AuthRotateInput,
-    ) -> Result<AuthRotateResponse, AdminRpcError> {
+    async fn rotate(&self, input: AuthRotateInput) -> Result<AuthRotateResponse, AdminRpcError> {
         // 1. Resolve the new value (operator-supplied or daemon-generated).
         let new_token = match input.new_token {
             Some(t) => t,
@@ -134,9 +131,7 @@ impl AuthRotator for FsAuthRotator {
 
         // 6. Emit the durable audit row onto the firehose.
         let at_ms = now_ms();
-        let reason = input
-            .reason
-            .map(|r| truncate_chars(&r, REASON_MAX_LEN));
+        let reason = input.reason.map(|r| truncate_chars(&r, REASON_MAX_LEN));
         self.audit_emitter
             .emit(AgentEventKind::SecurityEvent {
                 event: SecurityEventKind::TokenRotated {
@@ -217,9 +212,8 @@ fn write_atomic_secret(path: &Path, body: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o600))?;
     }
-    tmp.persist(path).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("persist: {e}"))
-    })?;
+    tmp.persist(path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("persist: {e}")))?;
     Ok(())
 }
 
@@ -278,7 +272,11 @@ mod tests {
 
     fn make_rotator(
         token_path: PathBuf,
-    ) -> (Arc<FsAuthRotator>, Arc<CaptureNotifier>, Arc<CaptureEmitter>) {
+    ) -> (
+        Arc<FsAuthRotator>,
+        Arc<CaptureNotifier>,
+        Arc<CaptureEmitter>,
+    ) {
         let notifier = Arc::new(CaptureNotifier::default());
         let emitter = Arc::new(CaptureEmitter::default());
         let r = FsAuthRotator::new(

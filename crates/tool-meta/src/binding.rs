@@ -204,8 +204,14 @@ mod tests {
 
     #[test]
     fn render_with_account_id() {
-        assert_eq!(binding_id_render("whatsapp", Some("personal")), "whatsapp:personal");
-        assert_eq!(binding_id_render("telegram", Some("kate_tg")), "telegram:kate_tg");
+        assert_eq!(
+            binding_id_render("whatsapp", Some("personal")),
+            "whatsapp:personal"
+        );
+        assert_eq!(
+            binding_id_render("telegram", Some("kate_tg")),
+            "telegram:kate_tg"
+        );
     }
 
     #[test]

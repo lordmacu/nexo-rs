@@ -26,48 +26,44 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
 use async_trait::async_trait;
-use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
-use nexo_core::agent::admin_rpc::transcript_appender::{
-    TranscriptAppender, TranscriptEntry as AppenderEntry, TranscriptRole as AppenderRole,
+use dashmap::DashMap;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_core::agent::admin_rpc::channel_outbound::{
+    ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
 };
+use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
+use nexo_core::agent::admin_rpc::domains::escalations::{filter_matches, EscalationStore};
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
 use nexo_core::agent::admin_rpc::domains::pairing::{
     PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
 };
-use nexo_core::agent::admin_rpc::domains::escalations::{
-    filter_matches, EscalationStore,
-};
-use nexo_core::agent::admin_rpc::channel_outbound::{
-    ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
-};
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
 use nexo_core::agent::admin_rpc::domains::skills::SkillsStore;
 use nexo_core::agent::admin_rpc::domains::tenants::TenantStore;
-use nexo_tool_meta::admin::tenants::{
-    TenantDetail, TenantSummary, TenantsListFilter, TenantsUpsertInput,
+use nexo_core::agent::admin_rpc::transcript_appender::{
+    TranscriptAppender, TranscriptEntry as AppenderEntry, TranscriptRole as AppenderRole,
 };
-use nexo_broker::{AnyBroker, BrokerHandle, Event};
-use nexo_tool_meta::admin::escalations::{
-    EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
-};
-use nexo_tool_meta::admin::skills::{
-    SkillRecord, SkillRequiresRecord, SkillSummary, SkillsUpsertParams,
-};
-use nexo_tool_meta::admin::processing::{
-    PendingInbound, ProcessingControlState, ProcessingScope,
-};
+use nexo_core::agent::admin_rpc::AdminOutboundWriter;
 use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
 use nexo_core::agent::transcripts_index::TranscriptsIndex;
 use nexo_tool_meta::admin::agent_events::{
     AgentEventKind, AgentEventsListFilter, AgentEventsReadParams, AgentEventsSearchParams,
     SearchHit, TranscriptRole as WireTranscriptRole,
 };
-use nexo_core::agent::admin_rpc::AdminOutboundWriter;
+use nexo_tool_meta::admin::escalations::{
+    EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
+};
 use nexo_tool_meta::admin::pairing::{PairingState, PairingStatus, PairingStatusData};
+use nexo_tool_meta::admin::processing::{PendingInbound, ProcessingControlState, ProcessingScope};
+use nexo_tool_meta::admin::skills::{
+    SkillRecord, SkillRequiresRecord, SkillSummary, SkillsUpsertParams,
+};
+use nexo_tool_meta::admin::tenants::{
+    TenantDetail, TenantSummary, TenantsListFilter, TenantsUpsertInput,
+};
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -174,10 +170,7 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
     // default trait impls (which return Err). Backed by the
     // same atomic write lock as the global path so concurrent
     // tenant + global upserts don't tear the file.
-    fn list_tenant_provider_ids(
-        &self,
-        tenant_id: &str,
-    ) -> anyhow::Result<Vec<String>> {
+    fn list_tenant_provider_ids(&self, tenant_id: &str) -> anyhow::Result<Vec<String>> {
         yaml_patch::list_llm_tenant_provider_ids(&self.path, tenant_id)
     }
 
@@ -215,11 +208,7 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
         )
     }
 
-    fn remove_tenant_provider(
-        &self,
-        tenant_id: &str,
-        provider_id: &str,
-    ) -> anyhow::Result<()> {
+    fn remove_tenant_provider(&self, tenant_id: &str, provider_id: &str) -> anyhow::Result<()> {
         yaml_patch::remove_llm_tenant_provider(&self.path, tenant_id, provider_id)?;
         Ok(())
     }
@@ -259,9 +248,7 @@ impl nexo_core::agent::admin_rpc::domains::llm_providers::FactorySchemaLookup
     fn credential_schema(
         &self,
         factory_id: &str,
-    ) -> Option<
-        Vec<nexo_tool_meta::admin::llm_providers::CredentialFieldDescriptor>,
-    > {
+    ) -> Option<Vec<nexo_tool_meta::admin::llm_providers::CredentialFieldDescriptor>> {
         self.catalog
             .iter()
             .find(|e| e.id == factory_id)
@@ -356,11 +343,7 @@ impl CredentialStore for FilesystemCredentialStore {
         write_atomic_bytes(&target, &body)
     }
 
-    fn delete_credential(
-        &self,
-        channel: &str,
-        instance: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    fn delete_credential(&self, channel: &str, instance: Option<&str>) -> anyhow::Result<bool> {
         let target = self.payload_path(channel, instance);
         if !target.exists() {
             return Ok(false);
@@ -455,10 +438,7 @@ impl FsSkillsStore {
     /// Install a callback fired after every successful mutation.
     /// Production wiring passes the agents-domain reload trigger so
     /// hot-reload happens in lock-step with other yaml mutations.
-    pub fn with_on_change(
-        mut self,
-        cb: Arc<dyn Fn() + Send + Sync>,
-    ) -> Self {
+    pub fn with_on_change(mut self, cb: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.on_change = Some(cb);
         self
     }
@@ -484,11 +464,7 @@ impl FsSkillsStore {
     /// shared slot), and refuses paths that escape `self.root`
     /// after canonicalisation when the directories already
     /// exist.
-    fn resolve_skill_path(
-        &self,
-        tenant_id: Option<&str>,
-        name: &str,
-    ) -> anyhow::Result<PathBuf> {
+    fn resolve_skill_path(&self, tenant_id: Option<&str>, name: &str) -> anyhow::Result<PathBuf> {
         if name.is_empty()
             || name.contains('/')
             || name.contains('\\')
@@ -623,13 +599,33 @@ fn yaml_escape(s: &str) -> String {
 
 fn parse_frontmatter(
     raw: &str,
-) -> (Option<String>, Option<String>, Option<usize>, SkillRequiresRecord, String) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<usize>,
+    SkillRequiresRecord,
+    String,
+) {
     if !raw.starts_with("---") {
-        return (None, None, None, SkillRequiresRecord::default(), raw.to_string());
+        return (
+            None,
+            None,
+            None,
+            SkillRequiresRecord::default(),
+            raw.to_string(),
+        );
     }
     let after_open = match raw.find('\n') {
         Some(n) => &raw[n + 1..],
-        None => return (None, None, None, SkillRequiresRecord::default(), String::new()),
+        None => {
+            return (
+                None,
+                None,
+                None,
+                SkillRequiresRecord::default(),
+                String::new(),
+            )
+        }
     };
     let mut offset = 0;
     let mut end_idx = None;
@@ -642,7 +638,13 @@ fn parse_frontmatter(
         offset += line.len();
     }
     let Some(end_idx) = end_idx else {
-        return (None, None, None, SkillRequiresRecord::default(), raw.to_string());
+        return (
+            None,
+            None,
+            None,
+            SkillRequiresRecord::default(),
+            raw.to_string(),
+        );
     };
     let yaml = &after_open[..end_idx];
     let after_close = &after_open[end_idx..];
@@ -672,7 +674,13 @@ fn parse_frontmatter(
         env: parsed.requires.env,
         mode: parsed.requires.mode,
     };
-    (parsed.name, parsed.description, parsed.max_chars, requires, body_owned)
+    (
+        parsed.name,
+        parsed.description,
+        parsed.max_chars,
+        requires,
+        body_owned,
+    )
 }
 
 impl FsSkillsStore {
@@ -763,11 +771,7 @@ impl FsSkillsStore {
     }
 
     /// Phase 83.8.12.6 — shared delete implementation.
-    async fn delete_in_scope(
-        &self,
-        tenant_id: Option<&str>,
-        name: &str,
-    ) -> anyhow::Result<bool> {
+    async fn delete_in_scope(&self, tenant_id: Option<&str>, name: &str) -> anyhow::Result<bool> {
         let lock_key = match tenant_id {
             None => format!("__global__/{name}"),
             Some(tid) => format!("{tid}/{name}"),
@@ -797,10 +801,7 @@ impl SkillsStore for FsSkillsStore {
         self.read_record(None, name).await
     }
 
-    async fn upsert(
-        &self,
-        params: SkillsUpsertParams,
-    ) -> anyhow::Result<(SkillRecord, bool)> {
+    async fn upsert(&self, params: SkillsUpsertParams) -> anyhow::Result<(SkillRecord, bool)> {
         self.upsert_in_scope(None, params).await
     }
 
@@ -836,15 +837,10 @@ impl SkillsStore for FsSkillsStore {
         self.upsert_in_scope(Some(tenant_id), params).await
     }
 
-    async fn delete_for_tenant(
-        &self,
-        tenant_id: &str,
-        name: &str,
-    ) -> anyhow::Result<bool> {
+    async fn delete_for_tenant(&self, tenant_id: &str, name: &str) -> anyhow::Result<bool> {
         self.delete_in_scope(Some(tenant_id), name).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1130,10 +1126,7 @@ impl PairingChallengeStore for InMemoryPairingChallengeStore {
         Ok((id, expires_at_ms))
     }
 
-    fn read_challenge(
-        &self,
-        challenge_id: Uuid,
-    ) -> anyhow::Result<Option<PairingStatus>> {
+    fn read_challenge(&self, challenge_id: Uuid) -> anyhow::Result<Option<PairingStatus>> {
         let now = Instant::now();
         // First pass: check + flip-to-expired without holding the
         // entry lock past the read.
@@ -1141,9 +1134,7 @@ impl PairingChallengeStore for InMemoryPairingChallengeStore {
             if entry.expires_at <= now
                 && !matches!(
                     entry.status.state,
-                    PairingState::Linked
-                        | PairingState::Expired
-                        | PairingState::Cancelled
+                    PairingState::Linked | PairingState::Expired | PairingState::Cancelled
                 )
             {
                 entry.status.state = PairingState::Expired;
@@ -1698,9 +1689,7 @@ impl TranscriptReader for TranscriptReaderFs {
         }
         // Newest-first global ordering across sessions.
         out.sort_by_key(|e| match e {
-            AgentEventKind::TranscriptAppended { sent_at_ms, .. } => {
-                std::cmp::Reverse(*sent_at_ms)
-            }
+            AgentEventKind::TranscriptAppended { sent_at_ms, .. } => std::cmp::Reverse(*sent_at_ms),
             _ => std::cmp::Reverse(0u64),
         });
         out.truncate(filter.limit);
@@ -1864,9 +1853,7 @@ impl TranscriptAppender for TranscriptWriterAppender {
             timestamp: chrono::Utc::now(),
             role: match entry.role {
                 AppenderRole::User => nexo_core::agent::transcripts::TranscriptRole::User,
-                AppenderRole::Assistant => {
-                    nexo_core::agent::transcripts::TranscriptRole::Assistant
-                }
+                AppenderRole::Assistant => nexo_core::agent::transcripts::TranscriptRole::Assistant,
                 AppenderRole::Tool => nexo_core::agent::transcripts::TranscriptRole::Tool,
                 AppenderRole::System => nexo_core::agent::transcripts::TranscriptRole::System,
             },
@@ -1961,9 +1948,7 @@ mod pairing_store_tests {
     #[test]
     fn read_after_ttl_flips_to_expired_with_reason() {
         let store = store_with(10);
-        let (id, _) = store
-            .create_challenge("ana", "whatsapp", None, 0)
-            .unwrap();
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 0).unwrap();
         sleep(Duration::from_millis(30));
         let status = store.read_challenge(id).unwrap().unwrap();
         assert_eq!(status.state, PairingState::Expired);
@@ -1977,9 +1962,7 @@ mod pairing_store_tests {
     #[test]
     fn cancel_pending_succeeds_and_is_idempotent() {
         let store = store_with(60_000);
-        let (id, _) = store
-            .create_challenge("ana", "whatsapp", None, 0)
-            .unwrap();
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 0).unwrap();
         assert!(store.cancel_challenge(id).unwrap());
         // Second cancel — already terminal.
         assert!(!store.cancel_challenge(id).unwrap());
@@ -2055,7 +2038,9 @@ mod pairing_store_tests {
         use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
         let store = store_with(60_000);
         let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
-        let updated = store.update_qr(id, "PNGB64".into(), "##".into(), 1_111).unwrap();
+        let updated = store
+            .update_qr(id, "PNGB64".into(), "##".into(), 1_111)
+            .unwrap();
         assert!(updated);
         let status = store.read_challenge(id).unwrap().unwrap();
         assert_eq!(status.state, PairingState::QrReady);
@@ -2085,7 +2070,10 @@ mod pairing_store_tests {
         assert!(updated);
         let status = store.read_challenge(id).unwrap().unwrap();
         assert_eq!(status.state, PairingState::Linked);
-        assert_eq!(status.data.device_jid.as_deref(), Some("5491100@s.whatsapp.net"));
+        assert_eq!(
+            status.data.device_jid.as_deref(),
+            Some("5491100@s.whatsapp.net")
+        );
     }
 
     #[test]
@@ -2120,7 +2108,9 @@ mod pairing_store_tests {
         let (tx, mut rx) = mpsc::channel::<String>(8);
         let writer = DeferredAdminOutboundWriter::new();
         writer.bind(tx);
-        writer.send(r#"{"jsonrpc":"2.0","id":"app:x","result":null}"#.into()).await;
+        writer
+            .send(r#"{"jsonrpc":"2.0","id":"app:x","result":null}"#.into())
+            .await;
         let line = rx.recv().await.unwrap();
         assert!(line.ends_with('\n'), "frame must terminate in newline");
     }
@@ -2142,12 +2132,8 @@ mod pairing_store_tests {
     #[test]
     fn prune_expired_drops_only_stale_entries() {
         let store = store_with(10);
-        let (alive, _) = store
-            .create_challenge("ana", "whatsapp", None, 60)
-            .unwrap();
-        let (_dead, _) = store
-            .create_challenge("bob", "whatsapp", None, 0)
-            .unwrap(); // uses 10ms default
+        let (alive, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
+        let (_dead, _) = store.create_challenge("bob", "whatsapp", None, 0).unwrap(); // uses 10ms default
         sleep(Duration::from_millis(30));
         let removed = store.prune_expired();
         assert_eq!(removed, 1);
@@ -2261,12 +2247,8 @@ mod transcript_reader_tests {
         let tmp = tempfile::tempdir().unwrap();
         let s1 = Uuid::new_v4();
         let s2 = Uuid::new_v4();
-        let writer = seeded_writer(
-            tmp.path(),
-            "ana",
-            &[(s1, &["hi", "hola"]), (s2, &["yo"])],
-        )
-        .await;
+        let writer =
+            seeded_writer(tmp.path(), "ana", &[(s1, &["hi", "hola"]), (s2, &["yo"])]).await;
         let reader = TranscriptReaderFs::new(writer, None, "ana");
         let events = reader
             .list_recent_events(&AgentEventsListFilter {
@@ -2317,8 +2299,7 @@ mod transcript_reader_tests {
     async fn read_session_events_filters_by_since_seq_and_caps_limit() {
         let tmp = tempfile::tempdir().unwrap();
         let sid = Uuid::new_v4();
-        let writer =
-            seeded_writer(tmp.path(), "ana", &[(sid, &["a", "b", "c", "d"])]).await;
+        let writer = seeded_writer(tmp.path(), "ana", &[(sid, &["a", "b", "c", "d"])]).await;
         let reader = TranscriptReaderFs::new(writer, None, "ana");
 
         // Caller wants entries strictly AFTER seq=0 (so b, c, d
@@ -2424,7 +2405,10 @@ mod transcript_reader_tests {
             })
             .await
             .unwrap();
-        assert!(events.is_empty(), "untagged reader must reject tenant filter");
+        assert!(
+            events.is_empty(),
+            "untagged reader must reject tenant filter"
+        );
     }
 
     #[tokio::test]
@@ -2476,9 +2460,7 @@ impl InMemoryProcessingControlStore {
     /// `with_processing_domain` so an operator pause reaches
     /// every admin RPC route at once.
     pub fn new() -> Self {
-        Self::with_pending_cap(
-            nexo_tool_meta::admin::processing::DEFAULT_PENDING_INBOUNDS_CAP,
-        )
+        Self::with_pending_cap(nexo_tool_meta::admin::processing::DEFAULT_PENDING_INBOUNDS_CAP)
     }
 
     /// Phase 82.13.b.3 — build with a custom per-scope queue
@@ -2506,10 +2488,7 @@ impl InMemoryProcessingControlStore {
 
 #[async_trait]
 impl ProcessingControlStore for InMemoryProcessingControlStore {
-    async fn get(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<ProcessingControlState> {
+    async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<ProcessingControlState> {
         Ok(self
             .inner
             .get(scope)
@@ -2567,20 +2546,14 @@ impl ProcessingControlStore for InMemoryProcessingControlStore {
         Ok((entry.len(), dropped))
     }
 
-    async fn drain_pending(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<Vec<PendingInbound>> {
+    async fn drain_pending(&self, scope: &ProcessingScope) -> anyhow::Result<Vec<PendingInbound>> {
         Ok(match self.pending.remove(scope) {
             Some((_, queue)) => queue.into_iter().collect(),
             None => Vec::new(),
         })
     }
 
-    async fn pending_depth(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<usize> {
+    async fn pending_depth(&self, scope: &ProcessingScope) -> anyhow::Result<usize> {
         Ok(self
             .pending
             .get(scope)
@@ -2592,9 +2565,7 @@ impl ProcessingControlStore for InMemoryProcessingControlStore {
 #[cfg(test)]
 mod processing_store_tests {
     use super::*;
-    use nexo_tool_meta::admin::processing::{
-        ProcessingControlState, ProcessingScope,
-    };
+    use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 
     fn convo() -> ProcessingScope {
         ProcessingScope::Conversation {
@@ -2818,10 +2789,7 @@ impl InMemoryEscalationStore {
 
 #[async_trait]
 impl EscalationStore for InMemoryEscalationStore {
-    async fn list(
-        &self,
-        filter: &EscalationsListParams,
-    ) -> anyhow::Result<Vec<EscalationEntry>> {
+    async fn list(&self, filter: &EscalationsListParams) -> anyhow::Result<Vec<EscalationEntry>> {
         let mut out: Vec<EscalationEntry> = self
             .inner
             .iter()
@@ -2835,9 +2803,7 @@ impl EscalationStore for InMemoryEscalationStore {
             EscalationState::Pending {
                 requested_at_ms, ..
             } => std::cmp::Reverse(*requested_at_ms),
-            EscalationState::Resolved {
-                resolved_at_ms, ..
-            } => std::cmp::Reverse(*resolved_at_ms),
+            EscalationState::Resolved { resolved_at_ms, .. } => std::cmp::Reverse(*resolved_at_ms),
             _ => std::cmp::Reverse(0u64),
         });
         out.truncate(filter.limit);
@@ -2878,8 +2844,9 @@ impl EscalationStore for InMemoryEscalationStore {
         state: EscalationState,
     ) -> anyhow::Result<bool> {
         let scope = match &state {
-            EscalationState::Pending { scope, .. }
-            | EscalationState::Resolved { scope, .. } => scope.clone(),
+            EscalationState::Pending { scope, .. } | EscalationState::Resolved { scope, .. } => {
+                scope.clone()
+            }
             _ => anyhow::bail!("upsert_pending requires Pending or Resolved state"),
         };
         let entry = EscalationEntry {
@@ -3112,7 +3079,7 @@ mod escalation_store_tests {
             body: "first".into(),
             max_chars: None,
             requires: None,
-                tenant_id: None,
+            tenant_id: None,
         };
         let (_, c1) = store.upsert(p.clone()).await.unwrap();
         let (rec2, c2) = store
@@ -3214,7 +3181,7 @@ mod escalation_store_tests {
                     body: "x".into(),
                     max_chars: None,
                     requires: None,
-                tenant_id: None,
+                    tenant_id: None,
                 })
                 .await
                 .unwrap();
@@ -3248,11 +3215,9 @@ mod escalation_store_tests {
             .unwrap();
         assert!(created);
         // File on disk lives under <root>/acme/billing/SKILL.md.
-        let blob = tokio::fs::read_to_string(
-            root.join("acme").join("billing").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let blob = tokio::fs::read_to_string(root.join("acme").join("billing").join("SKILL.md"))
+            .await
+            .unwrap();
         assert!(blob.contains("tenant body"));
         // Global slot has no `billing`.
         let global_list = store.list(None).await.unwrap();
@@ -3355,16 +3320,13 @@ mod escalation_store_tests {
             .unwrap();
         // Each list returns ONLY its scope.
         let global_list = store.list(None).await.unwrap();
-        let global_names: Vec<&str> =
-            global_list.iter().map(|s| s.name.as_str()).collect();
+        let global_names: Vec<&str> = global_list.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(global_names, vec!["global1", "global2"]);
         let acme_list = store.list_for_tenant("acme", None).await.unwrap();
-        let acme_names: Vec<&str> =
-            acme_list.iter().map(|s| s.name.as_str()).collect();
+        let acme_names: Vec<&str> = acme_list.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(acme_names, vec!["tenant-acme"]);
         let globex_list = store.list_for_tenant("globex", None).await.unwrap();
-        let globex_names: Vec<&str> =
-            globex_list.iter().map(|s| s.name.as_str()).collect();
+        let globex_names: Vec<&str> = globex_list.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(globex_names, vec!["tenant-globex"]);
         tokio::fs::remove_dir_all(&root).await.ok();
     }
@@ -3436,11 +3398,9 @@ mod escalation_store_tests {
         // Phase 83.8.12.6 — global skills now live under
         // `<root>/__global__/<name>/SKILL.md` (was `<root>/<name>/`
         // pre-83.8.12.6). Test refactored accordingly.
-        let blob = tokio::fs::read_to_string(
-            root.join("__global__").join("rt").join("SKILL.md"),
-        )
-        .await
-        .unwrap();
+        let blob = tokio::fs::read_to_string(root.join("__global__").join("rt").join("SKILL.md"))
+            .await
+            .unwrap();
         assert!(blob.starts_with("---\n"));
         assert!(blob.contains("name: Round Trip"));
         assert!(blob.contains("description: Probe."));
@@ -3471,7 +3431,7 @@ mod escalation_store_tests {
                     body: format!("v{i}"),
                     max_chars: None,
                     requires: None,
-                tenant_id: None,
+                    tenant_id: None,
                 })
                 .await
             }));
@@ -3565,10 +3525,7 @@ impl BrokerOutboundDispatcher {
 
     /// Register a translator for one channel. Re-adding the
     /// same channel name overwrites the previous translator.
-    pub fn with_translator(
-        mut self,
-        translator: Box<dyn ChannelPayloadTranslator>,
-    ) -> Self {
+    pub fn with_translator(mut self, translator: Box<dyn ChannelPayloadTranslator>) -> Self {
         self.translators
             .insert(translator.channel().to_string(), translator);
         self
@@ -3577,23 +3534,18 @@ impl BrokerOutboundDispatcher {
 
 #[async_trait]
 impl ChannelOutboundDispatcher for BrokerOutboundDispatcher {
-    async fn send(
-        &self,
-        msg: OutboundMessage,
-    ) -> Result<OutboundAck, ChannelOutboundError> {
+    async fn send(&self, msg: OutboundMessage) -> Result<OutboundAck, ChannelOutboundError> {
         let translator = self
             .translators
             .get(&msg.channel)
             .ok_or_else(|| ChannelOutboundError::ChannelUnavailable(msg.channel.clone()))?;
-        let (topic, payload) = translator
-            .translate(&msg)
-            .map_err(|e| match e {
-                TranslationError::MissingField(_)
-                | TranslationError::InvalidValue { .. }
-                | TranslationError::UnsupportedKind(_) => {
-                    ChannelOutboundError::InvalidParams(e.to_string())
-                }
-            })?;
+        let (topic, payload) = translator.translate(&msg).map_err(|e| match e {
+            TranslationError::MissingField(_)
+            | TranslationError::InvalidValue { .. }
+            | TranslationError::UnsupportedKind(_) => {
+                ChannelOutboundError::InvalidParams(e.to_string())
+            }
+        })?;
         let event = Event::new(&topic, &msg.channel, payload);
         self.broker
             .publish(&topic, event)
@@ -3652,12 +3604,13 @@ impl ChannelPayloadTranslator for TelegramTranslator {
                     .reply_to_msg_id
                     .as_deref()
                     .ok_or(TranslationError::MissingField("reply_to_msg_id"))?;
-                let reply_id: i64 = reply_id_raw.parse().map_err(
-                    |e: std::num::ParseIntError| TranslationError::InvalidValue {
-                        field: "reply_to_msg_id",
-                        reason: format!("Telegram message id must be i64: {e}"),
-                    },
-                )?;
+                let reply_id: i64 =
+                    reply_id_raw.parse().map_err(|e: std::num::ParseIntError| {
+                        TranslationError::InvalidValue {
+                            field: "reply_to_msg_id",
+                            reason: format!("Telegram message id must be i64: {e}"),
+                        }
+                    })?;
                 serde_json::json!({
                     "to": chat_id,
                     "text": msg.body,
@@ -3773,9 +3726,10 @@ impl ChannelPayloadTranslator for WhatsAppTranslator {
                 })
             }
             "media" => {
-                let attachment = msg.attachments.first().ok_or(
-                    TranslationError::MissingField("attachments[0]"),
-                )?;
+                let attachment = msg
+                    .attachments
+                    .first()
+                    .ok_or(TranslationError::MissingField("attachments[0]"))?;
                 let url = attachment
                     .get("url")
                     .and_then(serde_json::Value::as_str)
@@ -3851,7 +3805,10 @@ mod broker_outbound_tests {
         let mut msg = text_msg();
         msg.msg_kind = "reply".into();
         let r = WhatsAppTranslator.translate(&msg);
-        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+        assert!(matches!(
+            r,
+            Err(TranslationError::MissingField("reply_to_msg_id"))
+        ));
     }
 
     #[test]
@@ -3876,7 +3833,10 @@ mod broker_outbound_tests {
         msg.msg_kind = "media".into();
         msg.attachments = vec![json!({})];
         let r = WhatsAppTranslator.translate(&msg);
-        assert!(matches!(r, Err(TranslationError::MissingField("attachments[0].url"))));
+        assert!(matches!(
+            r,
+            Err(TranslationError::MissingField("attachments[0].url"))
+        ));
     }
 
     #[test]
@@ -3894,17 +3854,14 @@ mod broker_outbound_tests {
             .subscribe("plugin.outbound.whatsapp.wa.0")
             .await
             .unwrap();
-        let dispatcher = BrokerOutboundDispatcher::new(broker)
-            .with_translator(Box::new(WhatsAppTranslator));
+        let dispatcher =
+            BrokerOutboundDispatcher::new(broker).with_translator(Box::new(WhatsAppTranslator));
         let ack = dispatcher.send(text_msg()).await.unwrap();
         assert!(ack.outbound_message_id.is_none());
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            sub.next(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_millis(200), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(evt.payload["text"], json!("hi"));
         assert_eq!(evt.payload["to"], json!("wa.55"));
     }
@@ -3912,8 +3869,8 @@ mod broker_outbound_tests {
     #[tokio::test]
     async fn broker_dispatcher_unknown_channel_returns_channel_unavailable() {
         let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
-        let dispatcher = BrokerOutboundDispatcher::new(broker)
-            .with_translator(Box::new(WhatsAppTranslator));
+        let dispatcher =
+            BrokerOutboundDispatcher::new(broker).with_translator(Box::new(WhatsAppTranslator));
         let mut msg = text_msg();
         msg.channel = "telegram".into();
         let r = dispatcher.send(msg).await;
@@ -3923,8 +3880,8 @@ mod broker_outbound_tests {
     #[tokio::test]
     async fn broker_dispatcher_translator_error_maps_to_invalid_params() {
         let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
-        let dispatcher = BrokerOutboundDispatcher::new(broker)
-            .with_translator(Box::new(WhatsAppTranslator));
+        let dispatcher =
+            BrokerOutboundDispatcher::new(broker).with_translator(Box::new(WhatsAppTranslator));
         let mut msg = text_msg();
         msg.msg_kind = "voice".into();
         let r = dispatcher.send(msg).await;
@@ -3986,7 +3943,10 @@ mod broker_outbound_tests {
         let mut msg = telegram_msg();
         msg.msg_kind = "reply".into();
         let r = TelegramTranslator.translate(&msg);
-        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+        assert!(matches!(
+            r,
+            Err(TranslationError::MissingField("reply_to_msg_id"))
+        ));
     }
 
     #[test]
@@ -4025,7 +3985,10 @@ mod broker_outbound_tests {
         assert_eq!(topic, "plugin.outbound.email.ops");
         assert_eq!(payload["to"], json!(["ana@example.com"]));
         assert_eq!(payload["subject"], json!("Re: tu consulta"));
-        assert_eq!(payload["body"], json!("Hola, te respondo desde el operador."));
+        assert_eq!(
+            payload["body"],
+            json!("Hola, te respondo desde el operador.")
+        );
     }
 
     #[test]
@@ -4050,7 +4013,10 @@ mod broker_outbound_tests {
         let mut msg = email_msg();
         msg.msg_kind = "reply".into();
         let r = EmailTranslator.translate(&msg);
-        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+        assert!(matches!(
+            r,
+            Err(TranslationError::MissingField("reply_to_msg_id"))
+        ));
     }
 
     #[test]
@@ -4072,17 +4038,17 @@ mod broker_outbound_tests {
     #[tokio::test]
     async fn dispatcher_routes_telegram_payload_to_topic() {
         let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
-        let mut sub = broker.subscribe("plugin.outbound.telegram.primary").await.unwrap();
-        let dispatcher = BrokerOutboundDispatcher::new(broker)
-            .with_translator(Box::new(TelegramTranslator));
+        let mut sub = broker
+            .subscribe("plugin.outbound.telegram.primary")
+            .await
+            .unwrap();
+        let dispatcher =
+            BrokerOutboundDispatcher::new(broker).with_translator(Box::new(TelegramTranslator));
         dispatcher.send(telegram_msg()).await.unwrap();
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            sub.next(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_millis(200), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(evt.payload["to"], json!(12345));
     }
 
@@ -4090,18 +4056,18 @@ mod broker_outbound_tests {
     async fn dispatcher_routes_email_payload_to_topic() {
         let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
         let mut sub = broker.subscribe("plugin.outbound.email.ops").await.unwrap();
-        let dispatcher = BrokerOutboundDispatcher::new(broker)
-            .with_translator(Box::new(EmailTranslator));
+        let dispatcher =
+            BrokerOutboundDispatcher::new(broker).with_translator(Box::new(EmailTranslator));
         dispatcher.send(email_msg()).await.unwrap();
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            sub.next(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_millis(200), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(evt.payload["to"], json!(["ana@example.com"]));
-        assert_eq!(evt.payload["body"], json!("Hola, te respondo desde el operador."));
+        assert_eq!(
+            evt.payload["body"],
+            json!("Hola, te respondo desde el operador.")
+        );
     }
 }
 
@@ -4136,10 +4102,7 @@ impl std::fmt::Debug for TenantsYamlPatcher {
 impl TenantsYamlPatcher {
     /// Build a patcher over `tenants.yaml` and the matching
     /// `agents.yaml` (used for orphan detection).
-    pub fn new(
-        tenants_yaml: impl Into<PathBuf>,
-        agents_yaml: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn new(tenants_yaml: impl Into<PathBuf>, agents_yaml: impl Into<PathBuf>) -> Self {
         Self {
             path: tenants_yaml.into(),
             agents_yaml_path: agents_yaml.into(),
@@ -4192,10 +4155,7 @@ impl TenantsYamlPatcher {
 
 #[async_trait]
 impl TenantStore for TenantsYamlPatcher {
-    async fn list(
-        &self,
-        filter: &TenantsListFilter,
-    ) -> anyhow::Result<Vec<TenantSummary>> {
+    async fn list(&self, filter: &TenantsListFilter) -> anyhow::Result<Vec<TenantSummary>> {
         let all = self.read_all()?;
         let mut out: Vec<TenantSummary> = all
             .into_iter()
@@ -4221,10 +4181,7 @@ impl TenantStore for TenantsYamlPatcher {
         Ok(all.into_iter().find(|t| t.id == tenant_id))
     }
 
-    async fn upsert(
-        &self,
-        params: TenantsUpsertInput,
-    ) -> anyhow::Result<(TenantDetail, bool)> {
+    async fn upsert(&self, params: TenantsUpsertInput) -> anyhow::Result<(TenantDetail, bool)> {
         let _guard = self.write_lock.lock().await;
         let mut all = self.read_all()?;
         let existing_idx = all.iter().position(|t| t.id == params.id);
@@ -4237,9 +4194,7 @@ impl TenantStore for TenantsYamlPatcher {
                 display_name: params.display_name,
                 active: params.active.unwrap_or(prev.active),
                 created_at: prev.created_at,
-                llm_provider_refs: params
-                    .llm_provider_refs
-                    .unwrap_or(prev.llm_provider_refs),
+                llm_provider_refs: params.llm_provider_refs.unwrap_or(prev.llm_provider_refs),
                 metadata: params.metadata.unwrap_or(prev.metadata),
             }
         } else {
@@ -4263,22 +4218,15 @@ impl TenantStore for TenantsYamlPatcher {
         Ok((detail, created))
     }
 
-    async fn delete(
-        &self,
-        tenant_id: &str,
-        purge: bool,
-    ) -> anyhow::Result<(bool, Vec<String>)> {
+    async fn delete(&self, tenant_id: &str, purge: bool) -> anyhow::Result<(bool, Vec<String>)> {
         let _guard = self.write_lock.lock().await;
         let mut all = self.read_all()?;
         let Some(idx) = all.iter().position(|t| t.id == tenant_id) else {
             // Idempotent unknown-tenant case.
             return Ok((false, Vec::new()));
         };
-        let orphans = crate::yaml_patch::list_agents_by_tenant(
-            &self.agents_yaml_path,
-            tenant_id,
-        )
-        .unwrap_or_default();
+        let orphans = crate::yaml_patch::list_agents_by_tenant(&self.agents_yaml_path, tenant_id)
+            .unwrap_or_default();
         if !orphans.is_empty() && !purge {
             // Refuse delete; surface orphan list so UI can confirm.
             return Ok((false, orphans));
@@ -4300,10 +4248,7 @@ mod tenants_yaml_tests {
     use std::collections::BTreeMap;
 
     fn tmp_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "nexo-tenants-yaml-{}",
-            uuid::Uuid::new_v4()
-        ))
+        std::env::temp_dir().join(format!("nexo-tenants-yaml-{}", uuid::Uuid::new_v4()))
     }
 
     fn fixture(dir: &std::path::Path) -> TenantsYamlPatcher {
@@ -4333,7 +4278,10 @@ mod tenants_yaml_tests {
     async fn upsert_then_list_round_trips_with_agent_count() {
         let dir = tmp_dir();
         let store = fixture(&dir);
-        let (_d, created) = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        let (_d, created) = store
+            .upsert(upsert_input("acme-corp", "Acme"))
+            .await
+            .unwrap();
         assert!(created);
         let list = store.list(&TenantsListFilter::default()).await.unwrap();
         assert_eq!(list.len(), 1);
@@ -4384,7 +4332,10 @@ mod tenants_yaml_tests {
     async fn delete_with_orphans_purge_false_returns_orphans() {
         let dir = tmp_dir();
         let store = fixture(&dir);
-        let _ = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        let _ = store
+            .upsert(upsert_input("acme-corp", "Acme"))
+            .await
+            .unwrap();
         let (removed, orphans) = store.delete("acme-corp", false).await.unwrap();
         assert!(!removed, "delete rejected because of orphan agents");
         assert_eq!(orphans, vec!["bot-acme-1"]);
@@ -4395,7 +4346,10 @@ mod tenants_yaml_tests {
     async fn delete_with_orphans_purge_true_removes_tenant_acks_orphans() {
         let dir = tmp_dir();
         let store = fixture(&dir);
-        let _ = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        let _ = store
+            .upsert(upsert_input("acme-corp", "Acme"))
+            .await
+            .unwrap();
         let (removed, orphans) = store.delete("acme-corp", true).await.unwrap();
         assert!(removed);
         assert_eq!(orphans, vec!["bot-acme-1"]);
@@ -4478,14 +4432,8 @@ mod tenants_yaml_tests {
     async fn empty_tenants_yaml_lists_zero() {
         let dir = tmp_dir();
         std::fs::create_dir_all(&dir).unwrap();
-        let store = TenantsYamlPatcher::new(
-            dir.join("tenants.yaml"),
-            dir.join("agents.yaml"),
-        );
-        let list = store
-            .list(&TenantsListFilter::default())
-            .await
-            .unwrap();
+        let store = TenantsYamlPatcher::new(dir.join("tenants.yaml"), dir.join("agents.yaml"));
+        let list = store.list(&TenantsListFilter::default()).await.unwrap();
         assert!(list.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -573,7 +573,10 @@ min_nexo_version = ">=0.1.0"
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&result.binary_path).unwrap().permissions().mode();
+            let mode = fs::metadata(&result.binary_path)
+                .unwrap()
+                .permissions()
+                .mode();
             assert!(mode & 0o111 != 0, "binary must be executable: {:o}", mode);
         }
     }
@@ -692,7 +695,11 @@ min_nexo_version = ">=0.1.0"
         .await
         .unwrap_err();
 
-        assert!(matches!(err, ExtractError::UnsafePath { .. }), "got {:?}", err);
+        assert!(
+            matches!(err, ExtractError::UnsafePath { .. }),
+            "got {:?}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -747,7 +754,11 @@ min_nexo_version = ">=0.1.0"
         .await
         .unwrap_err();
 
-        assert!(matches!(err, ExtractError::UnsafePath { .. }), "got {:?}", err);
+        assert!(
+            matches!(err, ExtractError::UnsafePath { .. }),
+            "got {:?}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -771,7 +782,13 @@ min_nexo_version = ">=0.1.0"
         .unwrap_err();
 
         assert!(
-            matches!(err, ExtractError::DisallowedEntryType { kind: "symlink", .. }),
+            matches!(
+                err,
+                ExtractError::DisallowedEntryType {
+                    kind: "symlink",
+                    ..
+                }
+            ),
             "got {:?}",
             err
         );
@@ -804,7 +821,11 @@ min_nexo_version = ">=0.1.0"
         .await
         .unwrap_err();
 
-        assert!(matches!(err, ExtractError::TooManyEntries { limit: 5 }), "got {:?}", err);
+        assert!(
+            matches!(err, ExtractError::TooManyEntries { limit: 5 }),
+            "got {:?}",
+            err
+        );
     }
 
     #[tokio::test]
@@ -824,7 +845,11 @@ min_nexo_version = ">=0.1.0"
         .await
         .unwrap_err();
 
-        assert!(matches!(err, ExtractError::BinaryMissing { .. }), "got {:?}", err);
+        assert!(
+            matches!(err, ExtractError::BinaryMissing { .. }),
+            "got {:?}",
+            err
+        );
         // Staging cleaned up.
         let leftovers: Vec<_> = fs::read_dir(tmp.path())
             .unwrap()

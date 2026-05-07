@@ -310,7 +310,8 @@ mod tests {
     #[tokio::test]
     async fn slot_clear_resets() {
         let slot = CacheSafeSlot::new();
-        slot.save(CacheSafeParams::from_parent_request(&mk_request())).await;
+        slot.save(CacheSafeParams::from_parent_request(&mk_request()))
+            .await;
         slot.clear().await;
         assert!(slot.get_clone().await.is_none());
     }

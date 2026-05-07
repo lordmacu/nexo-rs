@@ -34,10 +34,10 @@ pub use compact_policy::{
     MicroCompactContext, MicroCompactDecision, MicroCompactPolicy, SmCompactConfig,
     TruncatedToolResult, TIME_BASED_MC_CLEARED_MESSAGE,
 };
+pub use consolidation_lock_probe::ConsolidationLockProbe;
 pub use decision::{Decision, DecisionChoice, DecisionId};
 pub use error::HarnessError;
 pub use goal::{BudgetAxis, BudgetGuards, BudgetUsage, Goal, GoalId};
-pub use consolidation_lock_probe::ConsolidationLockProbe;
 pub use harness::AgentHarness;
 pub use memory_checkpoint::MemoryCheckpointer;
 pub use memory_extractor::MemoryExtractor;

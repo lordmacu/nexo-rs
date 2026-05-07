@@ -144,12 +144,7 @@ impl TtsProvider for EdgeTtsProvider {
 /// One round-trip through `msedge-tts`. Returns the raw mp3
 /// bytes (which may be empty if Edge accepted the request but
 /// produced no audio — caller decides how to react).
-async fn call_edge(
-    body: &str,
-    voice: &str,
-    audio_format: &str,
-    rate: i32,
-) -> Result<Vec<u8>> {
+async fn call_edge(body: &str, voice: &str, audio_format: &str, rate: i32) -> Result<Vec<u8>> {
     let body_owned = body.to_string();
     let voice_owned = voice.to_string();
     let format_owned = audio_format.to_string();

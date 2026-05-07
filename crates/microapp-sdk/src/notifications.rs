@@ -106,7 +106,10 @@ mod tests {
         // broadcast.
         listener(serde_json::json!({"not": "a real ping"}));
         let res = tokio::time::timeout(Duration::from_millis(20), rx.recv()).await;
-        assert!(res.is_err(), "no event should be broadcast on malformed input");
+        assert!(
+            res.is_err(),
+            "no event should be broadcast on malformed input"
+        );
     }
 
     #[tokio::test]

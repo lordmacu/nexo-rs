@@ -872,11 +872,7 @@ mod tests {
         let tmp = tmpdir();
         // pre-83.8.12.6 layout
         tokio::fs::create_dir_all(tmp.join("weather")).await?;
-        tokio::fs::write(
-            tmp.join("weather").join("SKILL.md"),
-            "Legacy weather.",
-        )
-        .await?;
+        tokio::fs::write(tmp.join("weather").join("SKILL.md"), "Legacy weather.").await?;
         let loader = SkillLoader::new(&tmp);
         let loaded = loader.load_many(&["weather".into()]).await;
         assert_eq!(loaded.len(), 1, "legacy layout must keep working");
@@ -922,7 +918,8 @@ mod tests {
         assert!(loop_skill.missing_versions.is_empty());
         let rendered = render_system_blocks(&loaded).expect("rendered");
         assert!(rendered.contains("## Loop"));
-        assert!(rendered.contains("> Bounded auto-iteration for a prompt with explicit stop predicates."));
+        assert!(rendered
+            .contains("> Bounded auto-iteration for a prompt with explicit stop predicates."));
         assert!(loop_skill.content.contains("max_iters"));
         assert!(loop_skill.content.contains("until_predicate"));
         assert!(loop_skill.content.contains("regex:"));
@@ -974,8 +971,14 @@ mod tests {
             .join("..")
             .join("skills");
         let loader = SkillLoader::new(&root);
-        let (loaded, status) = loader.load_many_with_status(&["simplify".to_string()]).await;
-        assert_eq!(loaded.len(), 1, "simplify skill should load from repo skills/");
+        let (loaded, status) = loader
+            .load_many_with_status(&["simplify".to_string()])
+            .await;
+        assert_eq!(
+            loaded.len(),
+            1,
+            "simplify skill should load from repo skills/"
+        );
         assert_eq!(
             status[0].action,
             SkillLoadAction::Loaded,
@@ -1011,7 +1014,11 @@ mod tests {
             .join("skills");
         let loader = SkillLoader::new(&root);
         let (loaded, status) = loader.load_many_with_status(&["verify".to_string()]).await;
-        assert_eq!(loaded.len(), 1, "verify skill should load from repo skills/");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "verify skill should load from repo skills/"
+        );
         assert_eq!(
             status[0].action,
             SkillLoadAction::Loaded,
@@ -1046,8 +1053,14 @@ mod tests {
             .join("..")
             .join("skills");
         let loader = SkillLoader::new(&root);
-        let (loaded, status) = loader.load_many_with_status(&["skillify".to_string()]).await;
-        assert_eq!(loaded.len(), 1, "skillify skill should load from repo skills/");
+        let (loaded, status) = loader
+            .load_many_with_status(&["skillify".to_string()])
+            .await;
+        assert_eq!(
+            loaded.len(),
+            1,
+            "skillify skill should load from repo skills/"
+        );
         assert_eq!(
             status[0].action,
             SkillLoadAction::Loaded,
@@ -1082,8 +1095,14 @@ mod tests {
             .join("..")
             .join("skills");
         let loader = SkillLoader::new(&root);
-        let (loaded, status) = loader.load_many_with_status(&["remember".to_string()]).await;
-        assert_eq!(loaded.len(), 1, "remember skill should load from repo skills/");
+        let (loaded, status) = loader
+            .load_many_with_status(&["remember".to_string()])
+            .await;
+        assert_eq!(
+            loaded.len(),
+            1,
+            "remember skill should load from repo skills/"
+        );
         assert_eq!(
             status[0].action,
             SkillLoadAction::Loaded,
@@ -1150,7 +1169,9 @@ mod tests {
         ));
         assert!(update_config_skill.content.contains("target_scope"));
         assert!(update_config_skill.content.contains("merge_mode"));
-        assert!(update_config_skill.content.contains("Hot-reload vs restart"));
+        assert!(update_config_skill
+            .content
+            .contains("Hot-reload vs restart"));
         assert!(update_config_skill.content.contains("config/agents.yaml"));
         assert!(update_config_skill.content.contains("config/llm.yaml"));
         Ok(())

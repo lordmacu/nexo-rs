@@ -68,9 +68,7 @@ use nexo_memory::MemoryEntry;
 use nexo_plugin_manifest::PluginManifest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{
-    self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader,
-};
+use tokio::io::{self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::errors::{Error as SdkError, Result as SdkResult};
@@ -390,10 +388,7 @@ impl BrokerSender {
     ///   with [`RpcError::Server`] when the host returns a
     ///   JSON-RPC error response (e.g. `-32603 "llm not
     ///   configured"`).
-    pub async fn complete_llm_stream(
-        &self,
-        p: LlmCompleteParams,
-    ) -> Result<LlmStream, RpcError> {
+    pub async fn complete_llm_stream(&self, p: LlmCompleteParams) -> Result<LlmStream, RpcError> {
         let mut params = json!({
             "provider": p.provider,
             "model": p.model,
@@ -417,15 +412,9 @@ impl BrokerSender {
             "params": params,
         });
         let (delta_tx, delta_rx) = mpsc::unbounded_channel::<String>();
-        let (final_tx, final_rx) =
-            oneshot::channel::<Result<LlmCompleteResult, RpcError>>();
-        self.pending.insert(
-            id,
-            PendingKind::Streaming {
-                delta_tx,
-                final_tx,
-            },
-        );
+        let (final_tx, final_rx) = oneshot::channel::<Result<LlmCompleteResult, RpcError>>();
+        self.pending
+            .insert(id, PendingKind::Streaming { delta_tx, final_tx });
 
         let line = serde_json::to_string(&frame).map_err(|e| {
             self.pending.remove(&id);
@@ -463,10 +452,7 @@ impl BrokerSender {
     ///
     /// Errors mirror the host wire spec at
     /// `nexo-plugin-contract.md` §5.2.
-    pub async fn complete_llm(
-        &self,
-        p: LlmCompleteParams,
-    ) -> Result<LlmCompleteResult, RpcError> {
+    pub async fn complete_llm(&self, p: LlmCompleteParams) -> Result<LlmCompleteResult, RpcError> {
         let mut params = json!({
             "provider": p.provider,
             "model": p.model,
@@ -496,9 +482,8 @@ impl BrokerSender {
             "method": "broker.publish",
             "params": { "topic": topic, "event": event },
         });
-        let line = serde_json::to_string(&frame).map_err(|e| {
-            SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
-        })?;
+        let line = serde_json::to_string(&frame)
+            .map_err(|e| SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
         let mut writer = self.writer.lock().await;
         writer.write_all(line.as_bytes()).await?;
         writer.write_all(b"\n").await?;
@@ -642,8 +627,7 @@ pub trait ToolHandler: Send + Sync + 'static {
         invocation: ToolInvocation,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
-                + Send,
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send,
         >,
     >;
 }
@@ -651,15 +635,16 @@ pub trait ToolHandler: Send + Sync + 'static {
 impl<F, Fut> ToolHandler for F
 where
     F: Fn(ToolInvocation) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
+        + Send
+        + 'static,
 {
     fn call(
         &self,
         invocation: ToolInvocation,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
-                + Send,
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send,
         >,
     > {
         Box::pin((self)(invocation))
@@ -738,9 +723,10 @@ impl LlmStream {
     /// `RpcError::Transport` on the second call (the receiver
     /// was already taken).
     pub async fn await_final(mut self) -> Result<LlmCompleteResult, RpcError> {
-        let rx = self.finished.take().ok_or_else(|| {
-            RpcError::Transport("await_final already consumed".into())
-        })?;
+        let rx = self
+            .finished
+            .take()
+            .ok_or_else(|| RpcError::Transport("await_final already consumed".into()))?;
         match rx.await {
             Ok(payload) => payload,
             Err(_canceled) => Err(RpcError::Transport(
@@ -874,9 +860,8 @@ where
     R: AsyncBufRead + Unpin + Send + 'static,
 {
     let mut lines = reader.lines();
-    let manifest_value = serde_json::to_value(&adapter.cached_manifest).map_err(|e| {
-        SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
-    })?;
+    let manifest_value = serde_json::to_value(&adapter.cached_manifest)
+        .map_err(|e| SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
     // Phase 81.15.c — child-side request-response correlation.
     // Each outbound request (memory.recall / llm.complete / ...)
     // registers a oneshot here under its allocated id; the reader
@@ -915,11 +900,9 @@ where
                         match kind {
                             PendingKind::Single(sender) => {
                                 let payload = if let Some(err) = err_obj {
-                                    let code = err
-                                        .get("code")
-                                        .and_then(|v| v.as_i64())
-                                        .unwrap_or(-32603)
-                                        as i32;
+                                    let code =
+                                        err.get("code").and_then(|v| v.as_i64()).unwrap_or(-32603)
+                                            as i32;
                                     let message = err
                                         .get("message")
                                         .and_then(|v| v.as_str())
@@ -940,11 +923,9 @@ where
                                 // `None`. Then `await_final()`
                                 // resolves with this payload.
                                 let payload = if let Some(err) = err_obj {
-                                    let code = err
-                                        .get("code")
-                                        .and_then(|v| v.as_i64())
-                                        .unwrap_or(-32603)
-                                        as i32;
+                                    let code =
+                                        err.get("code").and_then(|v| v.as_i64()).unwrap_or(-32603)
+                                            as i32;
                                     let message = err
                                         .get("message")
                                         .and_then(|v| v.as_str())
@@ -952,10 +933,13 @@ where
                                         .to_string();
                                     Err(RpcError::Server { code, message })
                                 } else {
-                                    serde_json::from_value::<LlmCompleteResult>(result_val)
-                                        .map_err(|e| RpcError::Decode(format!(
-                                            "llm.complete stream final result: {e}"
-                                        )))
+                                    serde_json::from_value::<LlmCompleteResult>(result_val).map_err(
+                                        |e| {
+                                            RpcError::Decode(format!(
+                                                "llm.complete stream final result: {e}"
+                                            ))
+                                        },
+                                    )
                                 };
                                 let _ = final_tx.send(payload);
                             }
@@ -1017,13 +1001,8 @@ where
                 // pending entry is missing (already finalized or
                 // user dropped the LlmStream), the chunk is
                 // dropped with debug log.
-                let req_id = params
-                    .get("request_id")
-                    .and_then(|v| v.as_u64());
-                let chunk = params
-                    .get("chunk")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let req_id = params.get("request_id").and_then(|v| v.as_u64());
+                let chunk = params.get("chunk").and_then(|v| v.as_str()).unwrap_or("");
                 if let Some(req_id) = req_id {
                     if let Some(entry) = pending.get(&req_id) {
                         if let PendingKind::Streaming { delta_tx, .. } = entry.value() {
@@ -1127,13 +1106,7 @@ where
                 }
             }
             other => {
-                write_error(
-                    &writer,
-                    id,
-                    -32601,
-                    &format!("method not found: {other}"),
-                )
-                .await?;
+                write_error(&writer, id, -32601, &format!("method not found: {other}")).await?;
             }
         }
     }
@@ -1247,8 +1220,14 @@ min_nexo_version = ">=0.1.0"
     #[test]
     fn tool_invocation_error_codes_match_contract_v1_10_band() {
         assert_eq!(ToolInvocationError::NotFound("x".into()).code(), -33401);
-        assert_eq!(ToolInvocationError::ArgumentInvalid("x".into()).code(), -33402);
-        assert_eq!(ToolInvocationError::ExecutionFailed("x".into()).code(), -33403);
+        assert_eq!(
+            ToolInvocationError::ArgumentInvalid("x".into()).code(),
+            -33402
+        );
+        assert_eq!(
+            ToolInvocationError::ExecutionFailed("x".into()).code(),
+            -33403
+        );
         assert_eq!(ToolInvocationError::Unavailable("x".into()).code(), -33404);
         assert_eq!(ToolInvocationError::Denied("x".into()).code(), -33405);
     }
@@ -1359,8 +1338,11 @@ min_nexo_version = ">=0.1.0"
             .await
             .unwrap();
         let reply = read_reply_line(&mut host_read).await;
-        assert!(reply["result"].get("tools").is_none(),
-            "expected no `tools` field; got: {}", reply["result"]);
+        assert!(
+            reply["result"].get("tools").is_none(),
+            "expected no `tools` field; got: {}",
+            reply["result"]
+        );
     }
 
     #[tokio::test]
@@ -1396,9 +1378,9 @@ min_nexo_version = ">=0.1.0"
     async fn tool_invoke_routes_to_registered_handler() {
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_tool(|inv: ToolInvocation| async move {
-                Ok(serde_json::json!({"echoed": inv.args}))
-            });
+            .on_tool(
+                |inv: ToolInvocation| async move { Ok(serde_json::json!({"echoed": inv.args})) },
+            );
         let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
         host_write
             .write_all(
@@ -1430,7 +1412,10 @@ min_nexo_version = ">=0.1.0"
         let reply = read_reply_line(&mut host_read).await;
         assert_eq!(reply["id"], 8);
         assert_eq!(reply["error"]["code"], -33401);
-        assert!(reply["error"]["message"].as_str().unwrap().contains("unknown"));
+        assert!(reply["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown"));
     }
 
     #[tokio::test]
@@ -1459,16 +1444,14 @@ min_nexo_version = ">=0.1.0"
         let called_clone = called.clone();
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_broker_event(
-                move |topic: String, event: Event, _broker: BrokerSender| {
-                    let called = called_clone.clone();
-                    async move {
-                        assert_eq!(topic, "plugin.outbound.test");
-                        assert_eq!(event.source, "host");
-                        called.store(true, Ordering::SeqCst);
-                    }
-                },
-            );
+            .on_broker_event(move |topic: String, event: Event, _broker: BrokerSender| {
+                let called = called_clone.clone();
+                async move {
+                    assert_eq!(topic, "plugin.outbound.test");
+                    assert_eq!(event.source, "host");
+                    called.store(true, Ordering::SeqCst);
+                }
+            });
         let (mut host_write, _host_read, _join) = run_adapter_on_duplex(adapter).await;
         // Fabricate a broker.event notification.
         let frame = serde_json::json!({
@@ -1610,29 +1593,27 @@ min_nexo_version = ">=0.1.0"
         let observed_clone = observed.clone();
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_broker_event(
-                move |_topic, _event, broker: BrokerSender| {
-                    let observed = observed_clone.clone();
-                    async move {
-                        let result = broker
-                            .request(
-                                "test.echo",
-                                serde_json::json!({"x": 1}),
-                                Some(Duration::from_secs(1)),
-                            )
-                            .await;
-                        match result {
-                            Ok(v) => {
-                                assert_eq!(v["echoed"], 1);
-                                observed.store(true, Ordering::SeqCst);
-                            }
-                            Err(e) => {
-                                panic!("request must succeed, got {e}")
-                            }
+            .on_broker_event(move |_topic, _event, broker: BrokerSender| {
+                let observed = observed_clone.clone();
+                async move {
+                    let result = broker
+                        .request(
+                            "test.echo",
+                            serde_json::json!({"x": 1}),
+                            Some(Duration::from_secs(1)),
+                        )
+                        .await;
+                    match result {
+                        Ok(v) => {
+                            assert_eq!(v["echoed"], 1);
+                            observed.store(true, Ordering::SeqCst);
+                        }
+                        Err(e) => {
+                            panic!("request must succeed, got {e}")
                         }
                     }
-                },
-            );
+                }
+            });
         let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
 
         // Trigger the handler: send a broker.event notification.

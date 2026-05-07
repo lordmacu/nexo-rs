@@ -111,7 +111,8 @@ mod tests {
         let (app_stdout, mut client_from_app) = tokio::io::duplex(1024);
 
         let runner = tokio::spawn(async move {
-            app.run_with(tokio::io::BufReader::new(app_stdin), app_stdout).await
+            app.run_with(tokio::io::BufReader::new(app_stdin), app_stdout)
+                .await
         });
 
         // 1. Call the tool — runtime invokes echo_via_admin.
@@ -161,10 +162,8 @@ mod tests {
                 break;
             }
         }
-        let tool_reply: Value = serde_json::from_slice(
-            full.split(|b| *b == b'\n').next().unwrap(),
-        )
-        .unwrap();
+        let tool_reply: Value =
+            serde_json::from_slice(full.split(|b| *b == b'\n').next().unwrap()).unwrap();
         assert_eq!(tool_reply["id"], serde_json::json!(1));
         // Cleanup — drop stdin to break the loop.
         drop(stdin);

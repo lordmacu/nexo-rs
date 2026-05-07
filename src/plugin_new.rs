@@ -21,18 +21,15 @@ use serde::Serialize;
 const PLUGIN_ID_REGEX: &str = r"^[a-z][a-z0-9_]{0,31}$";
 
 const TEXT_EXTENSIONS: &[&str] = &[
-    "toml", "md", "rs", "py", "ts", "mjs", "js", "php", "json",
-    "sh", "yml", "yaml", "lock", "txt",
+    "toml", "md", "rs", "py", "ts", "mjs", "js", "php", "json", "sh", "yml", "yaml", "lock", "txt",
 ];
 
-static TEMPLATE_RUST: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-rust");
+static TEMPLATE_RUST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-rust");
 static TEMPLATE_PYTHON: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-python");
 static TEMPLATE_TYPESCRIPT: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-typescript");
-static TEMPLATE_PHP: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-php");
+static TEMPLATE_PHP: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-php");
 
 // ── Public report types ────────────────────────────────────────────
 
@@ -63,9 +60,7 @@ pub enum PluginNewError {
     #[error("invalid plugin id `{got}`: must match {regex}")]
     InvalidId { got: String, regex: &'static str },
 
-    #[error(
-        "invalid lang `{got}`: must be one of rust|python|typescript|php"
-    )]
+    #[error("invalid lang `{got}`: must be one of rust|python|typescript|php")]
     InvalidLang { got: String },
 
     #[error(
@@ -174,47 +169,25 @@ fn placeholders_for(
     let title = title_case_from_id(id, lang);
 
     let owner_line = owner
-        .map(|o| {
-            format!(
-                "{} <{}@users.noreply.github.com>",
-                o, o
-            )
-        })
-        .unwrap_or_else(|| {
-            "Cristian Garcia <informacion@cristiangarcia.co>".to_string()
-        });
+        .map(|o| format!("{} <{}@users.noreply.github.com>", o, o))
+        .unwrap_or_else(|| "Cristian Garcia <informacion@cristiangarcia.co>".to_string());
 
-    let default_desc = format!(
-        "{} plugin (scaffolded by `nexo plugin new`).",
-        id
-    );
+    let default_desc = format!("{} plugin (scaffolded by `nexo plugin new`).", id);
     let desc = description
         .map(str::to_string)
         .unwrap_or(default_desc.clone());
 
     vec![
         // Order: longest first.
-        (
-            format!("template_plugin_{}", lang),
-            id.to_string(),
-        ),
-        (
-            format!("template-plugin-{}", lang),
-            id.to_string(),
-        ),
+        (format!("template_plugin_{}", lang), id.to_string()),
+        (format!("template-plugin-{}", lang), id.to_string()),
         (
             format!("template_echo{}", echo_suffix),
             format!("{}_echo", id),
         ),
+        (format!("Template Plugin ({})", label), title),
         (
-            format!("Template Plugin ({})", label),
-            title,
-        ),
-        (
-            format!(
-                "Skeleton out-of-tree subprocess plugin in {}.",
-                label
-            ),
+            format!("Skeleton out-of-tree subprocess plugin in {}.", label),
             desc.clone(),
         ),
         (
@@ -276,14 +249,12 @@ fn write_dir_with_substitutions(
                     })?;
                 }
                 if is_text_extension(f.path()) {
-                    let raw = f
-                        .contents_utf8()
-                        .ok_or_else(|| {
-                            PluginNewError::TemplateRead(format!(
-                                "non-utf8 text file in template: {}",
-                                f.path().display()
-                            ))
-                        })?;
+                    let raw = f.contents_utf8().ok_or_else(|| {
+                        PluginNewError::TemplateRead(format!(
+                            "non-utf8 text file in template: {}",
+                            f.path().display()
+                        ))
+                    })?;
                     let substituted = apply_substitutions(raw, replacements);
                     std::fs::write(&target, substituted).map_err(|e| {
                         PluginNewError::Io(format!("write {}: {e}", target.display()))
@@ -303,7 +274,10 @@ fn write_dir_with_substitutions(
                             .map(|e| e == "sh")
                             .unwrap_or(false)
                     {
-                        let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+                        let _ = std::fs::set_permissions(
+                            &target,
+                            std::fs::Permissions::from_mode(0o755),
+                        );
                     }
                 }
                 count += 1;
@@ -333,7 +307,10 @@ fn next_steps_for(lang: &str, id: &str, owner: Option<&str>) -> Vec<String> {
         _ => {}
     }
     if let Some(o) = owner {
-        steps.push(format!("git remote add origin git@github.com:{}/{}.git", o, id));
+        steps.push(format!(
+            "git remote add origin git@github.com:{}/{}.git",
+            o, id
+        ));
     } else {
         steps.push("git remote add origin git@github.com:<your-handle>/<repo>.git".into());
     }
@@ -345,9 +322,7 @@ fn next_steps_for(lang: &str, id: &str, owner: Option<&str>) -> Vec<String> {
 async fn try_git_init(dest: &Path, lang: &str) -> Result<bool, PluginNewError> {
     use tokio::process::Command;
     if Command::new("git").arg("--version").output().await.is_err() {
-        eprintln!(
-            "! git binary not found on PATH; skipping --git step. Run `git init` manually."
-        );
+        eprintln!("! git binary not found on PATH; skipping --git step. Run `git init` manually.");
         return Ok(false);
     }
     let init_status = Command::new("git")
@@ -407,10 +382,7 @@ pub async fn run_plugin_new(
         if force {
             if let Err(e) = std::fs::remove_dir_all(&dest) {
                 return Ok(emit_error(
-                    &PluginNewError::Io(format!(
-                        "remove existing {}: {e}",
-                        dest.display()
-                    )),
+                    &PluginNewError::Io(format!("remove existing {}: {e}", dest.display())),
                     json,
                     Some(dest.clone()),
                 ));
@@ -432,22 +404,23 @@ pub async fn run_plugin_new(
     }
 
     if !json {
-        eprintln!("→ Scaffolding {} plugin `{}` at {}", lang_label(&lang), id, dest.display());
+        eprintln!(
+            "→ Scaffolding {} plugin `{}` at {}",
+            lang_label(&lang),
+            id,
+            dest.display()
+        );
     }
 
-    let placeholders = placeholders_for(
-        &lang,
-        &id,
-        owner.as_deref(),
-        description.as_deref(),
-    );
-    let files_created = match write_dir_with_substitutions(template, template.path(), &dest, &placeholders) {
-        Ok(n) => n,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dest);
-            return Ok(emit_error(&e, json, Some(dest)));
-        }
-    };
+    let placeholders = placeholders_for(&lang, &id, owner.as_deref(), description.as_deref());
+    let files_created =
+        match write_dir_with_substitutions(template, template.path(), &dest, &placeholders) {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&dest);
+                return Ok(emit_error(&e, json, Some(dest)));
+            }
+        };
 
     if !json {
         eprintln!("✓ Wrote {} files", files_created);
@@ -481,10 +454,7 @@ pub async fn run_plugin_new(
     };
 
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&report).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         eprintln!();
         eprintln!("✓ Plugin `{}` scaffolded at {}", id, dest.display());
@@ -494,9 +464,7 @@ pub async fn run_plugin_new(
             eprintln!("  $ {step}");
         }
         eprintln!();
-        eprintln!(
-            "Then push to GitHub + tag v0.1.0; the bundled .github/workflows/release.yml"
-        );
+        eprintln!("Then push to GitHub + tag v0.1.0; the bundled .github/workflows/release.yml");
         eprintln!("does the rest (vendor, pack, optional cosign sign, gh release upload).");
     }
 
@@ -512,10 +480,7 @@ fn emit_error(err: &PluginNewError, json: bool, dest: Option<PathBuf>) -> i32 {
             error: err.to_string(),
             dest,
         };
-        println!(
-            "{}",
-            serde_json::to_string(&report).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         eprintln!("✗ Scaffold failed: {}", err);
         match err {
@@ -543,19 +508,20 @@ mod tests {
 
     #[test]
     fn id_validation_rejects_invalid_chars() {
-        let bad = ["My-Plugin", "my plugin", "123_plugin", "", &"a".repeat(33), "ñ"];
+        let bad = [
+            "My-Plugin",
+            "my plugin",
+            "123_plugin",
+            "",
+            &"a".repeat(33),
+            "ñ",
+        ];
         for id in bad {
-            assert!(
-                validate_id(id).is_err(),
-                "expected `{id}` to be rejected"
-            );
+            assert!(validate_id(id).is_err(), "expected `{id}` to be rejected");
         }
         let good = ["a", "ab", "my_plugin", "abc_def_ghi", &"a".repeat(32)];
         for id in good {
-            assert!(
-                validate_id(id).is_ok(),
-                "expected `{id}` to be accepted"
-            );
+            assert!(validate_id(id).is_ok(), "expected `{id}` to be accepted");
         }
     }
 
@@ -579,10 +545,7 @@ mod tests {
             "My Plugin (TypeScript)"
         );
         assert_eq!(title_case_from_id("slack", "python"), "Slack (Python)");
-        assert_eq!(
-            title_case_from_id("a_b_c", "rust"),
-            "A B C (Rust)"
-        );
+        assert_eq!(title_case_from_id("a_b_c", "rust"), "A B C (Rust)");
     }
 
     #[test]

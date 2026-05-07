@@ -288,14 +288,14 @@ impl AdminSender for MockAdminSender {
             .get("id")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| AdminError::Transport("mock: outbound frame missing string id".into()))?;
+            .ok_or_else(|| {
+                AdminError::Transport("mock: outbound frame missing string id".into())
+            })?;
         let method = frame
             .get("method")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| {
-                AdminError::Transport("mock: outbound frame missing method".into())
-            })?;
+            .ok_or_else(|| AdminError::Transport("mock: outbound frame missing method".into()))?;
         let params = frame.get("params").cloned().unwrap_or(Value::Null);
 
         // Capture for assertions BEFORE invoking the responder so a
@@ -408,9 +408,7 @@ mod tests {
     #[tokio::test]
     async fn on_with_receives_params_and_can_echo() {
         let mock = MockAdminRpc::new();
-        mock.on_with("nexo/admin/echo", |params| {
-            Ok(json!({ "echoed": params }))
-        });
+        mock.on_with("nexo/admin/echo", |params| Ok(json!({ "echoed": params })));
         let client = mock.client();
         let result: Value = client
             .call_raw("nexo/admin/echo", json!({ "x": 7 }))

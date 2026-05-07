@@ -20,9 +20,7 @@ use crate::path_extractor::{
     classify_command, extract_paths, filter_out_flags, parse_command_args,
 };
 use crate::sed_validator::sed_command_is_allowed;
-use crate::should_use_sandbox::{
-    should_use_sandbox, SandboxBackend, SandboxMode, SandboxProbe,
-};
+use crate::should_use_sandbox::{should_use_sandbox, SandboxBackend, SandboxMode, SandboxProbe};
 use crate::types::{PermissionOutcome, PermissionRequest};
 
 /// Phase C4.b — process-wide sandbox probe. Lazy-initialised on
@@ -88,10 +86,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
     /// `AdvisorRegistry::with_default()` to keep the bash advisor
     /// pre-registered, or `AdvisorRegistry::new()` for a clean
     /// slate.
-    pub fn with_advisors(
-        mut self,
-        advisors: Arc<crate::advisor::AdvisorRegistry>,
-    ) -> Self {
+    pub fn with_advisors(mut self, advisors: Arc<crate::advisor::AdvisorRegistry>) -> Self {
         self.advisors = advisors;
         self
     }
@@ -479,8 +474,7 @@ mod tests {
         // Risk-free command + backend present → no prior warning
         // → tier 5 stays silent → overall result is None.
         let input = json!({ "command": "echo hi" });
-        let out =
-            gather_bash_warnings_with_backend("Bash", &input, SandboxBackend::Firejail);
+        let out = gather_bash_warnings_with_backend("Bash", &input, SandboxBackend::Firejail);
         assert!(
             out.is_none(),
             "echo with backend should yield no warnings: got {out:?}",

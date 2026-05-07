@@ -18,9 +18,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use nexo_plugin_manifest::manifest::{
-    AdminCapabilities, HttpServerCapability,
-};
+use nexo_plugin_manifest::manifest::{AdminCapabilities, HttpServerCapability};
 use nexo_plugin_manifest::{discover_in_root, PluginManifest};
 
 /// Walk every plugin root, find a manifest (`plugin.toml`

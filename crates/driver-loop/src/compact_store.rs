@@ -31,7 +31,10 @@ impl CompactSummaryStore for SqliteCompactSummaryStore {
             .split("::")
             .last()
             .unwrap_or(&summary.agent_id);
-        let content = format!("compact_summary goal:{} turn:{} {}", goal_str, summary.turn_index, json);
+        let content = format!(
+            "compact_summary goal:{} turn:{} {}",
+            goal_str, summary.turn_index, json
+        );
         self.ltm
             .remember(&summary.agent_id, &content, &["compact_summary"])
             .await
@@ -57,7 +60,8 @@ impl CompactSummaryStore for SqliteCompactSummaryStore {
             }
             // The content has the prefix + JSON. Try stripping prefix.
             if let Some(json_start) = entry.content.find("{\"agent_id\"") {
-                if let Ok(s) = serde_json::from_str::<CompactSummary>(&entry.content[json_start..]) {
+                if let Ok(s) = serde_json::from_str::<CompactSummary>(&entry.content[json_start..])
+                {
                     return Ok(Some(s));
                 }
             }
@@ -119,11 +123,7 @@ mod tests {
     #[tokio::test]
     async fn noop_load_returns_none() {
         let s = NoopCompactSummaryStore;
-        assert!(s
-            .load("test", &GoalId::new())
-            .await
-            .unwrap()
-            .is_none());
+        assert!(s.load("test", &GoalId::new()).await.unwrap().is_none());
     }
 
     #[tokio::test]

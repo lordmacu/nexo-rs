@@ -17,14 +17,10 @@ use nexo_config::types::agents::{
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
 use nexo_core::agent::agent_events::AgentEventEmitter;
 use nexo_core::agent::redaction::Redactor;
-use nexo_core::agent::{
-    Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage,
-};
+use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
 use nexo_core::session::SessionManager;
 use nexo_tool_meta::admin::agent_events::AgentEventKind;
-use nexo_tool_meta::admin::processing::{
-    PendingInbound, ProcessingControlState, ProcessingScope,
-};
+use nexo_tool_meta::admin::processing::{PendingInbound, ProcessingControlState, ProcessingScope};
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -35,10 +31,7 @@ use uuid::Uuid;
 struct MockProcessingStore {
     rows: Mutex<std::collections::HashMap<ProcessingScope, ProcessingControlState>>,
     pending: Mutex<
-        std::collections::HashMap<
-            ProcessingScope,
-            std::collections::VecDeque<PendingInbound>,
-        >,
+        std::collections::HashMap<ProcessingScope, std::collections::VecDeque<PendingInbound>>,
     >,
     cap: usize,
     /// When `Some`, every `get` returns this Err — drives the
@@ -94,10 +87,7 @@ impl MockProcessingStore {
 
 #[async_trait]
 impl ProcessingControlStore for MockProcessingStore {
-    async fn get(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<ProcessingControlState> {
+    async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<ProcessingControlState> {
         if let Some(msg) = &self.fail_get {
             return Err(anyhow::anyhow!(msg.clone()));
         }
@@ -165,20 +155,12 @@ struct CaptureBehavior {
 
 #[async_trait]
 impl AgentBehavior for CaptureBehavior {
-    async fn on_message(
-        &self,
-        _ctx: &AgentContext,
-        msg: InboundMessage,
-    ) -> anyhow::Result<()> {
+    async fn on_message(&self, _ctx: &AgentContext, msg: InboundMessage) -> anyhow::Result<()> {
         self.received.lock().unwrap().push(msg.text.clone());
         Ok(())
     }
 
-    async fn decide(
-        &self,
-        _ctx: &AgentContext,
-        msg: &InboundMessage,
-    ) -> anyhow::Result<String> {
+    async fn decide(&self, _ctx: &AgentContext, msg: &InboundMessage) -> anyhow::Result<String> {
         Ok(msg.text.clone())
     }
 }
@@ -271,12 +253,7 @@ fn make_runtime(
     runtime
 }
 
-async fn publish_text(
-    broker: &AnyBroker,
-    session_id: Uuid,
-    text: &str,
-    from: &str,
-) {
+async fn publish_text(broker: &AnyBroker, session_id: Uuid, text: &str, from: &str) {
     let mut event = nexo_broker::types::Event::new(
         "plugin.inbound.test",
         "test",

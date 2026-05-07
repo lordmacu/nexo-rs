@@ -488,10 +488,7 @@ impl AgentContext {
     /// (paths without a binding match cannot have an
     /// MCP-channel source — the source rides alongside an
     /// already-matched binding, not as a substitute).
-    pub fn with_mcp_channel_source(
-        mut self,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn with_mcp_channel_source(mut self, source: impl Into<String>) -> Self {
         if let Some(b) = self.binding.as_mut() {
             b.mcp_channel_source = Some(source.into());
         }
@@ -509,16 +506,11 @@ impl AgentContext {
     /// want to gate the call. Caller is expected to gate at the
     /// call site for hot paths (every native-channel inbound
     /// passing through the resolver).
-    pub fn with_event_source(
-        mut self,
-        meta: nexo_tool_meta::EventSourceMeta,
-    ) -> Self {
+    pub fn with_event_source(mut self, meta: nexo_tool_meta::EventSourceMeta) -> Self {
         if let Some(b) = self.binding.as_mut() {
             b.event_source = Some(meta);
         } else {
-            tracing::debug!(
-                "with_event_source called on a context without a binding — no-op"
-            );
+            tracing::debug!("with_event_source called on a context without a binding — no-op");
         }
         self
     }
@@ -620,7 +612,7 @@ mod plan_mode_tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
@@ -777,7 +769,9 @@ mod plan_mode_tests {
         });
         let policy = Arc::new(EffectiveBindingPolicy::resolve(&a, 0));
 
-        let c = ctx().with_effective(policy).with_mcp_channel_source("slack");
+        let c = ctx()
+            .with_effective(policy)
+            .with_mcp_channel_source("slack");
         let b = c.binding.expect("binding populated");
         // Native binding tuple from policy
         assert_eq!(b.channel.as_deref(), Some("telegram"));

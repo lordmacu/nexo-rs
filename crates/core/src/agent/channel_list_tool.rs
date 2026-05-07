@@ -83,14 +83,13 @@ impl ChannelListTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: TOOL_NAME.into(),
-            description:
-                "List MCP channel servers currently registered for this binding. \
+            description: "List MCP channel servers currently registered for this binding. \
                  Each entry is a Slack/Telegram/iMessage-style inbound surface — \
                  a server that can push user messages into your conversation \
                  via a `notifications/nexo/channel` notification. Use to learn \
                  which platforms can reach you, which plugin sources back them, \
                  and whether any of them can also relay permission prompts."
-                    .into(),
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {},

@@ -148,14 +148,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_negative_expires_at() {
-        let b = OAuthBundle::new(
-            "a".into(),
-            "r".into(),
-            -1,
-            None,
-            "oauth_login",
-            "anthropic",
-        );
+        let b = OAuthBundle::new("a".into(), "r".into(), -1, None, "oauth_login", "anthropic");
         assert!(matches!(
             b.validate(),
             Err(BundleValidationError::InvalidExpiresAt { value: -1, .. })

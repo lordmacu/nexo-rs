@@ -68,11 +68,7 @@ pub fn format_event_subscriber_source(source_id: &str) -> String {
 ///     "dispatch:marketing-saas:whatsapp:personal"
 /// );
 /// ```
-pub fn format_dispatch_source(
-    extension_id: &str,
-    channel: &str,
-    account_id: &str,
-) -> String {
+pub fn format_dispatch_source(extension_id: &str, channel: &str, account_id: &str) -> String {
     format!("dispatch:{extension_id}:{channel}:{account_id}")
 }
 

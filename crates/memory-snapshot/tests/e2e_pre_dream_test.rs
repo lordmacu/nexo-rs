@@ -51,8 +51,7 @@ async fn seed_sqlite(path: &Path, marker: &str) {
 }
 
 async fn read_marker(db: &Path) -> String {
-    let opts =
-        SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display())).unwrap();
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display())).unwrap();
     let mut conn = opts.connect().await.unwrap();
     let v: String = sqlx::query_scalar("SELECT body FROM memories WHERE id = 0")
         .fetch_one(&mut conn)
@@ -103,11 +102,7 @@ async fn pre_dream_adapter_produces_usable_bundle_then_restore_recovers_state() 
     // Real agent state.
     let memdir = tmp.path().join("agents-memdir/ana");
     seed_memdir(&memdir, "v1");
-    seed_sqlite(
-        &tmp.path().join("agents-sqlite/ana/long_term.sqlite"),
-        "v1",
-    )
-    .await;
+    seed_sqlite(&tmp.path().join("agents-sqlite/ana/long_term.sqlite"), "v1").await;
 
     // Wire the adapter the way `AutoDreamRunner::with_pre_dream_snapshot`
     // would consume it.
@@ -161,7 +156,10 @@ async fn pre_dream_adapter_produces_usable_bundle_then_restore_recovers_state() 
 
     // SQLite restored back to v1.
     let after = read_marker(&tmp.path().join("agents-sqlite/ana/long_term.sqlite")).await;
-    assert_eq!(after, "v1-0", "SQLite must roll back to the pre-dream value");
+    assert_eq!(
+        after, "v1-0",
+        "SQLite must roll back to the pre-dream value"
+    );
 
     // Memdir restored back to v1.
     let memory = std::fs::read_to_string(memdir.join("MEMORY.md")).unwrap();
@@ -192,10 +190,7 @@ async fn pre_dream_adapter_label_correlates_to_run_id() {
             .unwrap();
     }
     let metas = s_arc.list(&"ana".into(), "default").await.unwrap();
-    let labels: Vec<_> = metas
-        .iter()
-        .filter_map(|m| m.label.clone())
-        .collect();
+    let labels: Vec<_> = metas.iter().filter_map(|m| m.label.clone()).collect();
     for run_id in ["alpha", "bravo", "charlie"] {
         let expected = format!("auto:pre-dream-{run_id}");
         assert!(

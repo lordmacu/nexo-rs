@@ -146,7 +146,9 @@ impl DriverEvent {
             DriverEvent::CompactRequested { .. } => "agent.driver.compact",
             DriverEvent::CompactCompleted { .. } => "agent.driver.compact.completed",
             DriverEvent::CompactSummaryStored { .. } => "agent.driver.compact.summary_stored",
-            DriverEvent::ExtractMemoriesCompleted { .. } => "agent.driver.extract_memories.completed",
+            DriverEvent::ExtractMemoriesCompleted { .. } => {
+                "agent.driver.extract_memories.completed"
+            }
             DriverEvent::ExtractMemoriesSkipped { .. } => "agent.driver.extract_memories.skipped",
             DriverEvent::AutoDreamOutcome { .. } => "agent.driver.auto_dream",
             DriverEvent::Progress { .. } => "agent.driver.progress",

@@ -50,13 +50,7 @@ const BROKER_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// before reaching the registry, so the literal `ext_` prefix being
 /// reserved here just stops a malicious plugin from forging
 /// `ext_other_plugin_…` names.
-pub const RESERVED_PREFIXES: &[&str] = &[
-    "agent_",
-    "system_",
-    "nexo_",
-    "mcp_",
-    "ext_",
-];
+pub const RESERVED_PREFIXES: &[&str] = &["agent_", "system_", "nexo_", "mcp_", "ext_"];
 
 /// Whether the registry rejects out-of-namespace registrations or
 /// merely logs them. Collisions are always rejected.
@@ -460,7 +454,9 @@ mod tests {
     #[test]
     fn register_rejects_reserved_prefix_agent() {
         let (scoped, _) = build_scoped("slack", &["slack_send"], NamespaceEnforcement::Strict);
-        let err = scoped.register(def("agent_route"), DummyHandler).unwrap_err();
+        let err = scoped
+            .register(def("agent_route"), DummyHandler)
+            .unwrap_err();
         assert!(matches!(
             err.reason,
             NamespaceViolationReason::ReservedPrefix("agent_")
@@ -530,7 +526,9 @@ mod tests {
     #[test]
     fn empty_expose_rejects_every_register() {
         let (scoped, _) = build_scoped("slack", &[], NamespaceEnforcement::Strict);
-        let err = scoped.register(def("slack_send"), DummyHandler).unwrap_err();
+        let err = scoped
+            .register(def("slack_send"), DummyHandler)
+            .unwrap_err();
         assert_eq!(err.reason, NamespaceViolationReason::NotInExpose);
     }
 
@@ -552,7 +550,9 @@ mod tests {
         // rejected as ReservedPrefix BEFORE the namespace check.
         // (Note: id regex actually rejects "agent" colliding with
         // built-in names, but defense-in-depth here.)
-        let err = scoped.register(def("agent_route"), DummyHandler).unwrap_err();
+        let err = scoped
+            .register(def("agent_route"), DummyHandler)
+            .unwrap_err();
         assert!(matches!(
             err.reason,
             NamespaceViolationReason::ReservedPrefix("agent_")

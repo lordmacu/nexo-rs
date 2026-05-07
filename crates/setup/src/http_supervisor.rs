@@ -49,7 +49,10 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Debug, Error)]
 pub enum HealthProbeError {
     /// `READY_TIMEOUT` elapsed without seeing a 200.
-    #[error("timed out waiting for {url} to return 200 within {0:?}", READY_TIMEOUT)]
+    #[error(
+        "timed out waiting for {url} to return 200 within {0:?}",
+        READY_TIMEOUT
+    )]
     Timeout {
         /// Full URL the probe was hitting.
         url: String,
@@ -92,7 +95,8 @@ impl Default for HttpServerSupervisor {
 
 impl std::fmt::Debug for HttpServerSupervisor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpServerSupervisor").finish_non_exhaustive()
+        f.debug_struct("HttpServerSupervisor")
+            .finish_non_exhaustive()
     }
 }
 
@@ -247,10 +251,7 @@ mod tests {
     /// Spin a tiny axum-free hyper server that returns the
     /// requested status code on the configured path. Returns
     /// the bound port + a JoinHandle so the test can shut down.
-    async fn spawn_health_server(
-        path: &'static str,
-        status: u16,
-    ) -> (u16, JoinHandle<()>) {
+    async fn spawn_health_server(path: &'static str, status: u16) -> (u16, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let handle = tokio::spawn(async move {
@@ -264,11 +265,7 @@ mod tests {
                     let _ = socket.read(&mut buf).await;
                     let request = String::from_utf8_lossy(&buf);
                     let body = "ok";
-                    let response_status = if request.contains(path) {
-                        status
-                    } else {
-                        404
-                    };
+                    let response_status = if request.contains(path) { status } else { 404 };
                     let phrase = match response_status {
                         200 => "OK",
                         503 => "Service Unavailable",

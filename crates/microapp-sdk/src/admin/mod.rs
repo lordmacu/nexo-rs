@@ -48,8 +48,7 @@ pub type OperatorHashSource = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// Default timeout for admin RPC round-trips. Mirrors the daemon
 /// pending-request timeout from the Phase 82.10 spec.
-pub const DEFAULT_ADMIN_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(30);
+pub const DEFAULT_ADMIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Typed errors a microapp sees when calling admin methods.
 #[non_exhaustive]
@@ -231,10 +230,7 @@ impl AdminClient {
         let Some(obj) = params.as_object_mut() else {
             return;
         };
-        obj.insert(
-            "operator_token_hash".to_string(),
-            Value::String(source()),
-        );
+        obj.insert("operator_token_hash".to_string(), Value::String(source()));
     }
 
     /// Generate the next `app:<uuid>` id. Public so the SDK
@@ -251,12 +247,15 @@ impl AdminClient {
         method: &str,
         params: P,
     ) -> Result<R, AdminError> {
-        let raw = self.call_raw(method, serde_json::to_value(&params).map_err(|e| {
-            AdminError::InvalidParams(format!("serialize params: {e}"))
-        })?).await?;
-        serde_json::from_value(raw).map_err(|e| {
-            AdminError::Internal(format!("deserialise result: {e}"))
-        })
+        let raw = self
+            .call_raw(
+                method,
+                serde_json::to_value(&params)
+                    .map_err(|e| AdminError::InvalidParams(format!("serialize params: {e}")))?,
+            )
+            .await?;
+        serde_json::from_value(raw)
+            .map_err(|e| AdminError::Internal(format!("deserialise result: {e}")))
     }
 
     /// Lower-level call that returns the raw `result` JSON value
@@ -277,9 +276,8 @@ impl AdminClient {
             "method": method,
             "params": params,
         });
-        let line = serde_json::to_string(&frame).map_err(|e| {
-            AdminError::Internal(format!("serialize frame: {e}"))
-        })?;
+        let line = serde_json::to_string(&frame)
+            .map_err(|e| AdminError::Internal(format!("serialize frame: {e}")))?;
 
         if let Err(e) = self.sender.send_line(line).await {
             self.pending.remove(&id);
@@ -383,7 +381,13 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let captured = sender.lines.lock().unwrap().first().cloned().expect("frame written");
+        let captured = sender
+            .lines
+            .lock()
+            .unwrap()
+            .first()
+            .cloned()
+            .expect("frame written");
         let frame: Value = serde_json::from_str(&captured).unwrap();
         assert_eq!(frame["method"], "nexo/admin/echo");
         assert!(frame["id"].as_str().unwrap().starts_with("app:"));
@@ -419,13 +423,12 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let id = serde_json::from_str::<Value>(
-            &sender.lines.lock().unwrap().first().cloned().unwrap(),
-        )
-        .unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let id =
+            serde_json::from_str::<Value>(&sender.lines.lock().unwrap().first().cloned().unwrap())
+                .unwrap()["id"]
+                .as_str()
+                .unwrap()
+                .to_string();
 
         let error_frame = serde_json::json!({
             "jsonrpc": "2.0",
@@ -460,7 +463,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AdminError::Transport(_)));
-        assert_eq!(client.pending_len(), 0, "pending entry cleared on send fail");
+        assert_eq!(
+            client.pending_len(),
+            0,
+            "pending entry cleared on send fail"
+        );
     }
 
     #[test]
@@ -647,13 +654,8 @@ mod tests {
         let client =
             AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
         client.set_operator_token_hash(|| "abc".to_string());
-        let frame = drive_send_only(
-            &client,
-            &sender,
-            "nexo/admin/processing/pause",
-            Value::Null,
-        )
-        .await;
+        let frame =
+            drive_send_only(&client, &sender, "nexo/admin/processing/pause", Value::Null).await;
         assert_eq!(frame["params"], Value::Null);
     }
 

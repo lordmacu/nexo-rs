@@ -166,26 +166,12 @@ pub enum WireAttachmentData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WireStreamChunk {
-    TextDelta {
-        delta: String,
-    },
-    ToolCallStart {
-        id: String,
-        name: String,
-    },
-    ToolCallArgsDelta {
-        id: String,
-        delta: String,
-    },
-    ToolCallEnd {
-        id: String,
-    },
-    Usage {
-        usage: WireTokenUsage,
-    },
-    End {
-        finish_reason: WireFinishReason,
-    },
+    TextDelta { delta: String },
+    ToolCallStart { id: String, name: String },
+    ToolCallArgsDelta { id: String, delta: String },
+    ToolCallEnd { id: String },
+    Usage { usage: WireTokenUsage },
+    End { finish_reason: WireFinishReason },
 }
 
 // ── Conversions ──────────────────────────────────────────────────
@@ -200,11 +186,7 @@ pub fn request_to_wire(req: &ChatRequest) -> WireChatRequest {
         system_prompt: req.system_prompt.clone(),
         stop_sequences: req.stop_sequences.clone(),
         tool_choice: tool_choice_to_wire(&req.tool_choice),
-        system_blocks: req
-            .system_blocks
-            .iter()
-            .map(prompt_block_to_wire)
-            .collect(),
+        system_blocks: req.system_blocks.iter().map(prompt_block_to_wire).collect(),
         cache_tools: req.cache_tools,
     }
 }

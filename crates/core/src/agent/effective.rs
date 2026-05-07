@@ -29,15 +29,14 @@
 
 use std::sync::Arc;
 
+use nexo_config::types::plan_mode::BindingRole;
 use nexo_config::{
     AgentConfig, DispatchPolicy, InboundBinding, ModelConfig, OutboundAllowlistConfig,
     ProactiveConfig, SenderRateLimitConfig, SenderRateLimitKeyword, SenderRateLimitOverride,
 };
-use nexo_config::types::plan_mode::BindingRole;
 
 use crate::agent::personas::{
-    coordinator_system_prompt, worker_system_prompt, CoordinatorPromptCtx,
-    WorkerPromptCtx,
+    coordinator_system_prompt, worker_system_prompt, CoordinatorPromptCtx, WorkerPromptCtx,
 };
 
 /// Concrete capability snapshot for one session attached to one binding.
@@ -153,8 +152,7 @@ pub struct EffectiveBindingPolicy {
     /// Operators wanting per-binding tighter caps with global
     /// fallback must explicitly include the global patterns in
     /// the binding map.
-    pub tool_rate_limits:
-        Option<nexo_config::types::agents::ToolRateLimitsConfig>,
+    pub tool_rate_limits: Option<nexo_config::types::agents::ToolRateLimitsConfig>,
 }
 
 impl EffectiveBindingPolicy {
@@ -230,9 +228,7 @@ impl EffectiveBindingPolicy {
     pub fn resolve(agent: &AgentConfig, binding_index: usize) -> Self {
         let binding = agent.inbound_bindings.get(binding_index);
         let allowed_tools = resolve_allowed_tools(agent, binding);
-        let role = BindingRole::from_role_str(
-            binding.and_then(|b| b.role.as_deref()),
-        );
+        let role = BindingRole::from_role_str(binding.and_then(|b| b.role.as_deref()));
         let base_prompt = resolve_prompt(agent, binding);
         let system_prompt = apply_persona_prefix(&allowed_tools, role, base_prompt);
         Self {
@@ -461,11 +457,7 @@ fn resolve_prompt(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Stri
 /// block ahead of the agent's existing system prompt. Other roles
 /// (Proactive / Unset) return `base` unchanged so today's
 /// behaviour is byte-identical for non-role bindings.
-fn apply_persona_prefix(
-    allowed_tools: &[String],
-    role: BindingRole,
-    base: String,
-) -> String {
+fn apply_persona_prefix(allowed_tools: &[String], role: BindingRole, base: String) -> String {
     let scratchpad_enabled = allowed_tools
         .iter()
         .any(|t| t.eq_ignore_ascii_case("TodoWrite"));
@@ -742,7 +734,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
@@ -967,8 +959,7 @@ allowed_tools:
   - FileEdit
   - TodoWrite
 "#;
-        let binding: InboundBinding =
-            serde_yaml::from_str(yaml).expect("valid binding YAML");
+        let binding: InboundBinding = serde_yaml::from_str(yaml).expect("valid binding YAML");
         let mut a = sample_agent();
         a.inbound_bindings.push(binding);
 
@@ -995,8 +986,7 @@ allowed_tools:
   - SendToPeer
   - TodoWrite
 "#;
-        let binding: InboundBinding =
-            serde_yaml::from_str(yaml).expect("valid binding YAML");
+        let binding: InboundBinding = serde_yaml::from_str(yaml).expect("valid binding YAML");
         let mut a = sample_agent();
         a.inbound_bindings.push(binding);
 
@@ -1688,7 +1678,10 @@ allowed_tools:
         let p_ent = EffectiveBindingPolicy::resolve(&a, 1);
 
         let free_map = p_free.tool_rate_limits.as_ref().expect("override present");
-        let drip = free_map.patterns.get("marketing_*").expect("pattern present");
+        let drip = free_map
+            .patterns
+            .get("marketing_*")
+            .expect("pattern present");
         assert_eq!(drip.rps, 0.167);
         assert_eq!(drip.burst, 10);
         assert!(drip.essential_deny_on_miss);

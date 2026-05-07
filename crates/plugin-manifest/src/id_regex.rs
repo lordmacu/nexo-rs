@@ -68,9 +68,7 @@ static DYNAMIC_RESERVED_IDS: OnceLock<Vec<String>> = OnceLock::new();
 
 /// Idempotent registration. First call wins; subsequent calls
 /// return `Err(&'static str)` so the caller can log + move on.
-pub fn register_reserved_ids(
-    ids: impl IntoIterator<Item = String>,
-) -> Result<(), &'static str> {
+pub fn register_reserved_ids(ids: impl IntoIterator<Item = String>) -> Result<(), &'static str> {
     let mut v: Vec<String> = ids.into_iter().collect();
     v.sort();
     v.dedup();
@@ -215,8 +213,14 @@ mod tests {
         // Locking the wire contract — adding/removing a reserved
         // id is a semver-major change for plugin authors.
         let expected: &[&str] = &[
-            "agent", "browser", "core", "email", "heartbeat", "memory",
-            "telegram", "whatsapp",
+            "agent",
+            "browser",
+            "core",
+            "email",
+            "heartbeat",
+            "memory",
+            "telegram",
+            "whatsapp",
         ];
         assert_eq!(RESERVED_IDS, expected);
     }

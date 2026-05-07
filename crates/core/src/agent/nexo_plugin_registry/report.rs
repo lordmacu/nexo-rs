@@ -17,9 +17,7 @@ use serde::Serialize;
 
 use nexo_plugin_manifest::PluginManifest;
 
-use super::capability_aggregator::{
-    AggregatedGate, PluginCapabilityAggregation, UnmetRequirement,
-};
+use super::capability_aggregator::{AggregatedGate, PluginCapabilityAggregation, UnmetRequirement};
 use super::contributes::{AgentMergeConflict, AgentMergeReport};
 use super::contributes_skills::{SkillConflict, SkillsMergeReport};
 use super::init_loop::InitOutcome;
@@ -132,16 +130,38 @@ pub enum DiagnosticLevel {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DiscoveryDiagnosticKind {
-    SearchPathMissing { reason: String },
-    ManifestParseError { error: String },
-    ValidationFailed { errors: Vec<String> },
-    SymlinkEscape { target: PathBuf },
+    SearchPathMissing {
+        reason: String,
+    },
+    ManifestParseError {
+        error: String,
+    },
+    ValidationFailed {
+        errors: Vec<String>,
+    },
+    SymlinkEscape {
+        target: PathBuf,
+    },
     PermissionDenied,
-    DuplicateId { id: String, kept_path: PathBuf },
-    VersionMismatch { id: String, required: String, current: Version },
-    Disabled { id: String },
-    AllowlistRejected { id: String },
-    UnresolvedEnvVar { var_name: String, in_path: PathBuf },
+    DuplicateId {
+        id: String,
+        kept_path: PathBuf,
+    },
+    VersionMismatch {
+        id: String,
+        required: String,
+        current: Version,
+    },
+    Disabled {
+        id: String,
+    },
+    AllowlistRejected {
+        id: String,
+    },
+    UnresolvedEnvVar {
+        var_name: String,
+        in_path: PathBuf,
+    },
     /// Phase 81.8 — two plugins both tried to register the same
     /// channel kind. The first plugin's adapter is live; the
     /// later plugin's adapter is rejected. Other registrations

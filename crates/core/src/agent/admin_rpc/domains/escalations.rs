@@ -37,10 +37,7 @@ const MAX_LIST_LIMIT: usize = 1000;
 #[async_trait]
 pub trait EscalationStore: Send + Sync + std::fmt::Debug {
     /// List entries matching `filter`, newest first.
-    async fn list(
-        &self,
-        filter: &EscalationsListParams,
-    ) -> anyhow::Result<Vec<EscalationEntry>>;
+    async fn list(&self, filter: &EscalationsListParams) -> anyhow::Result<Vec<EscalationEntry>>;
     /// Read the current state for one scope.
     async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<EscalationState>;
     /// Atomic resolve transition: `Pending` → `Resolved` with
@@ -88,9 +85,7 @@ pub async fn list(
     let entries = match store.list(&p).await {
         Ok(rows) => rows,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "escalations.list: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("escalations.list: {e}")))
         }
     };
     let entries = match (&p.tenant_id, patcher) {
@@ -104,8 +99,7 @@ pub async fn list(
         _ => entries,
     };
     AdminRpcResult::ok(
-        serde_json::to_value(EscalationsListResponse { entries })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(EscalationsListResponse { entries }).unwrap_or(Value::Null),
     )
 }
 
@@ -231,8 +225,7 @@ pub async fn auto_resolve_on_pause(
 pub struct EscalationThrottle {
     window_ms: u64,
     cap: u32,
-    history:
-        std::sync::Arc<dashmap::DashMap<ProcessingScope, std::collections::VecDeque<u64>>>,
+    history: std::sync::Arc<dashmap::DashMap<ProcessingScope, std::collections::VecDeque<u64>>>,
 }
 
 /// Failure shape returned by [`EscalationThrottle::try_acquire`]
@@ -277,11 +270,7 @@ impl EscalationThrottle {
     /// Returns `Err(ThrottleDenied)` when the rolling window
     /// already has `cap` entries — caller surfaces the
     /// `retry_after_ms` to the agent.
-    pub fn try_acquire(
-        &self,
-        scope: &ProcessingScope,
-        now_ms: u64,
-    ) -> Result<u32, ThrottleDenied> {
+    pub fn try_acquire(&self, scope: &ProcessingScope, now_ms: u64) -> Result<u32, ThrottleDenied> {
         let mut entry = self
             .history
             .entry(scope.clone())
@@ -300,9 +289,7 @@ impl EscalationThrottle {
             // slot frees. Saturating arithmetic keeps the math
             // safe across clock edge cases.
             let oldest = entry.front().copied().unwrap_or(now_ms);
-            let retry_after_ms = oldest
-                .saturating_add(self.window_ms)
-                .saturating_sub(now_ms);
+            let retry_after_ms = oldest.saturating_add(self.window_ms).saturating_sub(now_ms);
             return Err(ThrottleDenied {
                 cap: self.cap,
                 window_ms: self.window_ms,
@@ -331,10 +318,7 @@ impl EscalationThrottle {
 /// Convenience: filter helper used by in-memory store impls.
 /// Production callers that need a different ordering can
 /// override list directly.
-pub fn filter_matches(
-    entry: &EscalationEntry,
-    params: &EscalationsListParams,
-) -> bool {
+pub fn filter_matches(entry: &EscalationEntry, params: &EscalationsListParams) -> bool {
     if let Some(want_agent) = &params.agent_id {
         if &entry.agent_id != want_agent {
             return false;
@@ -407,10 +391,7 @@ mod tests {
             out.truncate(filter.limit);
             Ok(out)
         }
-        async fn get(
-            &self,
-            scope: &ProcessingScope,
-        ) -> anyhow::Result<EscalationState> {
+        async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<EscalationState> {
             Ok(self
                 .rows
                 .lock()
@@ -488,8 +469,7 @@ mod tests {
             .await
             .unwrap();
         let result = list(&store, None, serde_json::json!({})).await;
-        let resp: EscalationsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let resp: EscalationsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(resp.entries.len(), 1);
     }
 
@@ -506,8 +486,7 @@ mod tests {
             serde_json::json!({ "filter": "all", "limit": 0 }),
         )
         .await;
-        let resp: EscalationsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let resp: EscalationsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         // The mock returns at most `params.limit` rows; we
         // sent 0 → server clamps to DEFAULT_LIST_LIMIT, mock
         // returns up to that.
@@ -554,8 +533,7 @@ mod tests {
             }),
         )
         .await;
-        let resp: EscalationsResolveResponse =
-            serde_json::from_value(r.result.unwrap()).unwrap();
+        let resp: EscalationsResolveResponse = serde_json::from_value(r.result.unwrap()).unwrap();
         assert!(resp.changed);
         let state = store.get(&convo()).await.unwrap();
         assert!(matches!(state, EscalationState::Resolved { .. }));
@@ -574,8 +552,7 @@ mod tests {
             }),
         )
         .await;
-        let resp: EscalationsResolveResponse =
-            serde_json::from_value(r.result.unwrap()).unwrap();
+        let resp: EscalationsResolveResponse = serde_json::from_value(r.result.unwrap()).unwrap();
         assert!(!resp.changed);
     }
 
@@ -592,11 +569,7 @@ mod tests {
         fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
             Ok(self.tenants.keys().cloned().collect())
         }
-        fn read_agent_field(
-            &self,
-            agent_id: &str,
-            dotted: &str,
-        ) -> anyhow::Result<Option<Value>> {
+        fn read_agent_field(&self, agent_id: &str, dotted: &str) -> anyhow::Result<Option<Value>> {
             if dotted == "tenant_id" {
                 if let Some(t) = self.tenants.get(agent_id) {
                     return Ok(t.as_ref().map(|s| Value::String(s.clone())));
@@ -604,12 +577,7 @@ mod tests {
             }
             Ok(None)
         }
-        fn upsert_agent_field(
-            &self,
-            _: &str,
-            _: &str,
-            _: Value,
-        ) -> anyhow::Result<()> {
+        fn upsert_agent_field(&self, _: &str, _: &str, _: Value) -> anyhow::Result<()> {
             Err(anyhow::anyhow!("upsert not used in escalations tests"))
         }
         fn remove_agent(&self, _: &str) -> anyhow::Result<()> {
@@ -655,8 +623,7 @@ mod tests {
             serde_json::json!({ "tenant_id": "acme" }),
         )
         .await;
-        let resp: EscalationsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let resp: EscalationsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(resp.entries.len(), 1, "only ana (tenant=acme) survives");
         assert_eq!(resp.entries[0].agent_id, "ana");
     }
@@ -671,14 +638,8 @@ mod tests {
         // Tenant filter requested but no patcher available → row
         // returned unfiltered (back-compat behavior; production
         // wires the patcher always).
-        let result = list(
-            &store,
-            None,
-            serde_json::json!({ "tenant_id": "acme" }),
-        )
-        .await;
-        let resp: EscalationsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let result = list(&store, None, serde_json::json!({ "tenant_id": "acme" })).await;
+        let resp: EscalationsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(resp.entries.len(), 1, "no patcher → no filter");
     }
 
@@ -697,8 +658,7 @@ mod tests {
             serde_json::json!({ "tenant_id": "acme" }),
         )
         .await;
-        let resp: EscalationsListResponse =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let resp: EscalationsListResponse = serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(
             resp.entries.is_empty(),
             "agents without tenant_id must filter out (defense-in-depth)"
@@ -715,10 +675,7 @@ mod tests {
 
     #[async_trait]
     impl crate::agent::agent_events::AgentEventEmitter for CaptureEmitter {
-        async fn emit(
-            &self,
-            event: nexo_tool_meta::admin::agent_events::AgentEventKind,
-        ) {
+        async fn emit(&self, event: nexo_tool_meta::admin::agent_events::AgentEventKind) {
             self.events.lock().unwrap().push(event);
         }
     }

@@ -151,26 +151,19 @@ impl ToolFilter for AutoMemFilter {
             tool_names::REPL => true,
             tool_names::FILE_READ | tool_names::GREP | tool_names::GLOB => true,
             tool_names::BASH => {
-                let cmd = args
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+                let cmd = args.get("command").and_then(Value::as_str).unwrap_or("");
                 nexo_driver_permission::bash_destructive::is_read_only(cmd)
             }
-            tool_names::FILE_EDIT | tool_names::FILE_WRITE => {
-                self.file_path_inside_memdir(args)
-            }
+            tool_names::FILE_EDIT | tool_names::FILE_WRITE => self.file_path_inside_memdir(args),
             _ => false,
         }
     }
 
     fn denial_message(&self, tool_name: &str) -> String {
         match tool_name {
-            tool_names::BASH => {
-                "Only read-only shell commands are permitted in this context \
+            tool_names::BASH => "Only read-only shell commands are permitted in this context \
                  (ls, find, grep, cat, stat, wc, head, tail, and similar)"
-                    .to_string()
-            }
+                .to_string(),
             tool_names::FILE_EDIT | tool_names::FILE_WRITE => format!(
                 "Path must be inside the memory directory ({}). \
                  Edit/Write outside that path is denied.",
@@ -234,7 +227,10 @@ mod tests {
         let tmp = mk_tmpdir();
         let f = AutoMemFilter::new(tmp.path()).unwrap();
         assert!(f.allows(tool_names::BASH, &json!({"command": "ls -la /tmp"})));
-        assert!(f.allows(tool_names::BASH, &json!({"command": "grep foo bar.txt | head"})));
+        assert!(f.allows(
+            tool_names::BASH,
+            &json!({"command": "grep foo bar.txt | head"})
+        ));
     }
 
     #[test]
@@ -275,11 +271,12 @@ mod tests {
         let f = AutoMemFilter::new(tmp.path()).unwrap();
         let inside = tmp.path().join("foo.md");
         fs::write(&inside, "x").unwrap();
-        let path_str = inside.canonicalize().unwrap().to_string_lossy().into_owned();
-        assert!(f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": path_str})
-        ));
+        let path_str = inside
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(f.allows(tool_names::FILE_EDIT, &json!({"file_path": path_str})));
     }
 
     #[test]
@@ -289,20 +286,14 @@ mod tests {
         // File doesn't exist yet — parent does.
         let new_file = tmp.path().canonicalize().unwrap().join("new.md");
         let path_str = new_file.to_string_lossy().into_owned();
-        assert!(f.allows(
-            tool_names::FILE_WRITE,
-            &json!({"file_path": path_str})
-        ));
+        assert!(f.allows(tool_names::FILE_WRITE, &json!({"file_path": path_str})));
     }
 
     #[test]
     fn denies_edit_outside_memdir() {
         let tmp = mk_tmpdir();
         let f = AutoMemFilter::new(tmp.path()).unwrap();
-        assert!(!f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": "/etc/hosts"})
-        ));
+        assert!(!f.allows(tool_names::FILE_EDIT, &json!({"file_path": "/etc/hosts"})));
     }
 
     #[test]
@@ -313,10 +304,7 @@ mod tests {
             tool_names::FILE_EDIT,
             &json!({"file_path": "relative/foo.md"})
         ));
-        assert!(!f.allows(
-            tool_names::FILE_WRITE,
-            &json!({"file_path": "./bar.md"})
-        ));
+        assert!(!f.allows(tool_names::FILE_WRITE, &json!({"file_path": "./bar.md"})));
     }
 
     #[test]
@@ -326,10 +314,7 @@ mod tests {
         // Build a path that would escape memory_dir after canonicalize.
         let escape = tmp.path().join("..").join("..").join("etc").join("passwd");
         let path_str = escape.to_string_lossy().into_owned();
-        assert!(!f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": path_str})
-        ));
+        assert!(!f.allows(tool_names::FILE_EDIT, &json!({"file_path": path_str})));
     }
 
     #[cfg(unix)]
@@ -345,10 +330,7 @@ mod tests {
         let f = AutoMemFilter::new(tmp.path()).unwrap();
         let path_str = symlink_path.to_string_lossy().into_owned();
         // Symlink target lives OUTSIDE memory_dir. Filter must deny.
-        assert!(!f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": path_str})
-        ));
+        assert!(!f.allows(tool_names::FILE_EDIT, &json!({"file_path": path_str})));
 
         // Cleanup
         fs::remove_file(&outside).ok();
@@ -366,14 +348,8 @@ mod tests {
     fn denies_file_path_non_string() {
         let tmp = mk_tmpdir();
         let f = AutoMemFilter::new(tmp.path()).unwrap();
-        assert!(!f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": 123})
-        ));
-        assert!(!f.allows(
-            tool_names::FILE_EDIT,
-            &json!({"file_path": null})
-        ));
+        assert!(!f.allows(tool_names::FILE_EDIT, &json!({"file_path": 123})));
+        assert!(!f.allows(tool_names::FILE_EDIT, &json!({"file_path": null})));
     }
 
     #[test]
@@ -382,10 +358,7 @@ mod tests {
         let f = AutoMemFilter::new(tmp.path()).unwrap();
         let no_parent = tmp.path().join("nonexistent_subdir").join("foo.md");
         let path_str = no_parent.to_string_lossy().into_owned();
-        assert!(!f.allows(
-            tool_names::FILE_WRITE,
-            &json!({"file_path": path_str})
-        ));
+        assert!(!f.allows(tool_names::FILE_WRITE, &json!({"file_path": path_str})));
     }
 
     // ── Denial messages ──
@@ -463,9 +436,6 @@ mod tests {
         // Provider client MUST unwrap before dispatch. If the client
         // forgot to unwrap and passed nested args, filter denies (no
         // `command` at top level).
-        assert!(!f.allows(
-            tool_names::BASH,
-            &json!({"arguments": {"command": "ls"}})
-        ));
+        assert!(!f.allows(tool_names::BASH, &json!({"arguments": {"command": "ls"}})));
     }
 }

@@ -184,28 +184,23 @@ pub async fn handle_send_message_to_worker(
 impl ToolHandler for SendMessageToWorkerTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let policy = ctx.effective_policy();
-        let role = nexo_config::types::plan_mode::BindingRole::from_role_str(
-            policy.role.as_deref(),
-        );
+        let role =
+            nexo_config::types::plan_mode::BindingRole::from_role_str(policy.role.as_deref());
         let binding_key = policy.binding_id();
-        Ok(
-            handle_send_message_to_worker(
-                self.registry.as_ref(),
-                role,
-                binding_key.as_deref(),
-                &args,
-            )
-            .await,
+        Ok(handle_send_message_to_worker(
+            self.registry.as_ref(),
+            role,
+            binding_key.as_deref(),
+            &args,
         )
+        .await)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::worker_registry::{
-        InMemoryWorkerRegistry, WorkerSnapshot, WorkerStatus,
-    };
+    use crate::agent::worker_registry::{InMemoryWorkerRegistry, WorkerSnapshot, WorkerStatus};
     use nexo_config::types::plan_mode::BindingRole;
 
     fn snap(
@@ -363,13 +358,9 @@ mod tests {
         // tests) have no binding_id() — the tool refuses cleanly
         // rather than fall through to a default.
         let r = InMemoryWorkerRegistry::new();
-        let out = handle_send_message_to_worker(
-            &r,
-            BindingRole::Coordinator,
-            None,
-            &args("w-1", "hi"),
-        )
-        .await;
+        let out =
+            handle_send_message_to_worker(&r, BindingRole::Coordinator, None, &args("w-1", "hi"))
+                .await;
         assert_eq!(out["kind"], "BindingUnresolved");
     }
 

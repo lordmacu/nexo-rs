@@ -168,7 +168,10 @@ impl MicroappTestHarness {
         let result = resp.get("result").cloned().ok_or_else(|| {
             MicroappTestError::RpcError(resp.get("error").cloned().unwrap_or(Value::Null))
         })?;
-        let abort = result.get("abort").and_then(Value::as_bool).unwrap_or(false);
+        let abort = result
+            .get("abort")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if abort {
             let reason = result
                 .get("reason")
@@ -188,8 +191,8 @@ impl MicroappTestHarness {
             .await
             .take()
             .ok_or_else(|| MicroappTestError::Internal("harness already consumed".into()))?;
-        let mut input = serde_json::to_string(&req)
-            .map_err(|e| MicroappTestError::Internal(e.to_string()))?;
+        let mut input =
+            serde_json::to_string(&req).map_err(|e| MicroappTestError::Internal(e.to_string()))?;
         input.push('\n');
         let reader = BufReader::new(std::io::Cursor::new(input.into_bytes()));
         let writer: Vec<u8> = Vec::new();
@@ -215,17 +218,18 @@ impl MicroappTestHarness {
         let bytes = std::sync::Arc::try_unwrap(writer_arc)
             .map_err(|_| MicroappTestError::Internal("writer arc still shared".into()))?
             .into_inner();
-        let line = String::from_utf8(bytes)
-            .map_err(|e| MicroappTestError::Internal(e.to_string()))?;
+        let line =
+            String::from_utf8(bytes).map_err(|e| MicroappTestError::Internal(e.to_string()))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return Err(MicroappTestError::Internal("no response".into()));
         }
         // Take the first line — `run_one_request` only sends one
         // request, so there is exactly one response frame.
-        let first_line = trimmed.lines().next().ok_or_else(|| {
-            MicroappTestError::Internal("response had no lines".into())
-        })?;
+        let first_line = trimmed
+            .lines()
+            .next()
+            .ok_or_else(|| MicroappTestError::Internal("response had no lines".into()))?;
         serde_json::from_str(first_line).map_err(|e| MicroappTestError::Parse(e.to_string()))
     }
 }
@@ -294,10 +298,7 @@ impl MockBindingContext {
     }
 
     /// Layer the MCP channel-source label on top.
-    pub fn with_mcp_channel_source(
-        mut self,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn with_mcp_channel_source(mut self, source: impl Into<String>) -> Self {
         self.mcp_channel_source = Some(source.into());
         self
     }
@@ -305,16 +306,17 @@ impl MockBindingContext {
     /// Materialise the [`BindingContext`]. Panics when `agent_id`
     /// is unset — every binding has an agent owner.
     pub fn build(self) -> BindingContext {
-        let agent_id = self.agent_id.expect(
-            "MockBindingContext: with_agent(...) is required before build()",
-        );
+        let agent_id = self
+            .agent_id
+            .expect("MockBindingContext: with_agent(...) is required before build()");
         let mut ctx = BindingContext::agent_only(agent_id);
         ctx.session_id = self.session_id;
         ctx.channel = self.channel.clone();
         ctx.account_id = self.account_id.clone();
-        ctx.binding_id = self.channel.as_deref().map(|ch| {
-            nexo_tool_meta::binding_id_render(ch, self.account_id.as_deref())
-        });
+        ctx.binding_id = self
+            .channel
+            .as_deref()
+            .map(|ch| nexo_tool_meta::binding_id_render(ch, self.account_id.as_deref()));
         if let Some(s) = self.mcp_channel_source {
             ctx = ctx.with_mcp_channel_source(s);
         }
@@ -339,10 +341,7 @@ mod tests {
         // Phase 83.15.b — tool that exercises the admin RPC
         // surface; the harness's MockAdminRpc supplies the
         // canned response without a daemon in the loop.
-        async fn list_agents_tool(
-            _args: Value,
-            ctx: ToolCtx,
-        ) -> Result<ToolReply, ToolError> {
+        async fn list_agents_tool(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
             let admin = ctx
                 .admin()
                 .ok_or_else(|| ToolError::Internal("admin client missing".into()))?;
@@ -395,10 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_with_binding_injects_meta() {
-        async fn read_binding(
-            args: Value,
-            ctx: ToolCtx,
-        ) -> Result<ToolReply, ToolError> {
+        async fn read_binding(args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
             let _ = args;
             let channel = ctx
                 .binding

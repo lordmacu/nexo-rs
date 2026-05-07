@@ -202,9 +202,9 @@ fn parse_tool_error_string(plugin_id: &str, tool_name: &str, err_str: &str) -> a
         Some(-33403) => anyhow!("{context}tool execution failed ({err_str})"),
         Some(-33404) => anyhow!("{context}tool unavailable ({err_str})"),
         Some(-33405) => anyhow!("{context}tool denied ({err_str})"),
-        Some(-32601) => anyhow!(
-            "{context}plugin does not implement tool.invoke (method_not_found: {err_str})"
-        ),
+        Some(-32601) => {
+            anyhow!("{context}plugin does not implement tool.invoke (method_not_found: {err_str})")
+        }
         _ => anyhow!("{context}tool dispatch failed: {err_str}"),
     }
 }
@@ -319,8 +319,7 @@ mod tests {
 
     #[test]
     fn parse_tool_error_recognizes_tool_not_found() {
-        let err =
-            parse_tool_error_string("browser", "x", "code: -33401, message: not implemented");
+        let err = parse_tool_error_string("browser", "x", "code: -33401, message: not implemented");
         let s = err.to_string();
         assert!(s.contains("tool not found"), "{s}");
         assert!(s.contains("plugin 'browser' tool 'x'"), "{s}");
@@ -328,11 +327,8 @@ mod tests {
 
     #[test]
     fn parse_tool_error_recognizes_argument_invalid() {
-        let err = parse_tool_error_string(
-            "browser",
-            "x",
-            "code: -33402, message: arg 'url' missing",
-        );
+        let err =
+            parse_tool_error_string("browser", "x", "code: -33402, message: arg 'url' missing");
         let s = err.to_string();
         assert!(s.contains("argument invalid"));
     }

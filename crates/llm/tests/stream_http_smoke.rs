@@ -19,7 +19,9 @@ fn cfg_for(base_url: String) -> LlmProviderConfig {
         auth: None,
         api_flavor: None,
         embedding_model: None,
-        safety_settings: None, factory_type: None, api_key_secret_id: None,
+        safety_settings: None,
+        factory_type: None,
+        api_key_secret_id: None,
     }
 }
 

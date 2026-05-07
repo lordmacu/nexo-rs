@@ -276,7 +276,9 @@ mod tests {
         let h1 = Arc::new(RecordingHook::ok(HookResponse {
             abort: true,
             reason: Some("nope".into()),
-            decision: None, transformed_body: None, do_not_reply_again: false,
+            decision: None,
+            transformed_body: None,
+            do_not_reply_again: false,
             override_event: None,
         }));
         let h2 = Arc::new(RecordingHook::ok(HookResponse::default()));
@@ -318,7 +320,9 @@ mod tests {
         let h1 = Arc::new(RecordingHook::ok(HookResponse {
             abort: true,
             reason: Some("no-op".into()),
-            decision: None, transformed_body: None, do_not_reply_again: false,
+            decision: None,
+            transformed_body: None,
+            do_not_reply_again: false,
             override_event: None,
         }));
         let h2 = Arc::new(RecordingHook::ok(HookResponse::default()));
@@ -410,7 +414,9 @@ mod tests {
                 Ok(HookResponse {
                     abort: false,
                     reason: None,
-                    decision: None, transformed_body: None, do_not_reply_again: false,
+                    decision: None,
+                    transformed_body: None,
+                    do_not_reply_again: false,
                     override_event: Some(serde_json::json!({"text": "rewritten"})),
                 })
             }
@@ -492,7 +498,9 @@ mod tests {
                 Ok(HookResponse {
                     abort: true,
                     reason: Some("nope".into()),
-            decision: None, transformed_body: None, do_not_reply_again: false,
+                    decision: None,
+                    transformed_body: None,
+                    do_not_reply_again: false,
                     override_event: Some(serde_json::json!({"text": "rewritten"})),
                 })
             }

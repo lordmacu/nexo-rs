@@ -73,10 +73,7 @@ pub fn build_digest(events: &[TurnRecord], elapsed: Duration, max_events: usize)
     let hours = total_secs / 3600;
     let minutes = (total_secs % 3600) / 60;
 
-    let mut s = format!(
-        "**While you were away** (last {}h{}m):\n",
-        hours, minutes
-    );
+    let mut s = format!("**While you were away** (last {}h{}m):\n", hours, minutes);
 
     let n_completed = events
         .iter()
@@ -188,7 +185,9 @@ mod tests {
     #[tokio::test]
     async fn disabled_returns_none() {
         let cfg = AwaySummaryConfig::default(); // enabled = false
-        let log = MockLog { records: vec![rec("done")] };
+        let log = MockLog {
+            records: vec![rec("done")],
+        };
         let now = Utc::now();
         let last = now - chrono::Duration::hours(10);
         let r = try_compose_away_digest(&cfg, Some(last), now, &log)
@@ -200,7 +199,9 @@ mod tests {
     #[tokio::test]
     async fn last_seen_none_returns_none() {
         let cfg = enabled_cfg();
-        let log = MockLog { records: vec![rec("done")] };
+        let log = MockLog {
+            records: vec![rec("done")],
+        };
         let r = try_compose_away_digest(&cfg, None, Utc::now(), &log)
             .await
             .unwrap();
@@ -210,7 +211,9 @@ mod tests {
     #[tokio::test]
     async fn elapsed_below_threshold_returns_none() {
         let cfg = enabled_cfg(); // 4h
-        let log = MockLog { records: vec![rec("done")] };
+        let log = MockLog {
+            records: vec![rec("done")],
+        };
         let now = Utc::now();
         let last = now - chrono::Duration::hours(2);
         let r = try_compose_away_digest(&cfg, Some(last), now, &log)
@@ -222,7 +225,9 @@ mod tests {
     #[tokio::test]
     async fn negative_elapsed_returns_none() {
         let cfg = enabled_cfg();
-        let log = MockLog { records: vec![rec("done")] };
+        let log = MockLog {
+            records: vec![rec("done")],
+        };
         let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         // last_seen is in the future relative to now — clock skew.
         let last = now + chrono::Duration::hours(1);

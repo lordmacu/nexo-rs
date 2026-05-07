@@ -244,13 +244,8 @@ impl CronRunner {
                     Ok(new_next) => {
                         let following =
                             next_fire_after(&entry.cron_expr, new_next).unwrap_or(new_next);
-                        let new_next = apply_recurring_jitter(
-                            new_next,
-                            following,
-                            now_unix,
-                            &entry.id,
-                            &cfg,
-                        );
+                        let new_next =
+                            apply_recurring_jitter(new_next, following, now_unix, &entry.id, &cfg);
                         if let Err(e) = self
                             .store
                             .advance_after_fire(&entry.id, new_next, now_unix)
@@ -302,13 +297,8 @@ impl CronRunner {
                             .single()
                             .map(|dt| dt.minute())
                             .unwrap_or(0);
-                        let retry_at = apply_one_shot_lead(
-                            target,
-                            now_unix,
-                            &entry.id,
-                            &cfg,
-                            target_minute,
-                        );
+                        let retry_at =
+                            apply_one_shot_lead(target, now_unix, &entry.id, &cfg, target_minute);
                         match self
                             .store
                             .schedule_one_shot_retry(&entry.id, retry_at, now_unix)
@@ -707,7 +697,10 @@ mod tests {
             CronRunner::new(store.clone(), dispatcher.clone()).with_jitter_cfg(cfg.clone());
 
         let outcomes = runner.tick_once(1_700_000_500).await;
-        assert!(outcomes.is_empty(), "killswitch off must short-circuit tick");
+        assert!(
+            outcomes.is_empty(),
+            "killswitch off must short-circuit tick"
+        );
         assert!(
             dispatcher.captured().is_empty(),
             "dispatcher must not fire while killswitch off"

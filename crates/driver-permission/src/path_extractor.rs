@@ -92,7 +92,10 @@ impl PathCommand {
     }
 
     pub fn is_write(self) -> bool {
-        matches!(self, Self::Rm | Self::Rmdir | Self::Mv | Self::Cp | Self::Sed)
+        matches!(
+            self,
+            Self::Rm | Self::Rmdir | Self::Mv | Self::Cp | Self::Sed
+        )
     }
 }
 
@@ -182,7 +185,9 @@ pub fn extract_paths(cmd: PathCommand, args: &[String]) -> Vec<String> {
         }
         PathCommand::Find => extract_find_paths(args),
         PathCommand::Grep => extract_pattern_command_paths(args, &grep_flags_with_args(), &[]),
-        PathCommand::Rg => extract_pattern_command_paths(args, &rg_flags_with_args(), &[".".into()]),
+        PathCommand::Rg => {
+            extract_pattern_command_paths(args, &rg_flags_with_args(), &[".".into()])
+        }
         PathCommand::Sed => extract_sed_paths(args),
         PathCommand::Git => extract_git_paths(args),
         PathCommand::Jq => extract_jq_paths(args),
@@ -241,8 +246,17 @@ pub fn parse_command_args(cmd: &str) -> Vec<String> {
 fn extract_find_paths(args: &[String]) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
     let path_flags: BTreeSet<&str> = [
-        "-newer", "-anewer", "-cnewer", "-mnewer", "-samefile", "-path", "-wholename",
-        "-ilname", "-lname", "-ipath", "-iwholename",
+        "-newer",
+        "-anewer",
+        "-cnewer",
+        "-mnewer",
+        "-samefile",
+        "-path",
+        "-wholename",
+        "-ilname",
+        "-lname",
+        "-ipath",
+        "-iwholename",
     ]
     .into_iter()
     .collect();
@@ -269,9 +283,7 @@ fn extract_find_paths(args: &[String]) -> Vec<String> {
                 continue;
             }
             found_non_global_flag = true;
-            if path_flags.contains(arg.as_str())
-                || arg.starts_with("-newer")
-            {
+            if path_flags.contains(arg.as_str()) || arg.starts_with("-newer") {
                 if let Some(next) = args.get(i + 1) {
                     paths.push(next.clone());
                     i += 1;
@@ -337,10 +349,22 @@ fn extract_pattern_command_paths(
 
 fn grep_flags_with_args() -> BTreeSet<&'static str> {
     [
-        "-e", "--regexp", "-f", "--file", "--exclude", "--include",
-        "--exclude-dir", "--include-dir", "-m", "--max-count",
-        "-A", "--after-context", "-B", "--before-context",
-        "-C", "--context",
+        "-e",
+        "--regexp",
+        "-f",
+        "--file",
+        "--exclude",
+        "--include",
+        "--exclude-dir",
+        "--include-dir",
+        "-m",
+        "--max-count",
+        "-A",
+        "--after-context",
+        "-B",
+        "--before-context",
+        "-C",
+        "--context",
     ]
     .into_iter()
     .collect()
@@ -348,10 +372,27 @@ fn grep_flags_with_args() -> BTreeSet<&'static str> {
 
 fn rg_flags_with_args() -> BTreeSet<&'static str> {
     [
-        "-e", "--regexp", "-f", "--file", "-t", "--type",
-        "-T", "--type-not", "-g", "--glob", "-m", "--max-count",
-        "--max-depth", "-r", "--replace", "-A", "--after-context",
-        "-B", "--before-context", "-C", "--context",
+        "-e",
+        "--regexp",
+        "-f",
+        "--file",
+        "-t",
+        "--type",
+        "-T",
+        "--type-not",
+        "-g",
+        "--glob",
+        "-m",
+        "--max-count",
+        "--max-depth",
+        "-r",
+        "--replace",
+        "-A",
+        "--after-context",
+        "-B",
+        "--before-context",
+        "-C",
+        "--context",
     ]
     .into_iter()
     .collect()
@@ -443,18 +484,29 @@ fn extract_jq_paths(args: &[String]) -> Vec<String> {
 
 fn jq_flags_with_args() -> BTreeSet<&'static str> {
     [
-        "-e", "--expression", "-f", "--from-file", "--arg", "--argjson",
-        "--slurpfile", "--rawfile", "--args", "--jsonargs",
-        "-L", "--library-path", "--indent", "--tab",
+        "-e",
+        "--expression",
+        "-f",
+        "--from-file",
+        "--arg",
+        "--argjson",
+        "--slurpfile",
+        "--rawfile",
+        "--args",
+        "--jsonargs",
+        "-L",
+        "--library-path",
+        "--indent",
+        "--tab",
     ]
     .into_iter()
     .collect()
 }
 
 fn extract_tr_paths(args: &[String]) -> Vec<String> {
-    let has_delete = args.iter().any(|a| {
-        a == "-d" || a == "--delete" || (a.starts_with('-') && a.contains('d'))
-    });
+    let has_delete = args
+        .iter()
+        .any(|a| a == "-d" || a == "--delete" || (a.starts_with('-') && a.contains('d')));
     let non_flags = filter_out_flags(args);
     let skip = if has_delete { 1 } else { 2 };
     non_flags.into_iter().skip(skip).collect()

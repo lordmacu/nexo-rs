@@ -26,32 +26,29 @@ pub mod report;
 pub mod subprocess;
 
 pub use boot::{
-    register_plugin_registry_reload_hook, wire_plugin_registry,
-    wire_plugin_registry_with_runtime, SubprocessRuntime, WirePluginRegistryOutput,
+    register_plugin_registry_reload_hook, wire_plugin_registry, wire_plugin_registry_with_runtime,
+    SubprocessRuntime, WirePluginRegistryOutput,
 };
 pub use capability_aggregator::{
-    aggregate_plugin_gates, AggregatedGate, AggregatedGateState,
-    PluginCapabilityAggregation, UnmetRequirement,
+    aggregate_plugin_gates, AggregatedGate, AggregatedGateState, PluginCapabilityAggregation,
+    UnmetRequirement,
 };
 pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{
-    merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport,
-    MergeResolution,
+    merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport, MergeResolution,
 };
-pub use contributes_skills::{
-    merge_plugin_contributed_skills, SkillConflict, SkillsMergeReport,
-};
+pub use contributes_skills::{merge_plugin_contributed_skills, SkillConflict, SkillsMergeReport};
 pub use discovery::discover;
 pub use factory::{
     BoxError, FactoryInstantiateError, FactoryRegistrationError, PluginFactory,
     PluginFactoryRegistry,
 };
 pub use init_loop::{run_plugin_init_loop, run_plugin_init_loop_with_factory, InitOutcome};
-pub use subprocess::{subprocess_plugin_factory, SubprocessNexoPlugin};
 pub use report::{
-    DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic,
-    DiscoveryDiagnosticKind, PluginDiscoveryReport,
+    DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
+    PluginDiscoveryReport,
 };
+pub use subprocess::{subprocess_plugin_factory, SubprocessNexoPlugin};
 
 /// Hot-reloadable snapshot container. Read paths are zero-contention
 /// thanks to `ArcSwap`; Phase 18 hot-reload will call

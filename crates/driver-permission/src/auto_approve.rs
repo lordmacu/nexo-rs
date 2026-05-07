@@ -53,21 +53,9 @@ pub fn is_curated_auto_approve(
     }
     match tool_name {
         // ── Always read-only / info gathering ──
-        "FileRead"
-        | "Glob"
-        | "Grep"
-        | "LSP"
-        | "list_agents"
-        | "agent_status"
-        | "agent_turns_tail"
-        | "memory_history"
-        | "dream_runs_tail"
-        | "list_mcp_resources"
-        | "read_mcp_resource"
-        | "WebFetch"
-        | "WebSearch"
-        | "list_followups"
-        | "list_peers"
+        "FileRead" | "Glob" | "Grep" | "LSP" | "list_agents" | "agent_status"
+        | "agent_turns_tail" | "memory_history" | "dream_runs_tail" | "list_mcp_resources"
+        | "read_mcp_resource" | "WebFetch" | "WebSearch" | "list_followups" | "list_peers"
         | "task_get" => true,
 
         // ── Bash — read-only AND not destructive AND not sed-in-place ──
@@ -85,13 +73,8 @@ pub fn is_curated_auto_approve(
         | "ask_user_question" => true,
 
         // ── Multi-agent coordination — internal team work ──
-        "delegate"
-        | "team_create"
-        | "team_delete"
-        | "send_to_peer"
-        | "task_create"
-        | "task_update"
-        | "task_stop" => true,
+        "delegate" | "team_create" | "team_delete" | "send_to_peer" | "task_create"
+        | "task_update" | "task_stop" => true,
 
         // ── ALWAYS interactive — never auto, even with the dial on ──
         "ConfigTool" | "config_self_edit" => false,
@@ -164,14 +147,34 @@ mod tests {
 
     #[test]
     fn disabled_returns_false_for_everything() {
-        assert!(!is_curated_auto_approve("FileRead", &json!({}), false, None));
-        assert!(!is_curated_auto_approve("Bash", &json!({"command": "ls"}), false, None));
-        assert!(!is_curated_auto_approve("WebSearch", &json!({}), false, None));
+        assert!(!is_curated_auto_approve(
+            "FileRead",
+            &json!({}),
+            false,
+            None
+        ));
+        assert!(!is_curated_auto_approve(
+            "Bash",
+            &json!({"command": "ls"}),
+            false,
+            None
+        ));
+        assert!(!is_curated_auto_approve(
+            "WebSearch",
+            &json!({}),
+            false,
+            None
+        ));
     }
 
     #[test]
     fn file_read_always_auto_when_enabled() {
-        assert!(is_curated_auto_approve("FileRead", &json!({"file_path": "/etc/hosts"}), true, None));
+        assert!(is_curated_auto_approve(
+            "FileRead",
+            &json!({"file_path": "/etc/hosts"}),
+            true,
+            None
+        ));
     }
 
     #[test]
@@ -183,23 +186,14 @@ mod tests {
 
     #[test]
     fn bash_ls_auto() {
-        let ok = is_curated_auto_approve(
-            "Bash",
-            &json!({"command": "ls /tmp"}),
-            true,
-            ws(),
-        );
+        let ok = is_curated_auto_approve("Bash", &json!({"command": "ls /tmp"}), true, ws());
         assert!(ok, "ls /tmp must auto-approve");
     }
 
     #[test]
     fn bash_rm_rf_never_auto() {
-        let denied = is_curated_auto_approve(
-            "Bash",
-            &json!({"command": "rm -rf /tmp/foo"}),
-            true,
-            ws(),
-        );
+        let denied =
+            is_curated_auto_approve("Bash", &json!({"command": "rm -rf /tmp/foo"}), true, ws());
         assert!(!denied, "destructive commands must NOT auto-approve");
     }
 
@@ -230,12 +224,7 @@ mod tests {
     fn bash_pipe_with_destructive_in_chain() {
         // The destructive heuristic catches commands buried in pipes.
         let cmd = "ls | xargs rm -rf";
-        let denied = is_curated_auto_approve(
-            "Bash",
-            &json!({"command": cmd}),
-            true,
-            ws(),
-        );
+        let denied = is_curated_auto_approve("Bash", &json!({"command": cmd}), true, ws());
         assert!(!denied, "destructive in pipe must veto");
     }
 
@@ -271,12 +260,8 @@ mod tests {
     #[test]
     fn file_edit_workspace_none_blocks() {
         // No workspace_path configured → always false.
-        let denied = is_curated_auto_approve(
-            "FileEdit",
-            &json!({"file_path": "/tmp/x.md"}),
-            true,
-            None,
-        );
+        let denied =
+            is_curated_auto_approve("FileEdit", &json!({"file_path": "/tmp/x.md"}), true, None);
         assert!(!denied, "no workspace = always ask");
     }
 
@@ -311,12 +296,22 @@ mod tests {
 
     #[test]
     fn notify_origin_auto() {
-        assert!(is_curated_auto_approve("notify_origin", &json!({}), true, None));
+        assert!(is_curated_auto_approve(
+            "notify_origin",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn notify_push_auto() {
-        assert!(is_curated_auto_approve("notify_push", &json!({}), true, None));
+        assert!(is_curated_auto_approve(
+            "notify_push",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
@@ -331,12 +326,22 @@ mod tests {
 
     #[test]
     fn team_create_auto() {
-        assert!(is_curated_auto_approve("team_create", &json!({}), true, None));
+        assert!(is_curated_auto_approve(
+            "team_create",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn task_create_auto() {
-        assert!(is_curated_auto_approve("task_create", &json!({}), true, None));
+        assert!(is_curated_auto_approve(
+            "task_create",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
@@ -348,8 +353,18 @@ mod tests {
     #[test]
     fn config_tool_never_auto() {
         // Even with dial on, ConfigTool must ask.
-        assert!(!is_curated_auto_approve("ConfigTool", &json!({}), true, None));
-        assert!(!is_curated_auto_approve("config_self_edit", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "ConfigTool",
+            &json!({}),
+            true,
+            None
+        ));
+        assert!(!is_curated_auto_approve(
+            "config_self_edit",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
@@ -359,28 +374,58 @@ mod tests {
 
     #[test]
     fn remote_trigger_never_auto() {
-        assert!(!is_curated_auto_approve("remote_trigger", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "remote_trigger",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn schedule_cron_never_auto() {
-        assert!(!is_curated_auto_approve("schedule_cron", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "schedule_cron",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn mcp_prefix_default_ask() {
-        assert!(!is_curated_auto_approve("mcp_github_create_issue", &json!({}), true, None));
-        assert!(!is_curated_auto_approve("mcp_anything", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "mcp_github_create_issue",
+            &json!({}),
+            true,
+            None
+        ));
+        assert!(!is_curated_auto_approve(
+            "mcp_anything",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn ext_prefix_default_ask() {
-        assert!(!is_curated_auto_approve("ext_custom_tool", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "ext_custom_tool",
+            &json!({}),
+            true,
+            None
+        ));
     }
 
     #[test]
     fn unknown_tool_default_ask() {
-        assert!(!is_curated_auto_approve("brand_new_future_tool", &json!({}), true, None));
+        assert!(!is_curated_auto_approve(
+            "brand_new_future_tool",
+            &json!({}),
+            true,
+            None
+        ));
         assert!(!is_curated_auto_approve("", &json!({}), true, None));
     }
 }
@@ -472,10 +517,7 @@ impl<D: PermissionDecider + ?Sized> PermissionDecider for AutoApproveDecider<D> 
                 outcome: PermissionOutcome::AllowOnce {
                     updated_input: None,
                 },
-                rationale: format!(
-                    "auto_approve: curated subset ({})",
-                    request.tool_name
-                ),
+                rationale: format!("auto_approve: curated subset ({})", request.tool_name),
             });
         }
         self.inner.decide(request).await
@@ -516,8 +558,9 @@ mod decorator_tests {
     #[tokio::test]
     async fn delegates_when_metadata_missing() {
         // Inner is DenyAll so we can prove the decorator delegated.
-        let inner: Arc<dyn PermissionDecider> =
-            Arc::new(DenyAllDecider { reason: "delegated".into() });
+        let inner: Arc<dyn PermissionDecider> = Arc::new(DenyAllDecider {
+            reason: "delegated".into(),
+        });
         let dec = AutoApproveDecider::new(inner);
         let resp = dec.decide(req("FileRead", json!({}))).await.unwrap();
         assert!(matches!(resp.outcome, PermissionOutcome::Deny { .. }));
@@ -525,8 +568,9 @@ mod decorator_tests {
 
     #[tokio::test]
     async fn delegates_when_flag_false() {
-        let inner: Arc<dyn PermissionDecider> =
-            Arc::new(DenyAllDecider { reason: "delegated".into() });
+        let inner: Arc<dyn PermissionDecider> = Arc::new(DenyAllDecider {
+            reason: "delegated".into(),
+        });
         let dec = AutoApproveDecider::new(inner);
         let mut meta = serde_json::Map::new();
         meta.insert(META_AUTO_APPROVE.into(), json!(false));
@@ -540,8 +584,9 @@ mod decorator_tests {
     #[tokio::test]
     async fn short_circuits_for_curated_tool() {
         // Inner is DenyAll — if delegation happened we'd see Deny.
-        let inner: Arc<dyn PermissionDecider> =
-            Arc::new(DenyAllDecider { reason: "should_not_reach".into() });
+        let inner: Arc<dyn PermissionDecider> = Arc::new(DenyAllDecider {
+            reason: "should_not_reach".into(),
+        });
         let dec = AutoApproveDecider::new(inner);
         let mut meta = serde_json::Map::new();
         meta.insert(META_AUTO_APPROVE.into(), json!(true));
@@ -551,7 +596,9 @@ mod decorator_tests {
             .unwrap();
         assert!(matches!(
             resp.outcome,
-            PermissionOutcome::AllowOnce { updated_input: None }
+            PermissionOutcome::AllowOnce {
+                updated_input: None
+            }
         ));
         assert!(resp.rationale.contains("auto_approve"));
         assert!(resp.rationale.contains("FileRead"));
@@ -576,7 +623,9 @@ mod decorator_tests {
             .unwrap();
         assert!(matches!(
             resp.outcome,
-            PermissionOutcome::AllowOnce { updated_input: None }
+            PermissionOutcome::AllowOnce {
+                updated_input: None
+            }
         ));
         // Rationale comes from AllowAllDecider, not the decorator.
         assert!(resp.rationale.contains("AllowAllDecider"));
@@ -584,8 +633,9 @@ mod decorator_tests {
 
     #[tokio::test]
     async fn delegates_for_unknown_tool() {
-        let inner: Arc<dyn PermissionDecider> =
-            Arc::new(DenyAllDecider { reason: "unknown".into() });
+        let inner: Arc<dyn PermissionDecider> = Arc::new(DenyAllDecider {
+            reason: "unknown".into(),
+        });
         let dec = AutoApproveDecider::new(inner);
         let mut meta = serde_json::Map::new();
         meta.insert(META_AUTO_APPROVE.into(), json!(true));
@@ -600,8 +650,9 @@ mod decorator_tests {
     async fn handles_string_in_bool_field_defensively() {
         // metadata.auto_approve = "true" (string, not bool) → as_bool()
         // returns None → flag treated as false → delegate.
-        let inner: Arc<dyn PermissionDecider> =
-            Arc::new(DenyAllDecider { reason: "delegated".into() });
+        let inner: Arc<dyn PermissionDecider> = Arc::new(DenyAllDecider {
+            reason: "delegated".into(),
+        });
         let dec = AutoApproveDecider::new(inner);
         let mut meta = serde_json::Map::new();
         meta.insert(META_AUTO_APPROVE.into(), json!("true"));
@@ -611,6 +662,4 @@ mod decorator_tests {
             .unwrap();
         assert!(matches!(resp.outcome, PermissionOutcome::Deny { .. }));
     }
-
 }
-

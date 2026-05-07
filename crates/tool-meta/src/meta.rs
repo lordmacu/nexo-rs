@@ -106,10 +106,16 @@ pub fn build_meta_value(
     if binding.is_some() || inbound.is_some() {
         let mut nexo = serde_json::Map::new();
         if let Some(b) = binding {
-            nexo.insert(BINDING_KEY.into(), serde_json::to_value(b).unwrap_or(Value::Null));
+            nexo.insert(
+                BINDING_KEY.into(),
+                serde_json::to_value(b).unwrap_or(Value::Null),
+            );
         }
         if let Some(i) = inbound {
-            nexo.insert(INBOUND_KEY.into(), serde_json::to_value(i).unwrap_or(Value::Null));
+            nexo.insert(
+                INBOUND_KEY.into(),
+                serde_json::to_value(i).unwrap_or(Value::Null),
+            );
         }
         meta.insert(NEXO_NAMESPACE.into(), Value::Object(nexo));
     }

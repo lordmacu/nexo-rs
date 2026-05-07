@@ -33,8 +33,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use nexo_tool_meta::admin::processing::{
-    PendingInbound, ProcessingControlState, ProcessingScope,
-    DEFAULT_PENDING_INBOUNDS_CAP,
+    PendingInbound, ProcessingControlState, ProcessingScope, DEFAULT_PENDING_INBOUNDS_CAP,
 };
 
 use super::domains::processing::ProcessingControlStore;
@@ -65,7 +64,10 @@ impl SqliteProcessingControlStore {
             .max_connections(2)
             .connect_with(opts)
             .await?;
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .ok();
         Self::run_ddl(&pool).await?;
         Ok(Self {
             pool,
@@ -157,10 +159,7 @@ fn now_ms() -> i64 {
 
 #[async_trait]
 impl ProcessingControlStore for SqliteProcessingControlStore {
-    async fn get(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<ProcessingControlState> {
+    async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<ProcessingControlState> {
         let key = scope_key(scope)?;
         let row: Option<(String,)> =
             sqlx::query_as("SELECT state_json FROM nexo_processing_states WHERE scope_json = ?1")
@@ -224,11 +223,10 @@ impl ProcessingControlStore for SqliteProcessingControlStore {
 
     async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool> {
         let key = scope_key(scope)?;
-        let res =
-            sqlx::query("DELETE FROM nexo_processing_states WHERE scope_json = ?1")
-                .bind(&key)
-                .execute(&self.pool)
-                .await?;
+        let res = sqlx::query("DELETE FROM nexo_processing_states WHERE scope_json = ?1")
+            .bind(&key)
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -282,10 +280,7 @@ impl ProcessingControlStore for SqliteProcessingControlStore {
         }
     }
 
-    async fn drain_pending(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<Vec<PendingInbound>> {
+    async fn drain_pending(&self, scope: &ProcessingScope) -> anyhow::Result<Vec<PendingInbound>> {
         let key = scope_key(scope)?;
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT inbound_json FROM nexo_processing_pending \
@@ -314,10 +309,7 @@ impl ProcessingControlStore for SqliteProcessingControlStore {
         Ok(out)
     }
 
-    async fn pending_depth(
-        &self,
-        scope: &ProcessingScope,
-    ) -> anyhow::Result<usize> {
+    async fn pending_depth(&self, scope: &ProcessingScope) -> anyhow::Result<usize> {
         let key = scope_key(scope)?;
         let depth: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM nexo_processing_pending WHERE scope_json = ?1",
@@ -400,13 +392,16 @@ mod tests {
     async fn set_idempotent_returns_changed_false_on_second_call() {
         let store = SqliteProcessingControlStore::open_memory().await.unwrap();
         let s = ProcessingControlState::PausedByOperator {
-                    scope: convo(),
+            scope: convo(),
             reason: None,
             paused_at_ms: 1,
             operator_token_hash: "h".into(),
         };
         assert!(store.set(convo(), s.clone()).await.unwrap());
-        assert!(!store.set(convo(), s).await.unwrap(), "second set must be no-op");
+        assert!(
+            !store.set(convo(), s).await.unwrap(),
+            "second set must be no-op"
+        );
     }
 
     #[tokio::test]
@@ -428,7 +423,10 @@ mod tests {
             .set(convo(), ProcessingControlState::AgentActive)
             .await
             .unwrap();
-        assert!(changed, "transition Paused → AgentActive must report changed");
+        assert!(
+            changed,
+            "transition Paused → AgentActive must report changed"
+        );
         let state = store.get(&convo()).await.unwrap();
         assert!(matches!(state, ProcessingControlState::AgentActive));
     }
@@ -484,10 +482,7 @@ mod tests {
             .await
             .unwrap()
             .with_pending_cap(0);
-        let (depth, dropped) = store
-            .push_pending(&convo(), pending("x"))
-            .await
-            .unwrap();
+        let (depth, dropped) = store.push_pending(&convo(), pending("x")).await.unwrap();
         assert_eq!(depth, 0);
         assert_eq!(dropped, 1);
         // Nothing buffered; drain is empty.
@@ -509,9 +504,18 @@ mod tests {
     #[tokio::test]
     async fn pending_queues_are_isolated_per_scope() {
         let store = SqliteProcessingControlStore::open_memory().await.unwrap();
-        store.push_pending(&convo(), pending("ana-1")).await.unwrap();
-        store.push_pending(&other_convo(), pending("bob-1")).await.unwrap();
-        store.push_pending(&convo(), pending("ana-2")).await.unwrap();
+        store
+            .push_pending(&convo(), pending("ana-1"))
+            .await
+            .unwrap();
+        store
+            .push_pending(&other_convo(), pending("bob-1"))
+            .await
+            .unwrap();
+        store
+            .push_pending(&convo(), pending("ana-2"))
+            .await
+            .unwrap();
         assert_eq!(store.pending_depth(&convo()).await.unwrap(), 2);
         assert_eq!(store.pending_depth(&other_convo()).await.unwrap(), 1);
         let drained = store.drain_pending(&convo()).await.unwrap();
@@ -537,7 +541,10 @@ mod tests {
             )
             .await
             .unwrap();
-        store.push_pending(&convo(), pending("queued")).await.unwrap();
+        store
+            .push_pending(&convo(), pending("queued"))
+            .await
+            .unwrap();
         drop(store);
         // Re-open and verify the row + the queued inbound persist.
         let store2 = SqliteProcessingControlStore::open(&path).await.unwrap();

@@ -346,8 +346,7 @@ pub struct ProcessingStateResponse {
 /// rides on the `agent_event` firehose deferred wire-up —
 /// this constant pins the method string today so the future
 /// emit site is one-line.
-pub const PROCESSING_STATE_CHANGED_NOTIFY_METHOD: &str =
-    "nexo/notify/processing_state_changed";
+pub const PROCESSING_STATE_CHANGED_NOTIFY_METHOD: &str = "nexo/notify/processing_state_changed";
 
 /// JSON-RPC method literal for `processing/pause`.
 pub const PROCESSING_PAUSE_METHOD: &str = "nexo/admin/processing/pause";

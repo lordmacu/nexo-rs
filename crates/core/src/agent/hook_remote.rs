@@ -160,7 +160,9 @@ impl HookHandler for RemoteHookHandler {
 /// `Inner` not being initialized.
 #[derive(Debug, thiserror::Error)]
 pub enum HookHandlerRegistrationError {
-    #[error("subprocess plugin inner not initialized — call register_remote_hook_handlers AFTER init()")]
+    #[error(
+        "subprocess plugin inner not initialized — call register_remote_hook_handlers AFTER init()"
+    )]
     InnerUnavailable,
 }
 
@@ -370,10 +372,7 @@ mod tests {
 
         let resp = task.await.unwrap().unwrap();
         assert_eq!(resp.decision.as_deref(), Some("transform"));
-        assert_eq!(
-            resp.transformed_body.as_deref(),
-            Some("ssn [REDACTED]")
-        );
+        assert_eq!(resp.transformed_body.as_deref(), Some("ssn [REDACTED]"));
     }
 
     #[tokio::test]
@@ -427,7 +426,10 @@ mod tests {
 
         let resp = task.await.unwrap().unwrap();
         assert_eq!(
-            resp.override_event.as_ref().and_then(|v| v.get("k")).and_then(|v| v.as_str()),
+            resp.override_event
+                .as_ref()
+                .and_then(|v| v.get("k"))
+                .and_then(|v| v.as_str()),
             Some("rewritten")
         );
     }

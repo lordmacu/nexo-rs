@@ -59,10 +59,7 @@ impl ChannelRateLimit {
         // chattiest server. Anything above is almost certainly a
         // typo (rps vs rps_per_minute).
         if self.rps > 1000.0 {
-            return Err(format!(
-                "{label}.rps {} exceeds soft cap of 1000",
-                self.rps
-            ));
+            return Err(format!("{label}.rps {} exceeds soft cap of 1000", self.rps));
         }
         Ok(())
     }
@@ -203,7 +200,10 @@ impl ChannelsConfig {
                 }
             }
             if let Some(rl) = entry.rate_limit.as_ref() {
-                rl.validate(&format!("channels.approved[server={}].rate_limit", entry.server))?;
+                rl.validate(&format!(
+                    "channels.approved[server={}].rate_limit",
+                    entry.server
+                ))?;
             }
         }
         if let Some(rl) = self.default_rate_limit.as_ref() {
@@ -216,9 +216,7 @@ impl ChannelsConfig {
     /// override wins; falls back to `default_rate_limit`; `None`
     /// when neither is set or both collapse to inactive.
     pub fn resolve_rate_limit(&self, server: &str) -> Option<ChannelRateLimit> {
-        let from_entry = self
-            .lookup_approved(server)
-            .and_then(|e| e.rate_limit);
+        let from_entry = self.lookup_approved(server).and_then(|e| e.rate_limit);
         let chosen = from_entry.or(self.default_rate_limit);
         chosen.filter(|rl| rl.is_active())
     }
@@ -283,7 +281,7 @@ mod tests {
                 server: String::new(),
                 plugin_source: None,
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -297,7 +295,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: Some(String::new()),
                 outbound_tool_name: None,
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -311,7 +309,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: Some(String::new()),
-            rate_limit: None,
+                rate_limit: None,
             }],
             ..Default::default()
         };
@@ -350,7 +348,8 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: Some("slack@anthropic".into()),
                 outbound_tool_name: None,
-            rate_limit: None,            }],
+                rate_limit: None,
+            }],
             ..Default::default()
         };
         let got = c.lookup_approved("slack").unwrap();
@@ -396,7 +395,10 @@ approved:
         assert!(parsed.enabled);
         assert_eq!(parsed.max_content_chars, 8_000);
         assert_eq!(parsed.approved.len(), 2);
-        assert_eq!(parsed.approved[0].plugin_source.as_deref(), Some("slack@anthropic"));
+        assert_eq!(
+            parsed.approved[0].plugin_source.as_deref(),
+            Some("slack@anthropic")
+        );
         assert!(parsed.approved[1].plugin_source.is_none());
         parsed.validate().unwrap();
     }
@@ -447,7 +449,10 @@ approved:
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
-                rate_limit: Some(ChannelRateLimit { rps: 5.0, burst: 10 }),
+                rate_limit: Some(ChannelRateLimit {
+                    rps: 5.0,
+                    burst: 10,
+                }),
             }],
             ..Default::default()
         };

@@ -87,13 +87,7 @@ impl ConsentTracker {
         self.upsert(user_key, status, source, at);
     }
 
-    fn upsert(
-        &mut self,
-        user_key: &str,
-        status: ConsentStatus,
-        source: &str,
-        at: DateTime<Utc>,
-    ) {
+    fn upsert(&mut self, user_key: &str, status: ConsentStatus, source: &str, at: DateTime<Utc>) {
         self.current.insert(user_key.to_string(), status);
         self.history.push(ConsentRecord {
             user_key: user_key.to_string(),

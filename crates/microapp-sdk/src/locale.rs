@@ -212,8 +212,8 @@ impl std::str::FromStr for Locale {
         }
 
         let lang_lower = lang_raw.to_ascii_lowercase();
-        let language =
-            parse_language(&lang_lower).ok_or_else(|| LocaleParseError::UnknownLanguage(lang_raw.to_string()))?;
+        let language = parse_language(&lang_lower)
+            .ok_or_else(|| LocaleParseError::UnknownLanguage(lang_raw.to_string()))?;
 
         let region = match region_raw {
             None => None,
@@ -411,7 +411,6 @@ mod tests {
         }
     }
 }
-
 
 /// Parser-side errors. Wrapped in [`thiserror::Error`] so they
 /// surface cleanly through the existing error envelopes

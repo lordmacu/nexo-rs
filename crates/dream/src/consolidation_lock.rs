@@ -42,10 +42,7 @@ pub struct ConsolidationLock {
 impl ConsolidationLock {
     /// Construct, canonicalizing `memory_dir` for symlink defense.
     /// Memory dir MUST exist; caller `mkdir -p` first.
-    pub fn new(
-        memory_dir: &Path,
-        holder_stale: Duration,
-    ) -> Result<Self, AutoDreamError> {
+    pub fn new(memory_dir: &Path, holder_stale: Duration) -> Result<Self, AutoDreamError> {
         if !memory_dir.exists() {
             return Err(AutoDreamError::Config(format!(
                 "memory_dir does not exist: {}",
@@ -159,16 +156,12 @@ impl ConsolidationLock {
         // doesn't expose utimes directly without an extra crate.
         let secs = prior_mtime / 1000;
         let nanos = ((prior_mtime % 1000) * 1_000_000) as u32;
-        let timestamp = SystemTime::UNIX_EPOCH
-            + Duration::new(secs as u64, nanos);
+        let timestamp = SystemTime::UNIX_EPOCH + Duration::new(secs as u64, nanos);
         let path = self.path.clone();
         let result = tokio::task::spawn_blocking(move || {
             // Clear PID body before utimes — leak `:103`.
             std::fs::write(&path, b"")?;
-            filetime::set_file_mtime(
-                &path,
-                filetime::FileTime::from_system_time(timestamp),
-            )?;
+            filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(timestamp))?;
             Ok::<(), std::io::Error>(())
         })
         .await;
@@ -302,16 +295,14 @@ mod tests {
     #[tokio::test]
     async fn read_last_returns_zero_when_absent() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         assert_eq!(lock.read_last_consolidated_at().await, 0);
     }
 
     #[tokio::test]
     async fn try_acquire_succeeds_first_time() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         let prior = lock.try_acquire().await.unwrap();
         assert_eq!(prior, Some(0)); // no prior
         let mtime = lock.read_last_consolidated_at().await;
@@ -321,8 +312,7 @@ mod tests {
     #[tokio::test]
     async fn try_acquire_blocked_by_live_pid() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // Write our own PID — we know it's alive (we're running).
         // Sandbox-safe: kill(1, None) may be blocked in CI sandboxes,
         // so we use our own pid.
@@ -336,8 +326,7 @@ mod tests {
     #[tokio::test]
     async fn try_acquire_reclaims_dead_pid() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // Write a PID we know is dead — pick something huge.
         let dead_pid = "999999";
         fs::write(lock.path(), dead_pid).await.unwrap();
@@ -349,8 +338,7 @@ mod tests {
     #[tokio::test]
     async fn try_acquire_reclaims_after_holder_stale() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_millis(50)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_millis(50)).unwrap();
         // Write live PID + back-date mtime to 100ms ago.
         fs::write(lock.path(), "1").await.unwrap();
         // Sleep > holder_stale.
@@ -363,8 +351,7 @@ mod tests {
     #[tokio::test]
     async fn rollback_unlinks_when_prior_zero() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         let _ = lock.try_acquire().await.unwrap();
         assert!(lock.path().exists());
         lock.rollback(0).await;
@@ -374,8 +361,7 @@ mod tests {
     #[tokio::test]
     async fn rollback_resets_mtime_when_prior_nonzero() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         let _ = lock.try_acquire().await.unwrap();
         let prior = 1_000_000_000_000_i64; // year 2001
         lock.rollback(prior).await;
@@ -393,8 +379,7 @@ mod tests {
     #[tokio::test]
     async fn rollback_idempotent() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // Path doesn't exist — rollback(0) should be no-op (no panic).
         lock.rollback(0).await;
         // Acquire and rollback twice.
@@ -406,8 +391,7 @@ mod tests {
     #[tokio::test]
     async fn record_consolidation_writes_pid() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         lock.record_consolidation().await;
         let body = fs::read_to_string(lock.path()).await.unwrap();
         assert_eq!(body.trim(), std::process::id().to_string());
@@ -416,8 +400,7 @@ mod tests {
     #[tokio::test]
     async fn read_holder_info_returns_pid_and_mtime() {
         let tmp = mk_dir();
-        let lock =
-            ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         let _ = lock.try_acquire().await.unwrap();
         let (pid, mtime) = lock.read_holder_info().await;
         assert_eq!(pid as u32, std::process::id());
@@ -440,13 +423,10 @@ mod tests {
 
     #[tokio::test]
     async fn list_sessions_returns_empty_when_dir_missing() {
-        let result = list_sessions_touched_since(
-            Path::new("/nonexistent/transcripts"),
-            0,
-            "current",
-        )
-        .await
-        .unwrap();
+        let result =
+            list_sessions_touched_since(Path::new("/nonexistent/transcripts"), 0, "current")
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -459,9 +439,15 @@ mod tests {
         let s2 = "22222222-2222-2222-2222-222222222222";
         let current = "33333333-3333-3333-3333-333333333333";
 
-        fs::write(dir.join(format!("{s1}.jsonl")), b"x").await.unwrap();
-        fs::write(dir.join(format!("{s2}.jsonl")), b"y").await.unwrap();
-        fs::write(dir.join(format!("{current}.jsonl")), b"z").await.unwrap();
+        fs::write(dir.join(format!("{s1}.jsonl")), b"x")
+            .await
+            .unwrap();
+        fs::write(dir.join(format!("{s2}.jsonl")), b"y")
+            .await
+            .unwrap();
+        fs::write(dir.join(format!("{current}.jsonl")), b"z")
+            .await
+            .unwrap();
         // Non-UUID file should be skipped.
         fs::write(dir.join("agent-foo.jsonl"), b"a").await.unwrap();
 
@@ -497,8 +483,7 @@ mod tests {
     #[test]
     fn probe_returns_false_when_lock_absent() {
         let tmp = mk_dir();
-        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600))
-            .unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // No lock file written yet.
         assert!(!lock.is_live_holder());
     }
@@ -506,18 +491,15 @@ mod tests {
     #[tokio::test]
     async fn probe_returns_false_for_pid_zero() {
         let tmp = mk_dir();
-        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600))
-            .unwrap();
-        std::fs::write(tmp.path().canonicalize().unwrap().join(LOCK_FILE), b"0")
-            .unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
+        std::fs::write(tmp.path().canonicalize().unwrap().join(LOCK_FILE), b"0").unwrap();
         assert!(!lock.is_live_holder());
     }
 
     #[test]
     fn probe_returns_true_for_live_pid() {
         let tmp = mk_dir();
-        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600))
-            .unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // std::process::id() is always alive — no PID 1 sandbox surprises.
         let our_pid = std::process::id();
         std::fs::write(
@@ -531,8 +513,7 @@ mod tests {
     #[test]
     fn probe_returns_false_for_dead_pid() {
         let tmp = mk_dir();
-        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600))
-            .unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         // Find a clearly-dead PID by walking backwards from the typical
         // PID-max boundary; on Linux 32k is the historical default. Use
         // 999_999 — outside almost any kernel's pid_max.
@@ -547,8 +528,7 @@ mod tests {
     #[test]
     fn probe_returns_false_for_garbage_body() {
         let tmp = mk_dir();
-        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600))
-            .unwrap();
+        let lock = ConsolidationLock::new(tmp.path(), Duration::from_secs(3600)).unwrap();
         std::fs::write(
             tmp.path().canonicalize().unwrap().join(LOCK_FILE),
             b"not-a-pid",

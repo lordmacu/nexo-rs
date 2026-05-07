@@ -52,12 +52,12 @@ const SIZE_BUCKETS: &[u64] = &[256, 1_024, 4_096, 16_384, 65_536];
 /// retrieval (1 yr).
 const AGE_BUCKETS_SECS: &[u64] = &[
     1,
-    60,                 // 1 min
-    3_600,              // 1 hr
-    86_400,             // 1 d
-    7 * 86_400,         // 1 wk
-    30 * 86_400,        // 1 mo
-    365 * 86_400,       // 1 yr
+    60,           // 1 min
+    3_600,        // 1 hr
+    86_400,       // 1 d
+    7 * 86_400,   // 1 wk
+    30 * 86_400,  // 1 mo
+    365 * 86_400, // 1 yr
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -245,7 +245,11 @@ pub fn render_prometheus() -> String {
         let cell = entry.value();
         let avail = cell.available.load(Ordering::Relaxed);
         let sel = cell.selected.load(Ordering::Relaxed);
-        let ratio = if avail == 0 { 0.0 } else { sel as f64 / avail as f64 };
+        let ratio = if avail == 0 {
+            0.0
+        } else {
+            sel as f64 / avail as f64
+        };
         out.push_str(&format!(
             "memory_recall_selected_ratio{{agent_id=\"{}\",scope=\"{}\"}} {ratio:.6}\n",
             esc(&key.agent),
@@ -369,9 +373,7 @@ mod tests {
         record_recall("ana", "sqlite_long_term", 10, 4);
         record_recall("ana", "sqlite_long_term", 6, 3);
         let out = render_prometheus();
-        assert!(out.contains(
-            "memory_recall_total{agent_id=\"ana\",scope=\"sqlite_long_term\"} 2"
-        ));
+        assert!(out.contains("memory_recall_total{agent_id=\"ana\",scope=\"sqlite_long_term\"} 2"));
         // 7 selected / 16 available = 0.4375 (cumulative).
         assert!(
             out.contains("memory_recall_selected_ratio{agent_id=\"ana\",scope=\"sqlite_long_term\"} 0.437500"),
@@ -385,9 +387,7 @@ mod tests {
         let _g = lock();
         record_recall("ana", "sqlite_vector", 0, 0);
         let out = render_prometheus();
-        assert!(out.contains(
-            "memory_recall_total{agent_id=\"ana\",scope=\"sqlite_vector\"} 1"
-        ));
+        assert!(out.contains("memory_recall_total{agent_id=\"ana\",scope=\"sqlite_vector\"} 1"));
         assert!(out.contains(
             "memory_recall_selected_ratio{agent_id=\"ana\",scope=\"sqlite_vector\"} 0.000000"
         ));

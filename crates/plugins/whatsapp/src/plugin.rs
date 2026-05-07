@@ -66,8 +66,7 @@ pub struct WhatsappPlugin {
     /// firehose as `AgentEventKind::PeerTyping`. `None` keeps the
     /// plugin standalone-friendly (tests, embed scenarios) — the
     /// lifecycle loop just skips the typing forwarder.
-    event_emitter:
-        Arc<OnceCell<Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>>>,
+    event_emitter: Arc<OnceCell<Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>>>,
 }
 
 /// Phase 81.12.c — bundled NexoPlugin manifest. `expect()` is OK here:
@@ -264,7 +263,9 @@ impl Plugin for WhatsappPlugin {
                         .run_agent_with_transcribe(acl, t, handler)
                         .await
                 } else {
-                    session_for_task.run_agent_with_opts(acl, run_opts, handler).await
+                    session_for_task
+                        .run_agent_with_opts(acl, run_opts, handler)
+                        .await
                 }
             };
             tokio::select! {
@@ -469,11 +470,10 @@ mod nexo_plugin_tests {
     #[test]
     fn factory_builder_produces_usable_handle() {
         let cfg = test_whatsapp_config(None);
-        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
-            Box::new(move |_m| {
-                let plugin: Arc<dyn NexoPlugin> = Arc::new(WhatsappPlugin::new(cfg.clone()));
-                Ok(plugin)
-            });
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = Box::new(move |_m| {
+            let plugin: Arc<dyn NexoPlugin> = Arc::new(WhatsappPlugin::new(cfg.clone()));
+            Ok(plugin)
+        });
         let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
         match factory(&m) {
             Ok(handle) => assert_eq!(handle.manifest().plugin.id, "whatsapp"),
@@ -514,9 +514,6 @@ mod nexo_plugin_tests {
         assert_ne!(legacy_a.name(), legacy_b.name());
         assert_eq!(nexo_a.manifest().plugin.id, "whatsapp");
         assert_eq!(nexo_b.manifest().plugin.id, "whatsapp");
-        assert_eq!(
-            nexo_a.manifest().plugin.id,
-            nexo_b.manifest().plugin.id
-        );
+        assert_eq!(nexo_a.manifest().plugin.id, nexo_b.manifest().plugin.id);
     }
 }

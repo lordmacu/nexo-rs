@@ -26,9 +26,8 @@ use super::{Result, SttError, TranscribeConfig};
 /// Process-wide whisper-context cache keyed by model path. The
 /// `Mutex` is held only during slot insertion — the
 /// `Arc<WhisperContext>` itself is shared by clones.
-static MODEL_CACHE: tokio::sync::OnceCell<
-    Mutex<HashMap<PathBuf, Arc<WhisperContext>>>,
-> = tokio::sync::OnceCell::const_new();
+static MODEL_CACHE: tokio::sync::OnceCell<Mutex<HashMap<PathBuf, Arc<WhisperContext>>>> =
+    tokio::sync::OnceCell::const_new();
 
 async fn load_model(path: &Path) -> Result<Arc<WhisperContext>> {
     if !path.is_file() {

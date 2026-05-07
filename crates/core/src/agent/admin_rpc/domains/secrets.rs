@@ -25,11 +25,7 @@ use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 pub trait SecretsStore: Send + Sync {
     /// Write `value` keyed by `name`. Returns the persisted path
     /// + whether an existing env value was overwritten.
-    async fn write(
-        &self,
-        name: &str,
-        value: &str,
-    ) -> Result<SecretsWriteResponse, AdminRpcError>;
+    async fn write(&self, name: &str, value: &str) -> Result<SecretsWriteResponse, AdminRpcError>;
 }
 
 const NAME_RE: &str = r"^[A-Z][A-Z0-9_]{1,63}$";
@@ -41,20 +37,14 @@ const MAX_VALUE_BYTES: usize = 8192;
 /// `value` field is handled by the audit writer (Phase 82.10.h),
 /// not here — the cleartext flows through this handler so the
 /// store impl can persist it, but never lands in the audit DB.
-pub async fn write(
-    store: &dyn SecretsStore,
-    raw_params: Value,
-) -> AdminRpcResult {
+pub async fn write(store: &dyn SecretsStore, raw_params: Value) -> AdminRpcResult {
     match try_write(store, raw_params).await {
         Ok(v) => AdminRpcResult::ok(v),
         Err(e) => AdminRpcResult::err(e),
     }
 }
 
-async fn try_write(
-    store: &dyn SecretsStore,
-    raw_params: Value,
-) -> Result<Value, AdminRpcError> {
+async fn try_write(store: &dyn SecretsStore, raw_params: Value) -> Result<Value, AdminRpcError> {
     let input: SecretsWriteInput = serde_json::from_value(raw_params)
         .map_err(|e| AdminRpcError::InvalidParams(e.to_string()))?;
     validate_name(&input.name)?;
@@ -78,9 +68,7 @@ fn validate_name(name: &str) -> Result<(), AdminRpcError> {
 fn validate_value(value: &str) -> Result<(), AdminRpcError> {
     let n = value.as_bytes().len();
     if n < MIN_VALUE_BYTES {
-        return Err(AdminRpcError::InvalidParams(
-            "value cannot be empty".into(),
-        ));
+        return Err(AdminRpcError::InvalidParams("value cannot be empty".into()));
     }
     if n > MAX_VALUE_BYTES {
         return Err(AdminRpcError::InvalidParams(format!(

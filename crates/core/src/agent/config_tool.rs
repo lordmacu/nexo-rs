@@ -1199,7 +1199,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,

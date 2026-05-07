@@ -269,7 +269,9 @@ async fn dispatch_event(
                 .decode(b64)
                 .map_err(|e| anyhow::anyhow!("voice_note audio_bytes_b64 decode: {e}"))?;
             if audio.is_empty() {
-                return Err(anyhow::anyhow!("voice_note audio_bytes_b64 decoded to 0 bytes"));
+                return Err(anyhow::anyhow!(
+                    "voice_note audio_bytes_b64 decoded to 0 bytes"
+                ));
             }
             tracing::info!(
                 to = %to,

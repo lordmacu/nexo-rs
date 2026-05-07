@@ -88,7 +88,8 @@ impl Histogram {
 static SNAPSHOT_TOTAL: LazyLock<DashMap<OutcomeKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static RESTORE_TOTAL: LazyLock<DashMap<OutcomeKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static GC_TOTAL: LazyLock<DashMap<AgentTenantKey, AtomicU64>> = LazyLock::new(DashMap::new);
-static SNAPSHOT_DURATION: LazyLock<DashMap<AgentTenantKey, Histogram>> = LazyLock::new(DashMap::new);
+static SNAPSHOT_DURATION: LazyLock<DashMap<AgentTenantKey, Histogram>> =
+    LazyLock::new(DashMap::new);
 static SNAPSHOT_BYTES_TOTAL: LazyLock<DashMap<AgentTenantKey, AtomicU64>> =
     LazyLock::new(DashMap::new);
 
@@ -108,7 +109,13 @@ fn cap_label(value: &str, dict: &DashMap<String, ()>, cap: usize) -> String {
 static AGENT_DICT: LazyLock<DashMap<String, ()>> = LazyLock::new(DashMap::new);
 static TENANT_DICT: LazyLock<DashMap<String, ()>> = LazyLock::new(DashMap::new);
 
-pub fn record_snapshot(agent: &str, tenant: &str, outcome: Outcome, duration: Duration, size_bytes: u64) {
+pub fn record_snapshot(
+    agent: &str,
+    tenant: &str,
+    outcome: Outcome,
+    duration: Duration,
+    size_bytes: u64,
+) {
     let agent = cap_label(agent, &AGENT_DICT, AGENT_LABEL_CAP);
     let tenant = cap_label(tenant, &TENANT_DICT, TENANT_LABEL_CAP);
     let key = OutcomeKey {
@@ -267,14 +274,29 @@ mod tests {
     fn records_snapshot_increments_counter_and_histogram() {
         let _g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset();
-        record_snapshot("ana", "default", Outcome::Ok, Duration::from_millis(120), 4096);
-        record_snapshot("ana", "default", Outcome::Ok, Duration::from_millis(80), 2048);
+        record_snapshot(
+            "ana",
+            "default",
+            Outcome::Ok,
+            Duration::from_millis(120),
+            4096,
+        );
+        record_snapshot(
+            "ana",
+            "default",
+            Outcome::Ok,
+            Duration::from_millis(80),
+            2048,
+        );
         let body = render_prometheus();
         assert!(
-            body.contains("nexo_memory_snapshot_total{agent=\"ana\",tenant=\"default\",outcome=\"ok\"} 2"),
+            body.contains(
+                "nexo_memory_snapshot_total{agent=\"ana\",tenant=\"default\",outcome=\"ok\"} 2"
+            ),
             "{body}"
         );
-        assert!(body.contains("nexo_memory_snapshot_bytes_total{agent=\"ana\",tenant=\"default\"} 6144"));
+        assert!(body
+            .contains("nexo_memory_snapshot_bytes_total{agent=\"ana\",tenant=\"default\"} 6144"));
         // 120 ms hits the 250-bucket; 80 ms hits 100-bucket. So
         // cumulative at le=250 is 2 and at le=100 is 1.
         assert!(body.contains("le=\"100\"} 1"));
@@ -338,8 +360,14 @@ mod tests {
             "nexo_memory_snapshot_bytes_total",
             "nexo_memory_snapshot_duration_ms",
         ] {
-            assert!(body.contains(&format!("# HELP {prefix}")), "missing HELP for {prefix}");
-            assert!(body.contains(&format!("# TYPE {prefix}")), "missing TYPE for {prefix}");
+            assert!(
+                body.contains(&format!("# HELP {prefix}")),
+                "missing HELP for {prefix}"
+            );
+            assert!(
+                body.contains(&format!("# TYPE {prefix}")),
+                "missing TYPE for {prefix}"
+            );
         }
     }
 }

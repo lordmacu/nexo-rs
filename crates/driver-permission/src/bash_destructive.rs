@@ -4,8 +4,8 @@
 //! 16 compiled regex patterns detect known destructive git / rm / SQL / infra
 //! commands. First match wins. Pure function, no alloc, no async.
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 type DestructivePattern = (Regex, &'static str);
 
@@ -87,9 +87,8 @@ static DESTRUCTIVE_PATTERNS: LazyLock<Vec<DestructivePattern>> = LazyLock::new(|
 /// Second-stage check for `git clean` — if `--dry-run` or `-n` flag
 /// (standalone or combined like `-nfd`) is present, the command is a
 /// no-op despite `-f`.
-static GIT_CLEAN_DRY_RUN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"git\s+clean\b[^;&|\n]*\s-[a-zA-Z]*n[a-zA-Z]*").unwrap()
-});
+static GIT_CLEAN_DRY_RUN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"git\s+clean\b[^;&|\n]*\s-[a-zA-Z]*n[a-zA-Z]*").unwrap());
 
 /// Checks a bash command string against known destructive patterns.
 /// Returns a human-readable warning, or `None` if no pattern matches.
@@ -139,23 +138,16 @@ pub fn check_destructive_command(command: &str) -> Option<&'static str> {
 /// with explicit `>` redirect to `/dev/null` if needed.
 const READ_ONLY_COMMANDS: &[&str] = &[
     // Inspection
-    "ls", "find", "stat", "file", "du", "df", "tree", "realpath",
-    "readlink", "basename", "dirname",
+    "ls", "find", "stat", "file", "du", "df", "tree", "realpath", "readlink", "basename", "dirname",
     // Read content
-    "cat", "head", "tail", "less", "more", "tac",
-    "hexdump", "xxd", "od", "strings",
+    "cat", "head", "tail", "less", "more", "tac", "hexdump", "xxd", "od", "strings",
     // Search / filter / transform (output to stdout only)
-    "grep", "egrep", "fgrep", "rg", "ag",
-    "cut", "sort", "uniq", "rev", "wc",
-    "comm", "cmp", "diff", "tr",
-    // Identity / env
-    "pwd", "echo", "printf", "true", "false", "test", "[",
-    "which", "type", "command",
-    "hostname", "id", "whoami", "groups",
-    "env", "printenv", "uname", "date",
+    "grep", "egrep", "fgrep", "rg", "ag", "cut", "sort", "uniq", "rev", "wc", "comm", "cmp", "diff",
+    "tr", // Identity / env
+    "pwd", "echo", "printf", "true", "false", "test", "[", "which", "type", "command", "hostname",
+    "id", "whoami", "groups", "env", "printenv", "uname", "date",
     // Process / network inspection (read-only)
-    "ps", "top", "htop", "pgrep",
-    "ip", "netstat", "ss", "lsof",
+    "ps", "top", "htop", "pgrep", "ip", "netstat", "ss", "lsof",
 ];
 
 /// Pattern markers that imply state mutation regardless of the leading
@@ -164,16 +156,40 @@ const READ_ONLY_COMMANDS: &[&str] = &[
 /// favours under-permissive over under-deny: the fork's `tool_result`
 /// surface lets the model retry with a different shape.
 const MUTATING_MARKERS: &[&str] = &[
-    "$(", "`",          // subshells
-    "<<",               // heredoc / here-string (covers `<<` + `<<<`)
-    "<(", ">(",         // process substitution
-    "rm ", "mv ", "cp ", "chmod ", "chown ",
-    "mkdir ", "rmdir ", "ln ", "touch ",
-    "git push", "git commit", "git reset", "git checkout",
-    "git restore", "git stash", "git branch", "git merge",
-    "curl ", "wget ", "scp ", "rsync ",
-    "sudo ", "su ",
-    "tee ", "awk ", "perl ", "python ", "node ", "ruby ",
+    "$(",
+    "`",  // subshells
+    "<<", // heredoc / here-string (covers `<<` + `<<<`)
+    "<(",
+    ">(", // process substitution
+    "rm ",
+    "mv ",
+    "cp ",
+    "chmod ",
+    "chown ",
+    "mkdir ",
+    "rmdir ",
+    "ln ",
+    "touch ",
+    "git push",
+    "git commit",
+    "git reset",
+    "git checkout",
+    "git restore",
+    "git stash",
+    "git branch",
+    "git merge",
+    "curl ",
+    "wget ",
+    "scp ",
+    "rsync ",
+    "sudo ",
+    "su ",
+    "tee ",
+    "awk ",
+    "perl ",
+    "python ",
+    "node ",
+    "ruby ",
 ];
 
 /// True when `command` is composed entirely of read-only operations.
@@ -325,9 +341,8 @@ fn split_command_clauses(command: &str) -> Vec<&str> {
 /// Regex for detecting `sed -i` / `sed --in-place` / `sed -i.bak`.
 /// Matches the sed command followed by the in-place edit flag anywhere
 /// before a pipe, semicolon, or newline.
-static SED_IN_PLACE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\bsed\b[^;&|\n]*\s(-i\b|--in-place\b)").unwrap()
-});
+static SED_IN_PLACE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bsed\b[^;&|\n]*\s(-i\b|--in-place\b)").unwrap());
 
 /// Detects `sed -i` (or `--in-place`, or `-i.bak`) in a bash command
 /// and returns a warning that the file will be modified in place.
@@ -379,7 +394,10 @@ mod tests {
     #[test]
     fn git_push_force() {
         assert_warns("git push --force origin main", "overwrite remote history");
-        assert_warns("git push --force-with-lease origin main", "overwrite remote history");
+        assert_warns(
+            "git push --force-with-lease origin main",
+            "overwrite remote history",
+        );
         assert_warns("git push -f origin main", "overwrite remote history");
     }
 
@@ -445,8 +463,14 @@ mod tests {
     #[test]
     fn git_branch_force_delete() {
         assert_warns("git branch -D old-branch", "force-delete a branch");
-        assert_warns("git branch --delete --force old-branch", "force-delete a branch");
-        assert_warns("git branch --force --delete old-branch", "force-delete a branch");
+        assert_warns(
+            "git branch --delete --force old-branch",
+            "force-delete a branch",
+        );
+        assert_warns(
+            "git branch --force --delete old-branch",
+            "force-delete a branch",
+        );
     }
 
     #[test]
@@ -548,7 +572,10 @@ mod tests {
     #[test]
     fn terraform_destroy() {
         assert_warns("terraform destroy", "Terraform infrastructure");
-        assert_warns("terraform destroy -auto-approve", "Terraform infrastructure");
+        assert_warns(
+            "terraform destroy -auto-approve",
+            "Terraform infrastructure",
+        );
     }
 
     #[test]

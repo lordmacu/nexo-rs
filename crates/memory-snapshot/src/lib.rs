@@ -47,26 +47,24 @@ pub mod sqlite_backup;
 pub mod state_capture;
 pub mod tenant_path;
 
+pub use config::{EncryptionSection, EventsSection, MemorySnapshotConfig, RetentionSection};
+pub use dream_adapter::{MemoryMutationPublisher, PreDreamSnapshotAdapter};
 pub use error::SnapshotError;
-pub use id::{AgentId, SnapshotId};
-pub use manifest::{
-    ArtifactKind, ArtifactMeta, EncryptionMeta, GitMeta, Manifest, RedactionReport,
-    SchemaVersions, ToolVersions, BUNDLE_FORMAT, MANIFEST_VERSION,
-};
-pub use meta::{
-    GitDiffSummary, RestoreReport, SnapshotDiff, SnapshotMeta, SqliteDiffSummary,
-    StateDiffSummary, VerifyReport,
-};
-pub use config::{
-    EncryptionSection, EventsSection, MemorySnapshotConfig, RetentionSection,
-};
 pub use events::{
     EventPublisher, LifecycleEvent, MutationEvent, MutationOp, MutationScope, NoopPublisher,
     LIFECYCLE_SUBJECT_PREFIX, MUTATION_SUBJECT_PREFIX,
 };
-pub use dream_adapter::{MemoryMutationPublisher, PreDreamSnapshotAdapter};
+pub use id::{AgentId, SnapshotId};
+pub use manifest::{
+    ArtifactKind, ArtifactMeta, EncryptionMeta, GitMeta, Manifest, RedactionReport, SchemaVersions,
+    ToolVersions, BUNDLE_FORMAT, MANIFEST_VERSION,
+};
+pub use meta::{
+    GitDiffSummary, RestoreReport, SnapshotDiff, SnapshotMeta, SqliteDiffSummary, StateDiffSummary,
+    VerifyReport,
+};
 pub use path_resolver::{ClosureResolver, DefaultPathResolver, PathResolver};
-pub use redaction::{DefaultRedactionPolicy, RedactionPolicy, RedactionPass};
+pub use redaction::{DefaultRedactionPolicy, RedactionPass, RedactionPolicy};
 pub use request::{DecryptionIdentity, EncryptionKey, RestoreRequest, SnapshotRequest};
 pub use retention::{RetentionConfig, RetentionTickReport, RetentionWorker};
 pub use snapshotter::MemorySnapshotter;

@@ -48,10 +48,7 @@ impl<'de> Deserialize<'de> for RuleSelection {
                 }
             }
 
-            fn visit_seq<A: de::SeqAccess<'de>>(
-                self,
-                mut seq: A,
-            ) -> Result<Self::Value, A::Error> {
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
                 let mut ids = Vec::new();
                 while let Some(id) = seq.next_element::<String>()? {
                     ids.push(id);
@@ -110,8 +107,7 @@ impl SecretGuardConfig {
         let scanner = match &self.rules {
             RuleSelection::All if self.exclude_rules.is_empty() => SecretScanner::new(),
             RuleSelection::All => {
-                let excludes: Vec<&str> =
-                    self.exclude_rules.iter().map(|s| s.as_str()).collect();
+                let excludes: Vec<&str> = self.exclude_rules.iter().map(|s| s.as_str()).collect();
                 SecretScanner::without_rules(&excludes)
             }
             RuleSelection::List(ids) => {
@@ -160,7 +156,9 @@ mod tests {
         let guard = cfg.build_guard();
         assert!(!guard.is_enabled());
         // Disabled guard passes everything
-        assert!(guard.check("ghp_abcdefghijklmnopqrstuvwxyz1234567890").is_ok());
+        assert!(guard
+            .check("ghp_abcdefghijklmnopqrstuvwxyz1234567890")
+            .is_ok());
     }
 
     #[test]
@@ -208,7 +206,9 @@ rules:
         };
         let guard = cfg.build_guard();
         // github-pat should be excluded
-        assert!(guard.check("ghp_abcdefghijklmnopqrstuvwxyz1234567890").is_ok());
+        assert!(guard
+            .check("ghp_abcdefghijklmnopqrstuvwxyz1234567890")
+            .is_ok());
         // But aws should still be detected
         assert!(guard.check("AKIAIOSFODNN7EXAMPLE").is_err());
     }
@@ -223,7 +223,9 @@ rules:
         };
         let guard = cfg.build_guard();
         // Only aws rule active
-        assert!(guard.check("ghp_abcdefghijklmnopqrstuvwxyz1234567890").is_ok());
+        assert!(guard
+            .check("ghp_abcdefghijklmnopqrstuvwxyz1234567890")
+            .is_ok());
         assert!(guard.check("AKIAIOSFODNN7EXAMPLE").is_ok()); // Warn passes
     }
 

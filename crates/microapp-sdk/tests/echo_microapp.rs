@@ -6,9 +6,7 @@
 
 #![cfg(feature = "test-harness")]
 
-use nexo_microapp_sdk::{
-    Microapp, MicroappTestHarness, ToolCtx, ToolError, ToolReply,
-};
+use nexo_microapp_sdk::{Microapp, MicroappTestHarness, ToolCtx, ToolError, ToolReply};
 use serde_json::json;
 
 async fn echo(args: serde_json::Value, _ctx: ToolCtx) -> Result<ToolReply, ToolError> {

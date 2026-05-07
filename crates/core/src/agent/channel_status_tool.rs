@@ -47,23 +47,20 @@ impl ChannelStatusTool {
     fn resolved_binding_id(&self, ctx: &AgentContext) -> String {
         self.binding_id
             .clone()
-            .unwrap_or_else(|| {
-                super::channel_list_tool::resolve_binding_id(ctx)
-            })
+            .unwrap_or_else(|| super::channel_list_tool::resolve_binding_id(ctx))
     }
 
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: TOOL_NAME.into(),
-            description:
-                "Diagnose a registered MCP channel server. Returns whether the \
+            description: "Diagnose a registered MCP channel server. Returns whether the \
                  server is currently registered for this binding, its plugin \
                  source (when loaded via a plugin), the resolved outbound tool \
                  name, whether the server can relay permission prompts \
                  structurally, and the wallclock time the registration came up. \
                  When `server` is omitted the tool returns a status row per \
                  registered server."
-                    .into(),
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -138,7 +135,11 @@ mod tests {
     use super::*;
     use nexo_mcp::channel::{ChannelRegistry, RegisteredChannel};
 
-    fn registered(server: &str, outbound: Option<&str>, plugin_src: Option<&str>) -> RegisteredChannel {
+    fn registered(
+        server: &str,
+        outbound: Option<&str>,
+        plugin_src: Option<&str>,
+    ) -> RegisteredChannel {
         RegisteredChannel {
             binding_id: "b".into(),
             server_name: server.into(),

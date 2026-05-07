@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use nexo_plugin_manifest::{GateKind, GateRisk};
 
-use super::report::{
-    DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
-};
+use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 use super::NexoPluginRegistrySnapshot;
 
 /// Phase 81.11 — runtime view of one plugin-declared capability
@@ -98,9 +96,7 @@ pub fn aggregate_plugin_gates(
         // 1. Capability gates.
         for gate in &plugin.manifest.plugin.capability_gates.gates {
             // Conflict vs core INVENTORY (caller-supplied list).
-            if let Some((_, core_ext)) =
-                core_env_vars.iter().find(|(ev, _)| *ev == gate.env_var)
-            {
+            if let Some((_, core_ext)) = core_env_vars.iter().find(|(ev, _)| *ev == gate.env_var) {
                 report.conflicts.push(DiscoveryDiagnostic {
                     level: DiagnosticLevel::Error,
                     path: plugin.manifest_path.clone(),
@@ -179,9 +175,7 @@ fn evaluate_gate(env_var: &str, kind: GateKind) -> (AggregatedGateState, Option<
             _ => (AggregatedGateState::Disabled, None),
         },
         GateKind::Allowlist => match std::env::var(env_var) {
-            Ok(v) if !v.trim().is_empty()
-                && v.split(',').any(|s| !s.trim().is_empty()) =>
-            {
+            Ok(v) if !v.trim().is_empty() && v.split(',').any(|s| !s.trim().is_empty()) => {
                 (AggregatedGateState::Enabled, Some(v))
             }
             Ok(v) if !v.is_empty() => (AggregatedGateState::Disabled, Some(v)),
@@ -321,13 +315,11 @@ mod tests {
             agg.gates.get("NEXO_FIXTURE_GATE_DUP").unwrap().plugin_id,
             "alpha"
         );
-        assert!(
-            agg.conflicts.iter().any(|d| matches!(
-                &d.kind,
-                DiscoveryDiagnosticKind::CapabilityGateConflictsPlugin { plugin_a, plugin_b, .. }
-                    if plugin_a == "alpha" && plugin_b == "beta"
-            ))
-        );
+        assert!(agg.conflicts.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::CapabilityGateConflictsPlugin { plugin_a, plugin_b, .. }
+                if plugin_a == "alpha" && plugin_b == "beta"
+        )));
     }
 
     #[test]
@@ -346,7 +338,12 @@ mod tests {
         let diag = agg
             .conflicts
             .iter()
-            .find(|d| matches!(d.kind, DiscoveryDiagnosticKind::RequiredCapabilityNotGranted { .. }))
+            .find(|d| {
+                matches!(
+                    d.kind,
+                    DiscoveryDiagnosticKind::RequiredCapabilityNotGranted { .. }
+                )
+            })
             .expect("RequiredCapabilityNotGranted diagnostic");
         assert_eq!(diag.level, DiagnosticLevel::Warn);
 

@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub use nexo_config::PluginDiscoveryConfig;
 
-use super::report::{
-    DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
-};
+use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 
 /// Expand `$NEXO_HOME` and `$HOME` references inside each search path.
 /// Returns the expanded paths in order plus an `UnresolvedEnvVar`

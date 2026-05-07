@@ -21,8 +21,7 @@ use std::time::Duration;
 use nexo_broker::{AnyBroker, BrokerHandle, LocalBroker};
 use nexo_config::{AgentsConfig, PluginDiscoveryConfig};
 use nexo_core::agent::nexo_plugin_registry::{
-    wire_plugin_registry_with_runtime, InitOutcome, PluginFactoryRegistry,
-    SubprocessRuntime,
+    wire_plugin_registry_with_runtime, InitOutcome, PluginFactoryRegistry, SubprocessRuntime,
 };
 use semver::Version;
 use tempfile::tempdir;
@@ -112,7 +111,12 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
         state_root: tmp.path().to_path_buf(),
         long_term_memory: None,
         llm_registry: std::sync::Arc::new(nexo_llm::LlmRegistry::new()),
-        llm_config: std::sync::Arc::new(nexo_config::LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+        llm_config: std::sync::Arc::new(nexo_config::LlmConfig {
+            providers: std::collections::HashMap::new(),
+            retry: Default::default(),
+            context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
+        }),
         sandbox: std::sync::Arc::new(nexo_core::agent::plugin_sandbox::SandboxRunner::discover()),
     };
 
@@ -140,10 +144,7 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
     let outcomes = &snap.last_report.init_outcomes;
     match outcomes.get("auto_e2e_plugin") {
         Some(InitOutcome::Ok { duration_ms: _ }) => {}
-        other => panic!(
-            "expected Ok outcome for auto_e2e_plugin, got {:?}",
-            other
-        ),
+        other => panic!("expected Ok outcome for auto_e2e_plugin, got {:?}", other),
     }
 
     // Broker bridge: the mock's `broker.publish` notification
@@ -156,7 +157,10 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
     let event = event.expect("subscription delivers Some");
     assert_eq!(event.topic, "plugin.inbound.auto_e2e_kind");
     assert_eq!(event.source, "auto_e2e");
-    assert_eq!(event.payload.get("hello").and_then(|v| v.as_str()), Some("world"));
+    assert_eq!(
+        event.payload.get("hello").and_then(|v| v.as_str()),
+        Some("world")
+    );
 
     // Cancel so any background tasks the bridge spawned exit.
     runtime.shutdown.cancel();
@@ -211,7 +215,12 @@ nexo_capabilities = ["broker"]
         state_root: tmp.path().to_path_buf(),
         long_term_memory: None,
         llm_registry: std::sync::Arc::new(nexo_llm::LlmRegistry::new()),
-        llm_config: std::sync::Arc::new(nexo_config::LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+        llm_config: std::sync::Arc::new(nexo_config::LlmConfig {
+            providers: std::collections::HashMap::new(),
+            retry: Default::default(),
+            context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
+        }),
         sandbox: std::sync::Arc::new(nexo_core::agent::plugin_sandbox::SandboxRunner::discover()),
     };
 

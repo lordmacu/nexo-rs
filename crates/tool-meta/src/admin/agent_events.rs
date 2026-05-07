@@ -537,8 +537,8 @@ mod tests {
         };
         let s = serde_json::to_string(&evt).unwrap();
         assert!(!s.contains("reason"), "absent reason skipped on wire");
-        let back: AgentEventKind = serde_json::from_value(serde_json::from_str(&s).unwrap())
-            .unwrap();
+        let back: AgentEventKind =
+            serde_json::from_value(serde_json::from_str(&s).unwrap()).unwrap();
         assert_eq!(back, evt);
     }
 }

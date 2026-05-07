@@ -97,9 +97,7 @@ impl OptOutMatcher {
         for e in extras {
             let lowered = e.to_ascii_lowercase();
             let escaped = regex::escape(&lowered);
-            if let Ok(re) =
-                Regex::new(&format!(r"(?i)(?:^|\W){}(?:\W|$)", escaped))
-            {
+            if let Ok(re) = Regex::new(&format!(r"(?i)(?:^|\W){}(?:\W|$)", escaped)) {
                 self.patterns.push((lowered, re));
             }
         }

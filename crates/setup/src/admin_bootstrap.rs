@@ -24,12 +24,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nexo_config::types::extensions::ExtensionsConfig;
+use nexo_core::agent::admin_rpc::dispatcher::ReloadSignal;
 use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
 use nexo_core::agent::admin_rpc::{
     validate_capabilities_at_boot, AdminAuditWriter, AdminCapabilityDecl, AdminRpcDispatcher,
     CapabilitySet, DispatcherAdminRouter, InMemoryAuditWriter, SqliteAdminAuditWriter,
 };
-use nexo_core::agent::admin_rpc::dispatcher::ReloadSignal;
 use nexo_core::agent::agent_events::{
     AgentEventEmitter, BroadcastAgentEventEmitter, NoopAgentEventEmitter,
 };
@@ -190,8 +190,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// its next turn). When `None`, the channel send still
     /// happens but `ProcessingAck.transcript_stamped` reports
     /// `Some(false)`.
-    pub transcript_writer:
-        Option<Arc<nexo_core::agent::transcripts::TranscriptWriter>>,
+    pub transcript_writer: Option<Arc<nexo_core::agent::transcripts::TranscriptWriter>>,
     /// Phase 82.13.c — operator pause-control store SHARED with
     /// the agent runtime. Boot constructs ONE
     /// `InMemoryProcessingControlStore`, hands it here for the
@@ -212,8 +211,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// deployments). Production wires
     /// `crate::admin_adapters::TenantsYamlPatcher` against
     /// `config/tenants.yaml`.
-    pub tenant_store:
-        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
+    pub tenant_store: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
     /// Phase 82.10.k — secrets store. `None` keeps
     /// `nexo/admin/secrets/write` returning the typed
     /// `secrets domain not configured` -32603. Production wires
@@ -222,8 +220,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// `std::env::set_var` so existing LLM clients see the new
     /// value without a daemon restart). Resolves M9.frame.a
     /// (microapp follow-up).
-    pub secrets_store:
-        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>>,
+    pub secrets_store: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>>,
     /// Phase 82.10.l — daemon-side LLM provider probe. `None`
     /// keeps `nexo/admin/llm_providers/probe` returning the
     /// typed `llm_providers probe not configured` -32603.
@@ -232,23 +229,20 @@ pub struct AdminBootstrapInputs<'a> {
     /// the existing `LlmYamlPatcher` so the probe reflects
     /// the same config agent traffic would resolve. Resolves
     /// M9.frame.b (microapp follow-up).
-    pub llm_provider_probe: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>,
-    >,
+    pub llm_provider_probe:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>>,
     /// Snapshot of every LLM provider factory the daemon registered
     /// at boot. Drives the `nexo/admin/llm_providers/catalog` RPC.
     /// Production passes
     /// `LlmRegistry::catalog()` mapped into the wire shape so SPA
     /// wizards render strict provider/model dropdowns. Empty vec
     /// disables the RPC silently (caller error message guides ops).
-    pub llm_provider_catalog:
-        Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>,
+    pub llm_provider_catalog: Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>,
     /// Phase 82.10.o — operator bearer rotator. Test override:
     /// when `Some`, the bootstrap installs this rotator
     /// directly without consulting [`Self::auth_token_path`] /
     /// [`Self::auth_initial_hash`]. Useful for mocks.
-    pub auth_rotator:
-        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::auth::AuthRotator>>,
+    pub auth_rotator: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::auth::AuthRotator>>,
     /// Phase 82.10.o — canonical operator-token file path.
     /// Production passes
     /// `<state_root>/secrets/operator_token.txt`. When `Some`
@@ -274,15 +268,13 @@ pub struct AdminBootstrapInputs<'a> {
     /// skills root the runtime `SkillLoader` reads from so admin
     /// writes land where the runtime reads (Phase 83.8.12.6
     /// layout).
-    pub skills_store:
-        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>>,
+    pub skills_store: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>>,
     /// Phase 82.14 close-out — escalations store. `None` keeps
     /// `nexo/admin/escalations/*` returning the typed
     /// `escalations domain not configured` -32603. Production
     /// wires the in-memory store + the future SQLite adapter.
-    pub escalation_store: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::escalations::EscalationStore>,
-    >,
+    pub escalation_store:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::escalations::EscalationStore>>,
     /// Phase 82.11.log close-out — durable agent-event log. When
     /// `Some`, boot composes the live broadcast emitter with the
     /// log into a `Tee([Broadcast, Log])` so every emit (transcripts
@@ -304,9 +296,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// Boot supervisor calls `sweep_retention(retention_days,
     /// max_rows)` on the same scheduler as the audit-log sweep
     /// when the log is wired.
-    pub agent_event_log: Option<
-        Arc<nexo_core::agent::admin_rpc::SqliteAgentEventLog>,
-    >,
+    pub agent_event_log: Option<Arc<nexo_core::agent::admin_rpc::SqliteAgentEventLog>>,
     /// Phase 82.10.n — channel credential persisters that bridge
     /// `nexo/admin/credentials/register` to per-channel runtime
     /// state (yaml accounts list + secret file). Boot iterates
@@ -318,7 +308,8 @@ pub struct AdminBootstrapInputs<'a> {
     /// [`crate::persisters::EmailPersister`],
     /// [`crate::persisters::WhatsappPersister`] when the matching
     /// plugin is enabled in `extensions.yaml`.
-    pub persisters: Vec<Arc<dyn nexo_core::agent::admin_rpc::domains::credentials::ChannelCredentialPersister>>,
+    pub persisters:
+        Vec<Arc<dyn nexo_core::agent::admin_rpc::domains::credentials::ChannelCredentialPersister>>,
     /// Phase 82.10.p — per-channel pairing trigger registry.
     /// Empty default keeps the legacy "Pending forever" behavior
     /// (admin pairing/start creates a row but never pushes QR);
@@ -327,7 +318,6 @@ pub struct AdminBootstrapInputs<'a> {
     /// future: `telegram` → telegram-link, etc).
     pub pairing_triggers: nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers,
 }
-
 
 impl AdminRpcBootstrap {
     /// Build every per-microapp wire. Returns `Ok(None)` when no
@@ -412,9 +402,7 @@ impl AdminRpcBootstrap {
                 .get(microapp_id)
                 .map(|e| e.allow_external_bind)
                 .unwrap_or(false);
-            if let Err(bind) =
-                crate::http_supervisor::validate_bind_policy(decl, allow_external)
-            {
+            if let Err(bind) = crate::http_supervisor::validate_bind_policy(decl, allow_external) {
                 return Err(AdminBootstrapError::ExternalBindNotAllowed {
                     microapp_id: microapp_id.clone(),
                     bind,
@@ -448,18 +436,16 @@ impl AdminRpcBootstrap {
         ));
         let llm_yaml = Arc::new(LlmYamlPatcherFs::new(inputs.config_dir.join("llm.yaml")));
         let credential_store = Arc::new(FilesystemCredentialStore::new(inputs.secrets_root));
-        let pairing_store = Arc::new(InMemoryPairingChallengeStore::new(
-            Duration::from_secs(5 * 60),
-        ));
+        let pairing_store = Arc::new(InMemoryPairingChallengeStore::new(Duration::from_secs(
+            5 * 60,
+        )));
 
         // Spawn the pairing prune task — every 30 s.
         let prune_handle = {
             let store = pairing_store.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(30));
-                interval.set_missed_tick_behavior(
-                    tokio::time::MissedTickBehavior::Delay,
-                );
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     interval.tick().await;
                     let removed = store.prune_expired();
@@ -499,12 +485,10 @@ impl AdminRpcBootstrap {
         let event_emitter: Arc<dyn AgentEventEmitter> =
             match (broadcast.clone(), inputs.agent_event_log.clone()) {
                 (Some(b), Some(log)) => Arc::new(
-                    nexo_core::agent::agent_events::TeeAgentEventEmitter::with_sinks(
-                        vec![
-                            b as Arc<dyn AgentEventEmitter>,
-                            log as Arc<dyn AgentEventEmitter>,
-                        ],
-                    ),
+                    nexo_core::agent::agent_events::TeeAgentEventEmitter::with_sinks(vec![
+                        b as Arc<dyn AgentEventEmitter>,
+                        log as Arc<dyn AgentEventEmitter>,
+                    ]),
                 ),
                 (Some(b), None) => b,
                 (None, Some(log)) => log as Arc<dyn AgentEventEmitter>,
@@ -536,8 +520,7 @@ impl AdminRpcBootstrap {
             // microapps stop polling pairing/status on a 1-2 s
             // cadence. Bound post-spawn alongside the response
             // writer in `bind_writer`.
-            let pairing_notifier =
-                Arc::new(crate::admin_adapters::DeferredPairingNotifier::new());
+            let pairing_notifier = Arc::new(crate::admin_adapters::DeferredPairingNotifier::new());
             // Phase 82.10.o — per-microapp deferred token-rotated
             // notifier, registered with the daemon-global fanout
             // below so a single rotate fans out to every connected
@@ -551,10 +534,7 @@ impl AdminRpcBootstrap {
                 .with_audit_writer(audit.clone())
                 .with_agents_domain(agents_yaml.clone(), inputs.reload_signal.clone())
                 .with_credentials_domain(credential_store.clone())
-                .with_pairing_domain(
-                    pairing_store.clone(),
-                    Some(pairing_notifier.clone()),
-                )
+                .with_pairing_domain(pairing_store.clone(), Some(pairing_notifier.clone()))
                 .with_pairing_triggers(inputs.pairing_triggers.clone())
                 .with_wa_bot_handle(Arc::new(
                     nexo_plugin_whatsapp::bot_registry::WhatsappBotHandle,
@@ -569,8 +549,7 @@ impl AdminRpcBootstrap {
             // possible.
             if !inputs.llm_provider_catalog.is_empty() {
                 let catalog_arc = Arc::new(inputs.llm_provider_catalog.clone());
-                let lookup =
-                    crate::admin_adapters::CatalogFactorySchema::new(catalog_arc);
+                let lookup = crate::admin_adapters::CatalogFactorySchema::new(catalog_arc);
                 dispatcher = dispatcher.with_llm_factory_schema(lookup);
             }
             // Phase 82.10.u — OAuth verifier store + sweep task.
@@ -585,12 +564,8 @@ impl AdminRpcBootstrap {
             // does not pile up.
             let store_for_sweep = oauth_store.clone();
             tokio::spawn(async move {
-                let mut tick = tokio::time::interval(
-                    std::time::Duration::from_secs(60),
-                );
-                tick.set_missed_tick_behavior(
-                    tokio::time::MissedTickBehavior::Delay,
-                );
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     tick.tick().await;
                     use nexo_llm_auth::VerifierStore;
@@ -609,9 +584,7 @@ impl AdminRpcBootstrap {
             if let Some(broker) = inputs.broker.clone() {
                 let outbound = Arc::new(
                     crate::admin_adapters::BrokerOutboundDispatcher::new(broker)
-                        .with_translator(Box::new(
-                            crate::admin_adapters::WhatsAppTranslator,
-                        )),
+                        .with_translator(Box::new(crate::admin_adapters::WhatsAppTranslator)),
                 );
                 dispatcher = dispatcher.with_channel_outbound(outbound);
             }
@@ -621,9 +594,8 @@ impl AdminRpcBootstrap {
             // outbound adapter but the ack reports
             // `transcript_stamped: false`.
             if let Some(writer) = inputs.transcript_writer.clone() {
-                let appender = Arc::new(
-                    crate::admin_adapters::TranscriptWriterAppender::new(writer),
-                );
+                let appender =
+                    Arc::new(crate::admin_adapters::TranscriptWriterAppender::new(writer));
                 dispatcher = dispatcher.with_transcript_appender(appender);
             }
             // Phase 82.13.c — install the processing-control
@@ -657,10 +629,11 @@ impl AdminRpcBootstrap {
             // `HttpLlmProviderProbe` against the local
             // `llm_yaml` so admin/llm_providers/probe just
             // works out of the box. Resolves M9.frame.b.
-            let probe: Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe> =
-                inputs.llm_provider_probe.clone().unwrap_or_else(|| {
-                    crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
-                });
+            let probe: Arc<
+                dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe,
+            > = inputs.llm_provider_probe.clone().unwrap_or_else(|| {
+                crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
+            });
             dispatcher = dispatcher.with_llm_provider_probe(probe);
             // Phase 82.10.o — install the auth rotator. Test
             // override (`auth_rotator: Some(...)`) wins;
@@ -682,7 +655,9 @@ impl AdminRpcBootstrap {
                 let rotator = crate::auth_rotator::FsAuthRotator::new(
                     token_path,
                     auth_token_rotated_fanout.clone()
-                        as Arc<dyn nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier>,
+                        as Arc<
+                            dyn nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier,
+                        >,
                     event_emitter.clone(),
                     initial_hash,
                 );
@@ -727,12 +702,10 @@ impl AdminRpcBootstrap {
                     .unwrap_or(false);
                 if wants_transcripts {
                     let mut rx = b.subscribe();
-                    let writer_clone: Arc<DeferredAdminOutboundWriter> =
-                        writer.clone();
+                    let writer_clone: Arc<DeferredAdminOutboundWriter> = writer.clone();
                     let microapp_id = id.clone();
                     let handle = tokio::spawn(async move {
-                        firehose_subscriber_loop(microapp_id, &mut rx, writer_clone)
-                            .await;
+                        firehose_subscriber_loop(microapp_id, &mut rx, writer_clone).await;
                     });
                     subscribe_handles.push(handle);
                 }
@@ -796,11 +769,7 @@ impl AdminRpcBootstrap {
     /// (Phase 82.10.h.b.pairing — closes the chicken-and-egg
     /// that previously left microapps polling
     /// `pairing/status`).
-    pub fn bind_writer(
-        &self,
-        extension_id: &str,
-        sender: tokio::sync::mpsc::Sender<String>,
-    ) {
+    pub fn bind_writer(&self, extension_id: &str, sender: tokio::sync::mpsc::Sender<String>) {
         if let Some(wire) = self.wires.get(extension_id) {
             wire.writer.bind(sender.clone());
             wire.pairing_notifier.bind(sender.clone());
@@ -939,10 +908,7 @@ mod tests {
     async fn build_fails_when_required_capability_not_granted() {
         let cfg = extensions_cfg_with_grant("agent-creator", &[]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let dir = tempfile::tempdir().unwrap();
         let err = AdminRpcBootstrap::build(AdminBootstrapInputs {
             config_dir: dir.path(),
@@ -979,10 +945,7 @@ mod tests {
     async fn build_succeeds_and_routes_for_granted_microapp() {
         let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let dir = tempfile::tempdir().unwrap();
         let bootstrap = AdminRpcBootstrap::build(AdminBootstrapInputs {
             config_dir: dir.path(),
@@ -1027,10 +990,8 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_task_spawned_for_microapp_with_transcripts_subscribe() {
-        let cfg = extensions_cfg_with_grant(
-            "agent-creator",
-            &["agents_crud", "transcripts_subscribe"],
-        );
+        let cfg =
+            extensions_cfg_with_grant("agent-creator", &["agents_crud", "transcripts_subscribe"]);
         let mut manifests = BTreeMap::new();
         manifests.insert(
             "agent-creator".into(),
@@ -1047,21 +1008,21 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1079,10 +1040,7 @@ mod tests {
     async fn no_subscribe_task_without_subscribe_capability() {
         let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let dir = tempfile::tempdir().unwrap();
         let bootstrap = AdminRpcBootstrap::build_with_firehose(
             AdminBootstrapInputs {
@@ -1094,21 +1052,21 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1120,10 +1078,8 @@ mod tests {
 
     #[tokio::test]
     async fn agent_events_subscribe_all_also_spawns_task() {
-        let cfg = extensions_cfg_with_grant(
-            "audit-app",
-            &["agents_crud", "agent_events_subscribe_all"],
-        );
+        let cfg =
+            extensions_cfg_with_grant("audit-app", &["agents_crud", "agent_events_subscribe_all"]);
         let mut manifests = BTreeMap::new();
         manifests.insert(
             "audit-app".into(),
@@ -1140,21 +1096,21 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1169,10 +1125,7 @@ mod tests {
         use nexo_plugin_manifest::manifest::HttpServerCapability;
         let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
         http.insert(
             "agent-creator".into(),
@@ -1194,21 +1147,21 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1229,10 +1182,7 @@ mod tests {
             entry.allow_external_bind = true;
         }
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
         http.insert(
             "agent-creator".into(),
@@ -1254,21 +1204,21 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1283,10 +1233,7 @@ mod tests {
         use nexo_plugin_manifest::manifest::HttpServerCapability;
         let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
         http.insert(
             "agent-creator".into(),
@@ -1309,21 +1256,21 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1341,16 +1288,11 @@ mod tests {
     async fn shared_processing_store_round_trips_pause_to_runtime_check() {
         use crate::admin_adapters::InMemoryProcessingControlStore;
         use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
-        use nexo_tool_meta::admin::processing::{
-            ProcessingControlState, ProcessingScope,
-        };
+        use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 
         let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
         let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "agent-creator".into(),
-            admin_caps(&["agents_crud"], &[]),
-        );
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
         let dir = tempfile::tempdir().unwrap();
 
         // ONE store, two consumers.
@@ -1421,10 +1363,8 @@ mod tests {
 
     #[tokio::test]
     async fn firehose_off_silences_subscribe_tasks_but_keeps_admin_rpc() {
-        let cfg = extensions_cfg_with_grant(
-            "agent-creator",
-            &["agents_crud", "transcripts_subscribe"],
-        );
+        let cfg =
+            extensions_cfg_with_grant("agent-creator", &["agents_crud", "transcripts_subscribe"]);
         let mut manifests = BTreeMap::new();
         manifests.insert(
             "agent-creator".into(),
@@ -1441,21 +1381,21 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
-            broker: None,
-            transcript_writer: None,
-            processing_store: None,
-            tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
-            skills_store: None,
-            escalation_store: None,
-            agent_event_log: None,
-            persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+                persisters: Vec::new(),
+                pairing_triggers: Default::default(),
             },
             false,
         )
@@ -1500,17 +1440,17 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
-            secrets_store: None,
-            llm_provider_probe: None,
-            llm_provider_catalog: Vec::new(),
-            auth_rotator: None,
-            auth_token_path: None,
-            auth_initial_hash: None,
+                secrets_store: None,
+                llm_provider_probe: None,
+                llm_provider_catalog: Vec::new(),
+                auth_rotator: None,
+                auth_token_path: None,
+                auth_initial_hash: None,
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),
                 persisters: Vec::new(),
-            pairing_triggers: Default::default(),
+                pairing_triggers: Default::default(),
             },
             true,
         )

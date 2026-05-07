@@ -33,8 +33,8 @@
 //!    (`<extension_id>_<tool>`) and reserved error code range
 //!    (-32000…-32099).
 
-use nexo_microapp_sdk::{Microapp, ToolCtx, ToolError, ToolReply};
 use nexo_microapp_sdk::{HookCtx, HookOutcome};
+use nexo_microapp_sdk::{Microapp, ToolCtx, ToolError, ToolReply};
 use serde_json::{json, Value};
 
 #[tokio::main]
@@ -49,18 +49,15 @@ async fn main() -> anyhow::Result<()> {
 /// exact same tool wiring the production binary ships — no risk
 /// of test-only builders drifting from the deployed shape.
 pub(crate) fn build_app() -> Microapp {
-    Microapp::new(
-        "template-microapp-rust",
-        env!("CARGO_PKG_VERSION"),
-    )
-    // Phase 83.8.8.a — opt into the admin RPC surface so
-    // `whoami_tool` can call `nexo/admin/agents/get`. Tools that
-    // don't touch the daemon admin layer can omit this.
-    .with_admin()
-    .with_tool("greet", greet_tool)
-    .with_tool("ping", ping_tool)
-    .with_tool("whoami", whoami_tool)
-    .with_hook("before_message", before_message_hook)
+    Microapp::new("template-microapp-rust", env!("CARGO_PKG_VERSION"))
+        // Phase 83.8.8.a — opt into the admin RPC surface so
+        // `whoami_tool` can call `nexo/admin/agents/get`. Tools that
+        // don't touch the daemon admin layer can omit this.
+        .with_admin()
+        .with_tool("greet", greet_tool)
+        .with_tool("ping", ping_tool)
+        .with_tool("whoami", whoami_tool)
+        .with_hook("before_message", before_message_hook)
 }
 
 /// Example tool 1: build a greeting from `args.name` + carry
@@ -68,10 +65,7 @@ pub(crate) fn build_app() -> Microapp {
 /// operator's transcripts) see which agent / channel / account
 /// answered.
 async fn greet_tool(args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
-    let name = args
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("world");
+    let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("world");
 
     // BindingContext access — the daemon threads agent_id,
     // channel, account_id (Phase 82.1) through every tool call.
@@ -110,20 +104,16 @@ async fn ping_tool(_args: Value, _ctx: ToolCtx) -> Result<ToolReply, ToolError> 
 /// this path with `MockAdminRpc` so a developer can assert on
 /// shape + canned responses without a daemon in the loop.
 async fn whoami_tool(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
-    let agent_id = ctx
-        .binding()
-        .map(|b| b.agent_id.clone())
-        .ok_or_else(|| ToolError::InvalidArguments(
+    let agent_id = ctx.binding().map(|b| b.agent_id.clone()).ok_or_else(|| {
+        ToolError::InvalidArguments(
             "binding context missing — whoami needs `_meta.nexo.binding.agent_id`".into(),
-        ))?;
+        )
+    })?;
     let admin = ctx.admin().ok_or_else(|| {
         ToolError::Internal("admin client not configured (build with `with_admin`)".into())
     })?;
     let detail = admin
-        .call_raw(
-            "nexo/admin/agents/get",
-            json!({ "agent_id": agent_id }),
-        )
+        .call_raw("nexo/admin/agents/get", json!({ "agent_id": agent_id }))
         .await
         .map_err(|e| ToolError::Internal(format!("admin/agents/get: {e}")))?;
     Ok(ToolReply::ok_json(json!({
@@ -137,10 +127,7 @@ async fn whoami_tool(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError>
 /// in the daemon's pre/post-turn lifecycle without owning a tool
 /// surface. The vote-to-block path (returning `Abort`) lets a
 /// compliance microapp veto a turn before the LLM sees it.
-async fn before_message_hook(
-    _args: Value,
-    ctx: HookCtx,
-) -> Result<HookOutcome, ToolError> {
+async fn before_message_hook(_args: Value, ctx: HookCtx) -> Result<HookOutcome, ToolError> {
     if let Some(meta) = ctx.inbound() {
         tracing::info!(
             target: "template-microapp-rust",

@@ -54,7 +54,10 @@ impl SqliteEscalationStore {
             .max_connections(2)
             .connect_with(opts)
             .await?;
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .ok();
         Self::run_ddl(&pool).await?;
         Ok(Self { pool })
     }
@@ -118,19 +121,15 @@ fn canonicalize(value: &Value) -> Value {
 
 #[async_trait]
 impl EscalationStore for SqliteEscalationStore {
-    async fn list(
-        &self,
-        filter: &EscalationsListParams,
-    ) -> anyhow::Result<Vec<EscalationEntry>> {
+    async fn list(&self, filter: &EscalationsListParams) -> anyhow::Result<Vec<EscalationEntry>> {
         // Load every row, deserialise, then run the existing
         // `filter_matches` predicate so the SQL stays simple +
         // the trait contract (filter / agent / scope_kind) lives
         // in one place. Server-side push-down lands in 82.14.c.b
         // alongside the per-tenant filter wire-up.
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT entry_json FROM nexo_escalations")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT entry_json FROM nexo_escalations")
+            .fetch_all(&self.pool)
+            .await?;
         let mut out: Vec<EscalationEntry> = Vec::with_capacity(rows.len());
         for (json,) in rows {
             match serde_json::from_str::<EscalationEntry>(&json) {
@@ -148,12 +147,10 @@ impl EscalationStore for SqliteEscalationStore {
         // Newest first by request/resolve time. Same ordering as
         // InMemoryEscalationStore.
         out.sort_by_key(|e| match &e.state {
-            EscalationState::Pending { requested_at_ms, .. } => {
-                std::cmp::Reverse(*requested_at_ms)
-            }
-            EscalationState::Resolved { resolved_at_ms, .. } => {
-                std::cmp::Reverse(*resolved_at_ms)
-            }
+            EscalationState::Pending {
+                requested_at_ms, ..
+            } => std::cmp::Reverse(*requested_at_ms),
+            EscalationState::Resolved { resolved_at_ms, .. } => std::cmp::Reverse(*resolved_at_ms),
             _ => std::cmp::Reverse(0u64),
         });
         out.truncate(filter.limit);
@@ -220,8 +217,9 @@ impl EscalationStore for SqliteEscalationStore {
         state: EscalationState,
     ) -> anyhow::Result<bool> {
         let scope = match &state {
-            EscalationState::Pending { scope, .. }
-            | EscalationState::Resolved { scope, .. } => scope.clone(),
+            EscalationState::Pending { scope, .. } | EscalationState::Resolved { scope, .. } => {
+                scope.clone()
+            }
             _ => anyhow::bail!("upsert_pending requires Pending or Resolved state"),
         };
         let key = scope_key(&scope)?;
@@ -312,7 +310,9 @@ mod tests {
         assert!(inserted, "first upsert reports new row");
         let state = store.get(&scope).await.unwrap();
         match state {
-            EscalationState::Pending { requested_at_ms, .. } => {
+            EscalationState::Pending {
+                requested_at_ms, ..
+            } => {
                 assert_eq!(requested_at_ms, 1_000);
             }
             other => panic!("expected Pending, got {other:?}"),
@@ -347,7 +347,9 @@ mod tests {
             .unwrap();
         assert!(changed);
         match store.get(&scope).await.unwrap() {
-            EscalationState::Resolved { resolved_at_ms, by, .. } => {
+            EscalationState::Resolved {
+                resolved_at_ms, by, ..
+            } => {
                 assert_eq!(resolved_at_ms, 2_000);
                 assert!(matches!(by, ResolvedBy::OperatorTakeover));
             }
@@ -398,7 +400,9 @@ mod tests {
         let timestamps: Vec<u64> = rows
             .into_iter()
             .map(|e| match e.state {
-                EscalationState::Pending { requested_at_ms, .. } => requested_at_ms,
+                EscalationState::Pending {
+                    requested_at_ms, ..
+                } => requested_at_ms,
                 _ => 0,
             })
             .collect();
@@ -408,7 +412,9 @@ mod tests {
         assert_eq!(two.len(), 2);
         assert_eq!(
             match &two[0].state {
-                EscalationState::Pending { requested_at_ms, .. } => *requested_at_ms,
+                EscalationState::Pending {
+                    requested_at_ms, ..
+                } => *requested_at_ms,
                 _ => 0,
             },
             3_000
@@ -446,7 +452,9 @@ mod tests {
         drop(store);
         let store2 = SqliteEscalationStore::open(&path).await.unwrap();
         match store2.get(&scope).await.unwrap() {
-            EscalationState::Pending { requested_at_ms, .. } => {
+            EscalationState::Pending {
+                requested_at_ms, ..
+            } => {
                 assert_eq!(requested_at_ms, 99, "Pending must survive restart");
             }
             other => panic!("expected Pending, got {other:?}"),

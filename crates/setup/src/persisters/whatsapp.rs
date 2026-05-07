@@ -87,8 +87,7 @@ impl ChannelCredentialPersister for WhatsappPersister {
             probed: false,
             healthy: false,
             detail: Some(
-                "whatsapp session health is reported via nexo/notify/pairing_status_changed"
-                    .into(),
+                "whatsapp session health is reported via nexo/notify/pairing_status_changed".into(),
             ),
             reason_code: Some(reason_code::NOT_PROBED.into()),
         }
@@ -109,11 +108,8 @@ mod tests {
     fn validate_shape_accepts_anything() {
         let p = WhatsappPersister::new();
         p.validate_shape(&json!(null), &HashMap::new()).unwrap();
-        p.validate_shape(
-            &json!({ "anything": "goes" }),
-            &HashMap::new(),
-        )
-        .unwrap();
+        p.validate_shape(&json!({ "anything": "goes" }), &HashMap::new())
+            .unwrap();
     }
 
     #[tokio::test]
@@ -137,7 +133,10 @@ mod tests {
         let outcome = p.probe(None, &json!({}), &HashMap::new()).await;
         assert!(!outcome.probed);
         assert!(!outcome.healthy);
-        assert_eq!(outcome.reason_code.as_deref(), Some(reason_code::NOT_PROBED));
+        assert_eq!(
+            outcome.reason_code.as_deref(),
+            Some(reason_code::NOT_PROBED)
+        );
         assert!(outcome.detail.is_some());
     }
 }

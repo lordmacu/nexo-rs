@@ -188,13 +188,7 @@ impl ToolRegistry {
     pub fn to_tool_defs_non_deferred(&self) -> Vec<ToolDef> {
         self.handlers
             .iter()
-            .filter(|e| {
-                !self
-                    .meta
-                    .get(e.key())
-                    .map(|m| m.deferred)
-                    .unwrap_or(false)
-            })
+            .filter(|e| !self.meta.get(e.key()).map(|m| m.deferred).unwrap_or(false))
             .map(|e| e.value().0.clone())
             .collect()
     }
@@ -623,11 +617,7 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names, vec!["FileRead"]);
         // Three names show up in the deferred side-channel.
-        let deferred: Vec<String> = reg
-            .deferred_tools()
-            .into_iter()
-            .map(|(n, _)| n)
-            .collect();
+        let deferred: Vec<String> = reg.deferred_tools().into_iter().map(|(n, _)| n).collect();
         for expected in &["TodoWrite", "Lsp", "Repl"] {
             assert!(
                 deferred.iter().any(|n| n == expected),

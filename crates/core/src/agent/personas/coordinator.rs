@@ -213,11 +213,7 @@ fn render_tool_list(allowed: &[String]) -> String {
     let mut matched: Vec<&str> = COORDINATOR_TOOLS
         .iter()
         .copied()
-        .filter(|name| {
-            allowed
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case(name))
-        })
+        .filter(|name| allowed.iter().any(|t| t.eq_ignore_ascii_case(name)))
         .collect();
     matched.sort_unstable();
 
@@ -315,8 +311,7 @@ mod tests {
     #[test]
     fn workers_section_renders_when_list_non_empty() {
         let tools: Vec<String> = vec!["TeamCreate".into(), "SendToPeer".into()];
-        let workers: Vec<String> =
-            vec!["worker-research".into(), "worker-impl".into()];
+        let workers: Vec<String> = vec!["worker-research".into(), "worker-impl".into()];
 
         let prompt = coordinator_system_prompt(CoordinatorPromptCtx {
             allowed_tools: &tools,

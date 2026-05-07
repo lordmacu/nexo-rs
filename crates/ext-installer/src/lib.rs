@@ -76,8 +76,9 @@ impl PluginCoords {
             Some((c, t)) => (c, t.to_string()),
             None => (s, "latest".to_string()),
         };
-        let (owner, repo) =
-            coords.split_once('/').ok_or_else(|| InstallError::CoordsInvalid {
+        let (owner, repo) = coords
+            .split_once('/')
+            .ok_or_else(|| InstallError::CoordsInvalid {
                 got: s.to_string(),
                 reason: "expected <owner>/<repo>[@<tag>]",
             })?;
@@ -227,15 +228,13 @@ pub async fn resolve_release(
 ) -> Result<ResolvedInstall, InstallError> {
     let release = fetch_release_raw(client, coords, api_base).await?;
     let version_str = release.tag_name.trim_start_matches('v').to_string();
-    let version = semver::Version::parse(&version_str).map_err(|e| {
-        InstallError::ReleaseShape {
-            owner: coords.owner.clone(),
-            repo: coords.repo.clone(),
-            reason: format!(
-                "release tag `{}` does not parse as semver `vX.Y.Z`: {e}",
-                release.tag_name
-            ),
-        }
+    let version = semver::Version::parse(&version_str).map_err(|e| InstallError::ReleaseShape {
+        owner: coords.owner.clone(),
+        repo: coords.repo.clone(),
+        reason: format!(
+            "release tag `{}` does not parse as semver `vX.Y.Z`: {e}",
+            release.tag_name
+        ),
     })?;
 
     // Locate the manifest asset.
@@ -283,26 +282,27 @@ pub async fn resolve_release(
     // daemons accept.
     let per_target_name = format!("{plugin_id}-{version_str}-{target}.tar.gz");
     let noarch_name = format!("{plugin_id}-{version_str}-noarch.tar.gz");
-    let (tarball_asset, tarball_name) = match release.assets.iter().find(|a| a.name == per_target_name) {
-        Some(a) => (a, per_target_name),
-        None => match release.assets.iter().find(|a| a.name == noarch_name) {
-            Some(a) => (a, noarch_name),
-            None => {
-                let available: Vec<String> = release
-                    .assets
-                    .iter()
-                    .filter(|a| a.name.ends_with(".tar.gz"))
-                    .map(|a| a.name.clone())
-                    .collect();
-                return Err(InstallError::TargetNotFound {
-                    id: plugin_id.clone(),
-                    version: version.clone(),
-                    target: target.to_string(),
-                    available,
-                });
-            }
-        },
-    };
+    let (tarball_asset, tarball_name) =
+        match release.assets.iter().find(|a| a.name == per_target_name) {
+            Some(a) => (a, per_target_name),
+            None => match release.assets.iter().find(|a| a.name == noarch_name) {
+                Some(a) => (a, noarch_name),
+                None => {
+                    let available: Vec<String> = release
+                        .assets
+                        .iter()
+                        .filter(|a| a.name.ends_with(".tar.gz"))
+                        .map(|a| a.name.clone())
+                        .collect();
+                    return Err(InstallError::TargetNotFound {
+                        id: plugin_id.clone(),
+                        version: version.clone(),
+                        target: target.to_string(),
+                        available,
+                    });
+                }
+            },
+        };
 
     // Find the matching .sha256 asset.
     let sha256_name = format!("{tarball_name}.sha256");
@@ -621,24 +621,18 @@ nexo_capabilities = ["broker"]
             .await;
         Mock::given(method("GET"))
             .and(path("/tarball"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_bytes(tarball_payload.as_slice()),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(tarball_payload.as_slice()))
             .mount(&server)
             .await;
 
         let coords = PluginCoords::parse("alice/slack-plugin@v0.2.0").unwrap();
         let client = reqwest::Client::new();
-        let resolved =
-            resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
-                .await
-                .expect("resolve");
+        let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
+            .await
+            .expect("resolve");
         assert_eq!(resolved.entry.id, "slack");
         assert_eq!(resolved.entry.version.to_string(), "0.2.0");
-        assert_eq!(
-            resolved.entry.tier,
-            nexo_ext_registry::ExtTier::Community
-        );
+        assert_eq!(resolved.entry.tier, nexo_ext_registry::ExtTier::Community);
 
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("slack-0.2.0.tar.gz");
@@ -672,9 +666,7 @@ nexo_capabilities = ["broker"]
 
         let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
-        match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
-            .await
-        {
+        match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri()).await {
             Err(InstallError::ReleaseShape { reason, .. }) => {
                 assert!(reason.contains("nexo-plugin.toml"));
             }
@@ -716,9 +708,7 @@ nexo_capabilities = ["broker"]
 
         let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
-        match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
-            .await
-        {
+        match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri()).await {
             Err(InstallError::TargetNotFound { available, .. }) => {
                 assert_eq!(
                     available,
@@ -759,7 +749,10 @@ nexo_capabilities = ["broker"]
         let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
             .await
             .expect("noarch fallback");
-        assert_eq!(resolved.entry.downloads[0].url.as_str(), "https://example.com/tar");
+        assert_eq!(
+            resolved.entry.downloads[0].url.as_str(),
+            "https://example.com/tar"
+        );
         assert!(resolved.sha256_url.contains("/sha"));
     }
 
@@ -807,8 +800,7 @@ nexo_capabilities = ["broker"]
         let manifest_body = manifest_toml("slack", "0.2.0");
         let tarball_payload = b"actual bytes here";
         // ADVERTISE A WRONG sha256 — install must reject + remove.
-        let advertised_sha =
-            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
+        let advertised_sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
 
         let manifest_url = format!("{}/manifest", server.uri());
         let tarball_url = format!("{}/tarball", server.uri());
@@ -839,18 +831,15 @@ nexo_capabilities = ["broker"]
             .await;
         Mock::given(method("GET"))
             .and(path("/tarball"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_bytes(tarball_payload.as_slice()),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(tarball_payload.as_slice()))
             .mount(&server)
             .await;
 
         let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
-        let resolved =
-            resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
-                .await
-                .expect("resolve");
+        let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
+            .await
+            .expect("resolve");
 
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("tampered.tar.gz");

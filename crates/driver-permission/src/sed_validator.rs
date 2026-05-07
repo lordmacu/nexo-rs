@@ -4,8 +4,8 @@
 //! Validates sed commands against an allowlist (line-printing, substitution)
 //! and a denylist (write/execute commands, backslash tricks, etc.).
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::path_extractor::parse_command_args;
 
@@ -65,8 +65,15 @@ fn is_line_printing_command(command: &str, expressions: &[String]) -> bool {
         .collect();
 
     let allowed_flags = [
-        "-n", "--quiet", "--silent", "-E", "--regexp-extended",
-        "-r", "-z", "--zero-terminated", "--posix",
+        "-n",
+        "--quiet",
+        "--silent",
+        "-E",
+        "--regexp-extended",
+        "-r",
+        "-z",
+        "--zero-terminated",
+        "--posix",
     ];
 
     if !validate_flags_against_allowlist(&flags, &allowed_flags) {
@@ -75,7 +82,9 @@ fn is_line_printing_command(command: &str, expressions: &[String]) -> bool {
 
     // Must have -n flag
     let has_n = flags.iter().any(|f| {
-        f == "-n" || f == "--quiet" || f == "--silent"
+        f == "-n"
+            || f == "--quiet"
+            || f == "--silent"
             || (f.starts_with('-') && !f.starts_with("--") && f.contains('n'))
     });
     if !has_n {
@@ -218,16 +227,12 @@ fn contains_dangerous_operations(expression: &str) -> bool {
     }
 
     // Negation operator (!)
-    if cmd.starts_with('!')
-        || Regex::new(r"[/\d$]!").map_or(false, |re| re.is_match(cmd))
-    {
+    if cmd.starts_with('!') || Regex::new(r"[/\d$]!").map_or(false, |re| re.is_match(cmd)) {
         return true;
     }
 
     // Step address (~)
-    if Regex::new(r"\d\s*~\s*\d|,\s*~\s*\d|\$\s*~\s*\d")
-        .map_or(false, |re| re.is_match(cmd))
-    {
+    if Regex::new(r"\d\s*~\s*\d|,\s*~\s*\d|\$\s*~\s*\d").map_or(false, |re| re.is_match(cmd)) {
         return true;
     }
 
@@ -242,9 +247,7 @@ fn contains_dangerous_operations(expression: &str) -> bool {
     }
 
     // Backslash tricks
-    if cmd.contains("s\\")
-        || Regex::new(r"\\[|#%@]").map_or(false, |re| re.is_match(cmd))
-    {
+    if cmd.contains("s\\") || Regex::new(r"\\[|#%@]").map_or(false, |re| re.is_match(cmd)) {
         return true;
     }
 
@@ -259,8 +262,8 @@ fn contains_dangerous_operations(expression: &str) -> bool {
     }
 
     // Malformed substitution
-    if cmd.starts_with("s/") && !Regex::new(r"^s/[^/]*/[^/]*/[^/]*$")
-        .map_or(false, |re| re.is_match(cmd))
+    if cmd.starts_with("s/")
+        && !Regex::new(r"^s/[^/]*/[^/]*/[^/]*$").map_or(false, |re| re.is_match(cmd))
     {
         return true;
     }
@@ -604,13 +607,19 @@ mod tests {
     #[test]
     fn substitution_with_files_allowed_in_edit_mode() {
         assert!(sed_command_is_allowed("sed 's/foo/bar/' file.txt", true));
-        assert!(sed_command_is_allowed("sed -i 's/foo/bar/g' file.txt", true));
+        assert!(sed_command_is_allowed(
+            "sed -i 's/foo/bar/g' file.txt",
+            true
+        ));
     }
 
     #[test]
     fn substitution_with_dangerous_flags_rejected() {
         assert!(!sed_command_is_allowed("sed 's/foo/bar/e' file.txt", true));
-        assert!(!sed_command_is_allowed("sed 's/foo/bar/w out.txt' file.txt", true));
+        assert!(!sed_command_is_allowed(
+            "sed 's/foo/bar/w out.txt' file.txt",
+            true
+        ));
     }
 
     // ── Expressions ──
@@ -686,7 +695,10 @@ mod tests {
 
     #[test]
     fn in_place_sed_without_edit_mode_blocked() {
-        assert!(!sed_command_is_allowed("sed -i 's/foo/bar/' file.txt", false));
+        assert!(!sed_command_is_allowed(
+            "sed -i 's/foo/bar/' file.txt",
+            false
+        ));
     }
 
     #[test]

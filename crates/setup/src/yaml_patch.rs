@@ -1981,10 +1981,7 @@ pub fn read_llm_provider_field(
     }
     let root: Value =
         serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
-    let provider = match root
-        .get("providers")
-        .and_then(|p| p.get(provider_id))
-    {
+    let provider = match root.get("providers").and_then(|p| p.get(provider_id)) {
         Some(p) => p,
         None => return Ok(None),
     };
@@ -2008,13 +2005,11 @@ pub fn upsert_llm_provider_field(
 ) -> Result<()> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut root: Value = if path.exists() {
-        let text =
-            fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         if text.trim().is_empty() {
             Value::Mapping(Mapping::new())
         } else {
-            serde_yaml::from_str(&text)
-                .with_context(|| format!("parse {}", path.display()))?
+            serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?
         }
     } else {
         Value::Mapping(Mapping::new())
@@ -2032,7 +2027,9 @@ pub fn upsert_llm_provider_field(
         let providers = root_map
             .get_mut(&providers_key)
             .and_then(Value::as_mapping_mut)
-            .ok_or_else(|| anyhow::anyhow!("`providers:` is not a mapping in {}", path.display()))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("`providers:` is not a mapping in {}", path.display())
+            })?;
         let provider_key = Value::String(provider_id.into());
         if !providers.contains_key(&provider_key) {
             providers.insert(provider_key.clone(), Value::Mapping(Mapping::new()));
@@ -2063,10 +2060,7 @@ pub fn remove_llm_provider(path: &Path, provider_id: &str) -> Result<bool> {
     let mut root: Value =
         serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
     let removed = {
-        let providers = match root
-            .get_mut("providers")
-            .and_then(Value::as_mapping_mut)
-        {
+        let providers = match root.get_mut("providers").and_then(Value::as_mapping_mut) {
             Some(m) => m,
             None => return Ok(false),
         };
@@ -2090,10 +2084,7 @@ pub fn remove_llm_provider(path: &Path, provider_id: &str) -> Result<bool> {
 /// List provider ids under `tenants.<tenant_id>.providers`.
 /// Empty when the tenant has no providers block (or the
 /// tenant or `tenants:` are absent).
-pub fn list_llm_tenant_provider_ids(
-    path: &Path,
-    tenant_id: &str,
-) -> Result<Vec<String>> {
+pub fn list_llm_tenant_provider_ids(path: &Path, tenant_id: &str) -> Result<Vec<String>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -2167,13 +2158,11 @@ pub fn upsert_llm_tenant_provider_field(
 ) -> Result<()> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut root: Value = if path.exists() {
-        let text =
-            fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         if text.trim().is_empty() {
             Value::Mapping(Mapping::new())
         } else {
-            serde_yaml::from_str(&text)
-                .with_context(|| format!("parse {}", path.display()))?
+            serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?
         }
     } else {
         Value::Mapping(Mapping::new())
@@ -2200,7 +2189,10 @@ pub fn upsert_llm_tenant_provider_field(
             .get_mut(&tenant_key)
             .and_then(Value::as_mapping_mut)
             .ok_or_else(|| {
-                anyhow::anyhow!("`tenants.{tenant_id}:` is not a mapping in {}", path.display())
+                anyhow::anyhow!(
+                    "`tenants.{tenant_id}:` is not a mapping in {}",
+                    path.display()
+                )
             })?;
         let providers_key = Value::String("providers".into());
         if !tenant.contains_key(&providers_key) {
@@ -2238,11 +2230,7 @@ pub fn upsert_llm_tenant_provider_field(
 /// LEFT IN PLACE on purpose: deleting a single provider must
 /// not delete the whole tenant config (operator's other
 /// per-tenant knobs may live there in future).
-pub fn remove_llm_tenant_provider(
-    path: &Path,
-    tenant_id: &str,
-    provider_id: &str,
-) -> Result<bool> {
+pub fn remove_llm_tenant_provider(path: &Path, tenant_id: &str, provider_id: &str) -> Result<bool> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     if !path.exists() {
         return Ok(false);

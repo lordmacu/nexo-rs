@@ -131,8 +131,9 @@ impl SessionRegistry for SqliteSessionRegistry {
 
         match row {
             Ok(r) => match r.try_get::<String, _>("session_id").ok() {
-                Some(s) => Uuid::parse_str(&s)
-                    .unwrap_or_else(|_| Uuid::parse_str(&candidate).unwrap()),
+                Some(s) => {
+                    Uuid::parse_str(&s).unwrap_or_else(|_| Uuid::parse_str(&candidate).unwrap())
+                }
                 None => Uuid::parse_str(&candidate).unwrap(),
             },
             Err(e) => {
@@ -155,11 +156,10 @@ impl SessionRegistry for SqliteSessionRegistry {
             return 0;
         }
         let cutoff = chrono::Utc::now().timestamp_millis() - max_idle_ms;
-        let res =
-            sqlx::query("DELETE FROM mcp_channel_sessions WHERE last_seen_ms < ?1")
-                .bind(cutoff)
-                .execute(&self.pool)
-                .await;
+        let res = sqlx::query("DELETE FROM mcp_channel_sessions WHERE last_seen_ms < ?1")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await;
         match res {
             Ok(r) => r.rows_affected() as usize,
             Err(e) => {

@@ -7,14 +7,20 @@ use uuid::Uuid;
 #[tokio::test]
 async fn mutation_hook_fires_on_remember_and_forget() {
     use async_trait::async_trait;
-    use nexo_driver_types::{
-        MemoryMutationHook, MemoryMutationOp, MemoryMutationScope,
-    };
+    use nexo_driver_types::{MemoryMutationHook, MemoryMutationOp, MemoryMutationScope};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
     struct Recorder {
-        events: Mutex<Vec<(String, String, MemoryMutationScope, MemoryMutationOp, String)>>,
+        events: Mutex<
+            Vec<(
+                String,
+                String,
+                MemoryMutationScope,
+                MemoryMutationOp,
+                String,
+            )>,
+        >,
     }
     #[async_trait]
     impl MemoryMutationHook for Recorder {
@@ -65,10 +71,7 @@ async fn mutation_hook_fires_on_remember_and_forget() {
 #[tokio::test]
 async fn mutation_hook_absent_by_default_does_not_panic() {
     let db = LongTermMemory::open(":memory:").await.unwrap();
-    let id = db
-        .remember("ana", "no hook attached", &[])
-        .await
-        .unwrap();
+    let id = db.remember("ana", "no hook attached", &[]).await.unwrap();
     db.forget(id).await.unwrap();
     // Just reaching here without panic proves the path tolerates a None hook.
 }
@@ -76,9 +79,7 @@ async fn mutation_hook_absent_by_default_does_not_panic() {
 #[tokio::test]
 async fn mutation_hook_skips_event_when_forget_id_missing() {
     use async_trait::async_trait;
-    use nexo_driver_types::{
-        MemoryMutationHook, MemoryMutationOp, MemoryMutationScope,
-    };
+    use nexo_driver_types::{MemoryMutationHook, MemoryMutationOp, MemoryMutationScope};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]

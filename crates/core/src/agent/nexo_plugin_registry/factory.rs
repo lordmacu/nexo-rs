@@ -132,9 +132,7 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Arc;
 
-    use crate::agent::plugin_host::{
-        PluginInitContext, PluginInitError, PluginShutdownError,
-    };
+    use crate::agent::plugin_host::{PluginInitContext, PluginInitError, PluginShutdownError};
 
     /// Mock NexoPlugin used across factory tests. Owns a manifest
     /// instance so `manifest()` can return a stable reference.
@@ -163,10 +161,7 @@ mod tests {
         fn manifest(&self) -> &PluginManifest {
             &self.manifest
         }
-        async fn init(
-            &self,
-            _ctx: &mut PluginInitContext<'_>,
-        ) -> Result<(), PluginInitError> {
+        async fn init(&self, _ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
             Ok(())
         }
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
@@ -252,8 +247,7 @@ mod tests {
     #[test]
     fn instantiate_success_returns_arc_handle() {
         let mut reg = PluginFactoryRegistry::new();
-        let factory: PluginFactory =
-            Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
+        let factory: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
         reg.register("alpha", factory).unwrap();
         let m = fixture_manifest("alpha");
         match reg.instantiate("alpha", &m) {

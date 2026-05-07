@@ -27,9 +27,7 @@ pub mod router;
 pub mod transcript_appender;
 pub mod wa_bot;
 
-pub use agent_events_sqlite::{
-    AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog,
-};
+pub use agent_events_sqlite::{AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog};
 pub use audit_sqlite::{
     format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
 };
@@ -41,8 +39,8 @@ pub use audit::{
     InMemoryAuditWriter,
 };
 pub use capabilities::{
-    validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError,
-    CapabilityBootReport, CapabilityBootWarn, CapabilitySet,
+    validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError, CapabilityBootReport,
+    CapabilityBootWarn, CapabilitySet,
 };
 pub use channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,

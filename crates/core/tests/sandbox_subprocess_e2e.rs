@@ -148,10 +148,7 @@ async fn sandboxed_plugin_cannot_read_shadow() {
     let outcomes = &snap.last_report.init_outcomes;
     match outcomes.get("sandbox_e2e_plugin") {
         Some(InitOutcome::Ok { duration_ms: _ }) => {}
-        other => panic!(
-            "expected Ok outcome under sandbox, got {:?}",
-            other
-        ),
+        other => panic!("expected Ok outcome under sandbox, got {:?}", other),
     }
 
     // Give the mock script a moment to attempt the shadow read

@@ -16,9 +16,7 @@ use chrono::Utc;
 use thiserror::Error;
 use uuid::Uuid;
 
-pub use nexo_tool_meta::{
-    format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION,
-};
+pub use nexo_tool_meta::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};
 
 /// Header allowlist forwarded inside a [`WebhookEnvelope`].
 ///
@@ -62,9 +60,7 @@ pub fn envelope_from_handled(
 }
 
 /// Allowlist filter — case-insensitive header-name match.
-pub fn filter_forward_headers(
-    headers: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+pub fn filter_forward_headers(headers: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for (name, value) in headers {
         let lower = name.to_ascii_lowercase();
@@ -96,11 +92,7 @@ pub enum DispatchError {
 pub trait WebhookDispatcher: Send + Sync {
     /// Topic resolution + transport. Implementors get the topic
     /// pre-rendered by the per-source publish_to template.
-    async fn dispatch(
-        &self,
-        topic: &str,
-        envelope: WebhookEnvelope,
-    ) -> Result<(), DispatchError>;
+    async fn dispatch(&self, topic: &str, envelope: WebhookEnvelope) -> Result<(), DispatchError>;
 }
 
 /// Test helper — captures every dispatched envelope in-memory.
@@ -138,11 +130,7 @@ impl RecordingWebhookDispatcher {
 
 #[async_trait]
 impl WebhookDispatcher for RecordingWebhookDispatcher {
-    async fn dispatch(
-        &self,
-        topic: &str,
-        envelope: WebhookEnvelope,
-    ) -> Result<(), DispatchError> {
+    async fn dispatch(&self, topic: &str, envelope: WebhookEnvelope) -> Result<(), DispatchError> {
         self.inner.lock().await.push((topic.to_string(), envelope));
         Ok(())
     }

@@ -85,10 +85,7 @@ impl PiiRedactor {
             // unavailable in `regex`; we strip pre/post on the
             // matched range.
             card: Regex::new(r"\b(?:\d[\s\-]?){13,19}\b").unwrap(),
-            email: Regex::new(
-                r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",
-            )
-            .unwrap(),
+            email: Regex::new(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b").unwrap(),
             luhn_check: false,
             redact_phones: true,
             redact_cards: true,
@@ -158,8 +155,7 @@ impl PiiRedactor {
             redacted = pattern
                 .replace_all(&redacted, |caps: &regex::Captures<'_>| {
                     let raw = &caps[0];
-                    let digits: usize =
-                        raw.chars().filter(|c| c.is_ascii_digit()).count();
+                    let digits: usize = raw.chars().filter(|c| c.is_ascii_digit()).count();
                     if digits < 7 {
                         // Too short — keep verbatim (auth codes,
                         // SKUs, etc.).
@@ -176,10 +172,7 @@ impl PiiRedactor {
 }
 
 fn is_luhn_valid(raw: &str) -> bool {
-    let digits: Vec<u32> = raw
-        .chars()
-        .filter_map(|c| c.to_digit(10))
-        .collect();
+    let digits: Vec<u32> = raw.chars().filter_map(|c| c.to_digit(10)).collect();
     if digits.len() < 13 || digits.len() > 19 {
         return false;
     }
@@ -276,9 +269,8 @@ mod tests {
     #[test]
     fn redacts_multiple_pii_types_in_one_pass() {
         let r = PiiRedactor::new();
-        let (_, stats) = r.redact(
-            "email a@b.co or call +1 555 123 4567 or charge 4111-1111-1111-1111",
-        );
+        let (_, stats) =
+            r.redact("email a@b.co or call +1 555 123 4567 or charge 4111-1111-1111-1111");
         assert_eq!(stats.emails_redacted, 1);
         assert_eq!(stats.phones_redacted, 1);
         assert_eq!(stats.cards_redacted, 1);

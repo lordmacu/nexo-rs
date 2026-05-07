@@ -119,8 +119,13 @@ impl PlanApprovalRegistry {
 /// (bracketed command grammar for operator-side approvals).
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanModeApprovalCommand {
-    Approve { plan_id: String },
-    Reject { plan_id: String, reason: Option<String> },
+    Approve {
+        plan_id: String,
+    },
+    Reject {
+        plan_id: String,
+        reason: Option<String>,
+    },
 }
 
 /// Parse a `[plan-mode] approve|reject plan_id=<id> [reason=<text>]`
@@ -562,7 +567,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
@@ -737,7 +742,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,

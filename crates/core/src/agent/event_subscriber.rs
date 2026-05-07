@@ -20,9 +20,7 @@ use std::time::Duration;
 
 use nexo_broker::{handle::BrokerHandle, AnyBroker, Event};
 use nexo_config::types::agents::InboundBinding;
-use nexo_config::types::event_subscriber::{
-    EventSubscriberBinding, OverflowPolicy, SynthesisMode,
-};
+use nexo_config::types::event_subscriber::{EventSubscriberBinding, OverflowPolicy, SynthesisMode};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::sync::{Mutex, Notify, Semaphore};
@@ -63,10 +61,7 @@ pub fn event_inbound_topic(source_id: &str) -> String {
 /// modification, plus a top-level `_nexo_event_source` field
 /// that the inbound resolver reads to populate
 /// `BindingContext.event_source`.
-pub fn build_synthesised_payload(
-    binding: &EventSubscriberBinding,
-    event: &Event,
-) -> Option<Value> {
+pub fn build_synthesised_payload(binding: &EventSubscriberBinding, event: &Event) -> Option<Value> {
     if binding.synthesize_inbound == SynthesisMode::Off {
         return None;
     }
@@ -163,9 +158,9 @@ pub fn synthesize_event_inbound_bindings(
 ) -> Vec<InboundBinding> {
     let mut out = declared.to_vec();
     for sub in event_subscribers {
-        let already = out.iter().any(|b| {
-            b.plugin == EVENT_BINDING_CHANNEL && b.instance.as_deref() == Some(&sub.id)
-        });
+        let already = out
+            .iter()
+            .any(|b| b.plugin == EVENT_BINDING_CHANNEL && b.instance.as_deref() == Some(&sub.id));
         if !already {
             let mut binding = InboundBinding::default();
             binding.plugin = EVENT_BINDING_CHANNEL.into();
@@ -183,9 +178,7 @@ pub fn synthesize_event_inbound_bindings(
 /// `plugin.inbound.event.*`. Returns `None` for payloads without
 /// the field (legacy / native-channel inbounds) or when the field
 /// fails to deserialise (shape mismatch — log + skip).
-pub fn extract_nexo_event_source(
-    payload: &Value,
-) -> Option<nexo_tool_meta::EventSourceMeta> {
+pub fn extract_nexo_event_source(payload: &Value) -> Option<nexo_tool_meta::EventSourceMeta> {
     let raw = payload.as_object()?.get(EVENT_SOURCE_PAYLOAD_FIELD)?;
     serde_json::from_value(raw.clone()).ok()
 }
@@ -267,9 +260,7 @@ pub async fn run_event_subscriber(
                     None => None,
                 };
 
-                if let Some(payload) =
-                    build_synthesised_payload(&consumer_sub.binding, &event)
-                {
+                if let Some(payload) = build_synthesised_payload(&consumer_sub.binding, &event) {
                     let topic = event_inbound_topic(&consumer_sub.binding.id);
                     let republish = Event::new(
                         topic.clone(),
@@ -486,13 +477,7 @@ mod skeleton_tests {
         let broker = AnyBroker::local();
         let sub = EventSubscriber::new("ana", mk_binding("a", "x.>"), broker);
         assert!(sub.semaphore.is_some());
-        assert_eq!(
-            sub.semaphore
-                .as_ref()
-                .unwrap()
-                .available_permits(),
-            1
-        );
+        assert_eq!(sub.semaphore.as_ref().unwrap().available_permits(), 1);
     }
 
     #[tokio::test]
@@ -536,7 +521,10 @@ mod skeleton_tests {
         let text = payload["text"].as_str().unwrap();
         assert!(text.starts_with("<event subject=\"alert.cpu.high\""));
         assert!(text.ends_with("/>"));
-        assert_eq!(payload[EVENT_SOURCE_PAYLOAD_FIELD]["synthesis_mode"], "tick");
+        assert_eq!(
+            payload[EVENT_SOURCE_PAYLOAD_FIELD]["synthesis_mode"],
+            "tick"
+        );
     }
 
     #[test]
@@ -791,7 +779,11 @@ mod skeleton_tests {
         broker
             .publish(
                 "plugin.inbound.event.loopy",
-                Event::new("plugin.inbound.event.loopy", "tester", serde_json::json!({})),
+                Event::new(
+                    "plugin.inbound.event.loopy",
+                    "tester",
+                    serde_json::json!({}),
+                ),
             )
             .await
             .unwrap();

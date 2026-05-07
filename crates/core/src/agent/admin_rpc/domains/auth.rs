@@ -48,10 +48,7 @@ pub trait AuthRotator: Send + Sync {
     ///    to all connected microapp listeners.
     /// 4. Emit the audit firehose event
     ///    `AgentEventKind::SecurityEvent::TokenRotated`.
-    async fn rotate(
-        &self,
-        input: AuthRotateInput,
-    ) -> Result<AuthRotateResponse, AdminRpcError>;
+    async fn rotate(&self, input: AuthRotateInput) -> Result<AuthRotateResponse, AdminRpcError>;
 }
 
 /// Dispatcher entry point. Validates the supplied token (if
@@ -59,20 +56,14 @@ pub trait AuthRotator: Send + Sync {
 /// Audit emit is the rotator's responsibility, not the
 /// handler's — the audit row carries data only the rotator
 /// knows (resolved hash, persistence timestamp).
-pub async fn rotate_token(
-    rotator: &dyn AuthRotator,
-    raw_params: Value,
-) -> AdminRpcResult {
+pub async fn rotate_token(rotator: &dyn AuthRotator, raw_params: Value) -> AdminRpcResult {
     match try_rotate(rotator, raw_params).await {
         Ok(v) => AdminRpcResult::ok(v),
         Err(e) => AdminRpcResult::err(e),
     }
 }
 
-async fn try_rotate(
-    rotator: &dyn AuthRotator,
-    raw_params: Value,
-) -> Result<Value, AdminRpcError> {
+async fn try_rotate(rotator: &dyn AuthRotator, raw_params: Value) -> Result<Value, AdminRpcError> {
     let input: AuthRotateInput = serde_json::from_value(raw_params)
         .map_err(|e| AdminRpcError::InvalidParams(e.to_string()))?;
     if let Some(t) = input.new_token.as_deref() {
@@ -147,7 +138,10 @@ mod tests {
         assert_eq!(v["new_hash"], "deadbeefcafebabe");
         let calls = rotator.invocations.lock().await;
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].new_token.as_deref(), Some("super-secret-bearer-32"));
+        assert_eq!(
+            calls[0].new_token.as_deref(),
+            Some("super-secret-bearer-32")
+        );
         assert_eq!(calls[0].reason.as_deref(), Some("scheduled rotation"));
     }
 
@@ -165,16 +159,15 @@ mod tests {
     #[tokio::test]
     async fn rotate_rejects_short_token_without_reaching_rotator() {
         let rotator = Arc::new(MockAuthRotator::new(canned_response()));
-        let result = rotate_token(
-            rotator.as_ref(),
-            json!({ "new_token": "short" }),
-        )
-        .await;
+        let result = rotate_token(rotator.as_ref(), json!({ "new_token": "short" })).await;
         let err = result.error.expect("err result");
         assert!(result.result.is_none());
         match err {
             AdminRpcError::InvalidParams(msg) => {
-                assert!(msg.contains(">= 16"), "expected length floor in msg, got {msg}");
+                assert!(
+                    msg.contains(">= 16"),
+                    "expected length floor in msg, got {msg}"
+                );
             }
             other => panic!("expected InvalidParams, got {other:?}"),
         }

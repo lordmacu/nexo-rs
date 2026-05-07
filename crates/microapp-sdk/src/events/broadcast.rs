@@ -89,13 +89,7 @@ pub fn build_persisting_listener<T>(
     state: Arc<EventBroadcastState<T>>,
 ) -> Arc<dyn Fn(Value) + Send + Sync>
 where
-    T: EventMetadata
-        + Serialize
-        + DeserializeOwned
-        + Clone
-        + Send
-        + Sync
-        + 'static,
+    T: EventMetadata + Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 {
     let inner = build_broadcast_listener::<T>(method_name, state.broadcast.clone());
     // Subscribe ONCE here so the persistence side-effect rides on

@@ -39,9 +39,7 @@ pub fn extension_state_root() -> PathBuf {
 /// Pure path computation — does NOT touch the filesystem.
 /// Pair with [`ensure_state_dir`] to materialise it.
 pub fn state_dir_for(extension_id: &str) -> PathBuf {
-    extension_state_root()
-        .join(extension_id)
-        .join("state")
+    extension_state_root().join(extension_id).join("state")
 }
 
 /// Build [`state_dir_for`] AND `mkdir -p` it. Idempotent. Any

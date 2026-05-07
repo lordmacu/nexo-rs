@@ -155,10 +155,7 @@ mod tests {
 
     #[test]
     fn inactive_rate_limit_always_allows() {
-        let rl = ChannelRateLimit {
-            rps: 0.0,
-            burst: 0,
-        };
+        let rl = ChannelRateLimit { rps: 0.0, burst: 0 };
         let map = ClientBucketMap::new(rl);
         let key = ClientBucketKey {
             source_id: "x".into(),

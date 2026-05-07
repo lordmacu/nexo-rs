@@ -7,9 +7,7 @@ use std::fs;
 
 use semver::Version;
 
-use nexo_core::agent::nexo_plugin_registry::{
-    discover, NexoPluginRegistry, PluginDiscoveryConfig,
-};
+use nexo_core::agent::nexo_plugin_registry::{discover, NexoPluginRegistry, PluginDiscoveryConfig};
 
 fn write_manifest(dir: &std::path::Path, plugin_id: &str, version: &str) {
     fs::create_dir_all(dir).unwrap();

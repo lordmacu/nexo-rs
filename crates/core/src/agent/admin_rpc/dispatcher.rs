@@ -27,21 +27,21 @@ use super::audit::{
     InMemoryAuditWriter,
 };
 use super::capabilities::CapabilitySet;
+use super::channel_outbound::ChannelOutboundDispatcher;
 use super::domains::agent_events::TranscriptReader;
 use super::domains::agents::YamlPatcher;
 use super::domains::credentials::{ChannelCredentialPersister, CredentialStore, PersisterRegistry};
 use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
+use super::domains::processing::ProcessingControlStore;
+use super::domains::skills::SkillsStore;
+use super::domains::tenants::TenantStore;
 use super::pairing_trigger::{PairingChannelTriggers, PairingHandle};
+use super::transcript_appender::TranscriptAppender;
 use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use super::domains::processing::ProcessingControlStore;
-use super::channel_outbound::ChannelOutboundDispatcher;
-use super::transcript_appender::TranscriptAppender;
-use super::domains::skills::SkillsStore;
-use super::domains::tenants::TenantStore;
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -213,8 +213,7 @@ pub struct AdminRpcDispatcher {
     /// active; with a lookup wired the handler also accepts the
     /// new `fields: BTreeMap` payload validated against the
     /// factory's declared `credential_schema`.
-    llm_factory_schema:
-        Option<Arc<dyn super::domains::llm_providers::FactorySchemaLookup>>,
+    llm_factory_schema: Option<Arc<dyn super::domains::llm_providers::FactorySchemaLookup>>,
     /// Phase 82.10.u — OAuth verifier store. `None` disables
     /// `nexo/admin/llm_providers/oauth_*` (the SPA falls back to
     /// the manual `oauth_bundle_import` paste path).
@@ -282,8 +281,7 @@ pub struct AdminRpcDispatcher {
     /// against the existing `LlmYamlPatcher` so the probe
     /// reflects the same config agent traffic would resolve.
     /// Resolves M9.frame.b (microapp follow-up).
-    llm_provider_probe:
-        Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
+    llm_provider_probe: Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
     /// Phase 82.10.o — operator bearer rotator. `None` disables
     /// `nexo/admin/auth/rotate_token` (returns `Internal`).
     /// Production wires `nexo_setup::auth_rotator::FsAuthRotator`
@@ -417,11 +415,7 @@ impl AdminRpcDispatcher {
     /// Phase 82.10.c — install the agents domain. Production
     /// passes a `YamlPatcher` adapter wrapping
     /// `nexo_setup::yaml_patch::*`.
-    pub fn with_agents_domain(
-        mut self,
-        yaml: Arc<dyn YamlPatcher>,
-        reload: ReloadSignal,
-    ) -> Self {
+    pub fn with_agents_domain(mut self, yaml: Arc<dyn YamlPatcher>, reload: ReloadSignal) -> Self {
         self.agents_yaml = Some(yaml);
         self.reload_signal = Some(reload);
         self
@@ -452,9 +446,7 @@ impl AdminRpcDispatcher {
     ) -> &mut Self {
         let channel = persister.channel().to_string();
         if self.persisters.contains_key(&channel) {
-            panic!(
-                "duplicate ChannelCredentialPersister registration for channel `{channel}`"
-            );
+            panic!("duplicate ChannelCredentialPersister registration for channel `{channel}`");
         }
         self.persisters.insert(channel, persister);
         self
@@ -465,10 +457,7 @@ impl AdminRpcDispatcher {
     /// `credentials/register` + `credentials/revoke` handlers to
     /// route to the per-channel bridge. `None` = opaque-only
     /// fallback path.
-    pub fn persister_for(
-        &self,
-        channel: &str,
-    ) -> Option<Arc<dyn ChannelCredentialPersister>> {
+    pub fn persister_for(&self, channel: &str) -> Option<Arc<dyn ChannelCredentialPersister>> {
         self.persisters.get(channel).cloned()
     }
 
@@ -489,10 +478,7 @@ impl AdminRpcDispatcher {
     /// `nexo/admin/whatsapp/bot/{list,send}`. Pass the
     /// implementation owned by the WhatsApp plugin at boot. Calling
     /// this with `None` (default) disables the routes.
-    pub fn with_wa_bot_handle(
-        mut self,
-        handle: Arc<dyn super::wa_bot::WaBotHandle>,
-    ) -> Self {
+    pub fn with_wa_bot_handle(mut self, handle: Arc<dyn super::wa_bot::WaBotHandle>) -> Self {
         self.wa_bot_handle = Some(handle);
         self
     }
@@ -562,10 +548,7 @@ impl AdminRpcDispatcher {
     /// Phase 82.11 — install the agent_events domain. Production
     /// passes a `TranscriptReader` adapter wrapping
     /// `TranscriptWriter` + `TranscriptsIndex`.
-    pub fn with_agent_events_domain(
-        mut self,
-        reader: Arc<dyn TranscriptReader>,
-    ) -> Self {
+    pub fn with_agent_events_domain(mut self, reader: Arc<dyn TranscriptReader>) -> Self {
         self.transcript_reader = Some(reader);
         self
     }
@@ -574,10 +557,7 @@ impl AdminRpcDispatcher {
     /// passes a `ProcessingControlStore` adapter (in-memory
     /// DashMap variant in v0). `None` keeps the four
     /// `nexo/admin/processing/*` methods disabled.
-    pub fn with_processing_domain(
-        mut self,
-        store: Arc<dyn ProcessingControlStore>,
-    ) -> Self {
+    pub fn with_processing_domain(mut self, store: Arc<dyn ProcessingControlStore>) -> Self {
         self.processing_store = Some(store);
         self
     }
@@ -586,10 +566,7 @@ impl AdminRpcDispatcher {
     /// Production wires the in-memory adapter; SQLite-backed
     /// durable variant is a 82.14.b follow-up. `None` disables
     /// `nexo/admin/escalations/*`.
-    pub fn with_escalations_domain(
-        mut self,
-        store: Arc<dyn EscalationStore>,
-    ) -> Self {
+    pub fn with_escalations_domain(mut self, store: Arc<dyn EscalationStore>) -> Self {
         self.escalation_store = Some(store);
         self
     }
@@ -618,10 +595,7 @@ impl AdminRpcDispatcher {
     /// `Reply`. Without one wired the handler returns
     /// `-32004 channel_unavailable`. Production passes a
     /// multi-channel router adapter living in `nexo-setup`.
-    pub fn with_channel_outbound(
-        mut self,
-        outbound: Arc<dyn ChannelOutboundDispatcher>,
-    ) -> Self {
+    pub fn with_channel_outbound(mut self, outbound: Arc<dyn ChannelOutboundDispatcher>) -> Self {
         self.channel_outbound = Some(outbound);
         self
     }
@@ -634,10 +608,7 @@ impl AdminRpcDispatcher {
     /// `Some(false)` so the operator UI can surface a hint.
     /// Production wires
     /// `nexo_setup::admin_adapters::TranscriptWriterAppender`.
-    pub fn with_transcript_appender(
-        mut self,
-        appender: Arc<dyn TranscriptAppender>,
-    ) -> Self {
+    pub fn with_transcript_appender(mut self, appender: Arc<dyn TranscriptAppender>) -> Self {
         self.transcript_appender = Some(appender);
         self
     }
@@ -730,8 +701,9 @@ impl AdminRpcDispatcher {
             // manual message. Reuses the channel CRUD gate since
             // operators who can manage channels are the same set
             // that drives the bubble UI.
-            "nexo/admin/whatsapp/bot/list"
-            | "nexo/admin/whatsapp/bot/send" => Some("channels_crud"),
+            "nexo/admin/whatsapp/bot/list" | "nexo/admin/whatsapp/bot/send" => {
+                Some("channels_crud")
+            }
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -743,12 +715,7 @@ impl AdminRpcDispatcher {
     }
 
     /// Dispatch one admin RPC request.
-    pub async fn dispatch(
-        &self,
-        microapp_id: &str,
-        method: &str,
-        params: Value,
-    ) -> AdminRpcResult {
+    pub async fn dispatch(&self, microapp_id: &str, method: &str, params: Value) -> AdminRpcResult {
         let started = Instant::now();
         let started_at_ms = now_epoch_ms();
         // Phase 82.10.k — redact sensitive fields per-method
@@ -823,12 +790,7 @@ impl AdminRpcDispatcher {
     }
 
     /// Method router.
-    async fn call_handler(
-        &self,
-        microapp_id: &str,
-        method: &str,
-        params: Value,
-    ) -> AdminRpcResult {
+    async fn call_handler(&self, microapp_id: &str, method: &str, params: Value) -> AdminRpcResult {
         match method {
             "nexo/admin/echo" => AdminRpcResult::ok(serde_json::json!({
                 "echoed": params,
@@ -864,18 +826,20 @@ impl AdminRpcDispatcher {
                     "agents domain not configured".into(),
                 )),
             },
-            "nexo/admin/credentials/list" => {
-                match (&self.credential_store, &self.agents_yaml) {
-                    (Some(store), Some(yaml)) => {
-                        super::domains::credentials::list(store.as_ref(), yaml.as_ref(), params)
-                    }
-                    _ => AdminRpcResult::err(AdminRpcError::Internal(
-                        "credentials domain not configured".into(),
-                    )),
+            "nexo/admin/credentials/list" => match (&self.credential_store, &self.agents_yaml) {
+                (Some(store), Some(yaml)) => {
+                    super::domains::credentials::list(store.as_ref(), yaml.as_ref(), params)
                 }
-            }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "credentials domain not configured".into(),
+                )),
+            },
             "nexo/admin/credentials/register" => {
-                match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
+                match (
+                    &self.credential_store,
+                    &self.agents_yaml,
+                    &self.reload_signal,
+                ) {
                     (Some(store), Some(yaml), Some(reload)) => {
                         let trigger = reload.clone();
                         // Phase 82.10.n — peek at the channel
@@ -905,7 +869,11 @@ impl AdminRpcDispatcher {
                 }
             }
             "nexo/admin/credentials/revoke" => {
-                match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
+                match (
+                    &self.credential_store,
+                    &self.agents_yaml,
+                    &self.reload_signal,
+                ) {
                     (Some(store), Some(yaml), Some(reload)) => {
                         let trigger = reload.clone();
                         let persister = params
@@ -954,9 +922,9 @@ impl AdminRpcDispatcher {
                         match serde_json::from_value(params) {
                             Ok(v) => v,
                             Err(e) => {
-                                return AdminRpcResult::err(
-                                    AdminRpcError::InvalidParams(e.to_string()),
-                                );
+                                return AdminRpcResult::err(AdminRpcError::InvalidParams(
+                                    e.to_string(),
+                                ));
                             }
                         };
                     match handle.list_bots(&p.agent_id).await {
@@ -965,9 +933,7 @@ impl AdminRpcDispatcher {
                                 agent_id: p.agent_id,
                                 bots: bots.into_iter().collect(),
                             };
-                            AdminRpcResult::ok(
-                                serde_json::to_value(resp).unwrap_or(Value::Null),
-                            )
+                            AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
                         }
                         Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
                             "wa_bot list: {e}"
@@ -984,15 +950,16 @@ impl AdminRpcDispatcher {
                         match serde_json::from_value(params) {
                             Ok(v) => v,
                             Err(e) => {
-                                return AdminRpcResult::err(
-                                    AdminRpcError::InvalidParams(e.to_string()),
-                                );
+                                return AdminRpcResult::err(AdminRpcError::InvalidParams(
+                                    e.to_string(),
+                                ));
                             }
                         };
                     if !p.bot_jid.contains("@bot") {
-                        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-                            format!("bot_jid {} must end in @bot", p.bot_jid),
-                        ));
+                        return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
+                            "bot_jid {} must end in @bot",
+                            p.bot_jid
+                        )));
                     }
                     if p.text.trim().is_empty() {
                         return AdminRpcResult::err(AdminRpcError::InvalidParams(
@@ -1001,11 +968,8 @@ impl AdminRpcDispatcher {
                     }
                     match handle.send_to_bot(&p.agent_id, &p.bot_jid, &p.text).await {
                         Ok(msg_id) => {
-                            let resp =
-                                nexo_tool_meta::admin::wa_bot::BotSendResponse { msg_id };
-                            AdminRpcResult::ok(
-                                serde_json::to_value(resp).unwrap_or(Value::Null),
-                            )
+                            let resp = nexo_tool_meta::admin::wa_bot::BotSendResponse { msg_id };
+                            AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
                         }
                         Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
                             "wa_bot send: {e}"
@@ -1085,11 +1049,7 @@ impl AdminRpcDispatcher {
             "nexo/admin/channels/approve" => match (&self.agents_yaml, &self.reload_signal) {
                 (Some(yaml), Some(reload)) => {
                     let trigger = reload.clone();
-                    super::domains::channels::approve(
-                        yaml.as_ref(),
-                        params,
-                        &move || trigger(),
-                    )
+                    super::domains::channels::approve(yaml.as_ref(), params, &move || trigger())
                 }
                 _ => AdminRpcResult::err(AdminRpcError::Internal(
                     "channels domain not configured".into(),
@@ -1098,11 +1058,7 @@ impl AdminRpcDispatcher {
             "nexo/admin/channels/revoke" => match (&self.agents_yaml, &self.reload_signal) {
                 (Some(yaml), Some(reload)) => {
                     let trigger = reload.clone();
-                    super::domains::channels::revoke(
-                        yaml.as_ref(),
-                        params,
-                        &move || trigger(),
-                    )
+                    super::domains::channels::revoke(yaml.as_ref(), params, &move || trigger())
                 }
                 _ => AdminRpcResult::err(AdminRpcError::Internal(
                     "channels domain not configured".into(),
@@ -1115,25 +1071,19 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/agent_events/list" => match &self.transcript_reader {
-                Some(reader) => {
-                    super::domains::agent_events::list(reader.as_ref(), params).await
-                }
+                Some(reader) => super::domains::agent_events::list(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agent_events domain not configured".into(),
                 )),
             },
             "nexo/admin/agent_events/read" => match &self.transcript_reader {
-                Some(reader) => {
-                    super::domains::agent_events::read(reader.as_ref(), params).await
-                }
+                Some(reader) => super::domains::agent_events::read(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agent_events domain not configured".into(),
                 )),
             },
             "nexo/admin/agent_events/search" => match &self.transcript_reader {
-                Some(reader) => {
-                    super::domains::agent_events::search(reader.as_ref(), params).await
-                }
+                Some(reader) => super::domains::agent_events::search(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agent_events domain not configured".into(),
                 )),
@@ -1150,13 +1100,12 @@ impl AdminRpcDispatcher {
                             nexo_tool_meta::admin::processing::ProcessingPauseParams,
                         >(params.clone())
                         {
-                            if let Err(e) =
-                                super::domains::escalations::auto_resolve_on_pause(
-                                    escalations.as_ref(),
-                                    self.event_emitter.as_ref(),
-                                    &p.scope,
-                                )
-                                .await
+                            if let Err(e) = super::domains::escalations::auto_resolve_on_pause(
+                                escalations.as_ref(),
+                                self.event_emitter.as_ref(),
+                                &p.scope,
+                            )
+                            .await
                             {
                                 tracing::warn!(
                                     error = %e,
@@ -1205,16 +1154,17 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/processing/state" => match &self.processing_store {
-                Some(store) => {
-                    super::domains::processing::state(store.as_ref(), params).await
-                }
+                Some(store) => super::domains::processing::state(store.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "processing domain not configured".into(),
                 )),
             },
             "nexo/admin/escalations/list" => match &self.escalation_store {
                 Some(store) => {
-                    let patcher = self.agents_yaml.as_deref().map(|y| y as &dyn super::domains::agents::YamlPatcher);
+                    let patcher = self
+                        .agents_yaml
+                        .as_deref()
+                        .map(|y| y as &dyn super::domains::agents::YamlPatcher);
                     super::domains::escalations::list(store.as_ref(), patcher, params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
@@ -1295,9 +1245,7 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/llm_providers/probe_draft" => match &self.llm_provider_probe {
-                Some(p) => {
-                    super::domains::llm_providers::probe_draft(p.as_ref(), params).await
-                }
+                Some(p) => super::domains::llm_providers::probe_draft(p.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers probe not configured".into(),
                 )),
@@ -1329,8 +1277,7 @@ impl AdminRpcDispatcher {
                         .await
                     }
                     _ => AdminRpcResult::err(AdminRpcError::Internal(
-                        "OAuth finish requires verifier_store + secrets + llm_yaml + reload"
-                            .into(),
+                        "OAuth finish requires verifier_store + secrets + llm_yaml + reload".into(),
                     )),
                 }
             }
@@ -1503,11 +1450,7 @@ mod tests {
             ) -> anyhow::Result<(TenantDetail, bool)> {
                 anyhow::bail!("not used")
             }
-            async fn delete(
-                &self,
-                _id: &str,
-                _purge: bool,
-            ) -> anyhow::Result<(bool, Vec<String>)> {
+            async fn delete(&self, _id: &str, _purge: bool) -> anyhow::Result<(bool, Vec<String>)> {
                 Ok((false, vec![]))
             }
         }
@@ -1528,8 +1471,7 @@ mod tests {
     #[tokio::test]
     async fn audit_writer_records_each_call_with_args_hash() {
         let writer = Arc::new(InMemoryAuditWriter::new());
-        let d = dispatcher_granting("agent-creator", &["_echo"])
-            .with_audit_writer(writer.clone());
+        let d = dispatcher_granting("agent-creator", &["_echo"]).with_audit_writer(writer.clone());
         let _ = d
             .dispatch(
                 "agent-creator",
@@ -1561,8 +1503,7 @@ mod tests {
     #[tokio::test]
     async fn audit_writer_records_unknown_method_as_error() {
         let writer = Arc::new(InMemoryAuditWriter::new());
-        let d = dispatcher_granting("agent-creator", &["_echo"])
-            .with_audit_writer(writer.clone());
+        let d = dispatcher_granting("agent-creator", &["_echo"]).with_audit_writer(writer.clone());
         let _ = d
             .dispatch("agent-creator", "nexo/admin/nonexistent", Value::Null)
             .await;
@@ -1586,10 +1527,18 @@ mod tests {
         // a trivial mock yaml.
         struct NoopYaml;
         impl super::super::domains::agents::YamlPatcher for NoopYaml {
-            fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> { Ok(vec![]) }
-            fn read_agent_field(&self, _: &str, _: &str) -> anyhow::Result<Option<Value>> { Ok(None) }
-            fn upsert_agent_field(&self, _: &str, _: &str, _: Value) -> anyhow::Result<()> { Ok(()) }
-            fn remove_agent(&self, _: &str) -> anyhow::Result<()> { Ok(()) }
+            fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
+                Ok(vec![])
+            }
+            fn read_agent_field(&self, _: &str, _: &str) -> anyhow::Result<Option<Value>> {
+                Ok(None)
+            }
+            fn upsert_agent_field(&self, _: &str, _: &str, _: Value) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn remove_agent(&self, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
         let d = d.with_agents_domain(Arc::new(NoopYaml), reload);
         let result = d
@@ -1640,9 +1589,9 @@ mod tests {
     /// happy-path routing.
     #[tokio::test]
     async fn dispatcher_routes_secrets_write_with_capability_and_store() {
-        use std::path::PathBuf;
         use async_trait::async_trait;
         use nexo_tool_meta::admin::secrets::SecretsWriteResponse;
+        use std::path::PathBuf;
 
         struct StaticStore;
         #[async_trait]

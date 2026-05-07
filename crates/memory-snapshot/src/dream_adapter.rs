@@ -82,14 +82,7 @@ fn map_op(o: DtOp) -> MutationOp {
 
 #[async_trait]
 impl MemoryMutationHook for MemoryMutationPublisher {
-    async fn on_mutation(
-        &self,
-        agent_id: &str,
-        tenant: &str,
-        scope: DtScope,
-        op: DtOp,
-        key: &str,
-    ) {
+    async fn on_mutation(&self, agent_id: &str, tenant: &str, scope: DtScope, op: DtOp, key: &str) {
         let event = MutationEvent {
             agent_id: agent_id.to_string(),
             tenant: tenant.to_string(),
@@ -150,10 +143,7 @@ mod tests {
 
     #[async_trait]
     impl MemorySnapshotter for CapturingSnapshotter {
-        async fn snapshot(
-            &self,
-            req: SnapshotRequest,
-        ) -> Result<SnapshotMeta, SnapshotError> {
+        async fn snapshot(&self, req: SnapshotRequest) -> Result<SnapshotMeta, SnapshotError> {
             *self.last_label.lock().await = req.label.clone();
             Ok(SnapshotMeta {
                 id: SnapshotId::new(),
@@ -170,10 +160,7 @@ mod tests {
                 redactions_applied: false,
             })
         }
-        async fn restore(
-            &self,
-            _req: RestoreRequest,
-        ) -> Result<RestoreReport, SnapshotError> {
+        async fn restore(&self, _req: RestoreRequest) -> Result<RestoreReport, SnapshotError> {
             unimplemented!()
         }
         async fn list(
@@ -263,16 +250,10 @@ mod tests {
         struct FailingSnapshotter;
         #[async_trait]
         impl MemorySnapshotter for FailingSnapshotter {
-            async fn snapshot(
-                &self,
-                _req: SnapshotRequest,
-            ) -> Result<SnapshotMeta, SnapshotError> {
+            async fn snapshot(&self, _req: SnapshotRequest) -> Result<SnapshotMeta, SnapshotError> {
                 Err(SnapshotError::Concurrent("ana".into()))
             }
-            async fn restore(
-                &self,
-                _req: RestoreRequest,
-            ) -> Result<RestoreReport, SnapshotError> {
+            async fn restore(&self, _req: RestoreRequest) -> Result<RestoreReport, SnapshotError> {
                 unimplemented!()
             }
             async fn list(
@@ -377,16 +358,10 @@ mod tests {
         struct Stub;
         #[async_trait]
         impl MemorySnapshotter for Stub {
-            async fn snapshot(
-                &self,
-                _req: SnapshotRequest,
-            ) -> Result<SnapshotMeta, SnapshotError> {
+            async fn snapshot(&self, _req: SnapshotRequest) -> Result<SnapshotMeta, SnapshotError> {
                 unimplemented!()
             }
-            async fn restore(
-                &self,
-                _req: RestoreRequest,
-            ) -> Result<RestoreReport, SnapshotError> {
+            async fn restore(&self, _req: RestoreRequest) -> Result<RestoreReport, SnapshotError> {
                 unimplemented!()
             }
             async fn list(

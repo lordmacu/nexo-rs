@@ -110,7 +110,10 @@ where
             .max_connections(2)
             .connect_with(opts)
             .await?;
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .ok();
         Self::run_ddl(&pool, table).await?;
         Ok(Self {
             pool,
@@ -415,7 +418,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.len(), 2);
-        assert!(matches!(out[0], AgentEventKind::ProcessingStateChanged { .. }));
+        assert!(matches!(
+            out[0],
+            AgentEventKind::ProcessingStateChanged { .. }
+        ));
     }
 
     #[tokio::test]
@@ -449,14 +455,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.len(), 1);
-        assert!(matches!(out[0], AgentEventKind::ProcessingStateChanged { .. }));
+        assert!(matches!(
+            out[0],
+            AgentEventKind::ProcessingStateChanged { .. }
+        ));
     }
 
     #[tokio::test]
     async fn list_filters_by_tenant_id() {
         let s = open().await;
         s.append(&transcript("ana", 1, Some("acme"))).await.unwrap();
-        s.append(&transcript("ana", 2, Some("globex"))).await.unwrap();
+        s.append(&transcript("ana", 2, Some("globex")))
+            .await
+            .unwrap();
         let out = s
             .list(&ListFilter {
                 tenant_id: Some("acme".into()),
@@ -511,7 +522,9 @@ mod tests {
         let s = open().await;
         let now_ms = chrono::Utc::now().timestamp_millis() as u64;
         for i in 0..10u64 {
-            s.append(&pause("ana", now_ms - (10 - i) * 1000)).await.unwrap();
+            s.append(&pause("ana", now_ms - (10 - i) * 1000))
+                .await
+                .unwrap();
         }
         let deleted = s.sweep_retention(36500, 3).await.unwrap();
         assert_eq!(deleted, 7);

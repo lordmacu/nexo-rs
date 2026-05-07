@@ -100,12 +100,7 @@ impl SessionRegistry for InMemorySessionRegistry {
         let now_ms = chrono::Utc::now().timestamp_millis();
         // Try read-only fast path; if present, only need a write
         // lock to refresh `last_seen_ms`.
-        let cached_id = self
-            .inner
-            .read()
-            .await
-            .get(key)
-            .map(|e| e.session_id);
+        let cached_id = self.inner.read().await.get(key).map(|e| e.session_id);
         if let Some(id) = cached_id {
             self.inner
                 .write()
@@ -117,12 +112,10 @@ impl SessionRegistry for InMemorySessionRegistry {
         // Insert under the write lock — re-check inside in case a
         // concurrent caller raced past the first read.
         let mut w = self.inner.write().await;
-        let entry = w
-            .entry(key.clone())
-            .or_insert_with(|| SessionEntry {
-                session_id: Uuid::new_v4(),
-                last_seen_ms: now_ms,
-            });
+        let entry = w.entry(key.clone()).or_insert_with(|| SessionEntry {
+            session_id: Uuid::new_v4(),
+            last_seen_ms: now_ms,
+        });
         entry.last_seen_ms = now_ms;
         entry.session_id
     }
@@ -245,7 +238,10 @@ impl ChannelBridge {
     /// Spawn the consumer + GC tasks. Returns a handle the caller
     /// can join on shutdown. Caller-controlled `cancel` token
     /// triggers a clean exit on either side.
-    pub async fn spawn(self, cancel: CancellationToken) -> Result<ChannelBridgeHandle, BrokerError> {
+    pub async fn spawn(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<ChannelBridgeHandle, BrokerError> {
         let cfg = self.cfg;
         let mut sub = BrokerHandle::subscribe(&cfg.broker, &cfg.subject).await?;
         let registry = cfg.registry.clone();
@@ -409,12 +405,7 @@ mod tests {
 
     // ---- bridge end-to-end via a real local broker ----
 
-    async fn publish_envelope(
-        broker: &AnyBroker,
-        binding: &str,
-        server: &str,
-        content: &str,
-    ) {
+    async fn publish_envelope(broker: &AnyBroker, binding: &str, server: &str, content: &str) {
         let mut meta = BTreeMap::new();
         meta.insert("chat_id".to_string(), "C123".to_string());
         let inbound = ChannelInbound {

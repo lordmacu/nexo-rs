@@ -301,10 +301,8 @@ impl ReplProcess {
                 if let Ok(Some(status)) = child.try_wait() {
                     let (stdout, stderr) = self.read_buffers();
                     return ReplOutput {
-                        stdout: String::from_utf8_lossy(diff(&stdout, out_before_len))
-                            .into_owned(),
-                        stderr: String::from_utf8_lossy(diff(&stderr, err_before_len))
-                            .into_owned(),
+                        stdout: String::from_utf8_lossy(diff(&stdout, out_before_len)).into_owned(),
+                        stderr: String::from_utf8_lossy(diff(&stderr, err_before_len)).into_owned(),
                         timed_out: false,
                         exit_code: status.code(),
                     };
@@ -342,13 +340,11 @@ mod tests {
 
     fn has_runtime(name: &str) -> bool {
         match name {
-            "python" => {
-                StdCommand::new("python3")
-                    .arg("--version")
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false)
-            }
+            "python" => StdCommand::new("python3")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false),
             "node" => StdCommand::new("node")
                 .arg("--version")
                 .output()
@@ -397,10 +393,7 @@ mod tests {
         }
         let reg = ReplRegistry::new(test_config(), "/tmp".into());
         let sid = reg.spawn("node", None).await.expect("spawn node");
-        let out = reg
-            .exec(&sid, "console.log(1+1)")
-            .await
-            .expect("exec");
+        let out = reg.exec(&sid, "console.log(1+1)").await.expect("exec");
         assert!(out.stdout.contains("2"), "got: {:?}", out);
         reg.kill(&sid).await.ok();
     }
@@ -443,11 +436,7 @@ mod tests {
         let s1 = reg.spawn("bash", None).await.expect("spawn 1");
         let s2 = reg.spawn("bash", None).await.expect("spawn 2");
         let err = reg.spawn("bash", None).await.unwrap_err();
-        assert!(
-            err.to_string().contains("session limit"),
-            "got: {}",
-            err
-        );
+        assert!(err.to_string().contains("session limit"), "got: {}", err);
         reg.kill(&s1).await.ok();
         reg.kill(&s2).await.ok();
     }
@@ -518,16 +507,9 @@ mod tests {
         cfg.max_output_bytes = 100;
         let reg = ReplRegistry::new(cfg, "/tmp".into());
         let sid = reg.spawn("python", None).await.expect("spawn python");
-        let out = reg
-            .exec(&sid, "print('x' * 500)")
-            .await
-            .expect("exec");
+        let out = reg.exec(&sid, "print('x' * 500)").await.expect("exec");
         let len = out.stdout.len();
-        assert!(
-            len <= 200,
-            "output should be capped, got {} bytes",
-            len
-        );
+        assert!(len <= 200, "output should be capped, got {} bytes", len);
         reg.kill(&sid).await.ok();
     }
 }

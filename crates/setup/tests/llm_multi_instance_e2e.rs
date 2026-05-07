@@ -32,19 +32,10 @@ impl YamlPatcher for NoopAgentsYaml {
     fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }
-    fn read_agent_field(
-        &self,
-        _: &str,
-        _: &str,
-    ) -> anyhow::Result<Option<Value>> {
+    fn read_agent_field(&self, _: &str, _: &str) -> anyhow::Result<Option<Value>> {
         Ok(None)
     }
-    fn upsert_agent_field(
-        &self,
-        _: &str,
-        _: &str,
-        _: Value,
-    ) -> anyhow::Result<()> {
+    fn upsert_agent_field(&self, _: &str, _: &str, _: Value) -> anyhow::Result<()> {
         Ok(())
     }
     fn remove_agent(&self, _: &str) -> anyhow::Result<()> {
@@ -196,7 +187,9 @@ async fn upsert_rejects_conflicting_key_sources() {
         )
         .await;
 
-    let err = result.error.expect("upsert must reject conflicting sources");
+    let err = result
+        .error
+        .expect("upsert must reject conflicting sources");
     let msg = format!("{err:?}");
     assert!(
         msg.contains("conflicting"),

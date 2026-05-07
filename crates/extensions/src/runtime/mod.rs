@@ -128,7 +128,8 @@ mod tests {
 
     #[test]
     fn hook_response_parses_phase_83_3_block_decision() {
-        let json = r#"{"abort":true,"decision":"block","reason":"anti-loop","do_not_reply_again":true}"#;
+        let json =
+            r#"{"abort":true,"decision":"block","reason":"anti-loop","do_not_reply_again":true}"#;
         let r: HookResponse = serde_json::from_str(json).unwrap();
         assert!(r.abort);
         assert_eq!(r.decision.as_deref(), Some("block"));

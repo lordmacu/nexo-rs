@@ -169,10 +169,7 @@ pub fn render_text(
         for (plugin_id, outcome) in &report.init_outcomes {
             match outcome {
                 InitOutcome::Ok { duration_ms } => {
-                    let _ = writeln!(
-                        out,
-                        "  ✅ {plugin_id}  ok  {duration_ms}ms"
-                    );
+                    let _ = writeln!(out, "  ✅ {plugin_id}  ok  {duration_ms}ms");
                 }
                 InitOutcome::Failed { error } => {
                     let _ = writeln!(out, "  ❌ {plugin_id}  failed  {error}");
@@ -254,9 +251,8 @@ pub fn render_json(
         snapshot_report: &snap.last_report,
         channel_kinds: channels.kinds(),
     };
-    serde_json::to_string(&report).unwrap_or_else(|e| {
-        format!("{{\"error\":\"render_json failed: {e}\"}}")
-    })
+    serde_json::to_string(&report)
+        .unwrap_or_else(|e| format!("{{\"error\":\"render_json failed: {e}\"}}"))
 }
 
 fn diagnostic_kind_tag(kind: &DiscoveryDiagnosticKind) -> &'static str {
@@ -312,16 +308,12 @@ fn diagnostic_summary(kind: &DiscoveryDiagnosticKind) -> String {
             channel_kind,
             prior_registered_by,
             attempted_by,
-        } => format!(
-            "kind={channel_kind} prior={prior_registered_by} attempted={attempted_by}"
-        ),
+        } => format!("kind={channel_kind} prior={prior_registered_by} attempted={attempted_by}"),
         DiscoveryDiagnosticKind::CapabilityGateConflictsCore {
             env_var,
             plugin_id,
             core_extension,
-        } => format!(
-            "env_var={env_var} plugin={plugin_id} core_extension={core_extension}"
-        ),
+        } => format!("env_var={env_var} plugin={plugin_id} core_extension={core_extension}"),
         DiscoveryDiagnosticKind::CapabilityGateConflictsPlugin {
             env_var,
             plugin_a,
@@ -342,8 +334,7 @@ mod tests {
 
     use super::super::contributes::{AgentMergeConflict, MergeResolution};
     use super::super::report::{
-        DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
-        PluginDiscoveryReport,
+        DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind, PluginDiscoveryReport,
     };
     use super::super::DiscoveredPlugin;
     use nexo_plugin_manifest::PluginManifest;
@@ -391,9 +382,9 @@ mod tests {
             assert!(out.contains(header), "missing header: {header}\n---\n{out}");
         }
         assert!(out.contains("(none)"));
-        assert!(out.contains(
-            "(none registered — manifest-driven plugin instantiation lands in 81.12)"
-        ));
+        assert!(
+            out.contains("(none registered — manifest-driven plugin instantiation lands in 81.12)")
+        );
         assert!(out.contains("EXIT 0"));
     }
 
@@ -487,11 +478,14 @@ mod tests {
         assert_eq!(determine_exit_code(&clean), 0);
 
         let mut error_diag = empty_snapshot();
-        error_diag.last_report.diagnostics.push(DiscoveryDiagnostic {
-            level: DiagnosticLevel::Error,
-            path: PathBuf::from("/x"),
-            kind: DiscoveryDiagnosticKind::PermissionDenied,
-        });
+        error_diag
+            .last_report
+            .diagnostics
+            .push(DiscoveryDiagnostic {
+                level: DiagnosticLevel::Error,
+                path: PathBuf::from("/x"),
+                kind: DiscoveryDiagnosticKind::PermissionDenied,
+            });
         assert_eq!(determine_exit_code(&error_diag), 1);
 
         let mut last_wins = empty_snapshot();
@@ -506,12 +500,10 @@ mod tests {
         assert_eq!(determine_exit_code(&last_wins), 1);
 
         let mut failed = empty_snapshot();
-        failed.last_report.init_outcomes.insert(
-            "p1".into(),
-            InitOutcome::Failed {
-                error: "x".into(),
-            },
-        );
+        failed
+            .last_report
+            .init_outcomes
+            .insert("p1".into(), InitOutcome::Failed { error: "x".into() });
         assert_eq!(determine_exit_code(&failed), 1);
 
         let mut warn_only = empty_snapshot();

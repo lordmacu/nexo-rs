@@ -74,11 +74,7 @@ pub fn run_all_with_sandbox_env(
     validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.tools.expose, errors);
     // Phase 81.29 — extends.tools entries must satisfy the same
     // per-plugin namespace policy as tools.expose.
-    validate_tool_namespace(
-        &manifest.plugin.id,
-        &manifest.plugin.extends.tools,
-        errors,
-    );
+    validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.extends.tools, errors);
     validate_extends(&manifest.plugin.extends, errors);
     validate_deferred_subset(
         &manifest.plugin.tools.expose,
@@ -150,11 +146,7 @@ fn validate_sandbox(
     }
 }
 
-fn validate_sandbox_path(
-    path: &str,
-    kind: SandboxPathKind,
-    errors: &mut Vec<ManifestError>,
-) {
+fn validate_sandbox_path(path: &str, kind: SandboxPathKind, errors: &mut Vec<ManifestError>) {
     // ${state_dir} token is only meaningful in fs_write_paths;
     // anywhere else it's a typo for read intent and we surface it
     // explicitly so the operator catches the wrong-list mistake.
@@ -183,9 +175,7 @@ fn validate_sandbox_path(
         return;
     }
 
-    if let Some(denylisted) =
-        path_under_or_equals_denylist(&probe, SANDBOX_DENYLIST_HOST_PATHS)
-    {
+    if let Some(denylisted) = path_under_or_equals_denylist(&probe, SANDBOX_DENYLIST_HOST_PATHS) {
         errors.push(ManifestError::SandboxAllowlistTouchesDenylist {
             path: path.to_string(),
             denylisted: denylisted.to_string(),
@@ -287,11 +277,7 @@ fn validate_extends(extends: &ExtendsSection, errors: &mut Vec<ManifestError>) {
     }
 }
 
-fn validate_tool_namespace(
-    plugin_id: &str,
-    expose: &[String],
-    errors: &mut Vec<ManifestError>,
-) {
+fn validate_tool_namespace(plugin_id: &str, expose: &[String], errors: &mut Vec<ManifestError>) {
     let prefix = format!("{plugin_id}_");
     let ext_prefix = format!("ext_{plugin_id}_");
     for tool_name in expose {
@@ -359,10 +345,7 @@ fn validate_channel_kinds(
     }
 }
 
-fn validate_capability_impl(
-    manifest: &PluginManifest,
-    errors: &mut Vec<ManifestError>,
-) {
+fn validate_capability_impl(manifest: &PluginManifest, errors: &mut Vec<ManifestError>) {
     let p = &manifest.plugin;
     for cap in &p.capabilities.provides {
         let (populated, hint) = match cap {
@@ -455,7 +438,9 @@ min_nexo_version = ">=0.1.0"
         let toml = base_manifest_toml().replace(r#"id = "marketing""#, r#"id = "Marketing""#);
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, ManifestError::IdInvalid { .. })));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::IdInvalid { .. })));
     }
 
     #[test]
@@ -475,19 +460,21 @@ min_nexo_version = ">=0.1.0"
     #[test]
     fn reject_invalid_id_too_long() {
         let long = "a".repeat(40);
-        let toml = base_manifest_toml().replace(
-            r#"id = "marketing""#,
-            &format!(r#"id = "{long}""#),
-        );
+        let toml =
+            base_manifest_toml().replace(r#"id = "marketing""#, &format!(r#"id = "{long}""#));
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, ManifestError::IdInvalid { .. })));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::IdInvalid { .. })));
     }
 
     #[test]
     fn reject_min_nexo_version_too_new() {
-        let toml = base_manifest_toml()
-            .replace(r#"min_nexo_version = ">=0.1.0""#, r#"min_nexo_version = ">=99.0.0""#);
+        let toml = base_manifest_toml().replace(
+            r#"min_nexo_version = ">=0.1.0""#,
+            r#"min_nexo_version = ">=99.0.0""#,
+        );
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         assert!(errs
@@ -513,7 +500,8 @@ description = "x"
 min_nexo_version = ">=0.1.0"
 [plugin.tools]
 expose = ["lead_classify", "marketing_lead_route"]
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         let n = errs
@@ -535,7 +523,8 @@ min_nexo_version = ">=0.1.0"
 [plugin.tools]
 expose = ["marketing_a"]
 deferred = ["marketing_ghost"]
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         assert!(errs.iter().any(|e| matches!(
@@ -555,10 +544,13 @@ description = "x"
 min_nexo_version = ">=0.1.0"
 [plugin.skills]
 contributes_dir = "../etc/secrets"
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, ManifestError::PathTraversal { .. })));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::PathTraversal { .. })));
     }
 
     #[test]
@@ -572,7 +564,8 @@ description = "x"
 min_nexo_version = ">=0.1.0"
 [plugin.agents]
 contributes_dir = "/etc/secrets"
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         assert!(errs
@@ -591,12 +584,16 @@ description = "x"
 min_nexo_version = ">=0.1.0"
 [plugin.capabilities]
 provides = ["agents"]
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         assert!(errs.iter().any(|e| matches!(
             e,
-            ManifestError::CapabilityWithoutImpl { capability: Capability::Agents, .. }
+            ManifestError::CapabilityWithoutImpl {
+                capability: Capability::Agents,
+                ..
+            }
         )));
     }
 
@@ -612,10 +609,13 @@ min_nexo_version = ">=0.1.0"
 [[plugin.channels.register]]
 kind = "BadKind"
 adapter = "Foo"
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
-        assert!(errs.iter().any(|e| matches!(e, ManifestError::ChannelKindInvalid { .. })));
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::ChannelKindInvalid { .. })));
     }
 
     #[test]
@@ -639,7 +639,8 @@ env_var = "DUPE_KEY"
 kind = "Boolean"
 risk = "Low"
 effect = "second"
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         assert!(errs
@@ -659,7 +660,8 @@ description = "x"
 min_nexo_version = ">=99.0.0"
 [plugin.tools]
 expose = ["wrong_prefix"]
-"#.to_string();
+"#
+        .to_string();
         let m = parse(&toml);
         let errs = m.validate(&current()).unwrap_err();
         // We expect at least: id invalid, name empty, version mismatch, namespace.
@@ -669,7 +671,11 @@ expose = ["wrong_prefix"]
     // ── Phase 81.28 — [plugin.extends] validator ───────────────
 
     fn manifest_with_extends(extends_block: &str) -> PluginManifest {
-        let toml = format!("{}\n[plugin.extends]\n{}\n", base_manifest_toml(), extends_block);
+        let toml = format!(
+            "{}\n[plugin.extends]\n{}\n",
+            base_manifest_toml(),
+            extends_block
+        );
         parse(&toml)
     }
 
@@ -708,9 +714,7 @@ expose = ["wrong_prefix"]
 
     #[test]
     fn validate_rejects_cross_list_duplicate() {
-        let m = manifest_with_extends(
-            "channels = [\"slack\"]\nllm_providers = [\"slack\"]",
-        );
+        let m = manifest_with_extends("channels = [\"slack\"]\nllm_providers = [\"slack\"]");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
             errs.iter().any(|e| matches!(
@@ -747,9 +751,7 @@ expose = ["wrong_prefix"]
 
     #[test]
     fn validate_extends_tools_rejects_duplicate_within_list() {
-        let m = manifest_with_extends(
-            "tools = [\"marketing_lead\", \"marketing_lead\"]",
-        );
+        let m = manifest_with_extends("tools = [\"marketing_lead\", \"marketing_lead\"]");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
             errs.iter().any(|e| matches!(
@@ -825,11 +827,7 @@ expose = ["wrong_prefix"]
     // ── Phase 81.22 sandbox validator ─────────────────────────
 
     fn manifest_with_sandbox(body: &str) -> PluginManifest {
-        let toml = format!(
-            "{}\n[plugin.sandbox]\n{}\n",
-            base_manifest_toml(),
-            body
-        );
+        let toml = format!("{}\n[plugin.sandbox]\n{}\n", base_manifest_toml(), body);
         parse(&toml)
     }
 

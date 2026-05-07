@@ -99,8 +99,7 @@ pub struct BootDeps {
     /// per-binding `MemoryGitRepo`). `None` disables. Skipped on
     /// empty `files_touched` regardless. Failure logs warn and does
     /// NOT downgrade the outcome.
-    pub git_checkpointer:
-        Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
+    pub git_checkpointer: Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
     /// Phase 36.2 — optional pre-dream snapshot sink. When `Some`,
     /// the runner captures a `LocalFsSnapshotter` bundle (label
     /// `auto:pre-dream-<run_id>`) immediately before the fork-pass,
@@ -109,8 +108,7 @@ pub struct BootDeps {
     /// the rollback anchor — operators who want a hard gate enforce
     /// it at the boot wire (omit this hook until the snapshotter is
     /// healthy).
-    pub pre_dream_snapshot:
-        Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
+    pub pre_dream_snapshot: Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
     /// Tenant string passed to the pre-dream snapshot hook. Defaults
     /// to `"default"` for single-tenant deployments. Multi-tenant
     /// SaaS wires the per-binding tenant at boot.
@@ -130,9 +128,7 @@ pub struct BootDeps {
 /// - `Err(AutoDreamError::Config)` when validation fails.
 /// - `Err(AutoDreamError::Io)` when filesystem setup fails.
 /// - `Err(AutoDreamError::Audit)` when SQLite open fails.
-pub async fn build_runner(
-    deps: BootDeps,
-) -> Result<Option<Arc<AutoDreamRunner>>, AutoDreamError> {
+pub async fn build_runner(deps: BootDeps) -> Result<Option<Arc<AutoDreamRunner>>, AutoDreamError> {
     // Step 1 — validate config (fail-fast at boot).
     validate(&deps.config)?;
 
@@ -155,7 +151,10 @@ pub async fn build_runner(
     std::fs::create_dir_all(&memory_dir)?;
 
     // Step 4 — construct lock.
-    let lock = Arc::new(ConsolidationLock::new(&memory_dir, deps.config.holder_stale)?);
+    let lock = Arc::new(ConsolidationLock::new(
+        &memory_dir,
+        deps.config.holder_stale,
+    )?);
 
     // Step 5 — open dream_runs DB (mkdir parent first).
     let dream_db = default_dream_db_path(&deps.state_root);
@@ -326,11 +325,7 @@ mod tests {
     struct NoopDispatcher;
     #[async_trait]
     impl ToolDispatcher for NoopDispatcher {
-        async fn dispatch(
-            &self,
-            _name: &str,
-            _args: serde_json::Value,
-        ) -> Result<String, String> {
+        async fn dispatch(&self, _name: &str, _args: serde_json::Value) -> Result<String, String> {
             Ok(String::new())
         }
     }
@@ -440,7 +435,10 @@ mod tests {
 
         // Default path should NOT have been created.
         let default = default_memory_dir(&tmp.path().join("ws_unused"), "test_agent");
-        assert!(!default.exists(), "default memory_dir created despite override");
+        assert!(
+            !default.exists(),
+            "default memory_dir created despite override"
+        );
         assert!(custom.exists());
     }
 

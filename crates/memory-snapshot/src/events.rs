@@ -273,7 +273,8 @@ mod tests {
     #[tokio::test]
     async fn noop_publisher_silently_drops_both_event_kinds() {
         let p: Arc<dyn EventPublisher> = Arc::new(NoopPublisher);
-        p.publish_lifecycle(LifecycleEvent::Created(sample_meta())).await;
+        p.publish_lifecycle(LifecycleEvent::Created(sample_meta()))
+            .await;
         p.publish_mutation(MutationEvent {
             agent_id: "ana".into(),
             tenant: "default".into(),
@@ -291,7 +292,8 @@ mod tests {
     async fn recording_publisher_keeps_every_event() {
         let p = Arc::new(RecordingPublisher::default());
         let pa: Arc<dyn EventPublisher> = p.clone();
-        pa.publish_lifecycle(LifecycleEvent::Created(sample_meta())).await;
+        pa.publish_lifecycle(LifecycleEvent::Created(sample_meta()))
+            .await;
         pa.publish_lifecycle(LifecycleEvent::Gc {
             ts_ms: 0,
             report: Default::default(),

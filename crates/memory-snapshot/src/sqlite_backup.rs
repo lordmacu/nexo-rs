@@ -53,7 +53,9 @@ pub async fn backup_db(src: &Path, dst: &Path) -> Result<u64, sqlx::Error> {
     pool.close().await;
 
     let size = std::fs::metadata(dst)
-        .map_err(|e| sqlx::Error::Configuration(format!("metadata({}): {e}", dst.display()).into()))?
+        .map_err(|e| {
+            sqlx::Error::Configuration(format!("metadata({}): {e}", dst.display()).into())
+        })?
         .len();
     Ok(size)
 }
@@ -98,8 +100,8 @@ mod tests {
     }
 
     async fn count_rows(db: &Path) -> i64 {
-        let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display()))
-            .unwrap();
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=ro", db.display())).unwrap();
         let mut conn = opts.connect().await.unwrap();
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM t")
             .fetch_one(&mut conn)

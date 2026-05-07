@@ -83,8 +83,7 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 
 const CHANNEL_NOTIFICATION_METHOD: &str = "notifications/nexo/channel";
 const CHANNEL_PERMISSION_RESPONSE_METHOD: &str = "notifications/nexo/channel/permission";
-const CHANNEL_PERMISSION_REQUEST_METHOD: &str =
-    "notifications/nexo/channel/permission_request";
+const CHANNEL_PERMISSION_REQUEST_METHOD: &str = "notifications/nexo/channel/permission_request";
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -276,19 +275,9 @@ async fn handle_request(
                 .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let args = req
-                .params
-                .get("arguments")
-                .cloned()
-                .unwrap_or(Value::Null);
+            let args = req.params.get("arguments").cloned().unwrap_or(Value::Null);
             if name != "send_message" {
-                reply_error(
-                    writer,
-                    id,
-                    -32601,
-                    format!("unknown tool: {name}"),
-                )
-                .await;
+                reply_error(writer, id, -32601, format!("unknown tool: {name}")).await;
                 return;
             }
             let text = args
@@ -334,8 +323,7 @@ async fn handle_request(
             }
             let writer = writer.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(permission_delay_ms))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(permission_delay_ms)).await;
                 let notif = JsonRpcNotification {
                     jsonrpc: "2.0",
                     method: CHANNEL_PERMISSION_RESPONSE_METHOD.to_string(),

@@ -104,11 +104,7 @@ pub trait WorkerRegistry: Send + Sync {
     /// Look up a worker by `(coordinator_binding_key, worker_id)`.
     /// The binding-key gate is enforced inside the registry; the
     /// caller passes its own binding key from `EffectiveBindingPolicy.binding_id()`.
-    async fn lookup(
-        &self,
-        coordinator_binding_key: &str,
-        worker_id: &str,
-    ) -> WorkerLookup;
+    async fn lookup(&self, coordinator_binding_key: &str, worker_id: &str) -> WorkerLookup;
 }
 
 /// In-memory registry — DashMap-style HashMap behind a Mutex. Cheap
@@ -144,10 +140,7 @@ impl InMemoryWorkerRegistry {
         self.inner
             .lock()
             .expect("worker registry mutex poisoned")
-            .remove(&(
-                coordinator_binding_key.to_string(),
-                worker_id.to_string(),
-            ));
+            .remove(&(coordinator_binding_key.to_string(), worker_id.to_string()));
     }
 
     /// Test/admin helper: count entries (for assertions).
@@ -161,15 +154,8 @@ impl InMemoryWorkerRegistry {
 
 #[async_trait]
 impl WorkerRegistry for InMemoryWorkerRegistry {
-    async fn lookup(
-        &self,
-        coordinator_binding_key: &str,
-        worker_id: &str,
-    ) -> WorkerLookup {
-        let guard = self
-            .inner
-            .lock()
-            .expect("worker registry mutex poisoned");
+    async fn lookup(&self, coordinator_binding_key: &str, worker_id: &str) -> WorkerLookup {
+        let guard = self.inner.lock().expect("worker registry mutex poisoned");
         let key = (coordinator_binding_key.to_string(), worker_id.to_string());
         match guard.get(&key) {
             None => WorkerLookup::Unknown,
@@ -204,7 +190,10 @@ mod tests {
     #[tokio::test]
     async fn lookup_unknown_returns_unknown() {
         let r = InMemoryWorkerRegistry::new();
-        assert_eq!(r.lookup("ana:default", "missing").await, WorkerLookup::Unknown);
+        assert_eq!(
+            r.lookup("ana:default", "missing").await,
+            WorkerLookup::Unknown
+        );
     }
 
     #[tokio::test]

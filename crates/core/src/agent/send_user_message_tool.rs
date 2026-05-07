@@ -45,10 +45,7 @@ pub fn is_brief_result(value: &Value) -> bool {
 }
 
 /// Resolved attachment metadata returned to the model.
-fn attachment_metadata(
-    raw_paths: &[String],
-    cwd: Option<&PathBuf>,
-) -> Result<Vec<Value>> {
+fn attachment_metadata(raw_paths: &[String], cwd: Option<&PathBuf>) -> Result<Vec<Value>> {
     let mut out = Vec::with_capacity(raw_paths.len());
     for raw in raw_paths {
         let path = PathBuf::from(raw);
@@ -79,7 +76,10 @@ fn attachment_metadata(
 
 fn is_likely_image(path: &std::path::Path) -> bool {
     matches!(
-        path.extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        path.extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "heic" | "heif")
     )
 }
@@ -135,8 +135,7 @@ impl SendUserMessageTool {
         }
         ToolDef {
             name: TOOL_NAME.into(),
-            description:
-                "Send a message the user will read. Free-text output stays in the detail \
+            description: "Send a message the user will read. Free-text output stays in the detail \
                  view; this tool is the channel the user actually sees. \
                  `message` supports markdown. `attachments` accepts file paths \
                  (absolute or relative to the agent workspace) to include alongside \
@@ -145,7 +144,8 @@ impl SendUserMessageTool {
                  `status: 'proactive'` when surfacing something they did not ask for \
                  (a scheduled task finished, a blocker hit during background work, \
                  an unsolicited update). Set it honestly — downstream telemetry \
-                 and routing key off it.".into(),
+                 and routing key off it."
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -192,8 +192,7 @@ impl ToolHandler for SendUserMessageTool {
         }
 
         // ---- Gate 2: status (per cfg.status_required) ----
-        let status =
-            BriefStatus::parse(args["status"].as_str(), self.cfg.status_required)?;
+        let status = BriefStatus::parse(args["status"].as_str(), self.cfg.status_required)?;
 
         // ---- Gate 3: attachment count ----
         let raw_attachments: Vec<String> = match &args["attachments"] {
@@ -402,8 +401,8 @@ mod tests {
     #[test]
     fn attachment_metadata_rejects_directories() {
         let dir = tempfile::tempdir().unwrap();
-        let err = attachment_metadata(&[dir.path().to_string_lossy().into_owned()], None)
-            .unwrap_err();
+        let err =
+            attachment_metadata(&[dir.path().to_string_lossy().into_owned()], None).unwrap_err();
         assert!(err.to_string().contains("regular file"));
     }
 
@@ -415,10 +414,7 @@ mod tests {
         let resolved =
             attachment_metadata(&["note.txt".into()], Some(&dir.path().to_path_buf())).unwrap();
         assert_eq!(resolved.len(), 1);
-        assert!(resolved[0]["path"]
-            .as_str()
-            .unwrap()
-            .ends_with("note.txt"));
+        assert!(resolved[0]["path"].as_str().unwrap().ends_with("note.txt"));
     }
 
     #[test]

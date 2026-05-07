@@ -61,10 +61,7 @@ impl std::fmt::Debug for DispatcherAdminRouter {
 impl DispatcherAdminRouter {
     /// Build a router pinned to one dispatcher + one outbound
     /// writer.
-    pub fn new(
-        dispatcher: Arc<AdminRpcDispatcher>,
-        writer: Arc<dyn AdminOutboundWriter>,
-    ) -> Self {
+    pub fn new(dispatcher: Arc<AdminRpcDispatcher>, writer: Arc<dyn AdminOutboundWriter>) -> Self {
         Self { dispatcher, writer }
     }
 }
@@ -104,7 +101,10 @@ impl AdminRouter for DispatcherAdminRouter {
         let params = frame.get("params").cloned().unwrap_or(Value::Null);
 
         // Dispatch — never panics; returns either result or error.
-        let result = self.dispatcher.dispatch(extension_id, &method, params).await;
+        let result = self
+            .dispatcher
+            .dispatch(extension_id, &method, params)
+            .await;
         let response = frame_response(id, result);
         let line = match serde_json::to_string(&response) {
             Ok(s) => s,

@@ -137,8 +137,7 @@ pub fn validate_capabilities_at_boot(
         let optional: HashSet<String> = decl.optional.iter().cloned().collect();
         let declared: HashSet<String> = required.union(&optional).cloned().collect();
 
-        let missing_required: Vec<String> =
-            required.difference(&granted).cloned().collect();
+        let missing_required: Vec<String> = required.difference(&granted).cloned().collect();
         if !missing_required.is_empty() {
             let mut sorted = missing_required;
             sorted.sort();
@@ -148,8 +147,7 @@ pub fn validate_capabilities_at_boot(
             });
         }
 
-        let missing_optional: Vec<String> =
-            optional.difference(&granted).cloned().collect();
+        let missing_optional: Vec<String> = optional.difference(&granted).cloned().collect();
         if !missing_optional.is_empty() {
             let mut sorted = missing_optional;
             sorted.sort();
@@ -268,7 +266,10 @@ mod tests {
 
     #[test]
     fn all_satisfied_no_errors_no_warns() {
-        let decls = vec![("agent-creator".into(), decl(&["agents_crud"], &["llm_keys_crud"]))];
+        let decls = vec![(
+            "agent-creator".into(),
+            decl(&["agents_crud"], &["llm_keys_crud"]),
+        )];
         let mut grants_map = HashMap::new();
         grants_map.insert(
             "agent-creator".into(),

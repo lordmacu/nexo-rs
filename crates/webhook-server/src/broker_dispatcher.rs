@@ -25,11 +25,7 @@ impl BrokerWebhookDispatcher {
 
 #[async_trait]
 impl WebhookDispatcher for BrokerWebhookDispatcher {
-    async fn dispatch(
-        &self,
-        topic: &str,
-        envelope: WebhookEnvelope,
-    ) -> Result<(), DispatchError> {
+    async fn dispatch(&self, topic: &str, envelope: WebhookEnvelope) -> Result<(), DispatchError> {
         let source = envelope.source_id.clone();
         let payload = serde_json::to_value(&envelope)
             .map_err(|e| DispatchError::Rejected(format!("envelope serialise: {e}")))?;

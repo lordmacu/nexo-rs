@@ -84,7 +84,11 @@ impl RemoteChannelAdapter {
             .map(Duration::from_millis);
         match env_override {
             Some(t) => (t, t, t),
-            None => (DEFAULT_START_TIMEOUT, DEFAULT_STOP_TIMEOUT, DEFAULT_SEND_TIMEOUT),
+            None => (
+                DEFAULT_START_TIMEOUT,
+                DEFAULT_STOP_TIMEOUT,
+                DEFAULT_SEND_TIMEOUT,
+            ),
         }
     }
 
@@ -273,11 +277,9 @@ impl ChannelAdapter for RemoteChannelAdapter {
         let result = self
             .send_request("channel.send_outbound", params, self.send_timeout)
             .await?;
-        serde_json::from_value::<OutboundAck>(result).map_err(|e| {
-            ChannelAdapterError::Other {
-                kind: self.kind.clone(),
-                source: anyhow::anyhow!("decode OutboundAck: {e}"),
-            }
+        serde_json::from_value::<OutboundAck>(result).map_err(|e| ChannelAdapterError::Other {
+            kind: self.kind.clone(),
+            source: anyhow::anyhow!("decode OutboundAck: {e}"),
         })
     }
 }

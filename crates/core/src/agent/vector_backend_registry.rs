@@ -57,13 +57,11 @@ impl VectorBackendRegistry {
         let registered_by = registered_by.into();
         let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
         match guard.get(&name) {
-            Some(prior) => Err(
-                VectorBackendRegistrationError::NameAlreadyRegistered {
-                    name,
-                    prior_registered_by: prior.registered_by.clone(),
-                    attempted_by: registered_by,
-                },
-            ),
+            Some(prior) => Err(VectorBackendRegistrationError::NameAlreadyRegistered {
+                name,
+                prior_registered_by: prior.registered_by.clone(),
+                attempted_by: registered_by,
+            }),
             None => {
                 guard.insert(
                     name,
@@ -158,11 +156,7 @@ mod tests {
         ) -> anyhow::Result<Vec<VectorMatch>> {
             Ok(Vec::new())
         }
-        async fn delete(
-            &self,
-            _collection: &str,
-            _ids: Vec<String>,
-        ) -> anyhow::Result<DeleteAck> {
+        async fn delete(&self, _collection: &str, _ids: Vec<String>) -> anyhow::Result<DeleteAck> {
             Ok(DeleteAck::default())
         }
     }

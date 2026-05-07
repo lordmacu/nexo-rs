@@ -67,7 +67,10 @@ fn pack_tarball_produces_canonical_asset_layout() {
         work.path().join("nexo-plugin.toml"),
     )
     .unwrap();
-    copy_dir_recursive(&template_root().join("scripts"), &work.path().join("scripts"));
+    copy_dir_recursive(
+        &template_root().join("scripts"),
+        &work.path().join("scripts"),
+    );
 
     // 2. Drop a synthetic binary mirroring cargo's release layout.
     let bin_dir = work.path().join("target").join(&target).join("release");
@@ -89,9 +92,16 @@ fn pack_tarball_produces_canonical_asset_layout() {
     // 4. Asset present at the expected path.
     let asset_name = format!("{}-{}-{}.tar.gz", PLUGIN_ID, PLUGIN_VERSION, target);
     let asset = work.path().join("dist").join(&asset_name);
-    let sidecar = work.path().join("dist").join(format!("{}.sha256", asset_name));
+    let sidecar = work
+        .path()
+        .join("dist")
+        .join(format!("{}.sha256", asset_name));
     assert!(asset.is_file(), "asset missing: {}", asset.display());
-    assert!(sidecar.is_file(), "sha256 sidecar missing: {}", sidecar.display());
+    assert!(
+        sidecar.is_file(),
+        "sha256 sidecar missing: {}",
+        sidecar.display()
+    );
 
     // 5. Sidecar is exactly 64 lowercase hex chars (+ optional newline).
     let sidecar_body = fs::read_to_string(&sidecar).unwrap();
@@ -104,7 +114,9 @@ fn pack_tarball_produces_canonical_asset_layout() {
         sidecar_hex
     );
     assert!(
-        sidecar_hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        sidecar_hex
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "sidecar must be lowercase hex"
     );
 

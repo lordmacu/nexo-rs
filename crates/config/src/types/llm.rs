@@ -504,10 +504,7 @@ impl LlmProviderConfig {
             }
         }
         let inline_present = !self.api_key.is_empty();
-        let secret_id = self
-            .api_key_secret_id
-            .as_deref()
-            .filter(|s| !s.is_empty());
+        let secret_id = self.api_key_secret_id.as_deref().filter(|s| !s.is_empty());
 
         match (inline_present, secret_id) {
             (true, Some(_)) => Err(KeyResolutionError::Conflict {
@@ -672,9 +669,7 @@ mod tests {
     // ── Phase 83.8.12.5 — resolve_provider semantics ──
 
     fn provider(api_key: &str) -> LlmProviderConfig {
-        let yaml = format!(
-            "api_key: {api_key}\nbase_url: https://api.example.com\n"
-        );
+        let yaml = format!("api_key: {api_key}\nbase_url: https://api.example.com\n");
         serde_yaml::from_str(&yaml).unwrap()
     }
 
@@ -784,7 +779,9 @@ tenants:
         assert_eq!(acme.providers["openai"].api_key, "acme-key");
         // Resolve respects precedence.
         assert_eq!(
-            cfg.resolve_provider(Some("acme"), "openai").unwrap().api_key,
+            cfg.resolve_provider(Some("acme"), "openai")
+                .unwrap()
+                .api_key,
             "acme-key"
         );
         assert_eq!(
@@ -1076,14 +1073,18 @@ auto:
     fn resolve_api_key_conflict_inline_and_secret() {
         let mut p = provider_inline("sk-inline");
         p.api_key_secret_id = Some("some-id".to_string());
-        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        let err = p
+            .resolve_api_key("provider-x", &NoSecretsSource)
+            .unwrap_err();
         assert!(matches!(err, KeyResolutionError::Conflict { .. }));
     }
 
     #[test]
     fn resolve_api_key_missing_when_neither_present() {
         let mut p = provider_inline("");
-        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        let err = p
+            .resolve_api_key("provider-x", &NoSecretsSource)
+            .unwrap_err();
         assert!(matches!(err, KeyResolutionError::Missing(_)));
     }
 
@@ -1118,7 +1119,9 @@ auto:
         // active — operator opted into the static-key path.
         let mut p = provider_inline("");
         p.auth = Some(auth_with_mode("api_key"));
-        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        let err = p
+            .resolve_api_key("provider-x", &NoSecretsSource)
+            .unwrap_err();
         assert!(matches!(err, KeyResolutionError::Missing(_)));
     }
 

@@ -115,9 +115,7 @@ pub trait ChannelCredentialPersister: Send + Sync {
             probed: false,
             healthy: false,
             detail: None,
-            reason_code: Some(
-                nexo_tool_meta::admin::credentials::reason_code::NOT_PROBED.into(),
-            ),
+            reason_code: Some(nexo_tool_meta::admin::credentials::reason_code::NOT_PROBED.into()),
         }
     }
 }
@@ -145,20 +143,12 @@ pub trait CredentialStore: Send + Sync {
     ) -> anyhow::Result<()>;
     /// Idempotent delete. Returns `true` when an entry was
     /// removed; `false` when it didn't exist.
-    fn delete_credential(
-        &self,
-        channel: &str,
-        instance: Option<&str>,
-    ) -> anyhow::Result<bool>;
+    fn delete_credential(&self, channel: &str, instance: Option<&str>) -> anyhow::Result<bool>;
 }
 
 /// `nexo/admin/credentials/list` — return all credentials with
 /// the agent ids currently bound to each.
-pub fn list(
-    store: &dyn CredentialStore,
-    yaml: &dyn YamlPatcher,
-    params: Value,
-) -> AdminRpcResult {
+pub fn list(store: &dyn CredentialStore, yaml: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     let filter: CredentialsListFilter = serde_json::from_value(params).unwrap_or_default();
 
     let creds = match store.list_credentials() {
@@ -173,9 +163,7 @@ pub fn list(
     let agent_ids = match yaml.list_agent_ids() {
         Ok(a) => a,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read: {e}")));
         }
     };
 
@@ -255,9 +243,7 @@ pub async fn register(
     if let Err(e) =
         store.write_credential(&input.channel, input.instance.as_deref(), &input.payload)
     {
-        return AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "credential write: {e}"
-        )));
+        return AdminRpcResult::err(AdminRpcError::Internal(format!("credential write: {e}")));
     }
 
     // Phase 82.10.n step 2 — bridge to plugin runtime state.
@@ -336,9 +322,7 @@ pub async fn revoke(
     let agent_ids = match yaml.list_agent_ids() {
         Ok(a) => a,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read: {e}")));
         }
     };
 
@@ -367,9 +351,7 @@ pub async fn revoke(
     let removed = match store.delete_credential(&p.channel, p.instance.as_deref()) {
         Ok(r) => r,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "credential delete: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("credential delete: {e}")));
         }
     };
 
@@ -399,7 +381,9 @@ fn agent_has_binding(
     else {
         return false;
     };
-    bindings.iter().any(|b| binding_matches(b, channel, instance))
+    bindings
+        .iter()
+        .any(|b| binding_matches(b, channel, instance))
 }
 
 fn binding_matches(b: &Value, channel: &str, instance: Option<&str>) -> bool {
@@ -423,7 +407,10 @@ fn bind_agent(
         Some(Value::Array(arr)) => arr,
         _ => Vec::new(),
     };
-    if bindings.iter().any(|b| binding_matches(b, channel, instance)) {
+    if bindings
+        .iter()
+        .any(|b| binding_matches(b, channel, instance))
+    {
         return Ok(());
     }
     let mut new_binding = serde_json::Map::new();
@@ -483,11 +470,7 @@ mod tests {
             );
             Ok(())
         }
-        fn delete_credential(
-            &self,
-            channel: &str,
-            instance: Option<&str>,
-        ) -> anyhow::Result<bool> {
+        fn delete_credential(&self, channel: &str, instance: Option<&str>) -> anyhow::Result<bool> {
             Ok(self
                 .creds
                 .lock()
@@ -537,11 +520,7 @@ mod tests {
             ids.sort();
             Ok(ids)
         }
-        fn read_agent_field(
-            &self,
-            agent_id: &str,
-            dotted: &str,
-        ) -> anyhow::Result<Option<Value>> {
+        fn read_agent_field(&self, agent_id: &str, dotted: &str) -> anyhow::Result<Option<Value>> {
             Ok(self
                 .agents
                 .lock()
@@ -775,16 +754,20 @@ mod tests {
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(response.credentials.len(), 2);
 
-        let shared = response.credentials.iter().find(|c| {
-            c.instance.as_deref() == Some("shared")
-        }).unwrap();
+        let shared = response
+            .credentials
+            .iter()
+            .find(|c| c.instance.as_deref() == Some("shared"))
+            .unwrap();
         let mut shared_agents = shared.agent_ids.clone();
         shared_agents.sort();
         assert_eq!(shared_agents, vec!["ana".to_string(), "carlos".into()]);
 
-        let orphan = response.credentials.iter().find(|c| {
-            c.instance.as_deref() == Some("orphan")
-        }).unwrap();
+        let orphan = response
+            .credentials
+            .iter()
+            .find(|c| c.instance.as_deref() == Some("orphan"))
+            .unwrap();
         assert!(orphan.agent_ids.is_empty());
     }
 
@@ -942,12 +925,11 @@ mod tests {
         // Same Arc identity = same instance (Arc::ptr_eq across
         // dyn-trait pointers requires fattening the pointers
         // first, so just probe via a recorded call instead).
-        let _ = futures::executor::block_on(fetched.persist(
-            None,
-            &Value::Null,
-            &HashMap::new(),
-        ));
-        assert_eq!(mock.calls.lock().unwrap().as_slice(), &["persist".to_string()]);
+        let _ = futures::executor::block_on(fetched.persist(None, &Value::Null, &HashMap::new()));
+        assert_eq!(
+            mock.calls.lock().unwrap().as_slice(),
+            &["persist".to_string()]
+        );
     }
 
     #[test]
@@ -1002,7 +984,10 @@ mod tests {
         let outcome = p.probe(None, &Value::Null, &HashMap::new()).await;
         assert!(!outcome.probed);
         assert!(!outcome.healthy);
-        assert_eq!(outcome.reason_code.as_deref(), Some(reason_code::NOT_PROBED));
+        assert_eq!(
+            outcome.reason_code.as_deref(),
+            Some(reason_code::NOT_PROBED)
+        );
     }
 
     #[tokio::test]
@@ -1188,7 +1173,10 @@ mod tests {
         let v = response.validation.expect("validation present");
         assert!(v.probed);
         assert!(!v.healthy);
-        assert_eq!(v.reason_code.as_deref(), Some(reason_code::CONNECTIVITY_FAILED));
+        assert_eq!(
+            v.reason_code.as_deref(),
+            Some(reason_code::CONNECTIVITY_FAILED)
+        );
         // Side-effects intact.
         assert_eq!(store.list_credentials().unwrap().len(), 1);
         assert_eq!(yaml.bindings("ana").len(), 1);

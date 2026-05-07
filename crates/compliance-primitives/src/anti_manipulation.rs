@@ -83,7 +83,10 @@ impl AntiManipulationMatcher {
     /// `to_ascii_lowercase` on the body.
     pub fn with_phrases(phrases: Vec<String>) -> Self {
         Self {
-            phrases: phrases.into_iter().map(|s| s.to_ascii_lowercase()).collect(),
+            phrases: phrases
+                .into_iter()
+                .map(|s| s.to_ascii_lowercase())
+                .collect(),
         }
     }
 
@@ -167,8 +170,7 @@ mod tests {
 
     #[test]
     fn extra_phrases_extend_defaults() {
-        let m = AntiManipulationMatcher::default()
-            .with_extra_phrases(vec!["bypass mode".into()]);
+        let m = AntiManipulationMatcher::default().with_extra_phrases(vec!["bypass mode".into()]);
         // Default still works.
         assert!(matches!(
             m.evaluate("ignore previous"),

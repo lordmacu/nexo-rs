@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use nexo_tool_meta::admin::tenants::{
-    TenantDetail, TenantSummary, TenantsDeleteParams, TenantsDeleteResponse,
-    TenantsGetParams, TenantsGetResponse, TenantsListFilter, TenantsListResponse,
-    TenantsUpsertInput, TenantsUpsertResponse,
+    TenantDetail, TenantSummary, TenantsDeleteParams, TenantsDeleteResponse, TenantsGetParams,
+    TenantsGetResponse, TenantsListFilter, TenantsListResponse, TenantsUpsertInput,
+    TenantsUpsertResponse,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -34,10 +34,7 @@ pub const MAX_DISPLAY_NAME_CHARS: usize = 128;
 pub trait TenantStore: Send + Sync + std::fmt::Debug {
     /// List tenants matching `filter`. Empty registry returns
     /// an empty `Vec` (NOT an error).
-    async fn list(
-        &self,
-        filter: &TenantsListFilter,
-    ) -> anyhow::Result<Vec<TenantSummary>>;
+    async fn list(&self, filter: &TenantsListFilter) -> anyhow::Result<Vec<TenantSummary>>;
 
     /// Read one tenant. Unknown id returns `Ok(None)` — daemon
     /// does NOT surface a not-found error so callers can probe.
@@ -46,10 +43,7 @@ pub trait TenantStore: Send + Sync + std::fmt::Debug {
     /// Create or update one tenant. The boolean is `true` when
     /// this call created a new record, `false` on idempotent
     /// retry / update.
-    async fn upsert(
-        &self,
-        params: TenantsUpsertInput,
-    ) -> anyhow::Result<(TenantDetail, bool)>;
+    async fn upsert(&self, params: TenantsUpsertInput) -> anyhow::Result<(TenantDetail, bool)>;
 
     /// Delete one tenant.
     ///
@@ -64,11 +58,7 @@ pub trait TenantStore: Send + Sync + std::fmt::Debug {
     /// - `purge: true` → cascade-deletes every orphan agent,
     ///   then removes the tenant, returns `(true, [])`.
     /// - Unknown tenant id → `(false, [])` (idempotent).
-    async fn delete(
-        &self,
-        tenant_id: &str,
-        purge: bool,
-    ) -> anyhow::Result<(bool, Vec<String>)>;
+    async fn delete(&self, tenant_id: &str, purge: bool) -> anyhow::Result<(bool, Vec<String>)>;
 }
 
 /// Validate the tenant id matches the kebab-case regex
@@ -117,9 +107,7 @@ pub async fn list(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
     let tenants = match store.list(&filter).await {
         Ok(v) => v,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "empresa_store.list: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("empresa_store.list: {e}")))
         }
     };
     let response = TenantsListResponse { tenants };
@@ -139,9 +127,7 @@ pub async fn get(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
     let tenant = match store.get(&p.tenant_id).await {
         Ok(e) => e,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "empresa_store.get: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("empresa_store.get: {e}")))
         }
     };
     let response = TenantsGetResponse { tenant };
@@ -226,10 +212,7 @@ mod tests {
 
     #[async_trait]
     impl TenantStore for InMemoryTenantStore {
-        async fn list(
-            &self,
-            filter: &TenantsListFilter,
-        ) -> anyhow::Result<Vec<TenantSummary>> {
+        async fn list(&self, filter: &TenantsListFilter) -> anyhow::Result<Vec<TenantSummary>> {
             let rows = self.rows.lock().unwrap();
             let agent_index = self.agent_index.lock().unwrap();
             Ok(rows
@@ -251,10 +234,7 @@ mod tests {
         async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<TenantDetail>> {
             Ok(self.rows.lock().unwrap().get(tenant_id).cloned())
         }
-        async fn upsert(
-            &self,
-            params: TenantsUpsertInput,
-        ) -> anyhow::Result<(TenantDetail, bool)> {
+        async fn upsert(&self, params: TenantsUpsertInput) -> anyhow::Result<(TenantDetail, bool)> {
             let mut rows = self.rows.lock().unwrap();
             let created = !rows.contains_key(&params.id);
             let existing = rows.get(&params.id).cloned();
@@ -291,10 +271,7 @@ mod tests {
                 return Ok((false, vec![]));
             }
             let mut agent_index = self.agent_index.lock().unwrap();
-            let orphans = agent_index
-                .get(tenant_id)
-                .cloned()
-                .unwrap_or_default();
+            let orphans = agent_index.get(tenant_id).cloned().unwrap_or_default();
             if !orphans.is_empty() && !purge {
                 return Ok((false, orphans));
             }
@@ -343,11 +320,7 @@ mod tests {
     async fn upsert_twice_reports_created_false_second() {
         let s = store();
         let _ = upsert(s.as_ref(), json!({ "id": "x", "display_name": "X" })).await;
-        let up2 = upsert(
-            s.as_ref(),
-            json!({ "id": "x", "display_name": "X v2" }),
-        )
-        .await;
+        let up2 = upsert(s.as_ref(), json!({ "id": "x", "display_name": "X v2" })).await;
         assert_eq!(up2.result.unwrap()["created"], json!(false));
     }
 
@@ -377,11 +350,7 @@ mod tests {
         )
         .await;
         s.with_agents("globex", &["g-001", "g-002", "g-003"]);
-        let d = delete(
-            s.as_ref(),
-            json!({ "tenant_id": "globex", "purge": false }),
-        )
-        .await;
+        let d = delete(s.as_ref(), json!({ "tenant_id": "globex", "purge": false })).await;
         let v = d.result.unwrap();
         assert_eq!(v["removed"], json!(false));
         assert_eq!(v["orphaned_agents"], json!(["g-001", "g-002", "g-003"]));
@@ -396,15 +365,13 @@ mod tests {
         )
         .await;
         s.with_agents("globex", &["g-001"]);
-        let d = delete(
-            s.as_ref(),
-            json!({ "tenant_id": "globex", "purge": true }),
-        )
-        .await;
+        let d = delete(s.as_ref(), json!({ "tenant_id": "globex", "purge": true })).await;
         let v = d.result.unwrap();
         assert_eq!(v["removed"], json!(true));
         assert!(
-            v.get("orphaned_agents").map(|x| x.as_array().unwrap().is_empty()).unwrap_or(true),
+            v.get("orphaned_agents")
+                .map(|x| x.as_array().unwrap().is_empty())
+                .unwrap_or(true),
             "purge cascade clears orphan list"
         );
     }
@@ -432,11 +399,7 @@ mod tests {
     async fn display_name_too_long_rejected() {
         let s = store();
         let long = "x".repeat(MAX_DISPLAY_NAME_CHARS + 1);
-        let r = upsert(
-            s.as_ref(),
-            json!({ "id": "x", "display_name": long }),
-        )
-        .await;
+        let r = upsert(s.as_ref(), json!({ "id": "x", "display_name": long })).await;
         assert_eq!(r.error.unwrap().code(), -32602);
     }
 

@@ -30,10 +30,7 @@ pub trait FactorySchemaLookup: Send + Sync {
     /// the factory isn't registered. The handler maps `None` to
     /// `LlmProviderError::InvalidAuthMode { factory: factory_id, mode: "<unknown>" }`
     /// — operator picked a factory the daemon can't instantiate.
-    fn credential_schema(
-        &self,
-        factory_id: &str,
-    ) -> Option<Vec<CredentialFieldDescriptor>>;
+    fn credential_schema(&self, factory_id: &str) -> Option<Vec<CredentialFieldDescriptor>>;
 
     /// Returns the auth modes `factory_id` supports. Used to reject
     /// upsert / oauth_start with an unsupported mode early.
@@ -66,11 +63,8 @@ pub trait LlmYamlPatcher: Send + Sync {
     /// List provider ids in source order.
     fn list_provider_ids(&self) -> anyhow::Result<Vec<String>>;
     /// Read a dotted field under `providers.<id>.*`.
-    fn read_provider_field(
-        &self,
-        provider_id: &str,
-        dotted: &str,
-    ) -> anyhow::Result<Option<Value>>;
+    fn read_provider_field(&self, provider_id: &str, dotted: &str)
+        -> anyhow::Result<Option<Value>>;
     /// Upsert a dotted field under `providers.<id>.*`.
     fn upsert_provider_field(
         &self,
@@ -87,10 +81,7 @@ pub trait LlmYamlPatcher: Send + Sync {
     /// Default impl returns empty so legacy patchers without
     /// tenant support compile cleanly while behaving as if no
     /// tenant overrides existed.
-    fn list_tenant_provider_ids(
-        &self,
-        _tenant_id: &str,
-    ) -> anyhow::Result<Vec<String>> {
+    fn list_tenant_provider_ids(&self, _tenant_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }
 
@@ -124,11 +115,7 @@ pub trait LlmYamlPatcher: Send + Sync {
 
     /// Phase 83.8.12.5.c.b — remove the
     /// `tenants.<tenant_id>.providers.<provider_id>` block.
-    fn remove_tenant_provider(
-        &self,
-        _tenant_id: &str,
-        _provider_id: &str,
-    ) -> anyhow::Result<()> {
+    fn remove_tenant_provider(&self, _tenant_id: &str, _provider_id: &str) -> anyhow::Result<()> {
         Err(anyhow::anyhow!(
             "remove_tenant_provider not implemented for this LlmYamlPatcher"
         ))
@@ -154,9 +141,7 @@ pub fn list(patcher: &dyn LlmYamlPatcher) -> AdminRpcResult {
     let ids = match patcher.list_provider_ids() {
         Ok(i) => i,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "llm.yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("llm.yaml read: {e}")));
         }
     };
     let mut providers: Vec<LlmProviderSummary> = ids
@@ -165,8 +150,7 @@ pub fn list(patcher: &dyn LlmYamlPatcher) -> AdminRpcResult {
         .collect();
     providers.sort_by(|a, b| a.id.cmp(&b.id));
     AdminRpcResult::ok(
-        serde_json::to_value(LlmProvidersListResponse { providers })
-            .unwrap_or(Value::Null),
+        serde_json::to_value(LlmProvidersListResponse { providers }).unwrap_or(Value::Null),
     )
 }
 
@@ -224,7 +208,7 @@ pub async fn upsert(
     );
     if oauth_mode {
         let _ = factory_schema; // schema not consulted in OAuth path
-        let _ = secrets;        // bundle persistence already done by oauth_finish
+        let _ = secrets; // bundle persistence already done by oauth_finish
         return upsert_oauth_metadata(patcher, input, reload_signal);
     }
 
@@ -232,14 +216,7 @@ pub async fn upsert(
     // submitted a non-OAuth `fields` payload. Legacy path stays
     // intact for callers that still use api_key_env etc.
     if !input.fields.is_empty() {
-        return upsert_schema_driven(
-            patcher,
-            secrets,
-            factory_schema,
-            input,
-            reload_signal,
-        )
-        .await;
+        return upsert_schema_driven(patcher, secrets, factory_schema, input, reload_signal).await;
     }
     let _ = factory_schema; // silence unused when fields empty
 
@@ -329,9 +306,7 @@ pub async fn upsert(
     };
 
     if let Err(e) = write_field("base_url", Value::String(input.base_url.clone())) {
-        return AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml write: {e}"
-        )));
+        return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
     }
     // Phase 82.10.s.3 — persist factory_type when supplied so the
     // registry can split instance-id from factory-id at runtime.
@@ -345,21 +320,15 @@ pub async fn upsert(
         .filter(|s| !s.is_empty())
     {
         if let Err(e) = write_field("factory_type", Value::String(ft.to_string())) {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
     }
     // Phase 82.10.s.3 — write whichever single key source was
     // provided. The pre-validation above guaranteed exactly one is
     // set; we still defensively check before writing each.
     if env_set {
-        if let Err(e) =
-            write_field("api_key_env", Value::String(input.api_key_env.clone()))
-        {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+        if let Err(e) = write_field("api_key_env", Value::String(input.api_key_env.clone())) {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
     }
     if let Some(sid) = effective_secret_id
@@ -368,9 +337,7 @@ pub async fn upsert(
         .filter(|s| !s.is_empty())
     {
         if let Err(e) = write_field("api_key_secret_id", Value::String(sid.to_string())) {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
     }
     if !input.headers.is_empty() {
@@ -380,9 +347,7 @@ pub async fn upsert(
             .map(|(k, v)| (k.clone(), Value::String(v.clone())))
             .collect();
         if let Err(e) = write_field("headers", Value::Object(map)) {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml write: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
     }
     reload_signal();
@@ -541,9 +506,7 @@ async fn upsert_schema_driven(
 
     // ── Step 2: auth_mode validation ─────────────────────────────
     if let Some(mode) = input.auth_mode {
-        let supported = lookup
-            .supported_auth_modes(&factory_id)
-            .unwrap_or_default();
+        let supported = lookup.supported_auth_modes(&factory_id).unwrap_or_default();
         if !supported.contains(&mode) {
             return err_typed(LlmProviderError::InvalidAuthMode {
                 factory: factory_id.clone(),
@@ -675,10 +638,9 @@ async fn upsert_schema_driven(
     // ── Step 6: persist auth.mode when explicit + non-default ────
     if let Some(mode) = input.auth_mode {
         if mode != AuthMode::ApiKey {
-            if let Err(e) = write_field(
-                "auth.mode",
-                Value::String(auth_mode_wire(mode).to_string()),
-            ) {
+            if let Err(e) =
+                write_field("auth.mode", Value::String(auth_mode_wire(mode).to_string()))
+            {
                 return err_typed(LlmProviderError::YamlWriteFailed {
                     detail: e.to_string(),
                 });
@@ -812,9 +774,7 @@ pub fn delete(
     let agent_ids = match agents.list_agent_ids() {
         Ok(ids) => ids,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "agents.yaml read: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("agents.yaml read: {e}")));
         }
     };
     for aid in &agent_ids {
@@ -879,9 +839,7 @@ pub fn delete(
                     .unwrap_or(Value::Null),
             )
         }
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml remove: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("yaml remove: {e}"))),
     }
 }
 
@@ -927,10 +885,7 @@ pub trait LlmProvidersProbe: Send + Sync {
 /// Validates the input, then forwards to the configured probe
 /// impl. The handler does NOT touch `llm.yaml` itself; the
 /// adapter wraps the existing [`LlmYamlPatcher`] for that.
-pub async fn probe(
-    probe_impl: &dyn LlmProvidersProbe,
-    raw_params: Value,
-) -> AdminRpcResult {
+pub async fn probe(probe_impl: &dyn LlmProvidersProbe, raw_params: Value) -> AdminRpcResult {
     match try_probe(probe_impl, raw_params).await {
         Ok(v) => AdminRpcResult::ok(v),
         Err(e) => AdminRpcResult::err(e),
@@ -962,10 +917,7 @@ async fn try_probe(
 /// `AdminRpcError` taxonomy as the regular probe — including the
 /// `Internal "not implemented"` fallback for adapters that haven't
 /// migrated.
-pub async fn probe_draft(
-    probe_impl: &dyn LlmProvidersProbe,
-    raw_params: Value,
-) -> AdminRpcResult {
+pub async fn probe_draft(probe_impl: &dyn LlmProvidersProbe, raw_params: Value) -> AdminRpcResult {
     match try_probe_draft(probe_impl, raw_params).await {
         Ok(v) => AdminRpcResult::ok(v),
         Err(e) => AdminRpcResult::err(e),
@@ -1018,18 +970,14 @@ pub async fn oauth_start(
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if input.factory_type.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "factory_type is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("factory_type is empty".into()));
     }
 
     match (input.factory_type.as_str(), input.auth_mode) {
         ("anthropic", AuthMode::OAuthAuthCode) => {
             oauth_start_anthropic(verifier_store, input).await
         }
-        ("minimax", AuthMode::OAuthDeviceCode) => {
-            oauth_start_minimax(verifier_store, input).await
-        }
+        ("minimax", AuthMode::OAuthDeviceCode) => oauth_start_minimax(verifier_store, input).await,
         (factory, mode) => err_typed(LlmProviderError::InvalidAuthMode {
             factory: factory.to_string(),
             mode: auth_mode_wire(mode).to_string(),
@@ -1071,8 +1019,7 @@ async fn oauth_start_minimax(
 ) -> AdminRpcResult {
     let pkce = nexo_llm_auth::pkce::gen_pkce(nexo_llm_auth::pkce::StateEncoding::Base64Url);
     let region = nexo_llm_auth::minimax::Region::Global;
-    let device = match nexo_llm_auth::minimax::request_user_code(region, &pkce, None).await
-    {
+    let device = match nexo_llm_auth::minimax::request_user_code(region, &pkce, None).await {
         Ok(d) => d,
         Err(e) => {
             return err_typed(LlmProviderError::OAuthExchangeFailed {
@@ -1126,14 +1073,10 @@ pub async fn oauth_finish(
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if input.session_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "session_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("session_id is empty".into()));
     }
     if input.instance_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "instance_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("instance_id is empty".into()));
     }
 
     // Single-use: peek_status discriminates expired vs missing
@@ -1339,9 +1282,7 @@ mod tests {
         providers: Mutex<HashMap<String, HashMap<String, Value>>>,
         /// Phase 83.8.12.5.c.b — tenant providers keyed by
         /// `(tenant_id, provider_id)`.
-        tenant_providers: Mutex<
-            HashMap<(String, String), HashMap<String, Value>>,
-        >,
+        tenant_providers: Mutex<HashMap<(String, String), HashMap<String, Value>>>,
     }
     impl MockLlm {
         fn with(provs: &[(&str, &str, &str)]) -> Self {
@@ -1369,11 +1310,7 @@ mod tests {
             v.sort();
             Ok(v)
         }
-        fn read_provider_field(
-            &self,
-            id: &str,
-            dotted: &str,
-        ) -> anyhow::Result<Option<Value>> {
+        fn read_provider_field(&self, id: &str, dotted: &str) -> anyhow::Result<Option<Value>> {
             Ok(self
                 .providers
                 .lock()
@@ -1399,10 +1336,7 @@ mod tests {
             self.providers.lock().unwrap().remove(id);
             Ok(())
         }
-        fn list_tenant_provider_ids(
-            &self,
-            tenant_id: &str,
-        ) -> anyhow::Result<Vec<String>> {
+        fn list_tenant_provider_ids(&self, tenant_id: &str) -> anyhow::Result<Vec<String>> {
             let mut v: Vec<String> = self
                 .tenant_providers
                 .lock()
@@ -1442,11 +1376,7 @@ mod tests {
                 .insert(dotted.to_string(), value);
             Ok(())
         }
-        fn remove_tenant_provider(
-            &self,
-            tenant_id: &str,
-            provider_id: &str,
-        ) -> anyhow::Result<()> {
+        fn remove_tenant_provider(&self, tenant_id: &str, provider_id: &str) -> anyhow::Result<()> {
             self.tenant_providers
                 .lock()
                 .unwrap()
@@ -1475,11 +1405,7 @@ mod tests {
         fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
             Ok(self.agents.lock().unwrap().keys().cloned().collect())
         }
-        fn read_agent_field(
-            &self,
-            id: &str,
-            dotted: &str,
-        ) -> anyhow::Result<Option<Value>> {
+        fn read_agent_field(&self, id: &str, dotted: &str) -> anyhow::Result<Option<Value>> {
             Ok(self
                 .agents
                 .lock()
@@ -1628,8 +1554,7 @@ mod tests {
         )
         .await;
         assert!(result.error.is_none(), "{result:?}");
-        let summary: LlmProviderSummary =
-            serde_json::from_value(result.result.unwrap()).unwrap();
+        let summary: LlmProviderSummary = serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(summary.tenant_scope.as_deref(), Some("acme"));
         // Global table untouched.
         assert!(llm.list_provider_ids().unwrap().is_empty());
@@ -1828,9 +1753,7 @@ mod tests {
 
     #[tokio::test]
     async fn probe_propagates_store_error() {
-        let mock = MockProbe::err(AdminRpcError::InvalidParams(
-            "env var FOO not set".into(),
-        ));
+        let mock = MockProbe::err(AdminRpcError::InvalidParams("env var FOO not set".into()));
         let result = probe(&mock, serde_json::json!({"provider_id": "minimax"})).await;
         let err = result.error.expect("expected error");
         match err {
@@ -1879,10 +1802,7 @@ mod tests {
         modes: Vec<AuthMode>,
     }
     impl FactorySchemaLookup for MockSchema {
-        fn credential_schema(
-            &self,
-            factory_id: &str,
-        ) -> Option<Vec<CredentialFieldDescriptor>> {
+        fn credential_schema(&self, factory_id: &str) -> Option<Vec<CredentialFieldDescriptor>> {
             (factory_id == self.factory_id).then(|| self.schema.clone())
         }
         fn supported_auth_modes(&self, factory_id: &str) -> Option<Vec<AuthMode>> {
@@ -1935,10 +1855,7 @@ mod tests {
             &self,
             name: &str,
             value: &str,
-        ) -> Result<
-            nexo_tool_meta::admin::secrets::SecretsWriteResponse,
-            AdminRpcError,
-        > {
+        ) -> Result<nexo_tool_meta::admin::secrets::SecretsWriteResponse, AdminRpcError> {
             self.writes
                 .lock()
                 .unwrap()

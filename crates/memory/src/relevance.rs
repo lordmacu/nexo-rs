@@ -111,7 +111,11 @@ pub fn score_memories(
         let freq_norm = ((freq_count as f32).ln_1p() / 6.0_f32.ln_1p()).min(1.0);
 
         let score = sim * recency * freq_norm;
-        let score = if score.is_finite() { score.clamp(0.0, 1.0) } else { 0.0 };
+        let score = if score.is_finite() {
+            score.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
         scored.push((score, entry.clone()));
     }
@@ -157,7 +161,12 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
-    fn make_entry(id: &str, content: &str, days_old: i64, memory_type: Option<MemoryType>) -> MemoryEntry {
+    fn make_entry(
+        id: &str,
+        content: &str,
+        days_old: i64,
+        memory_type: Option<MemoryType>,
+    ) -> MemoryEntry {
         let now = Utc::now();
         MemoryEntry {
             id: uuid::Uuid::parse_str(id).unwrap(),
@@ -194,27 +203,54 @@ mod tests {
 
     #[test]
     fn score_memories_nan_cosine_guarded() {
-        let e = make_entry("00000000-0000-0000-0000-000000000001", "test", 0, Some(MemoryType::Project));
-        let scored = score_memories(vec![e.clone()], &[(f32::NAN, e)], Utc::now(), &HashMap::new());
+        let e = make_entry(
+            "00000000-0000-0000-0000-000000000001",
+            "test",
+            0,
+            Some(MemoryType::Project),
+        );
+        let scored = score_memories(
+            vec![e.clone()],
+            &[(f32::NAN, e)],
+            Utc::now(),
+            &HashMap::new(),
+        );
         assert_eq!(scored[0].0, 0.0);
     }
 
     #[test]
     fn score_memories_zero_half_life() {
-        let e = make_entry("00000000-0000-0000-0000-000000000002", "old", 365, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-000000000002",
+            "old",
+            365,
+            Some(MemoryType::Project),
+        );
         let scored = score_memories(vec![e.clone()], &[(0.8, e)], Utc::now(), &HashMap::new());
         // 365 days old with 90d half-life → recency ≈ exp(-365*ln2/90) ≈ exp(-2.81) ≈ 0.06
         // score = 0.8 * 0.06 * 0.29 ≈ 0.014
-        assert!(scored[0].0 > 0.0 && scored[0].0 < 0.1,
-            "expected low score for very old memory, got {}", scored[0].0);
+        assert!(
+            scored[0].0 > 0.0 && scored[0].0 < 0.1,
+            "expected low score for very old memory, got {}",
+            scored[0].0
+        );
     }
 
     #[test]
     fn score_memories_future_mtime() {
-        let e = make_entry("00000000-0000-0000-0000-000000000003", "future", -1, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-000000000003",
+            "future",
+            -1,
+            Some(MemoryType::Project),
+        );
         let scored = score_memories(vec![e.clone()], &[(0.5, e)], Utc::now(), &HashMap::new());
         // age=0 → recency=1.0, score = 0.5 * 1.0 * freq(1) ≈ 0.145
-        assert!(scored[0].0 > 0.1, "expected non-zero score for future mtime, got {}", scored[0].0);
+        assert!(
+            scored[0].0 > 0.1,
+            "expected non-zero score for future mtime, got {}",
+            scored[0].0
+        );
     }
 
     #[test]
@@ -223,43 +259,91 @@ mod tests {
         let scored = score_memories(vec![e.clone()], &[(0.9, e)], Utc::now(), &HashMap::new());
         // 10d old, 90d half-life → recency ≈ exp(-10*ln2/90) ≈ 0.926
         // score = 0.9 * 0.926 * 0.29 ≈ 0.242
-        assert!(scored[0].0 > 0.2, "expected moderate score for legacy None, got {}", scored[0].0);
+        assert!(
+            scored[0].0 > 0.2,
+            "expected moderate score for legacy None, got {}",
+            scored[0].0
+        );
     }
 
     #[test]
     fn score_memories_sorted_descending() {
-        let recent = make_entry("00000000-0000-0000-0000-000000000005", "recent", 1, Some(MemoryType::Project));
-        let medium = make_entry("00000000-0000-0000-0000-000000000006", "medium", 30, Some(MemoryType::Project));
-        let old = make_entry("00000000-0000-0000-0000-000000000007", "old", 180, Some(MemoryType::Project));
+        let recent = make_entry(
+            "00000000-0000-0000-0000-000000000005",
+            "recent",
+            1,
+            Some(MemoryType::Project),
+        );
+        let medium = make_entry(
+            "00000000-0000-0000-0000-000000000006",
+            "medium",
+            30,
+            Some(MemoryType::Project),
+        );
+        let old = make_entry(
+            "00000000-0000-0000-0000-000000000007",
+            "old",
+            180,
+            Some(MemoryType::Project),
+        );
 
         let entries = vec![old.clone(), recent.clone(), medium.clone()];
         let sims = vec![(0.8, old), (0.8, recent), (0.8, medium)];
         let scored = score_memories(entries, &sims, Utc::now(), &HashMap::new());
 
         assert_eq!(scored.len(), 3);
-        assert!(scored[0].0 > scored[1].0, "recent ({}) should outrank medium ({})", scored[0].0, scored[1].0);
-        assert!(scored[1].0 > scored[2].0, "medium ({}) should outrank old ({})", scored[1].0, scored[2].0);
+        assert!(
+            scored[0].0 > scored[1].0,
+            "recent ({}) should outrank medium ({})",
+            scored[0].0,
+            scored[1].0
+        );
+        assert!(
+            scored[1].0 > scored[2].0,
+            "medium ({}) should outrank old ({})",
+            scored[1].0,
+            scored[2].0
+        );
     }
 
     #[test]
     fn score_memories_user_type_never_decays() {
-        let e = make_entry("00000000-0000-0000-0000-000000000008", "pref", 365, Some(MemoryType::User));
+        let e = make_entry(
+            "00000000-0000-0000-0000-000000000008",
+            "pref",
+            365,
+            Some(MemoryType::User),
+        );
         let scored = score_memories(vec![e.clone()], &[(0.5, e)], Utc::now(), &HashMap::new());
         // 365d old, 10000d half-life → recency ≈ exp(-365*ln2/10000) ≈ 0.975
         // score = 0.5 * 0.975 * 0.29 ≈ 0.141
-        assert!(scored[0].0 > 0.13, "user memory should barely decay, got {}", scored[0].0);
+        assert!(
+            scored[0].0 > 0.13,
+            "user memory should barely decay, got {}",
+            scored[0].0
+        );
     }
 
     #[test]
     fn freshness_note_below_threshold() {
-        let e = make_entry("00000000-0000-0000-0000-000000000009", "fresh", 0, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-000000000009",
+            "fresh",
+            0,
+            Some(MemoryType::Project),
+        );
         let note = freshness_note(&e, Utc::now(), 1);
         assert!(note.is_none());
     }
 
     #[test]
     fn freshness_note_above_threshold() {
-        let e = make_entry("00000000-0000-0000-0000-00000000000a", "stale", 2, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-00000000000a",
+            "stale",
+            2,
+            Some(MemoryType::Project),
+        );
         let note = freshness_note(&e, Utc::now(), 1);
         assert!(note.is_some());
         let n = note.unwrap();
@@ -269,19 +353,34 @@ mod tests {
 
     #[test]
     fn freshness_note_threshold_zero() {
-        let e = make_entry("00000000-0000-0000-0000-00000000000b", "always", 0, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-00000000000b",
+            "always",
+            0,
+            Some(MemoryType::Project),
+        );
         let note = freshness_note(&e, Utc::now(), 0);
         // 0 days old, threshold 0 — 0 > 0 is false, no warning
         assert!(note.is_none());
         // But after 1 day, threshold 0 should warn
-        let old = make_entry("00000000-0000-0000-0000-00000000000c", "old", 1, Some(MemoryType::Project));
+        let old = make_entry(
+            "00000000-0000-0000-0000-00000000000c",
+            "old",
+            1,
+            Some(MemoryType::Project),
+        );
         let note2 = freshness_note(&old, Utc::now(), 0);
         assert!(note2.is_some());
     }
 
     #[test]
     fn freshness_note_max_threshold_disables() {
-        let e = make_entry("00000000-0000-0000-0000-00000000000d", "ancient", 1000, Some(MemoryType::Project));
+        let e = make_entry(
+            "00000000-0000-0000-0000-00000000000d",
+            "ancient",
+            1000,
+            Some(MemoryType::Project),
+        );
         let note = freshness_note(&e, Utc::now(), i32::MAX as u32);
         assert!(note.is_none());
     }

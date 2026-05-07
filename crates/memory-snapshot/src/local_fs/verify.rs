@@ -77,7 +77,10 @@ pub(super) async fn run_verify(bundle: &Path) -> Result<VerifyReport, SnapshotEr
     let bundle_sha256_ok = check_sibling_sha256(bundle)?;
 
     let (manifest, per_artifact_ok) = inspect_bundle(bundle)?;
-    if !manifest.schema_versions.is_supported_by(&SchemaVersions::CURRENT) {
+    if !manifest
+        .schema_versions
+        .is_supported_by(&SchemaVersions::CURRENT)
+    {
         return Err(SnapshotError::SchemaTooNew {
             bundle: manifest.schema_versions.manifest,
             runtime: SchemaVersions::CURRENT.manifest,
@@ -225,7 +228,10 @@ mod tests {
             .unwrap();
         seed_memdir(&tmp.join("agents-memdir/ana"));
         seed_sqlite(&tmp.join("agents-sqlite/ana/long_term.sqlite"), 4).await;
-        let meta = s.snapshot(SnapshotRequest::cli("ana", "default")).await.unwrap();
+        let meta = s
+            .snapshot(SnapshotRequest::cli("ana", "default"))
+            .await
+            .unwrap();
         meta.bundle_path
     }
 

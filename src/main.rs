@@ -625,10 +625,7 @@ impl RuntimeCronToolExecutor {
     /// M5 — atomic hot-swap of the binding map. Called by the
     /// config-reload post-hook. Cheap (single `Arc` store).
     /// In-flight callers retain their pre-swap snapshot.
-    fn replace_bindings(
-        &self,
-        new_map: std::collections::HashMap<String, CronToolBindingContext>,
-    ) {
+    fn replace_bindings(&self, new_map: std::collections::HashMap<String, CronToolBindingContext>) {
         self.by_binding.store(Arc::new(new_map));
     }
 
@@ -1091,13 +1088,8 @@ async fn main() -> Result<()> {
                 memory_dir,
                 db,
             } => {
-                return run_agent_dream_kill(
-                    run_id,
-                    *force,
-                    memory_dir.as_deref(),
-                    db.as_deref(),
-                )
-                .await;
+                return run_agent_dream_kill(run_id, *force, memory_dir.as_deref(), db.as_deref())
+                    .await;
             }
         },
         Mode::AgentRun {
@@ -1116,11 +1108,7 @@ async fn main() -> Result<()> {
         } => {
             return run_agent_ps(kind.as_deref(), all, db.as_deref(), json).await;
         }
-        Mode::AgentAttach {
-            goal_id,
-            db,
-            json,
-        } => {
+        Mode::AgentAttach { goal_id, db, json } => {
             return run_agent_attach(&goal_id, db.as_deref(), json).await;
         }
         Mode::AgentDiscover {
@@ -1350,7 +1338,8 @@ async fn main() -> Result<()> {
             include_orphan,
             json,
         } => {
-            let code = plugin_admin::run_plugin_list(&args.config_dir, include_orphan, json).await?;
+            let code =
+                plugin_admin::run_plugin_list(&args.config_dir, include_orphan, json).await?;
             std::process::exit(code);
         }
         Mode::PluginUpgrade {
@@ -1378,7 +1367,8 @@ async fn main() -> Result<()> {
             json,
         } => {
             let code =
-                plugin_admin::run_plugin_remove(&args.config_dir, id, purge_cache, yes, json).await?;
+                plugin_admin::run_plugin_remove(&args.config_dir, id, purge_cache, yes, json)
+                    .await?;
             std::process::exit(code);
         }
         Mode::Admin { port } => return run_admin_web(port).await,
@@ -1416,10 +1406,11 @@ async fn main() -> Result<()> {
     // wins).
     for agent_cfg in &mut cfg.agents.agents {
         if !agent_cfg.event_subscribers.is_empty() {
-            agent_cfg.inbound_bindings = nexo_core::agent::event_subscriber::synthesize_event_inbound_bindings(
-                &agent_cfg.inbound_bindings,
-                &agent_cfg.event_subscribers,
-            );
+            agent_cfg.inbound_bindings =
+                nexo_core::agent::event_subscriber::synthesize_event_inbound_bindings(
+                    &agent_cfg.inbound_bindings,
+                    &agent_cfg.event_subscribers,
+                );
         }
     }
     // Phase 81.9 — `cfg` stays mutable so `wire_plugin_registry`
@@ -1538,9 +1529,7 @@ async fn main() -> Result<()> {
     // agent_event_log.
     let processing_store: std::sync::Arc<
         dyn nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore,
-    > = std::sync::Arc::new(
-        nexo_setup::admin_adapters::InMemoryProcessingControlStore::new(),
-    );
+    > = std::sync::Arc::new(nexo_setup::admin_adapters::InMemoryProcessingControlStore::new());
 
     // Phase 82.13.b — initialise the broker BEFORE
     // `AdminBootstrap` so the `processing/intervention` admin RPC
@@ -1670,12 +1659,12 @@ async fn main() -> Result<()> {
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new
                 // values without a daemon restart.
-                secrets_store: Some(
-                    nexo_setup::secrets_store::FsSecretsStore::with_secrets_dir(
-                        secrets_dir.clone(),
-                    )
-                        as std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>,
-                ),
+                secrets_store: Some(nexo_setup::secrets_store::FsSecretsStore::with_secrets_dir(
+                    secrets_dir.clone(),
+                )
+                    as std::sync::Arc<
+                        dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore,
+                    >),
                 // Phase 82.10.l — None lets admin_bootstrap
                 // default-construct `HttpLlmProviderProbe`
                 // against the local `LlmYamlPatcherFs`. Tests
@@ -2033,10 +2022,8 @@ async fn main() -> Result<()> {
     let memory_mutation_hook: Option<Arc<dyn nexo_driver_types::MemoryMutationHook>> =
         if snapshot_yaml.events.mutation_publish_enabled && memory_snapshotter.is_some() {
             Some(
-                nexo_memory_snapshot::MemoryMutationPublisher::new(
-                    memory_event_publisher.clone(),
-                )
-                .into_arc(),
+                nexo_memory_snapshot::MemoryMutationPublisher::new(memory_event_publisher.clone())
+                    .into_arc(),
             )
         } else {
             None
@@ -2056,9 +2043,8 @@ async fn main() -> Result<()> {
     // Phase 80.9.b.b — process-wide pending-permission map
     // shared by the ChannelRelayDecider + every per-server
     // permission-response pump.
-    let pending_permissions = std::sync::Arc::new(
-        nexo_mcp::channel_permission::PendingPermissionMap::new(),
-    );
+    let pending_permissions =
+        std::sync::Arc::new(nexo_mcp::channel_permission::PendingPermissionMap::new());
     {
         // Spawn one bridge per process. Sink publishes
         // `ChannelInboundEvent` on a stable subject the agent
@@ -2336,8 +2322,7 @@ async fn main() -> Result<()> {
     // (browser/telegram/whatsapp/email) keep their dormant
     // manifests OUT of `search_paths` and continue via the legacy
     // block above until 81.18-81.19 extract them out-of-tree.
-    let factory_registry =
-        nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
+    let factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
     let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| config_dir.clone());
@@ -2375,18 +2360,17 @@ async fn main() -> Result<()> {
         // command wrapped at spawn time.
         sandbox: nexo_core::agent::plugin_sandbox::shared_runner_from_env(),
     };
-    let wire =
-        nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
-            &mut cfg.agents,
-            &discovery_cfg_clone,
-            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
-            &core_envs,
-            &available_caps,
-            Some(&factory_registry),
-            Some(&subprocess_runtime),
-        )
-        .await;
+    let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
+        &mut cfg.agents,
+        &discovery_cfg_clone,
+        &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        &core_envs,
+        &available_caps,
+        Some(&factory_registry),
+        Some(&subprocess_runtime),
+    )
+    .await;
     // `wire.registry` + `wire.skill_roots` +
     // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
     // reload registration + 81.12 per-agent threading without
@@ -2765,9 +2749,9 @@ async fn main() -> Result<()> {
                 None
             }
             Ok(()) => {
-                let dispatcher = Arc::new(
-                    nexo_webhook_server::BrokerWebhookDispatcher::new(broker.clone()),
-                );
+                let dispatcher = Arc::new(nexo_webhook_server::BrokerWebhookDispatcher::new(
+                    broker.clone(),
+                ));
                 match nexo_webhook_server::build_router(wcfg, dispatcher) {
                     Err(e) => {
                         tracing::error!(error = %e, "webhook_receiver disabled: router build failed");
@@ -2814,11 +2798,9 @@ async fn main() -> Result<()> {
         if agent_cfg.event_subscribers.is_empty() {
             continue;
         }
-        if let Err(e) =
-            nexo_config::types::event_subscriber::check_event_subscribers_unique(
-                &agent_cfg.event_subscribers,
-            )
-        {
+        if let Err(e) = nexo_config::types::event_subscriber::check_event_subscribers_unique(
+            &agent_cfg.event_subscribers,
+        ) {
             tracing::error!(
                 agent_id = %agent_cfg.id,
                 error = %e,
@@ -2836,13 +2818,12 @@ async fn main() -> Result<()> {
                 );
                 continue;
             }
-            let sub = std::sync::Arc::new(
-                nexo_core::agent::event_subscriber::EventSubscriber::new(
+            let sub =
+                std::sync::Arc::new(nexo_core::agent::event_subscriber::EventSubscriber::new(
                     agent_cfg.id.clone(),
                     binding.clone(),
                     broker.clone(),
-                ),
-            );
+                ));
             let cancel = event_subscribers_shutdown.clone();
             tokio::spawn(async move {
                 if let Err(e) =
@@ -3457,9 +3438,8 @@ async fn main() -> Result<()> {
     // Created once per process so the broker subscriber below can
     // resolve pending ExitPlanMode approvals from inbound
     // `[plan-mode] approve|reject plan_id=…` chat messages.
-    let plan_approval_registry = std::sync::Arc::new(
-        nexo_core::agent::plan_mode_tool::PlanApprovalRegistry::default(),
-    );
+    let plan_approval_registry =
+        std::sync::Arc::new(nexo_core::agent::plan_mode_tool::PlanApprovalRegistry::default());
     // Subscribe to inbound topics for plan-mode approval routing.
     // Spawned in a fire-and-forget task; ends with the daemon shutdown.
     {
@@ -3492,12 +3472,23 @@ async fn main() -> Result<()> {
                     None => continue,
                 };
                 let (plan_id, decision) = match cmd {
-                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Approve { plan_id } => {
-                        (plan_id, nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Approve)
-                    }
-                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Reject { plan_id, reason } => {
+                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Approve {
+                        plan_id,
+                    } => (
+                        plan_id,
+                        nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Approve,
+                    ),
+                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Reject {
+                        plan_id,
+                        reason,
+                    } => {
                         let reason = reason.unwrap_or_else(|| "rejected by operator".to_string());
-                        (plan_id, nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Reject { reason })
+                        (
+                            plan_id,
+                            nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Reject {
+                                reason,
+                            },
+                        )
                     }
                 };
                 let resolved = registry.resolve(&plan_id, decision);
@@ -3577,8 +3568,10 @@ async fn main() -> Result<()> {
     // primary (first non-None) registers with the
     // `DriverOrchestrator.builder().auto_dream(...)` so the
     // orchestrator can dispatch consolidation cycles.
-    let mut auto_dream_runners: Vec<(String, Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>>)> =
-        Vec::with_capacity(cfg.agents.agents.len());
+    let mut auto_dream_runners: Vec<(
+        String,
+        Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>>,
+    )> = Vec::with_capacity(cfg.agents.agents.len());
 
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
@@ -3607,40 +3600,35 @@ async fn main() -> Result<()> {
         // Phase 67 self-driving wire is added — single instance per
         // agent keeps cadence + circuit breaker + in-progress mutex
         // coherent.
-        let memory_extractor: Option<Arc<dyn nexo_driver_types::MemoryExtractor>> = match agent_cfg
-            .extract_memories
-            .as_ref()
-            .filter(|c| c.enabled)
-        {
-            Some(yaml_cfg) => {
-                let cfg_concrete = nexo_driver_types::ExtractMemoriesConfig {
-                    enabled: yaml_cfg.enabled,
-                    turns_throttle: yaml_cfg.turns_throttle,
-                    max_turns: yaml_cfg.max_turns,
-                    max_consecutive_failures: yaml_cfg.max_consecutive_failures,
-                };
-                let adapter = Arc::new(
-                    nexo_driver_loop::extract_memories::LlmClientAdapter::new(
-                        Arc::clone(&llm),
-                        agent_cfg.model.model.clone(),
-                    ),
-                );
-                let extract = Arc::new(
-                    nexo_driver_loop::extract_memories::ExtractMemories::new(
-                        cfg_concrete,
-                        adapter,
-                    ),
-                );
-                tracing::info!(
-                    agent = %agent_id,
-                    throttle = yaml_cfg.turns_throttle,
-                    max_turns = yaml_cfg.max_turns,
-                    "[memory] extract_memories enabled"
-                );
-                Some(extract as Arc<dyn nexo_driver_types::MemoryExtractor>)
-            }
-            _ => None,
-        };
+        let memory_extractor: Option<Arc<dyn nexo_driver_types::MemoryExtractor>> =
+            match agent_cfg.extract_memories.as_ref().filter(|c| c.enabled) {
+                Some(yaml_cfg) => {
+                    let cfg_concrete = nexo_driver_types::ExtractMemoriesConfig {
+                        enabled: yaml_cfg.enabled,
+                        turns_throttle: yaml_cfg.turns_throttle,
+                        max_turns: yaml_cfg.max_turns,
+                        max_consecutive_failures: yaml_cfg.max_consecutive_failures,
+                    };
+                    let adapter =
+                        Arc::new(nexo_driver_loop::extract_memories::LlmClientAdapter::new(
+                            Arc::clone(&llm),
+                            agent_cfg.model.model.clone(),
+                        ));
+                    let extract =
+                        Arc::new(nexo_driver_loop::extract_memories::ExtractMemories::new(
+                            cfg_concrete,
+                            adapter,
+                        ));
+                    tracing::info!(
+                        agent = %agent_id,
+                        throttle = yaml_cfg.turns_throttle,
+                        max_turns = yaml_cfg.max_turns,
+                        "[memory] extract_memories enabled"
+                    );
+                    Some(extract as Arc<dyn nexo_driver_types::MemoryExtractor>)
+                }
+                _ => None,
+            };
 
         // Validate heartbeat interval eagerly even though the runtime is
         // pending Phase 7 — better to fail at startup than silently ignore.
@@ -4010,12 +3998,10 @@ async fn main() -> Result<()> {
                 } else {
                     agent_cfg.workspace.clone()
                 };
-                let repl_registry = std::sync::Arc::new(
-                    nexo_core::agent::ReplRegistry::new(
-                        effective_boot.repl.clone(),
-                        repl_workspace,
-                    ),
-                );
+                let repl_registry = std::sync::Arc::new(nexo_core::agent::ReplRegistry::new(
+                    effective_boot.repl.clone(),
+                    repl_workspace,
+                ));
                 tools.register(
                     nexo_core::agent::ReplTool::tool_def(),
                     nexo_core::agent::ReplTool::new(repl_registry),
@@ -4431,11 +4417,7 @@ async fn main() -> Result<()> {
                             // commit_all fires a Git/Update event
                             // onto `nexo.memory.mutated.<agent>`.
                             let repo = if let Some(ref hook) = memory_mutation_hook {
-                                repo.with_mutation_hook(
-                                    hook.clone(),
-                                    agent_id.clone(),
-                                    "default",
-                                )
+                                repo.with_mutation_hook(hook.clone(), agent_id.clone(), "default")
                             } else {
                                 repo
                             };
@@ -4488,10 +4470,7 @@ async fn main() -> Result<()> {
             if let Some(snapshotter) = &memory_snapshotter {
                 let tool = nexo_core::agent::MemorySnapshotTool::new(snapshotter.clone())
                     .with_redact_secrets_default(snapshot_yaml.redact_secrets_default);
-                tools.register(
-                    nexo_core::agent::MemorySnapshotTool::tool_def(),
-                    tool,
-                );
+                tools.register(nexo_core::agent::MemorySnapshotTool::tool_def(), tool);
             }
             // Wire session-close commit: when a session expires, snapshot
             // the workspace so the day's memory edits land in history
@@ -4651,9 +4630,8 @@ async fn main() -> Result<()> {
                             binding.plugin,
                             binding.instance.as_deref().unwrap_or("default")
                         );
-                        let allow_arc = std::sync::Arc::new(
-                            binding.allowed_channel_servers.clone(),
-                        );
+                        let allow_arc =
+                            std::sync::Arc::new(binding.allowed_channel_servers.clone());
                         for (server_name, client) in &clients_snapshot {
                             if !binding
                                 .allowed_channel_servers
@@ -4662,34 +4640,27 @@ async fn main() -> Result<()> {
                             {
                                 continue;
                             }
-                            let cap_declared =
-                                nexo_mcp::channel::has_channel_capability(Some(
-                                    &client.capabilities().experimental,
-                                ));
-                            let perm_cap =
-                                nexo_mcp::channel::has_channel_permission_capability(Some(
-                                    &client.capabilities().experimental,
-                                ));
+                            let cap_declared = nexo_mcp::channel::has_channel_capability(Some(
+                                &client.capabilities().experimental,
+                            ));
+                            let perm_cap = nexo_mcp::channel::has_channel_permission_capability(
+                                Some(&client.capabilities().experimental),
+                            );
                             let plugin_source = channels_cfg
                                 .lookup_approved(server_name)
                                 .and_then(|e| e.plugin_source.clone());
-                            let loop_cfg =
-                                nexo_mcp::channel_boot::build_inbound_loop_config(
-                                    &channel_boot,
-                                    server_name.clone(),
-                                    binding_id.clone(),
-                                    plugin_source,
-                                    cfg_arc.clone(),
-                                    allow_arc.clone(),
-                                    cap_declared,
-                                    perm_cap,
-                                );
-                            let handle =
-                                nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
-                                    .spawn_against_client(
-                                        client.as_ref(),
-                                        channel_shutdown.clone(),
-                                    );
+                            let loop_cfg = nexo_mcp::channel_boot::build_inbound_loop_config(
+                                &channel_boot,
+                                server_name.clone(),
+                                binding_id.clone(),
+                                plugin_source,
+                                cfg_arc.clone(),
+                                allow_arc.clone(),
+                                cap_declared,
+                                perm_cap,
+                            );
+                            let handle = nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
+                                .spawn_against_client(client.as_ref(), channel_shutdown.clone());
                             // Phase 80.9.b.b — spawn the
                             // permission-response pump alongside
                             // the channel inbound loop so any
@@ -4697,17 +4668,16 @@ async fn main() -> Result<()> {
                             // event from this server resolves the
                             // matching pending entry.
                             if perm_cap {
-                                let _ = nexo_mcp::channel_permission::spawn_permission_response_pump(
-                                    client.clone(),
-                                    server_name.clone(),
-                                    pending_permissions.clone(),
-                                    channel_shutdown.clone(),
-                                );
+                                let _ =
+                                    nexo_mcp::channel_permission::spawn_permission_response_pump(
+                                        client.clone(),
+                                        server_name.clone(),
+                                        pending_permissions.clone(),
+                                        channel_shutdown.clone(),
+                                    );
                             }
                             match handle {
-                                nexo_mcp::channel::ChannelInboundLoopHandle::Running {
-                                    ..
-                                } => {
+                                nexo_mcp::channel::ChannelInboundLoopHandle::Running { .. } => {
                                     tracing::info!(
                                         agent = %agent_cfg.id,
                                         binding = %binding_id,
@@ -5230,72 +5200,71 @@ async fn main() -> Result<()> {
         // registration after the loop. Uses `agent_cfg_for_dream`
         // (cloned at loop top) since `agent_cfg` was already moved
         // by `Agent::new`.
-        let runner_opt: Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>> = match agent_cfg_for_dream
-            .auto_dream
-            .as_ref()
-        {
-            Some(ad_cfg) if ad_cfg.enabled => {
-                if agent_cfg_for_dream.workspace.trim().is_empty() {
-                    tracing::warn!(
-                        agent = %agent_id,
-                        "auto_dream.enabled=true but agent.workspace is empty — skipping"
-                    );
-                    None
-                } else {
-                    let parent_ctx_template = nexo_core::agent::AgentContext::new(
-                        agent_cfg_for_dream.id.clone(),
-                        Arc::new(agent_cfg_for_dream.clone()),
-                        broker.clone(),
-                        sessions.clone(),
-                    );
-                    let tool_dispatcher: Arc<dyn nexo_fork::ToolDispatcher> = Arc::new(
-                        nexo_fork::AgentToolDispatcher::new(
-                            tools.clone(),
-                            parent_ctx_template.clone(),
-                        ),
-                    );
-                    let git_checkpointer = agent_git.as_ref().map(|g| {
-                        Arc::new(nexo_core::agent::MemoryGitCheckpointer::new(g.clone()))
-                            as Arc<dyn nexo_driver_types::MemoryCheckpointer>
-                    });
-                    let pre_dream_snapshot = if snapshot_yaml.auto_pre_dream {
-                        memory_snapshotter.as_ref().map(|s| {
-                            nexo_memory_snapshot::PreDreamSnapshotAdapter::new(s.clone())
-                                .into_arc()
-                        })
-                    } else {
+        let runner_opt: Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>> =
+            match agent_cfg_for_dream.auto_dream.as_ref() {
+                Some(ad_cfg) if ad_cfg.enabled => {
+                    if agent_cfg_for_dream.workspace.trim().is_empty() {
+                        tracing::warn!(
+                            agent = %agent_id,
+                            "auto_dream.enabled=true but agent.workspace is empty — skipping"
+                        );
                         None
-                    };
-                    let deps = nexo_dream::boot::BootDeps {
-                        config: ad_cfg.clone(),
-                        agent_id: agent_cfg_for_dream.id.clone(),
-                        workspace_root: std::path::PathBuf::from(&agent_cfg_for_dream.workspace),
-                        state_root: nexo_project_tracker::state::nexo_state_dir(),
-                        parent_ctx_template,
-                        llm: llm.clone(),
-                        tool_dispatcher,
-                        fork_system_prompt: agent_cfg_for_dream.system_prompt.clone(),
-                        fork_tools: Vec::new(),
-                        fork_model: agent_cfg_for_dream.model.model.clone(),
-                        git_checkpointer,
-                        pre_dream_snapshot,
-                        pre_dream_tenant: "default".into(),
-                    };
-                    match nexo_dream::boot::build_runner(deps).await {
-                        Ok(opt) => opt,
-                        Err(e) => {
-                            tracing::warn!(
-                                agent = %agent_id,
-                                error = %e,
-                                "auto_dream boot failed; agent runs without consolidation"
-                            );
+                    } else {
+                        let parent_ctx_template = nexo_core::agent::AgentContext::new(
+                            agent_cfg_for_dream.id.clone(),
+                            Arc::new(agent_cfg_for_dream.clone()),
+                            broker.clone(),
+                            sessions.clone(),
+                        );
+                        let tool_dispatcher: Arc<dyn nexo_fork::ToolDispatcher> =
+                            Arc::new(nexo_fork::AgentToolDispatcher::new(
+                                tools.clone(),
+                                parent_ctx_template.clone(),
+                            ));
+                        let git_checkpointer = agent_git.as_ref().map(|g| {
+                            Arc::new(nexo_core::agent::MemoryGitCheckpointer::new(g.clone()))
+                                as Arc<dyn nexo_driver_types::MemoryCheckpointer>
+                        });
+                        let pre_dream_snapshot = if snapshot_yaml.auto_pre_dream {
+                            memory_snapshotter.as_ref().map(|s| {
+                                nexo_memory_snapshot::PreDreamSnapshotAdapter::new(s.clone())
+                                    .into_arc()
+                            })
+                        } else {
                             None
+                        };
+                        let deps = nexo_dream::boot::BootDeps {
+                            config: ad_cfg.clone(),
+                            agent_id: agent_cfg_for_dream.id.clone(),
+                            workspace_root: std::path::PathBuf::from(
+                                &agent_cfg_for_dream.workspace,
+                            ),
+                            state_root: nexo_project_tracker::state::nexo_state_dir(),
+                            parent_ctx_template,
+                            llm: llm.clone(),
+                            tool_dispatcher,
+                            fork_system_prompt: agent_cfg_for_dream.system_prompt.clone(),
+                            fork_tools: Vec::new(),
+                            fork_model: agent_cfg_for_dream.model.model.clone(),
+                            git_checkpointer,
+                            pre_dream_snapshot,
+                            pre_dream_tenant: "default".into(),
+                        };
+                        match nexo_dream::boot::build_runner(deps).await {
+                            Ok(opt) => opt,
+                            Err(e) => {
+                                tracing::warn!(
+                                    agent = %agent_id,
+                                    error = %e,
+                                    "auto_dream boot failed; agent runs without consolidation"
+                                );
+                                None
+                            }
                         }
                     }
                 }
-            }
-            _ => None,
-        };
+                _ => None,
+            };
 
         // Phase 80.1.c — `dream_now` LLM tool registration. Honors
         // the `NEXO_DREAM_NOW_ENABLED` capability inventory entry
@@ -5354,8 +5323,7 @@ async fn main() -> Result<()> {
                 let mut registered_count = 0_usize;
                 for (agent_id, runner) in active.iter() {
                     let hook: Arc<dyn nexo_driver_types::AutoDreamHook> = runner.clone();
-                    dc.orchestrator
-                        .register_auto_dream(agent_id.clone(), hook);
+                    dc.orchestrator.register_auto_dream(agent_id.clone(), hook);
                     registered_count += 1;
                 }
                 tracing::info!(
@@ -5365,8 +5333,7 @@ async fn main() -> Result<()> {
                     "auto_dream runners registered on orchestrator"
                 );
             } else {
-                let agents: Vec<&str> =
-                    active.iter().map(|(id, _)| id.as_str()).collect();
+                let agents: Vec<&str> = active.iter().map(|(id, _)| id.as_str()).collect();
                 tracing::info!(
                     target: "boot.auto_dream",
                     agents = ?agents,
@@ -5437,9 +5404,7 @@ async fn main() -> Result<()> {
         reload_coord
             .register_post_hook(Box::new(move || {
                 let Some(executor) = cell.get() else {
-                    tracing::debug!(
-                        "[cron] post-hook fired before executor built; skipping"
-                    );
+                    tracing::debug!("[cron] post-hook fired before executor built; skipping");
                     return;
                 };
                 let new_map = build_cron_bindings_from_snapshots(&snapshots, &deps);
@@ -5461,73 +5426,67 @@ async fn main() -> Result<()> {
     // every Phase 18 reload — automatic, no SIGHUP needed.
     // Returned handle survives until the daemon's main shutdown
     // sequence drains it.
-    let mcp_embed_handle: Option<nexo_mcp::HttpServerHandle> = match cfg
-        .mcp_server
-        .as_ref()
-        .filter(|s| s.daemon_embed.enabled)
-    {
-        Some(server_cfg) => {
-            let (primary_id, primary_cfg) =
-                primary_for_mcp_embed.clone().ok_or_else(|| {
+    let mcp_embed_handle: Option<nexo_mcp::HttpServerHandle> =
+        match cfg.mcp_server.as_ref().filter(|s| s.daemon_embed.enabled) {
+            Some(server_cfg) => {
+                let (primary_id, primary_cfg) = primary_for_mcp_embed.clone().ok_or_else(|| {
+                    anyhow::anyhow!("mcp_server.daemon_embed enabled but agents.yaml has no agents")
+                })?;
+                let primary_tools = tools_per_agent.get(&primary_id).cloned().ok_or_else(|| {
                     anyhow::anyhow!(
-                        "mcp_server.daemon_embed enabled but agents.yaml has no agents"
+                        "mcp_server.daemon_embed: primary agent `{}` not in tools_per_agent map",
+                        primary_id
                     )
                 })?;
-            let primary_tools = tools_per_agent.get(&primary_id).cloned().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "mcp_server.daemon_embed: primary agent `{}` not in tools_per_agent map",
-                    primary_id
-                )
-            })?;
-            let primary_cfg_arc = Arc::new(primary_cfg);
-            let primary_ctx = nexo_core::agent::AgentContext::new(
-                primary_id.clone(),
-                primary_cfg_arc,
-                broker.clone(),
-                Arc::clone(&sessions),
-            );
-            let allowlist = compute_allowlist_from_mcp_server_cfg(server_cfg);
-            let server_info = nexo_mcp::McpServerInfo {
-                name: server_cfg
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| primary_id.clone()),
-                version: env!("CARGO_PKG_VERSION").into(),
-            };
-            let bridge = nexo_core::agent::ToolRegistryBridge::new(
-                server_info,
-                primary_tools,
-                primary_ctx,
-                allowlist,
-                server_cfg.expose_proxies,
-            )
-            .with_list_changed_capability(true);
-
-            let http_yaml = server_cfg.http.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "mcp_server.daemon_embed enabled requires mcp_server.http config"
-                )
-            })?;
-            if !http_yaml.enabled {
-                anyhow::bail!(
-                    "mcp_server.daemon_embed enabled but mcp_server.http.enabled = false"
+                let primary_cfg_arc = Arc::new(primary_cfg);
+                let primary_ctx = nexo_core::agent::AgentContext::new(
+                    primary_id.clone(),
+                    primary_cfg_arc,
+                    broker.clone(),
+                    Arc::clone(&sessions),
                 );
-            }
-            let handle = start_http_transport(&bridge, http_yaml, &watcher_shutdown).await?;
-            tracing::info!(
-                agent = %primary_id,
-                addr = %handle.bind_addr,
-                "[mcp-embed] daemon MCP server ready"
-            );
+                let allowlist = compute_allowlist_from_mcp_server_cfg(server_cfg);
+                let server_info = nexo_mcp::McpServerInfo {
+                    name: server_cfg
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| primary_id.clone()),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                };
+                let bridge = nexo_core::agent::ToolRegistryBridge::new(
+                    server_info,
+                    primary_tools,
+                    primary_ctx,
+                    allowlist,
+                    server_cfg.expose_proxies,
+                )
+                .with_list_changed_capability(true);
 
-            // Reload-coord post-hook: on every Phase 18 reload,
-            // re-read `mcp_server.expose_tools` from disk + atomic
-            // swap_allowlist + notify so connected clients refresh
-            // tool list without reconnect.
-            let bridge_for_hook = bridge.clone();
-            let notifier = handle.notifier();
-            let cfg_dir_for_hook = config_dir.clone();
-            reload_coord
+                let http_yaml = server_cfg.http.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "mcp_server.daemon_embed enabled requires mcp_server.http config"
+                    )
+                })?;
+                if !http_yaml.enabled {
+                    anyhow::bail!(
+                        "mcp_server.daemon_embed enabled but mcp_server.http.enabled = false"
+                    );
+                }
+                let handle = start_http_transport(&bridge, http_yaml, &watcher_shutdown).await?;
+                tracing::info!(
+                    agent = %primary_id,
+                    addr = %handle.bind_addr,
+                    "[mcp-embed] daemon MCP server ready"
+                );
+
+                // Reload-coord post-hook: on every Phase 18 reload,
+                // re-read `mcp_server.expose_tools` from disk + atomic
+                // swap_allowlist + notify so connected clients refresh
+                // tool list without reconnect.
+                let bridge_for_hook = bridge.clone();
+                let notifier = handle.notifier();
+                let cfg_dir_for_hook = config_dir.clone();
+                reload_coord
                 .register_post_hook(Box::new(move || {
                     match reload_expose_tools(&cfg_dir_for_hook) {
                         Ok(new_allow) => {
@@ -5548,10 +5507,10 @@ async fn main() -> Result<()> {
                 }))
                 .await;
 
-            Some(handle)
-        }
-        _ => None,
-    };
+                Some(handle)
+            }
+            _ => None,
+        };
 
     // Phase 81.10 — register post-reload hook that re-discovers
     // plugin manifests and atomically swaps the registry snapshot.
@@ -5643,9 +5602,8 @@ async fn main() -> Result<()> {
                         );
                     } else {
                         let bindings_count = cron_tool_bindings.len();
-                        let executor = std::sync::Arc::new(RuntimeCronToolExecutor::new(
-                            cron_tool_bindings,
-                        ));
+                        let executor =
+                            std::sync::Arc::new(RuntimeCronToolExecutor::new(cron_tool_bindings));
                         // M5.b — late-bind into the post-hook cell so
                         // subsequent reloads can `replace_bindings`.
                         let _ = cron_executor_cell.set(Arc::clone(&executor));
@@ -5706,11 +5664,7 @@ async fn main() -> Result<()> {
     // `daemon_embed.enabled = false`.
     if let Some(handle) = mcp_embed_handle {
         watcher_shutdown.cancel();
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            handle.join,
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle.join).await;
     }
     // Phase 79.6 — drop the team router subscriber. Active teams
     // keep their soft-deleted state; force-kill of in-flight
@@ -5972,9 +5926,7 @@ async fn boot_dispatch_ctx_if_enabled(
     let decider: Arc<dyn nexo_driver_permission::PermissionDecider> = if any_agent_has_channels {
         let mgr_for_resolver = mcp_manager.clone();
         let resolver: std::sync::Arc<
-            dyn Fn(&str) -> Option<std::sync::Arc<dyn nexo_mcp::McpClient>>
-                + Send
-                + Sync,
+            dyn Fn(&str) -> Option<std::sync::Arc<dyn nexo_mcp::McpClient>> + Send + Sync,
         > = std::sync::Arc::new(move |server_name: &str| {
             let mgr = mgr_for_resolver.as_ref()?;
             // Block on the shared session lookup. Acceptable here:
@@ -5985,9 +5937,8 @@ async fn boot_dispatch_ctx_if_enabled(
             // `tokio::runtime::Handle::current().block_on` — this
             // is a slim MVP; a follow-up wraps the resolver in an
             // async-friendly trait.
-            let rt = tokio::runtime::Handle::current().block_on(async {
-                mgr.get_or_create(uuid::Uuid::nil()).await
-            });
+            let rt = tokio::runtime::Handle::current()
+                .block_on(async { mgr.get_or_create(uuid::Uuid::nil()).await });
             rt.clients()
                 .into_iter()
                 .find(|(name, _)| name == server_name)
@@ -5995,9 +5946,9 @@ async fn boot_dispatch_ctx_if_enabled(
         });
         let dispatcher: std::sync::Arc<
             dyn nexo_mcp::channel_permission::PermissionRelayDispatcher,
-        > = std::sync::Arc::new(
-            nexo_mcp::channel_permission::ClientResolverDispatcher::new(resolver),
-        );
+        > = std::sync::Arc::new(nexo_mcp::channel_permission::ClientResolverDispatcher::new(
+            resolver,
+        ));
         let wrapped = nexo_driver_permission::channel_relay::ChannelRelayDecider::new(
             ArcDeciderShim(inner_decider.clone()),
             channel_boot.registry.clone(),
@@ -6799,9 +6750,7 @@ async fn run_extension_discovery(
         });
         let rt_result = match admin_opts {
             Some(opts) => nexo_extensions::StdioRuntime::spawn_with(&c.manifest, opts).await,
-            None => {
-                nexo_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await
-            }
+            None => nexo_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await,
         };
         match rt_result {
             Ok(rt) => {
@@ -7669,8 +7618,7 @@ fn route_memory_subcommand(
                 .unwrap_or_else(|| PathBuf::from(".")),
             dry_run: positional.iter().any(|a| a == "--dry-run"),
             no_auto_pre_snapshot: positional.iter().any(|a| a == "--no-auto-pre-snapshot"),
-            decrypt_identity: parse_kv_flag(positional, "--decrypt-identity")
-                .map(PathBuf::from),
+            decrypt_identity: parse_kv_flag(positional, "--decrypt-identity").map(PathBuf::from),
             state_root,
             memdir_root,
             sqlite_root,
@@ -7872,13 +7820,21 @@ fn parse_args() -> CliArgs {
     // match arms below.
     if pos_no_flags.first().map(|s| s.as_str()) == Some("pair") {
         if let Some(mode) = route_pair_subcommand(&positional, has_json_flag) {
-            return CliArgs { config_dir, mode, plugin_run_override: None };
+            return CliArgs {
+                config_dir,
+                mode,
+                plugin_run_override: None,
+            };
         }
     }
 
     if pos_no_flags.first().map(|s| s.as_str()) == Some("cron") {
         if let Some(mode) = route_cron_subcommand(&positional, has_json_flag) {
-            return CliArgs { config_dir, mode, plugin_run_override: None };
+            return CliArgs {
+                config_dir,
+                mode,
+                plugin_run_override: None,
+            };
         }
     }
 
@@ -7904,8 +7860,7 @@ fn parse_args() -> CliArgs {
                 limit: parse_kv_flag(&positional, "--limit")
                     .and_then(|v: String| v.parse().ok())
                     .unwrap_or(50),
-                format: parse_kv_flag(&positional, "--format")
-                    .unwrap_or_else(|| "table".into()),
+                format: parse_kv_flag(&positional, "--format").unwrap_or_else(|| "table".into()),
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
                 tenant_id: parse_kv_flag(&positional, "--tenant"),
             },
@@ -7915,7 +7870,11 @@ fn parse_args() -> CliArgs {
 
     if pos_no_flags.first().map(|s| s.as_str()) == Some("memory") {
         if let Some(mode) = route_memory_subcommand(&pos_no_flags, &positional, has_json_flag) {
-            return CliArgs { config_dir, mode, plugin_run_override: None };
+            return CliArgs {
+                config_dir,
+                mode,
+                plugin_run_override: None,
+            };
         }
     }
 
@@ -8016,13 +7975,9 @@ fn parse_args() -> CliArgs {
             json: has_json_flag,
         },
         // Phase 76.14 — mcp-server with optional subcommands
-        [cmd] if cmd == "mcp-server" => {
-            Mode::McpServer(McpServerSubcommand::Serve)
-        }
+        [cmd] if cmd == "mcp-server" => Mode::McpServer(McpServerSubcommand::Serve),
         [cmd, sub, url] if cmd == "mcp-server" && sub == "inspect" => {
-            Mode::McpServer(McpServerSubcommand::Inspect {
-                url: url.clone(),
-            })
+            Mode::McpServer(McpServerSubcommand::Inspect { url: url.clone() })
         }
         [cmd, sub, url] if cmd == "mcp-server" && sub == "bench" => {
             let tool = positional
@@ -8044,9 +7999,7 @@ fn parse_args() -> CliArgs {
             })
         }
         [cmd, sub, db] if cmd == "mcp-server" && sub == "tail-audit" => {
-            Mode::McpServer(McpServerSubcommand::TailAudit {
-                db: db.clone(),
-            })
+            Mode::McpServer(McpServerSubcommand::TailAudit { db: db.clone() })
         }
         // Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
         // Flag parsing inlined per project convention (no clap).
@@ -8070,18 +8023,14 @@ fn parse_args() -> CliArgs {
                 json: has_json_flag,
             })
         }
-        [cmd, sub, verb, run_id]
-            if cmd == "agent" && sub == "dream" && verb == "status" =>
-        {
+        [cmd, sub, verb, run_id] if cmd == "agent" && sub == "dream" && verb == "status" => {
             Mode::AgentDream(AgentDreamSubcommand::Status {
                 run_id: run_id.clone(),
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
                 json: has_json_flag,
             })
         }
-        [cmd, sub, verb, run_id]
-            if cmd == "agent" && sub == "dream" && verb == "kill" =>
-        {
+        [cmd, sub, verb, run_id] if cmd == "agent" && sub == "dream" && verb == "kill" => {
             Mode::AgentDream(AgentDreamSubcommand::Kill {
                 run_id: run_id.clone(),
                 force: positional.iter().any(|a| a == "--force"),
@@ -8119,19 +8068,15 @@ fn parse_args() -> CliArgs {
             }
         }
         // Phase 80.16 — `nexo agent attach <goal_id> [--db=...] [--json]`.
-        [cmd, sub, goal_id] if cmd == "agent" && sub == "attach" => {
-            Mode::AgentAttach {
-                goal_id: goal_id.clone(),
-                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
-                json: has_json_flag,
-            }
-        }
+        [cmd, sub, goal_id] if cmd == "agent" && sub == "attach" => Mode::AgentAttach {
+            goal_id: goal_id.clone(),
+            db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+            json: has_json_flag,
+        },
         // Phase 80.16 — `nexo agent discover [--include-interactive]
         // [--db=...] [--json]`.
         [cmd, sub] if cmd == "agent" && sub == "discover" => Mode::AgentDiscover {
-            include_interactive: positional
-                .iter()
-                .any(|a| a == "--include-interactive"),
+            include_interactive: positional.iter().any(|a| a == "--include-interactive"),
             db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             json: has_json_flag,
         },
@@ -8254,7 +8199,11 @@ fn parse_args() -> CliArgs {
         }
     };
 
-    CliArgs { config_dir, mode, plugin_run_override: None }
+    CliArgs {
+        config_dir,
+        mode,
+        plugin_run_override: None,
+    }
 }
 
 /// Phase 27.1 — print version to stdout. `verbose=false` mirrors clap's
@@ -8338,8 +8287,12 @@ fn print_usage() {
         "  agent setup telegram-link [<agent>]    Pair an existing Telegram instance to an agent"
     );
     println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
-    println!("  agent mcp-server                       Run as an MCP stdio/HTTP server (expose tools)");
-    println!("  agent mcp-server inspect <url>         List tools + resources of a remote MCP server");
+    println!(
+        "  agent mcp-server                       Run as an MCP stdio/HTTP server (expose tools)"
+    );
+    println!(
+        "  agent mcp-server inspect <url>         List tools + resources of a remote MCP server"
+    );
     println!("  agent mcp-server bench <url> --tool <n> --rps <n>  Load test a tool");
     println!("  agent mcp-server tail-audit <db>        Read recent audit log entries");
     println!("  agent pollers list [--json]            List configured poller jobs");
@@ -11917,7 +11870,9 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 BootResult::SkippedDenied {
                     reason: "config-self-edit-policy-disabled",
                 }
-            } else if entry.name == "Config" && effective_primary.config_tool.allowed_paths.is_empty() {
+            } else if entry.name == "Config"
+                && effective_primary.config_tool.allowed_paths.is_empty()
+            {
                 tracing::error!(
                     agent = %primary.id,
                     "mcp-server: Config tool refuses to register because `agents.{}.config_tool.allowed_paths` is empty. \
@@ -12091,15 +12046,14 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         let cfg_dir_for_sig = config_dir.to_path_buf();
         let shutdown_for_sig = shutdown.clone();
         tokio::spawn(async move {
-            let mut sighup = match tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::hangup(),
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "[mcp-server] could not install SIGHUP handler");
-                    return;
-                }
-            };
+            let mut sighup =
+                match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "[mcp-server] could not install SIGHUP handler");
+                        return;
+                    }
+                };
             loop {
                 tokio::select! {
                     _ = shutdown_for_sig.cancelled() => break,
@@ -12440,12 +12394,7 @@ async fn run_memory_restore(
 
 /// `nexo memory list --agent <id>` — show every bundle for the agent
 /// ordered newest-first.
-async fn run_memory_list(
-    agent: &str,
-    tenant: &str,
-    state_root: &Path,
-    json: bool,
-) -> Result<()> {
+async fn run_memory_list(agent: &str, tenant: &str, state_root: &Path, json: bool) -> Result<()> {
     use nexo_memory_snapshot::MemorySnapshotter;
 
     if agent.is_empty() {
@@ -12519,8 +12468,7 @@ async fn run_memory_diff(
         );
         println!(
             "state:  extract_cursor_changed={} last_dream_run_changed={}",
-            diff.state_summary.extract_cursor_changed,
-            diff.state_summary.last_dream_run_changed
+            diff.state_summary.extract_cursor_changed, diff.state_summary.last_dream_run_changed
         );
     }
     Ok(())
@@ -12582,10 +12530,7 @@ async fn run_memory_delete(
 
 fn is_truthy_env(name: &str) -> bool {
     match std::env::var(name) {
-        Ok(v) => matches!(
-            v.to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
+        Ok(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
         Err(_) => false,
     }
 }
@@ -12728,7 +12673,10 @@ async fn run_mcp_inspect(url: &str) -> Result<()> {
         Ok(r) if r.status().is_success() => {
             let res: Value = r.json().await.unwrap_or_default();
             let resources = res["result"]["resources"].as_array();
-            println!("\n## Resources ({})\n", resources.map(|r| r.len()).unwrap_or(0));
+            println!(
+                "\n## Resources ({})\n",
+                resources.map(|r| r.len()).unwrap_or(0)
+            );
             if let Some(resources) = resources {
                 for r in resources {
                     let uri = r["uri"].as_str().unwrap_or("?");
@@ -12945,9 +12893,8 @@ async fn run_microapp_admin_audit_tail(
         SqliteAdminAuditWriter,
     };
 
-    let db_path = db.unwrap_or_else(|| {
-        nexo_project_tracker::state::nexo_state_dir().join("admin_audit.db")
-    });
+    let db_path =
+        db.unwrap_or_else(|| nexo_project_tracker::state::nexo_state_dir().join("admin_audit.db"));
     if !db_path.exists() {
         anyhow::bail!(
             "audit DB does not exist: {} (start the daemon with \
@@ -13060,7 +13007,10 @@ async fn run_agent_dream_tail(
         if json {
             println!("[]");
         } else {
-            println!("(no dream runs recorded yet — db not found at {})", db.display());
+            println!(
+                "(no dream runs recorded yet — db not found at {})",
+                db.display()
+            );
         }
         return Ok(());
     }
@@ -13123,8 +13073,8 @@ async fn run_agent_dream_status(
 ) -> Result<()> {
     use nexo_agent_registry::{DreamRunStore, SqliteDreamRunStore};
 
-    let uuid = uuid::Uuid::parse_str(run_id)
-        .with_context(|| format!("`{run_id}` is not a valid UUID"))?;
+    let uuid =
+        uuid::Uuid::parse_str(run_id).with_context(|| format!("`{run_id}` is not a valid UUID"))?;
 
     let db = resolve_dream_db_path(db_override)?;
     if !db.exists() {
@@ -13190,8 +13140,8 @@ async fn run_agent_dream_kill(
     use nexo_agent_registry::{DreamRunStatus, DreamRunStore, SqliteDreamRunStore};
     use nexo_dream::ConsolidationLock;
 
-    let uuid = uuid::Uuid::parse_str(run_id)
-        .with_context(|| format!("`{run_id}` is not a valid UUID"))?;
+    let uuid =
+        uuid::Uuid::parse_str(run_id).with_context(|| format!("`{run_id}` is not a valid UUID"))?;
 
     let db = resolve_dream_db_path(db_override)?;
     if !db.exists() {
@@ -13256,9 +13206,7 @@ async fn run_agent_dream_kill(
             );
         }
         (Some(_), None) => {
-            println!(
-                "[dream-kill] no prior_mtime recorded for this run; lock rollback skipped"
-            );
+            println!("[dream-kill] no prior_mtime recorded for this run; lock rollback skipped");
         }
         (None, Some(_)) => {
             println!(
@@ -13333,7 +13281,11 @@ async fn run_agent_run(
         .with_context(|| format!("failed to open agent_handles DB at {}", db.display()))?;
 
     let goal_id = GoalId(Uuid::new_v4());
-    let kind = if bg { SessionKind::Bg } else { SessionKind::Interactive };
+    let kind = if bg {
+        SessionKind::Bg
+    } else {
+        SessionKind::Interactive
+    };
     let handle = AgentHandle {
         goal_id,
         phase_id: format!("cli-{}", if bg { "bg" } else { "run" }),
@@ -13467,8 +13419,8 @@ async fn run_agent_attach(
     use nexo_driver_types::GoalId;
     use uuid::Uuid;
 
-    let uuid = Uuid::parse_str(goal_id)
-        .with_context(|| format!("`{goal_id}` is not a valid UUID"))?;
+    let uuid =
+        Uuid::parse_str(goal_id).with_context(|| format!("`{goal_id}` is not a valid UUID"))?;
     let db = resolve_agent_db_path(db_override)?;
     if !db.exists() {
         anyhow::bail!("agent_handles DB not found at {}", db.display());
@@ -13556,7 +13508,11 @@ async fn run_agent_discover(
             SessionKind::DaemonWorker,
         ]
     } else {
-        vec![SessionKind::Bg, SessionKind::Daemon, SessionKind::DaemonWorker]
+        vec![
+            SessionKind::Bg,
+            SessionKind::Daemon,
+            SessionKind::DaemonWorker,
+        ]
     };
 
     let mut all = Vec::new();
@@ -13680,9 +13636,7 @@ impl nexo_mcp::channel_bridge::ChannelInboundSink for IntakeChannelSink {
             nexo_broker::Event::new(topic.to_string(), "mcp.channel.intake".to_string(), payload);
         nexo_broker::handle::BrokerHandle::publish(&self.broker, topic, evt)
             .await
-            .map_err(|e| {
-                nexo_mcp::channel_bridge::SinkError::Other(format!("broker publish: {e}"))
-            })
+            .map_err(|e| nexo_mcp::channel_bridge::SinkError::Other(format!("broker publish: {e}")))
     }
 }
 
@@ -13730,9 +13684,7 @@ async fn run_channel_list(
     let app = load_app_config_for_channels(config_override, config_dir)?;
     let mut rows: Vec<ChannelListRow> = Vec::new();
     for agent in &app.agents.agents {
-        let cfg = agent
-            .channels
-            .as_ref();
+        let cfg = agent.channels.as_ref();
         let approved: Vec<&str> = cfg
             .map(|c| c.approved.iter().map(|e| e.server.as_str()).collect())
             .unwrap_or_default();
@@ -13814,9 +13766,7 @@ async fn run_channel_doctor(
     json: bool,
     config_dir: &std::path::Path,
 ) -> Result<()> {
-    use nexo_mcp::channel::{
-        gate_channel_server, ChannelGateInputs, ChannelGateOutcome,
-    };
+    use nexo_mcp::channel::{gate_channel_server, ChannelGateInputs, ChannelGateOutcome};
 
     let app = load_app_config_for_channels(config_override, config_dir)?;
     let mut rows: Vec<ChannelDoctorRow> = Vec::new();
@@ -15772,7 +15722,11 @@ mod tests {
     fn compute_allowlist_returns_set_from_expose_tools() {
         use super::compute_allowlist_from_mcp_server_cfg;
         let mut cfg = nexo_config::types::mcp_server::McpServerConfig::default();
-        cfg.expose_tools = vec!["Read".into(), "Edit".into(), "marketing_lead_classify".into()];
+        cfg.expose_tools = vec![
+            "Read".into(),
+            "Edit".into(),
+            "marketing_lead_classify".into(),
+        ];
         let allow = compute_allowlist_from_mcp_server_cfg(&cfg).expect("non-empty -> Some");
         assert_eq!(allow.len(), 3);
         assert!(allow.contains("Read"));
@@ -16076,14 +16030,17 @@ mcp_server:
         // RuntimeCronToolExecutor doesn't impl Debug, so unwrap on
         // SetError isn't available; just assert the result is Ok.
         assert!(cell.set(Arc::clone(&executor)).is_ok());
-        assert!(cell.get().is_some(), "cell must hold the executor after set");
+        assert!(
+            cell.get().is_some(),
+            "cell must hold the executor after set"
+        );
     }
 
     // ── Phase 80.1.d — `nexo agent dream` CLI tests ──
 
     use super::{
-        resolve_dream_db_path, run_agent_dream_kill, run_agent_dream_status,
-        run_agent_dream_tail, short_uuid,
+        resolve_dream_db_path, run_agent_dream_kill, run_agent_dream_status, run_agent_dream_tail,
+        short_uuid,
     };
     use chrono::Utc;
     use nexo_agent_registry::{
@@ -16338,7 +16295,9 @@ mcp_server:
             .await
             .unwrap();
         // Just exercise the path; output is to stdout.
-        run_agent_ps(Some("bg"), true, Some(&db), false).await.unwrap();
+        run_agent_ps(Some("bg"), true, Some(&db), false)
+            .await
+            .unwrap();
         run_agent_ps(Some("interactive"), true, Some(&db), false)
             .await
             .unwrap();
@@ -16400,13 +16359,9 @@ mcp_server:
         run_agent_run("seed".into(), false, Some(&db), false)
             .await
             .unwrap();
-        let err = run_agent_attach(
-            "11111111-1111-1111-1111-111111111111",
-            Some(&db),
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = run_agent_attach("11111111-1111-1111-1111-111111111111", Some(&db), false)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no agent handle found"));
     }
 

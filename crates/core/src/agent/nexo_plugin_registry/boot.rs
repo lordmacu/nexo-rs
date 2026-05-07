@@ -17,15 +17,12 @@ use nexo_config::AgentsConfig;
 
 use std::collections::BTreeSet;
 
-use super::capability_aggregator::{
-    aggregate_plugin_gates, AggregatedGate, UnmetRequirement,
-};
+use super::capability_aggregator::{aggregate_plugin_gates, AggregatedGate, UnmetRequirement};
 use super::factory::PluginFactoryRegistry;
 use super::init_loop::run_plugin_init_loop_with_factory;
 use super::{
     discover, merge_plugin_contributed_agents, merge_plugin_contributed_skills,
-    run_plugin_init_loop, NexoPluginRegistry, NexoPluginRegistrySnapshot,
-    PluginDiscoveryConfig,
+    run_plugin_init_loop, NexoPluginRegistry, NexoPluginRegistrySnapshot, PluginDiscoveryConfig,
 };
 use crate::agent::channel_adapter::ChannelAdapterRegistry;
 use crate::agent::plugin_host::NexoPlugin;
@@ -103,8 +100,7 @@ pub struct WirePluginRegistryOutput {
     /// `RemoteVectorBackend` instances. v1 ships the registry +
     /// wire only; consumer-side wiring (`LongTermMemory.recall_vector`
     /// reading from this registry) lands in 81.26.b.
-    pub vector_backend_registry:
-        Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
+    pub vector_backend_registry: Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
     /// Phase 81.29 — shared `ToolRegistry` (the daemon's main
     /// tool catalog). Surfaced on the wire output so callers can
     /// enumerate registered subprocess tools (operator visibility,
@@ -225,9 +221,7 @@ pub async fn wire_plugin_registry_with_runtime(
     // `WirePluginRegistryOutput`.
     let shared_vector_backend_registry: Arc<
         crate::agent::vector_backend_registry::VectorBackendRegistry,
-    > = Arc::new(
-        crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
-    );
+    > = Arc::new(crate::agent::vector_backend_registry::VectorBackendRegistry::new());
     // Phase 81.29 — daemon's main tool registry shared between
     // each per-plugin `ScopedToolRegistry` (built by `SubprocessCtxStubs`
     // / per-plugin context_for) and the `WirePluginRegistryOutput`
@@ -441,8 +435,7 @@ struct SubprocessCtxStubs {
     /// `PluginInitContext` doesn't expose it (consumers read
     /// from `wire.vector_backend_registry`).
     #[allow(dead_code)]
-    vector_backend_registry:
-        Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
+    vector_backend_registry: Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
 }
 
 impl SubprocessCtxStubs {
@@ -453,9 +446,7 @@ impl SubprocessCtxStubs {
         rt: &SubprocessRuntime,
         channel_adapter_registry: Arc<ChannelAdapterRegistry>,
         hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
-        vector_backend_registry: Arc<
-            crate::agent::vector_backend_registry::VectorBackendRegistry,
-        >,
+        vector_backend_registry: Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
         tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
     ) -> Self {
         let mut stubs = Self::build(rt);
@@ -715,4 +706,3 @@ mod tests {
         assert!(!snap.last_report.diagnostics.is_empty());
     }
 }
-

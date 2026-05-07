@@ -365,10 +365,7 @@ impl HttpServerCapability {
     /// `true` when the bind address is loopback. Operators
     /// don't need `allow_external_bind` for these.
     pub fn is_loopback(&self) -> bool {
-        matches!(
-            self.bind.as_str(),
-            "127.0.0.1" | "::1" | "localhost"
-        )
+        matches!(self.bind.as_str(), "127.0.0.1" | "::1" | "localhost")
     }
 }
 
@@ -696,10 +693,7 @@ pub fn validate_contributed_skills(
         if !is_valid_skill_slug(name) {
             return Err(ContributedSkillError::InvalidSlug { name: name.clone() });
         }
-        let candidate = plugin_root
-            .join("skills")
-            .join(name)
-            .join("SKILL.md");
+        let candidate = plugin_root.join("skills").join(name).join("SKILL.md");
         if !candidate.is_file() {
             return Err(ContributedSkillError::Missing { name: name.clone() });
         }
@@ -896,19 +890,14 @@ impl PluginManifest {
         path: &Path,
         current_nexo_version: &Version,
     ) -> Result<Self, Vec<ManifestError>> {
-        let raw = std::fs::read_to_string(path).map_err(|e| {
-            vec![ManifestError::Io(e)]
-        })?;
+        let raw = std::fs::read_to_string(path).map_err(|e| vec![ManifestError::Io(e)])?;
         Self::parse_validated(&raw, current_nexo_version)
     }
 
     /// Run the full 4-tier validator. Collects every error
     /// (does NOT bail on first) so the operator fixes everything
     /// in one pass. Empty `Vec` = OK.
-    pub fn validate(
-        &self,
-        current_nexo_version: &Version,
-    ) -> Result<(), Vec<ManifestError>> {
+    pub fn validate(&self, current_nexo_version: &Version) -> Result<(), Vec<ManifestError>> {
         let mut errors = Vec::new();
         crate::validate::run_all(self, current_nexo_version, &mut errors);
         if errors.is_empty() {
@@ -1053,8 +1042,7 @@ min_nexo_version = ">=0.1.0"
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("examples")
             .join("marketing-example.toml");
-        let m = PluginManifest::from_path(&path)
-            .expect("reference manifest must parse");
+        let m = PluginManifest::from_path(&path).expect("reference manifest must parse");
         let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
         m.validate(&current)
             .unwrap_or_else(|errs| panic!("reference manifest must validate: {errs:?}"));
@@ -1198,7 +1186,9 @@ min_nexo_version = ">=0.1.0"
         let err = validate_contributed_skills(&caps, tmp.path()).unwrap_err();
         assert_eq!(
             err,
-            ContributedSkillError::Missing { name: "ghost".into() }
+            ContributedSkillError::Missing {
+                name: "ghost".into()
+            }
         );
     }
 

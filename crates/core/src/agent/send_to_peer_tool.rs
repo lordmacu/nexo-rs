@@ -35,8 +35,7 @@ pub const SEND_TO_PEER_TOOL_NAME: &str = "send_to_peer";
 /// this to `nexo_agent_registry::AgentRegistry::list` filtered by
 /// `agent_id` + Running status — kept as a closure so the tool
 /// stays free of an agent-registry dep.
-pub type PeerGoalLookup =
-    Arc<dyn Fn(&str) -> Vec<GoalId> + Send + Sync + 'static>;
+pub type PeerGoalLookup = Arc<dyn Fn(&str) -> Vec<GoalId> + Send + Sync + 'static>;
 
 pub struct SendToPeerTool {
     lookup: PeerGoalLookup,
@@ -156,10 +155,7 @@ impl ToolHandler for SendToPeerTool {
             let payload = match serde_json::to_value(&msg) {
                 Ok(v) => v,
                 Err(e) => {
-                    unreachable.push(format!(
-                        "serialise failed for goal {}: {}",
-                        goal.0, e
-                    ));
+                    unreachable.push(format!("serialise failed for goal {}: {}", goal.0, e));
                     continue;
                 }
             };
@@ -167,8 +163,9 @@ impl ToolHandler for SendToPeerTool {
             let topic = inbox_subject(goal);
             match ctx.broker.publish(&topic, event).await {
                 Ok(_) => delivered.push(goal.0.to_string()),
-                Err(e) => unreachable
-                    .push(format!("broker publish failed for goal {}: {}", goal.0, e)),
+                Err(e) => {
+                    unreachable.push(format!("broker publish failed for goal {}: {}", goal.0, e))
+                }
             }
         }
 
@@ -300,10 +297,7 @@ mod tests {
     async fn missing_to_errors() {
         let tool = SendToPeerTool::new(mk_lookup(lookup_returns_one_goal));
         let ctx = mk_ctx();
-        let err = tool
-            .call(&ctx, json!({"message": "x"}))
-            .await
-            .unwrap_err();
+        let err = tool.call(&ctx, json!({"message": "x"})).await.unwrap_err();
         assert!(err.to_string().contains("`to` is required"));
     }
 
@@ -345,10 +339,7 @@ mod tests {
         let tool = SendToPeerTool::new(mk_lookup(lookup_returns_one_goal));
         let ctx = mk_ctx();
         let v = tool
-            .call(
-                &ctx,
-                json!({"to": "ghost", "message": "anyone there"}),
-            )
+            .call(&ctx, json!({"to": "ghost", "message": "anyone there"}))
             .await
             .unwrap();
         assert_eq!(v["delivered_to"].as_array().unwrap().len(), 0);
@@ -395,8 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn correlation_id_round_trips() {
-        let captured_corr: std::sync::Mutex<Option<uuid::Uuid>> =
-            std::sync::Mutex::new(None);
+        let captured_corr: std::sync::Mutex<Option<uuid::Uuid>> = std::sync::Mutex::new(None);
         let captured = Arc::new(captured_corr);
 
         // Subscribe to the inbox subject so we can assert the wire
@@ -411,11 +401,8 @@ mod tests {
         let mut sub = ctx.broker.subscribe(&topic).await.unwrap();
         let cap = Arc::clone(&captured);
         let handle = tokio::spawn(async move {
-            if let Ok(Some(ev)) = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                sub.next(),
-            )
-            .await
+            if let Ok(Some(ev)) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), sub.next()).await
             {
                 let msg: InboxMessage = serde_json::from_value(ev.payload).unwrap();
                 *cap.lock().unwrap() = msg.correlation_id;

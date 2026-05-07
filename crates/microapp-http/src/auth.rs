@@ -411,9 +411,7 @@ mod tests {
         assert_eq!(res.status(), StatusCode::OK);
 
         // Rotate.
-        let did = state
-            .rotate(&token_hash("old-token"), "new-token")
-            .await;
+        let did = state.rotate(&token_hash("old-token"), "new-token").await;
         assert!(did);
 
         // Post-rotation: old token rejected.
