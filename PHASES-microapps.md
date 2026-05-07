@@ -2084,6 +2084,53 @@ transcript view, and self-hosted React UI.
 skip 82.3 by using NATS-transport extension) + 82.5 + 82.6
 + 82.9 = ~6-9 dev-days. 82.4, 82.7, 82.8 land post-MVP.
 
+#### 82.15 — `nexo-tool-meta::marketing` wire shapes   ⬜
+
+Triggered by `agent-creator-microapp` M15 marketing extension
+(`nexo-rs-extension-marketing`, sibling repo to
+`nexo-rs-plugin-browser`). The microapp's HTTP proxy + the
+extension's tool handlers + the extension's HTTP admin API +
+the microapp's frontend types ALL need bit-equivalent wire
+shapes for the marketing domain (lead state, routing rules,
+meeting intent, person / company / vendedor records). Putting
+them in `nexo-tool-meta` once means swapping the implementation
+behind any of them is a one-place change, the same pattern
+already established for `admin/agents`, `admin/skills`,
+`admin/llm_providers`, etc.
+
+Scope:
+- New module `crates/tool-meta/src/marketing.rs` (~150-200 LOC).
+- Types (all `#[derive(Serialize, Deserialize)]`):
+  - `LeadId`, `PersonId`, `CompanyId`, `TenantId` newtypes
+  - `LeadState` enum: `cold | engaged | meeting_scheduled | qualified | lost`
+  - `DomainKind` enum: `personal | corporate | disposable`
+  - `EnrichmentStatus` enum
+  - `SentimentBand` enum
+  - `IntentClass` enum
+  - `LeadProfileArgs` / `LeadProfileResponse`
+  - `RoutingRule` + `RulePredicate` enum + `AssignTarget` enum
+  - `FollowupProfile` (cadence intervals, max_attempts, stop_on_reply)
+  - `MeetingIntent` (accepted, proposed_time_iso, confidence, evidence)
+  - `EnrichmentResult` (source, confidence, person_inferred, company_inferred)
+  - `MailboxConfig` (provider, mode, poll_interval_seconds, active_hours)
+  - `VendedorRecord` (id, name, email, signature, working_hours, on_vacation)
+  - `OutboundDraft` (thread_id, lead_id, body, status: pending|approved|rejected)
+- Re-export under `nexo_tool_meta::marketing::*`.
+- Tests: round-trip JSON for every type (~12 tests).
+
+Done criteria:
+- `cargo build -p nexo-tool-meta` green.
+- `cargo nextest run -p nexo-tool-meta marketing` ≥ 12 tests pass.
+- Microapp + extension can both `use nexo_tool_meta::marketing::*`
+  and consume identical types.
+- Auto-gen TypeScript types via `serde_typescript` (or equivalent)
+  feed `frontend/src/api/marketing.ts` — same pattern as existing
+  `nexo_admin_types.ts`.
+
+Effort estimate: ~1 dev-day. Pure types crate with no
+side-effects; the heaviest task is enumerating predicates +
+domain classifications.
+
 ---
 
 ### Phase 83 — Microapp framework foundation   ⬜
