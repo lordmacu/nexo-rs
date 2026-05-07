@@ -23,6 +23,7 @@
 
 # Plugin SDKs
 
+- [Quickstart (10 min)](./plugins/quickstart.md)
 - [Authoring overview](./plugins/authoring.md)
 - [Manifest (Phase 81.13 unified)](./plugins/manifest-unified.md)
 - [Plugin contract](./plugins/contract.md)

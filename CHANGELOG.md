@@ -8,6 +8,23 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Added
+
+- **Plugin quickstart docs page (Phase 31.9 follow-up).** New
+  linear `docs/src/plugins/quickstart.md` walks zero-to-installed
+  in 10 numbered steps for the Rust SDK: prerequisites,
+  `nexo plugin new`, manifest + `src/main.rs` tour, build,
+  handshake smoke test, `nexo plugin run` inner loop, GitHub push,
+  tag-driven CI release, operator-side `nexo plugin install`,
+  `nexo plugin list` verify, iterate via
+  `nexo plugin upgrade`/`remove`. Troubleshooting table covers
+  6 common failure modes (missing target tarball, stdout pollution,
+  discovery path drift, signature gating, runtime-dep skew,
+  cosign trust). Pointer to other-language scaffolds at the end —
+  steps 2-10 read identically across Python/TypeScript/PHP.
+  Linked from `SUMMARY.md` (first entry under Plugin SDKs) and
+  cross-referenced from `authoring.md`'s abridged 5-min section.
+
 ### Changed
 
 - **Browser plugin extracted to standalone repo (Phase 81.17.c).**
