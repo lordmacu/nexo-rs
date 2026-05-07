@@ -13,7 +13,7 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 - **Browser plugin extracted to standalone repo (Phase 81.17.c).**
   `nexo-plugin-browser` (the 12 `browser_*` tools + CDP client +
   Chrome launcher) now ships as a standalone binary at
-  [`nexo-rs-plugin-browser`](https://github.com/nexo-rs/plugin-browser)
+  [`nexo-rs-plugin-browser`](https://github.com/lordmacu/nexo-plugin-browser)
   (sibling repo to `proyecto/`), loaded by the daemon via
   discovery + auto-subprocess fallback (Phase 81.17.b). Tools
   route through 81.29 `RemoteToolHandler` over JSON-RPC stdio

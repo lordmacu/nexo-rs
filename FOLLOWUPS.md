@@ -25,15 +25,13 @@ Browser plugin extracted to sibling repo at
 `70b3db3..3474cba` on proyecto main + initial commits on the
 standalone repo). 6 deferreds:
 
-- **`81.17.c.publish-github`** — push the standalone repo to
-  public `github.com/nexo-rs/plugin-browser`. Currently lives
-  locally; the GH Actions workflow stub is committed but
-  inactive (tag-only trigger, no PR/push). Why deferred:
-  validates the local flow first; pushing to public is a
-  separate decision.
-  How to apply: `git remote add origin git@github.com:nexo-rs/plugin-browser.git`
-  + `git push -u origin master` + activate the workflow by
-  enabling Actions on the public repo.
+- **`81.17.c.publish-github`** — RESOLVED 2026-05-07. Repo
+  published to
+  [github.com/lordmacu/nexo-plugin-browser](https://github.com/lordmacu/nexo-plugin-browser)
+  (PUBLIC). Tag `v0.2.0` triggered the release workflow which
+  builds linux-x64 + macos-arm64 binaries and creates a GitHub
+  Release with assets attached. The `nexo-rs` org placeholder
+  was dropped — repos live under `lordmacu/`.
 
 - **`81.17.c.crates-publish`** — `cargo publish nexo-plugin-browser`
   to crates.io. Depends on `nexo-microapp-sdk` being published
