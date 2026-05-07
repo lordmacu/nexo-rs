@@ -1,9 +1,20 @@
 # Extensions — Project Guide
 
-Each subdirectory is an **independent Rust workspace** (its own
-`Cargo.toml`, its own `target/`). Touch them as needed when the
-agent framework asks for new tools, channels, plugins, or
-microapps.
+Two kinds of subdirectories live here:
+
+- **Workspace members** — currently `template-mcp-server`,
+  `template-microapp-rust`, `template-plugin-rust`,
+  `sample-channel-server`. Listed under `[workspace].members` in
+  the proyecto root `Cargo.toml`; they share `target/` + lockfile
+  + profiles with the daemon. They MUST NOT define their own
+  `[profile.*]` blocks — Cargo ignores them and emits the
+  "profiles for the non root package will be ignored" warning at
+  every build. Profiles live exclusively in the workspace root.
+- **Independent workspaces** — every other subdirectory
+  (`template-rust`, `brave-search`, `cloudflare`, the language
+  SDKs, etc.). Each has its own `Cargo.toml` + `target/` and is
+  excluded from the proyecto workspace. These DO define their
+  own profiles, including `[profile.release-fast]`.
 
 Root architecture + retry policy:
 [`/home/familia/chat/CLAUDE.md`](../../CLAUDE.md). Phase tracker:
@@ -33,13 +44,22 @@ Every Rust workspace on this box shares:
 - **Dev profile:** `debug = "line-tables-only"` globally — keeps
   file:line in panics, smaller `target/`, faster IO.
 
-## `[profile.release-fast]` is in every extension's `Cargo.toml`
+## `[profile.release-fast]` policy
 
-Same opt-level as `release` but `lto = false`, `codegen-units = 16`.
-~50% faster build, ~5% runtime cost. Reserve plain `--release` for
-publish. If you add a brand-new extension, append the same block —
-or run `bash proyecto/scripts/add-release-fast.sh` (idempotent;
-skips extensions that already have it).
+- **Independent extensions** ship their own
+  `[profile.release-fast]` block: `inherits = "release"`,
+  `lto = false`, `codegen-units = 16`. ~50 % faster build for ~5 %
+  runtime cost; reserve plain `--release` for publish.
+  `bash proyecto/scripts/add-release-fast.sh` appends the block
+  idempotently and skips extensions that already have it.
+- **Workspace-member extensions** inherit `release-fast` from the
+  proyecto root `Cargo.toml` automatically. Adding a `[profile.*]`
+  block in a member's `Cargo.toml` is a no-op + warning — strip
+  it instead.
+
+If `cargo build --workspace` emits "profiles for the non root
+package will be ignored", that is the bug — go strip the offending
+member's profile block.
 
 ## Rules when modifying these crates
 

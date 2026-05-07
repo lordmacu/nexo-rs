@@ -31,12 +31,3 @@ tracing      = "0.1"
 # `test-harness` feature. Authors copying this template inherit
 # the same wiring so their tool tests run without a live daemon.
 nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["admin", "test-harness"] }
-
-# Iterative release builds — full opt-level, no LTO, parallel
-# codegen. Costs ~5 % runtime perf vs `release`; saves ~50 % build
-# time. Use for local validation; reserve `--release` for publish.
-[profile.release-fast]
-inherits      = "release"
-lto           = false
-codegen-units = 16
-strip         = "none"

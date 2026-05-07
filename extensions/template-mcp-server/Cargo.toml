@@ -26,12 +26,3 @@ tokio-util   = "0.7"
 tracing      = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow       = "1"
-
-# Iterative release builds — full opt-level, no LTO, parallel
-# codegen. Costs ~5 % runtime perf vs `release`; saves ~50 % build
-# time. Use for local validation; reserve `--release` for publish.
-[profile.release-fast]
-inherits      = "release"
-lto           = false
-codegen-units = 16
-strip         = "none"
