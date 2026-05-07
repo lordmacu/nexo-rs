@@ -4,7 +4,50 @@ Drives a real Chrome/Chromium instance via CDP. Agents can navigate,
 click, fill, screenshot, and run JS — with stable element refs that
 work across DOM mutations within a single turn.
 
-Source: `crates/plugins/browser/`.
+> **Phase 81.17.c (2026-05-07).** The browser plugin now ships as a
+> standalone subprocess (`nexo-rs-plugin-browser`), loaded by the daemon
+> via discovery + auto-subprocess fallback (Phase 81.17.b). The 12
+> `browser_*` tools route through 81.29 `RemoteToolHandler` over
+> JSON-RPC stdio. The in-tree `crates/plugins/browser/` source stays in
+> the workspace dormant for one migration window; deletion is tracked
+> in follow-up `81.17.c.in-tree-removal`.
+
+Source-of-truth: standalone repo
+[`github.com/nexo-rs/plugin-browser`](https://github.com/nexo-rs/plugin-browser)
+(local: `/home/familia/chat/nexo-rs-plugin-browser/`). In-tree mirror at
+`crates/plugins/browser/` is dormant; the daemon does NOT instantiate it
+in-process anymore.
+
+## Out-of-tree subprocess install
+
+```bash
+cd /path/to/nexo-rs-plugin-browser
+cargo build --release
+
+# Copy binary + manifest into a discovery search path.
+mkdir -p ~/.local/share/nexo/plugins/browser
+cp target/release/nexo-plugin-browser ~/.local/share/nexo/plugins/browser/
+cp nexo-plugin.toml                   ~/.local/share/nexo/plugins/browser/
+```
+
+In `plugins.yaml`:
+
+```yaml
+plugins:
+  discovery:
+    search_paths:
+      - ~/.local/share/nexo/plugins
+```
+
+The discovery walker picks up the manifest on next boot;
+auto-subprocess fallback spawns the binary; tool handlers register
+in the agent's scoped registry via `RemoteToolHandler`. ENV vars
+flow from `cfg.plugins.browser` YAML via the daemon's
+`seed_browser_subprocess_env` helper.
+
+The standalone repo's
+[README](https://github.com/nexo-rs/plugin-browser#readme) covers
+ENV var reference, sandbox notes, and the latency budget.
 
 ## Topics
 

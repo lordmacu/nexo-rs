@@ -4087,6 +4087,180 @@ keeps the door open without committing scope.
 - Active backlog lives in `FOLLOWUPS.md`.
 - Architecture remains documented in `design-agent-framework.md`.
 
+### Phase 81.17.c — Plugin-browser standalone repo extraction   ✅
+
+**Goal:** Pilot the extraction of an in-tree plugin to a separate
+repo, validating the subprocess + manifest + sandbox + remote-tool-
+handler infrastructure end-to-end against a real binary (not a
+bash mock or in-workspace template). Gates 81.18 (telegram) and
+81.19 (whatsapp + email).
+
+**Status:** shipped 2026-05-07 across `proyecto/` main and the
+new sibling repo at
+`/home/familia/chat/nexo-rs-plugin-browser/`. Sub-phases 81.17.c.1
+covered the SDK on_tool helper; 81.17.c.2 the standalone repo
+skeleton + binary; 81.17.c.3 the manifest extends.tools +
+sandbox/supervisor; 81.17.c.4 the in-tree wiring cleanup;
+81.17.c.5 the docs + close-out.
+
+**81.17.c.1 — SDK declare_tools + on_tool helpers (✅)**
+
+Promotes 81.29.b out of FOLLOWUPS — the standalone browser
+plugin needs the SDK helper to dispatch `tool.invoke` requests.
+
+- `nexo_microapp_sdk::plugin::{ToolDef, ToolInvocation,
+  ToolInvocationError, ToolHandler}` — wire-shape twins of the
+  daemon-side `RemoteToolDef`. `ToolInvocationError` 5 variants
+  match the contract v1.10.0 `-33401..-33405` band; `code()`
+  accessor returns the JSON-RPC error code.
+- `PluginAdapter::declare_tools(impl IntoIterator<Item = ToolDef>)`
+  builder + `PluginAdapter::on_tool<H: ToolHandler>(handler)`
+  builder.
+- Dispatch loop emits `tools: [<ToolDef>...]` in the
+  `initialize` reply (omitted when empty so existing plugins
+  see no behaviour change). Routes `method == "tool.invoke"`
+  to the registered handler; replies `-32601` when no handler
+  registered (clear surface so the host's `RemoteToolHandler`
+  doesn't hang).
+- 12 new unit tests: serde round-trips, default args, error
+  code mapping (5 variants), blanket impl over closures,
+  initialize-reply tools omission/inclusion, tool.invoke happy
+  path / error mapping / no-handler fallback.
+
+**81.17.c.2 — Standalone repo skeleton + binary (✅)**
+
+New sibling repo at `/home/familia/chat/nexo-rs-plugin-browser/`:
+
+- `Cargo.toml` — package `nexo-plugin-browser` v0.2.0, bin
+  `nexo-plugin-browser`, path deps to `../proyecto/crates/*`
+  (interim until crates.io publish — follow-up
+  `81.17.c.crates-publish`).
+- `src/cdp/`, `chrome.rs`, `command.rs`, `plugin.rs`, `tool.rs`
+  — copied verbatim from
+  `proyecto/crates/plugins/browser/src/`.
+- `src/main.rs` (~70 LOC) — tokio entry wiring
+  `PluginAdapter::new(MANIFEST)?.declare_tools(browser_tool_defs())
+  .on_tool(...)
+  .run_stdio()`. OnceCell-guarded shared `BrowserPlugin`
+  (one Chrome instance per subprocess lifetime; first tool
+  call boots).
+- `src/dispatch.rs` (~190 LOC) — per-tool routing replicating
+  the in-tree `Browser*Tool::call` bodies WITHOUT
+  `AgentContext` (which the subprocess can't construct).
+  Handles all 12 tools: 7 direct `BrowserCmd` variants
+  (Navigate/Click/Fill/Screenshot/Evaluate/Snapshot/ScrollTo)
+  + 5 evaluate-based wrappers (CurrentUrl / WaitFor / GoBack /
+  GoForward / PressKey with the same allowed-key-names guard
+  the in-tree code uses against script injection).
+- `src/env_config.rs` (~50 LOC + 3 tests) —
+  `browser_config_from_env() -> BrowserConfig` reading
+  `NEXO_PLUGIN_BROWSER_*` vars; defaults match the in-tree
+  YAML defaults so daemon-side YAML config still works.
+- `src/tool_defs.rs` (~80 LOC + 3 tests) —
+  `browser_tool_defs() -> Vec<ToolDef>` converting the
+  per-tool `nexo_llm::ToolDef` outputs (`name`, `description`,
+  `parameters`) into the SDK wire shape (`input_schema` is
+  `parameters` renamed).
+- `.gitignore` (target/), `.github/workflows/release.yml`
+  (dormant; tag-only trigger waits for public GitHub repo).
+- `README.md` (~250 LOC) — Why, Install, ENV reference,
+  Sandbox notes, Supervisor, Tools table, Latency budget
+  placeholder, Build prereqs, Releasing, Versioning, License.
+
+Build: `cargo build --release` produces 11 MB stripped binary
+at `target/release/nexo-plugin-browser`. 18/18 lib tests pass.
+
+**81.17.c.3 — Manifest with extends.tools + sandbox + supervisor (✅)**
+
+`nexo-rs-plugin-browser/nexo-plugin.toml` (contract v1.10.0):
+
+- `[plugin]` — id=browser, version=0.2.0,
+  description="(out-of-tree subprocess)".
+- `[plugin.entrypoint] command = "./nexo-plugin-browser"` —
+  daemon resolves relative to the manifest's containing dir.
+- `[plugin.extends] tools = [...12 names sorted alphabetically...]`
+  — the host kills the subprocess at handshake if the
+  initialize-reply tools[] advertises a name not in this
+  allowlist.
+- `[plugin.sandbox]` — `enabled = true`, `network = "host"`
+  (Chromium fetches arbitrary URLs), `fs_read_paths` covers
+  Chromium binary candidates, `fs_write_paths = ["${state_dir}"]`,
+  `drop_user = false` (Chromium needs user namespaces for its
+  OWN sandbox).
+- `[plugin.supervisor]` — `respawn = false` until 81.21.b.b
+  ships auto-respawn; `stderr_tail_lines = 64` for crash
+  events.
+
+In-tree `crates/plugins/browser/nexo-plugin.toml` updated to
+mirror the standalone manifest (advertises the same surface so
+discovery walking the in-tree dir produces a clear
+"binary not found" warn rather than a no-op). In-tree
+`plugin.rs` version assertions bumped 0.1.1 → 0.2.0 so the
+12 in-tree lib tests still pass.
+
+**81.17.c.4 — In-tree wiring cleanup (✅)**
+
+`proyecto/src/main.rs`:
+
+- Removed `use nexo_plugin_browser::BrowserPlugin;` (replaced
+  by Phase-81.17.c migration comment).
+- Removed the `let browser_plugin: Option<Arc<...>> = ...` block
+  + `plugins.register_arc(plugin)` registration.
+- Removed `register_browser_tools(&tools, plugin)` per-agent
+  call site (replaced by `tracing::debug!` informing operators
+  that tools auto-register via the subprocess RemoteToolHandler
+  path).
+- Added `seed_browser_subprocess_env(&browser_cfg)` helper
+  (~50 LOC) translating `cfg.plugins.browser` YAML into the
+  `NEXO_PLUGIN_BROWSER_*` env vars the subprocess reads on
+  spawn. Daemon process env propagates to every Command::spawn
+  child by default, so the single mutation reaches the
+  auto-subprocess fallback path.
+- Net: ~−25 LOC removed, ~+50 LOC added (the helper).
+
+**81.17.c.5 — Docs + close-out (✅)**
+
+- `docs/src/plugins/browser.md` gains a Phase 81.17.c migration
+  banner + "Out-of-tree subprocess install" section + cross-link
+  to the standalone README.
+- CHANGELOG `[Unreleased] § Changed` entry documenting the
+  in-tree wiring removal + the SDK on_tool helper promotion.
+- This PHASES entry.
+- 6 FOLLOWUPS entries: publish-github, crates-publish,
+  in-tree-removal, multi-profile, latency-numbers, nexo-cdp-extract.
+- proyecto/CLAUDE.md active-table: 81 row count 28/32 → 29/32;
+  drop 81.17.c from pending list.
+
+**Mining references:**
+- `research/extensions/browser/openclaw.plugin.json` — flat
+  manifest at plugin root + sibling to binary; same layout
+  adopted.
+- `research/extensions/browser/index.ts` —
+  `definePluginEntry({ register, reload })` boot flow; mirrored
+  via PluginAdapter chain.
+- `research/src/plugins/discovery.ts:111-158` — directory walk
+  + cached manifest registry; equivalent shipped via 81.5.
+- `research/AGENTS.md:43,76` — third-party plugins forbidden
+  from importing core `src/**`; standalone repo only depends
+  on the public SDK + manifest crates.
+- OpenClaw's browser plugin stayed bundled in monorepo
+  (115 plugins all `private: true`); 81.17.c is intentionally
+  ahead of the TS reference's distribution model.
+- `claude-code-leak/` absent on host; topic out of scope.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour. The `NEXO_PLUGIN_BROWSER_*` vars are operator-config
+inputs (same risk shape as the existing browser yaml flow); no
+`crates/setup/src/capabilities.rs::INVENTORY` entry needed.
+
+**Deferred:** e2e integration test (steps 11 + 17 in the
+plan) — bash mock fixture machinery requires a separate
+hardening pass; logged as `81.17.c.e2e-test-fixture` follow-up.
+Latency benchmark code lands in `benches/tool_latency.rs`
+follow-up (`81.17.c.latency-numbers`); v1 commits the bench
+harness placeholder, operators run + populate the README
+table.
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47

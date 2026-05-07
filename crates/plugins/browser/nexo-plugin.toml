@@ -1,26 +1,67 @@
-# Phase 81.12.a — DORMANT until Phase 81.12.e ships the boot wire flip.
+# Phase 81.17.c — DORMANT manifest mirroring the standalone repo.
 #
-# This manifest is part of the plugin crate and parsed at compile-time
-# via `include_str!` in `BrowserPlugin::new()`. Operators MUST NOT add
-# this directory to `plugins.discovery.search_paths` until Phase 81.12.e
-# (see proyecto/PHASES-curated.md). Doing so today would cause the
-# discovery walker to pick up the plugin while the legacy registration
-# in `src/main.rs:1855-1872` still constructs `BrowserPlugin` via
-# `PluginRegistry::register_arc`. The result is harmless on its own
-# (factory_registry passed to wire_plugin_registry is `None`, so the
-# discovered plugin records `InitOutcome::NoHandle`) — but it's
-# dead noise.
+# Source of truth for the browser plugin is now the standalone
+# repo at `github.com/nexo-rs/plugin-browser`
+# (local path: `/home/familia/chat/nexo-rs-plugin-browser/`).
 #
-# 81.12.e moves this file (or a symlink) into the operator's discovery
-# search path AND replaces the legacy block with
-# `factory_registry.register("browser", browser_plugin_factory(cfg))`.
+# This in-tree manifest stays for ONE migration window:
+#   - Operators pointing `plugins.discovery.search_paths` at
+#     `proyecto/crates/plugins/browser/` see this file but the
+#     `[plugin.entrypoint] command` points at a non-existent
+#     binary in this directory. The daemon logs:
+#       "browser manifest discovered but binary not found at <path>;
+#        install nexo-plugin-browser"
+#   - In-tree crate stays dormant in workspace for rollback
+#     safety. Deletion via follow-up 81.17.c.in-tree-removal.
+#
+# Operators wanting the plugin TODAY: build the standalone repo
+# and point discovery at `nexo-rs-plugin-browser/target/release/`.
 
 [plugin]
 id = "browser"
-version = "0.1.1"
+version = "0.2.0"
 name = "Browser Automation"
-description = "Chrome DevTools Protocol (CDP) browser channel for nexo agents."
+description = "Chrome DevTools Protocol (CDP) browser plugin for Nexo agents (out-of-tree subprocess; v0.1.x in-tree path dormant)."
 min_nexo_version = ">=0.1.0"
 
 [plugin.requires]
 nexo_capabilities = ["broker"]
+
+[plugin.entrypoint]
+command = "./nexo-plugin-browser"
+
+[plugin.extends]
+tools = [
+    "browser_click",
+    "browser_current_url",
+    "browser_evaluate",
+    "browser_fill",
+    "browser_go_back",
+    "browser_go_forward",
+    "browser_navigate",
+    "browser_press_key",
+    "browser_screenshot",
+    "browser_scroll_to",
+    "browser_snapshot",
+    "browser_wait_for",
+]
+
+[plugin.sandbox]
+enabled = true
+network = "host"
+fs_read_paths = [
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+]
+fs_write_paths = [
+    "${state_dir}",
+]
+drop_user = false
+
+[plugin.supervisor]
+respawn = false
+max_attempts = 0
+backoff_ms = 1000
+stderr_tail_lines = 64
