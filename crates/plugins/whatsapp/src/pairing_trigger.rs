@@ -362,6 +362,7 @@ mod tests {
             public_tunnel: WhatsappPublicTunnelConfig::default(),
             instance: instance.map(str::to_string),
             allow_agents: Vec::new(),
+            typing_mode: None,
         }
     }
 

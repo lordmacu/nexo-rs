@@ -33,6 +33,7 @@ fn cfg(timeout_ms: u64) -> WhatsappPluginConfig {
         public_tunnel: Default::default(),
         instance: None,
         allow_agents: Vec::new(),
+        typing_mode: None,
     }
 }
 
