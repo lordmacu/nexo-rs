@@ -18,12 +18,19 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
-### Phase 81.17.c — plugin-browser standalone repo — shipped, follow-ups open
+### Phase 81.17.c — plugin-browser standalone repo — shipped, 9/9 follow-ups resolved
 
-Browser plugin extracted to sibling repo at
-`/home/familia/chat/nexo-rs-plugin-browser/` (commits
-`70b3db3..3474cba` on proyecto main + initial commits on the
-standalone repo). 6 deferreds:
+Browser plugin extracted to public repo
+[github.com/lordmacu/nexo-plugin-browser](https://github.com/lordmacu/nexo-plugin-browser)
++ published to crates.io as `nexo-plugin-browser v0.2.0`.
+External operators install via `cargo install nexo-plugin-browser`
+— autonomous, no proyecto checkout required. Slimmed deps to
+4 (`nexo-microapp-sdk`, `nexo-broker`, `nexo-cdp`,
+`nexo-config`); the dead `nexo-core` / `nexo-llm` /
+`nexo-resilience` / `nexo-plugin-manifest` direct deps were
+dropped.
+
+9 follow-ups resolved 2026-05-07:
 
 - **`81.17.c.publish-github`** — RESOLVED 2026-05-07. Repo
   published to
@@ -57,14 +64,28 @@ standalone repo). 6 deferreds:
   `nexo-cdp-extract`). The `browser-test` example removed —
   coverage lives in `nexo-rs-plugin-browser/tests/e2e_handshake.rs`.
 
-- **`81.17.c.multi-profile`** — multi-Chrome profiles per agent
-  (current single-instance design holds one Chrome per
-  subprocess). Useful when one operator runs multiple
-  browser-using agents needing isolated cookies / session.
-  Why deferred: scope creep for v1; demand-driven.
-  How to apply: extend manifest with `[plugin.instances]`
-  field + dispatch agent_id → profile path mapping in
-  subprocess.
+- **`81.17.c.multi-profile`** — RESOLVED 2026-05-07. Shipped
+  in `nexo-plugin-browser v0.2.1`:
+    - `DashMap<agent_id, BrowserPlugin>` reemplaza el
+      single-OnceCell del v0.2.0; primer `tool.invoke` por
+      agente lazy-boota Chrome con `${BASE}/profiles/<agent_id>/`.
+    - 3 env knobs:
+      `NEXO_PLUGIN_BROWSER_MAX_PROFILES` (default 10, range 1..=64),
+      `NEXO_PLUGIN_BROWSER_PROFILE_IDLE_SECS` (default 900,
+      range 0..=86400; 0 disables eviction),
+      `NEXO_PLUGIN_BROWSER_MULTI_PROFILE` (default true; opt-out
+      reverts to v0.2.0 single-shared-profile behaviour).
+    - Sanitiser regex `[A-Za-z0-9_-]{1,64}` + path-traversal
+      defence; rejects → `-33402`.
+    - Cap reached → `-33404 Unavailable`.
+    - Idle eviction loop polls every 30 s, calls
+      `BrowserPlugin::shutdown_chrome` past threshold; on-disk
+      profile dir survives so next call lazy-reboots cleanly.
+    - Chrome profile chip decoration (name + sha256-derived
+      stable color) per OpenClaw chrome.profile-decoration.ts:108-162.
+  Tests: 17 sanitiser + 8 limits + 3 decoration + 1 plugin
+  shutdown + 5 e2e_multi_profile, all green.
+  See [GitHub Release v0.2.1](https://github.com/lordmacu/nexo-plugin-browser/releases/tag/v0.2.1).
 
 - **`81.17.c.latency-numbers`** — RESOLVED 2026-05-07.
   Bench harness shipped at
