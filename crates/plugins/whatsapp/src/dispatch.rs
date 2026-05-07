@@ -278,10 +278,47 @@ async fn dispatch_event(
                 session_id = ?ev.session_id,
                 "DISPATCH_EVENT proactive send_voice_note"
             );
-            session
+            // Switch the peer phone's indicator to "grabando audio…"
+            // immediately before the upload + send. Best-effort —
+            // a presence-emit failure must not abort the voice
+            // note delivery (the audio is the actual payload; the
+            // indicator is cosmetic UX). Same shape as the
+            // wa-agent `apply_response` path so both inbound-driven
+            // and proactive sends paint identically on the peer.
+            if let Err(e) = session
+                .send_chat_presence(
+                    &to,
+                    whatsapp_rs::ChatPresenceState::Composing,
+                    Some(whatsapp_rs::ChatPresenceMedia::Audio),
+                )
+                .await
+            {
+                tracing::warn!(
+                    to = %to,
+                    error = %e,
+                    "send_chat_presence(Composing, Audio) failed; continuing voice_note send"
+                );
+            }
+            let send_result = session
                 .send_voice_note(&to, &audio, &mimetype)
                 .await
-                .map_err(|e| anyhow::anyhow!("send_voice_note: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("send_voice_note: {e}"));
+            // Always emit the paused stanza, regardless of the
+            // send outcome. If the send succeeded we don't want
+            // the peer phone stuck on "grabando…" until WA's TTL
+            // (~10s) reaps the indicator; if it failed, paused is
+            // still the right state to leave the chat in.
+            if let Err(e) = session
+                .send_chat_presence(&to, whatsapp_rs::ChatPresenceState::Paused, None)
+                .await
+            {
+                tracing::warn!(
+                    to = %to,
+                    error = %e,
+                    "send_chat_presence(Paused) failed after voice_note send"
+                );
+            }
+            send_result?;
         }
         other => {
             return Err(anyhow::anyhow!("unknown outbound kind `{other}`"));
