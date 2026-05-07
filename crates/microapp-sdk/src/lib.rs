@@ -61,6 +61,9 @@ pub mod identity;
 #[cfg(feature = "routing")]
 pub mod routing;
 
+#[cfg(feature = "enrichment")]
+pub mod enrichment;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
