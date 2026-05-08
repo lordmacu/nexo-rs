@@ -4153,8 +4153,10 @@ name = "nexo-microapp-sdk"
 version = "0.1.2"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dashmap 6.1.0",
+ "hmac",
  "msedge-tts",
  "nexo-broker",
  "nexo-llm",
@@ -4168,7 +4170,9 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "sqlx",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
