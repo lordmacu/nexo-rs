@@ -22,8 +22,9 @@ pub mod store;
 
 pub use error::IdentityError;
 pub use store::{
-    open_pool, CompanyStore, PersonEmail, PersonEmailStore, PersonStore,
-    SqliteCompanyStore, SqlitePersonEmailStore, SqlitePersonStore,
+    open_pool, CompanyStore, PersonEmail, PersonEmailStore, PersonPhone,
+    PersonPhoneStore, PersonStore, SqliteCompanyStore, SqlitePersonEmailStore,
+    SqlitePersonPhoneStore, SqlitePersonStore,
 };
 
 // Re-export the wire types so consumers don't need to depend
