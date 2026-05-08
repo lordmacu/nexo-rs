@@ -18,7 +18,10 @@
 //! don't pull duplicate types.
 
 pub mod error;
+pub mod jid;
 pub mod store;
+
+pub use jid::{normalize_jid, parse_jid, same_user, JidParseError, ParsedJid};
 
 pub use error::IdentityError;
 pub use store::{
