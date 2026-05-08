@@ -69,4 +69,56 @@ pub enum VerifyError {
         /// `regex::Regex::new` error message.
         reason: String,
     },
+
+    /// PEM/DER certificate could not be parsed.
+    #[error("certificate parse failed: {0}")]
+    CertParseFailed(String),
+
+    /// Certificate is well-formed but does not carry an
+    /// ECDSA-P256 public key — the only key type cosign uses
+    /// today.
+    #[error("certificate public key is not ECDSA-P256: {0}")]
+    UnsupportedKey(String),
+
+    /// Signature file could not be base64-decoded or DER-parsed.
+    #[error("signature decode failed: {0}")]
+    SignatureDecodeFailed(String),
+
+    /// Signature did not verify against the certificate's public
+    /// key over `SHA-256(blob)`. Either the blob, the
+    /// certificate, or the signature has been tampered with.
+    #[error("signature does not verify against the certificate")]
+    SignatureMismatch,
+
+    /// Certificate has no Subject Alternative Name URIs / emails
+    /// — Fulcio always emits at least one, so an empty SAN
+    /// almost certainly means we got handed the wrong cert.
+    #[error("certificate has no Subject Alternative Name entries")]
+    IdentityNotFound,
+
+    /// Certificate's SAN entries do not match the policy's
+    /// `identity_regexp`.
+    #[error(
+        "identity `{found}` does not match policy regex `{expected_regex}`"
+    )]
+    IdentityMismatch {
+        /// First SAN entry the verifier inspected (URIs/emails
+        /// joined for diagnostic clarity).
+        found: String,
+        /// Regex from the matched author entry.
+        expected_regex: String,
+    },
+
+    /// Certificate's Fulcio OIDC-issuer extension does not match
+    /// the policy.
+    #[error(
+        "OIDC issuer mismatch: cert claims `{found}`, policy requires `{expected}`"
+    )]
+    IssuerMismatch {
+        /// What the cert's `1.3.6.1.4.1.57264.1.{1,8}` extension
+        /// reported.
+        found: String,
+        /// What the trust policy required.
+        expected: String,
+    },
 }
