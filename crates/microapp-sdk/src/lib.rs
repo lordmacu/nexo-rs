@@ -73,6 +73,9 @@ pub mod tracking;
 #[cfg(feature = "scoring")]
 pub mod scoring;
 
+#[cfg(feature = "guardrails")]
+pub mod guardrails;
+
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
