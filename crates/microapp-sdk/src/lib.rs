@@ -70,6 +70,9 @@ pub mod outbound;
 #[cfg(feature = "tracking")]
 pub mod tracking;
 
+#[cfg(feature = "scoring")]
+pub mod scoring;
+
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
