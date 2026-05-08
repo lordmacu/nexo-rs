@@ -186,6 +186,22 @@ impl StdioRuntime {
             {
                 opts.env_passthrough_allowlist.push(http.token_env.clone());
             }
+            // Phase 82.12.c — manifest may declare additional
+            // env var names the spawn must let past the
+            // secret-suffix blocklist. Used by microapps that
+            // proxy to a sibling extension and need the
+            // sibling's bearer in their own env (e.g.
+            // agent-creator forwarding to the marketing
+            // extension's loopback admin).
+            for name in &http.extra_env_passthrough {
+                if !opts
+                    .env_passthrough_allowlist
+                    .iter()
+                    .any(|n| n == name)
+                {
+                    opts.env_passthrough_allowlist.push(name.clone());
+                }
+            }
         }
         let (command, args) = match &manifest.transport {
             Transport::Stdio { command, args } => (command.clone(), args.clone()),
