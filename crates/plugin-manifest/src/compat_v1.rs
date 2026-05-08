@@ -232,6 +232,10 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             bind: h.bind,
             token_env: h.token_env,
             health_path: h.health_path,
+            // v1 manifests pre-date the field; default to an
+            // empty allowlist. Microapps that need extra
+            // passthrough env vars opt into v2.
+            extra_env_passthrough: Vec::new(),
         });
 
     // Capabilities.tools/hooks/channels/providers/pollers — these

@@ -351,6 +351,17 @@ pub struct HttpServerCapability {
     /// timeout). Default `/healthz`.
     #[serde(default = "default_health_path")]
     pub health_path: String,
+    /// Additional env var names the daemon must let through
+    /// the default secret-suffix blocklist when spawning
+    /// this microapp. Use case: a microapp that proxies to
+    /// a sibling extension (e.g. `agent-creator` →
+    /// marketing extension) needs the sibling's bearer
+    /// token visible in its own env, but the var name ends
+    /// in `_TOKEN` and would otherwise be stripped.
+    /// Operators audit this list during install — every
+    /// entry is a secret the microapp will see.
+    #[serde(default)]
+    pub extra_env_passthrough: Vec<String>,
 }
 
 fn default_http_bind() -> String {
