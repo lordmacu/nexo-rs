@@ -30,6 +30,9 @@ use serde::{Deserialize, Serialize};
 
 pub use nexo_tool_meta::template::{render_template, MISSING_PLACEHOLDER};
 
+#[cfg(feature = "templating-handlebars")]
+pub mod handlebars;
+
 /// Named operator template. Stable id for analytics joins +
 /// admin URL paths; human-facing label for the picker; body
 /// holds the `{{path}}` substitution string.

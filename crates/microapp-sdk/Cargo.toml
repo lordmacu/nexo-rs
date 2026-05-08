@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.11"
+version       = "0.1.12"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -118,6 +118,13 @@ guardrails = ["dep:regex", "dep:once_cell"]
 # by construction — no helpers, no eval, no IO. Pulls only
 # the existing serde + nexo-tool-meta deps already in tree.
 templating = []
+# F26 — opt-in Handlebars renderer for templates that
+# outgrow the mustache-lite default (conditionals, loops,
+# `{{#with}}` blocks). Sandboxed-by-construction: no
+# custom helpers / partials registered, no filesystem /
+# network access surfaces. Strictly additive on top of the
+# `templating` feature.
+templating-handlebars = ["templating", "dep:handlebars"]
 # F29 — email subject normalisation + synthetic thread-id
 # helpers. Pure string primitives mined during M17.3 in the
 # marketing extension; reusable by any microapp that
@@ -188,9 +195,13 @@ base64 = { version = "0.22", optional = true }
 # F29 — sled keyspace for cross-restart notification dedup.
 # Optional; default builds skip it.
 sled   = { version = "0.34", optional = true }
+# F26 — Handlebars renderer for the `templating-handlebars`
+# feature. Default features keep the dep tree narrow (no
+# heavy deps).
+handlebars = { version = "5", default-features = false, optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "email-threading", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 
