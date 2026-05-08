@@ -651,6 +651,107 @@ where
     }
 }
 
+/// Phase 81.17.c.ctx — tool dispatch context bundling host
+/// resources the handler can reach. Designed to grow without
+/// breaking the [`ToolHandlerWithContext`] signature: caller
+/// pattern-matches the fields they need, ignores the rest.
+///
+/// Available today:
+///   - `broker` — full `BrokerSender` for `publish` / `request`
+///     / `complete_llm` / `recall_memory` from inside a tool.
+///     Cheap to clone — internals are `Arc`-shared.
+///   - `plugin_id` — manifest id (echoed for multi-plugin
+///     handlers that dispatch by tool name).
+///
+/// Future fields land via field additions only. Plugin authors
+/// who don't read them are immune.
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct ToolContext {
+    /// Channel for outbound JSON-RPC frames (broker publish,
+    /// LLM completion, memory recall). Holds the same writer
+    /// the dispatch loop uses; concurrent clones serialise on
+    /// the writer's `Mutex`.
+    pub broker: BrokerSender,
+    /// Stable plugin id pulled from the manifest. Tools
+    /// matching on `<plugin_id>_*` names use this for
+    /// validation; multi-plugin glue handlers route on it.
+    pub plugin_id: String,
+}
+
+// `BrokerSender` carries trait-object fields (`Mutex<Box<dyn
+// AsyncWrite>>`) that can't be `Debug`-derived. Hand-rolled
+// formatter exposes `plugin_id` and redacts the rest so logs
+// don't leak handle addresses.
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("plugin_id", &self.plugin_id)
+            .field("broker", &"<BrokerSender>")
+            .finish()
+    }
+}
+
+/// Phase 81.17.c.ctx — like [`ToolHandler`] but receives a
+/// [`ToolContext`] alongside the [`ToolInvocation`]. Use this
+/// variant when the tool body needs to publish / request /
+/// LLM-call from the host. Register via
+/// [`PluginAdapter::on_tool_with_context`] (mutually exclusive
+/// with [`PluginAdapter::on_tool`]; the latter is preserved
+/// for plugins that don't need the host channel).
+///
+/// Blanket-implemented for any
+/// `Fn(ToolInvocation, ToolContext) -> Fut`:
+///
+/// ```ignore
+/// PluginAdapter::new(MANIFEST)?
+///     .on_tool_with_context(|inv, ctx| async move {
+///         // notify operator via broker
+///         let event = nexo_broker::Event::new(
+///             "agent.email.notification.x", "my_plugin",
+///             serde_json::json!({"hi": true}),
+///         );
+///         ctx.broker.publish("agent.email.notification.x", event).await.ok();
+///         Ok(serde_json::json!({ "ok": true }))
+///     })
+///     .run_stdio().await
+/// ```
+pub trait ToolHandlerWithContext: Send + Sync + 'static {
+    /// Invoke the handler. Same return-shape contract as
+    /// [`ToolHandler::call`] — `Ok(Value)` becomes the
+    /// JSON-RPC `result`; `Err(ToolInvocationError)` maps to
+    /// the typed error band.
+    fn call(
+        &self,
+        invocation: ToolInvocation,
+        ctx: ToolContext,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send,
+        >,
+    >;
+}
+
+impl<F, Fut> ToolHandlerWithContext for F
+where
+    F: Fn(ToolInvocation, ToolContext) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>>
+        + Send
+        + 'static,
+{
+    fn call(
+        &self,
+        invocation: ToolInvocation,
+        ctx: ToolContext,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<serde_json::Value, ToolInvocationError>> + Send,
+        >,
+    > {
+        Box::pin((self)(invocation, ctx))
+    }
+}
+
 /// Builder for the child-side plugin runtime. Authors call
 /// [`PluginAdapter::new`] with their manifest TOML, register
 /// `on_broker_event` + `on_shutdown` handlers, then drive the
@@ -673,6 +774,13 @@ pub struct PluginAdapter {
     /// not found` so the host's RemoteToolHandler surfaces a
     /// clear error.
     tool_handler: Option<Arc<dyn ToolHandler>>,
+    /// Phase 81.17.c.ctx — like [`tool_handler`] but the
+    /// closure also receives a [`ToolContext`] (broker access,
+    /// plugin id). Mutually exclusive with `tool_handler`;
+    /// when both are set the with-context handler wins
+    /// (operator likely migrated incrementally + forgot to
+    /// drop the old call).
+    tool_handler_with_context: Option<Arc<dyn ToolHandlerWithContext>>,
 }
 
 /// Phase 81.15.c.b — handle returned by
@@ -772,6 +880,7 @@ impl PluginAdapter {
             on_shutdown: None,
             declared_tools: Vec::new(),
             tool_handler: None,
+            tool_handler_with_context: None,
         })
     }
 
@@ -814,6 +923,26 @@ impl PluginAdapter {
     /// `RemoteToolHandler` surfaces a clear error.
     pub fn on_tool<H: ToolHandler>(mut self, handler: H) -> Self {
         self.tool_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 81.17.c.ctx — same as [`Self::on_tool`] but the
+    /// handler closure receives a [`ToolContext`] alongside
+    /// the [`ToolInvocation`]. Use this when the tool body
+    /// needs to publish to the broker, request via JSON-RPC,
+    /// or call the host's LLM / memory APIs from inside the
+    /// invocation.
+    ///
+    /// Mutually exclusive with `on_tool` — calling both during
+    /// the builder chain is allowed (no panic), but the
+    /// dispatch loop prefers the context-aware variant. Tests
+    /// + linters can detect the latent bug; runtime accepts
+    /// both for forward / backward migration ergonomics.
+    pub fn on_tool_with_context<H: ToolHandlerWithContext>(
+        mut self,
+        handler: H,
+    ) -> Self {
+        self.tool_handler_with_context = Some(Arc::new(handler));
         self
     }
 
@@ -1071,16 +1200,23 @@ where
                 // registered handler ⇒ reply with -32601 so the
                 // host's `RemoteToolHandler` surfaces a typed
                 // ToolError to the agent.
-                let Some(handler) = adapter.tool_handler.clone() else {
+                //
+                // Phase 81.17.c.ctx — the context-aware handler
+                // (`on_tool_with_context`) is preferred when both
+                // are registered; falls back to the plain
+                // `on_tool` handler. No handler at all → -32601.
+                let with_ctx = adapter.tool_handler_with_context.clone();
+                let plain = adapter.tool_handler.clone();
+                if with_ctx.is_none() && plain.is_none() {
                     write_error(
                         &writer,
                         id,
                         -32601,
-                        "method not found: tool.invoke (no handler registered — call PluginAdapter::on_tool)",
+                        "method not found: tool.invoke (no handler registered — call PluginAdapter::on_tool or on_tool_with_context)",
                     )
                     .await?;
                     continue;
-                };
+                }
                 let params = frame.get("params").cloned().unwrap_or(Value::Null);
                 let invocation: ToolInvocation = match serde_json::from_value(params) {
                     Ok(inv) => inv,
@@ -1095,7 +1231,20 @@ where
                         continue;
                     }
                 };
-                match handler.call(invocation).await {
+                let result = if let Some(handler) = with_ctx {
+                    let ctx = ToolContext {
+                        broker: BrokerSender {
+                            writer: writer.clone(),
+                            pending: pending.clone(),
+                            next_id: next_id.clone(),
+                        },
+                        plugin_id: adapter.cached_manifest.plugin.id.clone(),
+                    };
+                    handler.call(invocation, ctx).await
+                } else {
+                    plain.expect("checked above").call(invocation).await
+                };
+                match result {
                     Ok(value) => {
                         write_result(&writer, id, value).await?;
                     }
@@ -1436,6 +1585,60 @@ min_nexo_version = ">=0.1.0"
         let reply = read_reply_line(&mut host_read).await;
         assert_eq!(reply["id"], 9);
         assert_eq!(reply["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_with_context_handler_receives_broker_and_plugin_id() {
+        // Phase 81.17.c.ctx — context-aware handler should
+        // receive the manifest's plugin_id + a working
+        // BrokerSender. Asserts the plugin_id surfaces in the
+        // reply so the dispatch path is correct.
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_tool_with_context(|inv: ToolInvocation, ctx: ToolContext| async move {
+                Ok(serde_json::json!({
+                    "echoed_plugin_id": ctx.plugin_id,
+                    "tool_name": inv.tool_name,
+                }))
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                br#"{"jsonrpc":"2.0","id":10,"method":"tool.invoke","params":{"plugin_id":"test_plugin","tool_name":"ping"}}
+"#,
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 10);
+        assert_eq!(reply["result"]["echoed_plugin_id"], "test_plugin");
+        assert_eq!(reply["result"]["tool_name"], "ping");
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_with_context_takes_precedence_over_plain() {
+        // When both `on_tool` and `on_tool_with_context` are
+        // registered, dispatch loop prefers the context-aware
+        // variant — verifies the precedence rule documented in
+        // the builder doc-comment.
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_tool(
+                |_inv: ToolInvocation| async move { Ok(serde_json::json!({"path": "plain"})) },
+            )
+            .on_tool_with_context(|_inv, _ctx| async move {
+                Ok(serde_json::json!({"path": "with_context"}))
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                br#"{"jsonrpc":"2.0","id":11,"method":"tool.invoke","params":{"plugin_id":"test_plugin","tool_name":"x"}}
+"#,
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["result"]["path"], "with_context");
     }
 
     #[tokio::test]
