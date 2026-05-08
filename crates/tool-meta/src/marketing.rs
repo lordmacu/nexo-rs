@@ -402,6 +402,75 @@ impl Default for SellerNotificationSettings {
     }
 }
 
+// ── Custom notification templates (M15.44) ──────────────────────
+
+/// Per-tenant template overrides for notification summaries.
+/// Operator writes one of these to
+/// `${state_root}/marketing/<tenant_id>/notification_templates.yaml`
+/// so each tenant brands its own alerts. Empty file →
+/// `render_summary` falls back to the framework's hardcoded
+/// ES/EN strings.
+///
+/// Template body uses `nexo-tool-meta::template`'s `{{path}}`
+/// syntax. Available placeholders per kind:
+///
+/// - `{{from}}` — sender's display name (or email when no name).
+/// - `{{from_email}}` — raw email address.
+/// - `{{subject}}` — email subject line.
+/// - `{{seller}}` — seller's name.
+/// - `{{seller_email}}` — seller's primary_email.
+/// - `{{lead_id}}` — uuid string.
+/// - `{{state_from}}` / `{{state_to}}` — for `lead_transitioned`.
+/// - `{{reason}}` — operator-supplied reason on transition.
+/// - `{{confidence_pct}}` — `(confidence * 100).round()` for
+///   `meeting_intent`.
+/// - `{{evidence}}` — first 120 chars of the body for
+///   `meeting_intent`.
+///
+/// Unknown placeholders render as `{{path}}` literal so
+/// operators see broken templates clearly without crashing
+/// the publisher.
+///
+/// Each kind carries an optional ES + EN template; the
+/// publisher picks via `seller.preferred_language`. Missing
+/// language → fall through to the other; both missing →
+/// fall through to the framework's hardcoded default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct NotificationTemplates {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_created: Option<TemplateLocaleSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_replied: Option<TemplateLocaleSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_transitioned: Option<TemplateLocaleSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meeting_intent: Option<TemplateLocaleSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_pending: Option<TemplateLocaleSet>,
+}
+
+/// Per-locale template strings. `es` is the operator's
+/// default; `en` is the fallback for English-speaking sellers
+/// (selected via `seller.preferred_language == "en"`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct TemplateLocaleSet {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub en: Option<String>,
+}
+
+impl TemplateLocaleSet {
+    /// Pick the template for `lang`; falls back to the other
+    /// locale when missing, then to `None` if both empty.
+    pub fn for_lang(&self, lang: &str) -> Option<&str> {
+        match lang {
+            "en" => self.en.as_deref().or(self.es.as_deref()),
+            _ => self.es.as_deref().or(self.en.as_deref()),
+        }
+    }
+}
+
 /// Discriminated by `kind` so JS clients pattern-match on the
 /// string without typed access. Mirrors `LeadFirehoseEvent`'s
 /// shape but scoped to *operator-facing* notifications (vs the
@@ -964,6 +1033,64 @@ mod tests {
                 to: "ops@acme.com".into(),
             }
         );
+    }
+
+    #[test]
+    fn notification_templates_default_is_all_none() {
+        // Default = empty struct. Every locale set is None →
+        // render_summary falls back to the hardcoded strings.
+        let t = NotificationTemplates::default();
+        assert!(t.lead_created.is_none());
+        assert!(t.lead_replied.is_none());
+        assert!(t.lead_transitioned.is_none());
+        assert!(t.meeting_intent.is_none());
+        assert!(t.draft_pending.is_none());
+    }
+
+    #[test]
+    fn template_locale_set_picks_requested_lang_first() {
+        let set = TemplateLocaleSet {
+            es: Some("ES".into()),
+            en: Some("EN".into()),
+        };
+        assert_eq!(set.for_lang("es"), Some("ES"));
+        assert_eq!(set.for_lang("en"), Some("EN"));
+    }
+
+    #[test]
+    fn template_locale_set_falls_through_to_other_lang() {
+        let set = TemplateLocaleSet {
+            es: Some("ES only".into()),
+            en: None,
+        };
+        assert_eq!(set.for_lang("en"), Some("ES only"));
+        assert_eq!(set.for_lang("es"), Some("ES only"));
+    }
+
+    #[test]
+    fn template_locale_set_empty_both_returns_none() {
+        let set = TemplateLocaleSet::default();
+        assert_eq!(set.for_lang("es"), None);
+        assert_eq!(set.for_lang("en"), None);
+    }
+
+    #[test]
+    fn notification_templates_partial_payload_uses_serde_defaults() {
+        // Operator only writes `lead_created.es` — every other
+        // field defaults to None. The render_summary fallback
+        // chain handles the missing variants.
+        let json = r#"{
+            "lead_created": {
+                "es": "🚀 [Acme] Lead caliente: {{from}}\nAsunto: {{subject}}"
+            }
+        }"#;
+        let parsed: NotificationTemplates = serde_json::from_str(json).unwrap();
+        assert!(parsed.lead_created.is_some());
+        assert_eq!(
+            parsed.lead_created.as_ref().unwrap().es.as_deref(),
+            Some("🚀 [Acme] Lead caliente: {{from}}\nAsunto: {{subject}}")
+        );
+        assert!(parsed.lead_replied.is_none());
     }
 
     #[test]
