@@ -182,6 +182,7 @@ fn two_binding_agent() -> AgentConfig {
         event_subscribers: Vec::new(),
         tenant_id: None,
         extensions_config: std::collections::BTreeMap::new(),
+        active: true,
     }
 }
 
@@ -379,6 +380,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         event_subscribers: Vec::new(),
         tenant_id: None,
         extensions_config: std::collections::BTreeMap::new(),
+        active: true,
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

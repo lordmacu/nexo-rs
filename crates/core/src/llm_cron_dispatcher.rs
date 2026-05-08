@@ -1033,7 +1033,7 @@ mod tests {
     async fn routed_dispatcher_uses_entry_model_and_caches_client() {
         let builds = Arc::new(Mutex::new(Vec::new()));
         let seen_request_models = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = LlmRegistry::new();
+        let registry = LlmRegistry::new();
         registry
             .register(Box::new(RoutedMockFactory {
                 builds: Arc::clone(&builds),
@@ -1076,7 +1076,7 @@ mod tests {
         // scope), 4 chat calls.
         let builds = Arc::new(Mutex::new(Vec::new()));
         let seen_request_models = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = LlmRegistry::new();
+        let registry = LlmRegistry::new();
         registry
             .register(Box::new(RoutedMockFactory {
                 builds: Arc::clone(&builds),
@@ -1148,7 +1148,7 @@ mod tests {
     async fn routed_dispatcher_falls_back_for_legacy_rows() {
         let builds = Arc::new(Mutex::new(Vec::new()));
         let seen_request_models = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = LlmRegistry::new();
+        let registry = LlmRegistry::new();
         registry
             .register(Box::new(RoutedMockFactory {
                 builds: Arc::clone(&builds),
@@ -1174,7 +1174,7 @@ mod tests {
     async fn routed_dispatcher_uses_binding_model_for_legacy_rows_before_fallback() {
         let builds = Arc::new(Mutex::new(Vec::new()));
         let seen_request_models = Arc::new(Mutex::new(Vec::new()));
-        let mut registry = LlmRegistry::new();
+        let registry = LlmRegistry::new();
         registry
             .register(Box::new(RoutedMockFactory {
                 builds: Arc::clone(&builds),

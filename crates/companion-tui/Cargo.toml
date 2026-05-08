@@ -29,3 +29,6 @@ path = "src/main.rs"
 # Phase 27.1 — companion-tui ships separately when WS handshake stabilizes.
 [package.metadata.dist]
 dist = false
+
+[lints]
+workspace = true

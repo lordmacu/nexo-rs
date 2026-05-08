@@ -404,6 +404,7 @@ mod tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -614,6 +615,7 @@ mod tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

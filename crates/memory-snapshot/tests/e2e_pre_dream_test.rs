@@ -122,7 +122,7 @@ async fn pre_dream_adapter_produces_usable_bundle_then_restore_recovers_state() 
         .find(|m| {
             m.label
                 .as_deref()
-                .map(|l| l == &format!("auto:pre-dream-{run_id}"))
+                .map(|l| l == format!("auto:pre-dream-{run_id}"))
                 .unwrap_or(false)
         })
         .expect("a snapshot with the auto:pre-dream-<run_id> label must exist");

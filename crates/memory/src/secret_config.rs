@@ -11,18 +11,13 @@ use crate::secret_scanner::{OnSecret, SecretGuard, SecretScanner};
 /// Selection of scanner rules.
 ///
 /// Deserializes from either the string `"all"` or a list of rule IDs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RuleSelection {
     /// Use all available rules.
+    #[default]
     All,
     /// Use only the named rules.
     List(Vec<String>),
-}
-
-impl Default for RuleSelection {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl<'de> Deserialize<'de> for RuleSelection {

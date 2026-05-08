@@ -150,9 +150,7 @@ impl RetentionWorker {
                         match self.snapshotter.delete(&agent_id, &tenant, oldest.id).await {
                             Ok(()) => {
                                 report.bundles_deleted += 1;
-                                if over_count > 0 {
-                                    over_count -= 1;
-                                }
+                                over_count = over_count.saturating_sub(1);
                             }
                             Err(SnapshotError::Retention(_)) => {
                                 // Hit the "last snapshot" floor — stop

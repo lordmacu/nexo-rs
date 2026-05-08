@@ -536,7 +536,7 @@ mod tests {
     fn detects_github_fine_grained_pat() {
         let scanner = SecretScanner::new();
         // github_pat_ + exactly 82 word chars
-        let suffix: String = std::iter::repeat('X').take(82).collect();
+        let suffix: String = "X".repeat(82);
         let key = format!("github_pat_{suffix}");
         let m = scanner.scan(&key);
         assert!(has_rule(&m, "github-fine-grained-pat"), "got: {m:?}");
@@ -546,7 +546,7 @@ mod tests {
     fn detects_openai_api_key() {
         let scanner = SecretScanner::new();
         // sk-proj-<74 chars>T3BlbkFJ<74 chars>
-        let part: String = std::iter::repeat('A').take(74).collect();
+        let part: String = "A".repeat(74);
         let key = format!("sk-proj-{part}T3BlbkFJ{part}");
         let m = scanner.scan(&key);
         assert!(has_rule(&m, "openai-api-key"), "got: {m:?}");

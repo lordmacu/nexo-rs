@@ -273,6 +273,7 @@ mod tests {
         fn count(&self) -> usize {
             self.emits.lock().unwrap().len()
         }
+        #[allow(dead_code)]
         fn last_server(&self) -> Option<String> {
             self.emits.lock().unwrap().last().map(|(s, _)| s.clone())
         }

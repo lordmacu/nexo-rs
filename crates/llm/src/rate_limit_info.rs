@@ -22,6 +22,11 @@
 //! - Gemini: `retry-info` header, quota_project_id
 //! - MiniMax: `x-rate-limit-*` headers (OpenAI-compatible)
 //! - Generic/unknown: only `retry-after` header
+#![allow(
+    clippy::redundant_closure,
+    clippy::unnecessary_literal_unwrap,
+    clippy::question_mark
+)]
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -226,7 +231,7 @@ pub fn extract_openai_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
     let reset_str = headers
         .get("x-ratelimit-reset-requests")
         .and_then(|v| v.to_str().ok());
-    let resets_at = reset_str.and_then(|s| parse_openai_reset(s));
+    let resets_at = reset_str.and_then(parse_openai_reset);
 
     let status = if remaining_req == 0 {
         Some(QuotaStatus::Rejected)

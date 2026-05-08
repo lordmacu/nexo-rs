@@ -27,3 +27,6 @@ uuid            = { workspace = true }
 [dev-dependencies]
 serde_yaml = { workspace = true }
 tokio      = { workspace = true }
+
+[lints]
+workspace = true

@@ -32,6 +32,7 @@
 //! wired through `ChannelInboundLoop` once 80.9.b.b lands the
 //! `CapabilityClaim` change. The MVP today is the protocol
 //! surface — every operator-visible knob, every wire frame.
+#![allow(clippy::type_complexity)]
 
 use crate::client_trait::McpClient;
 use serde::{Deserialize, Serialize};
@@ -342,6 +343,10 @@ impl PendingPermissionMap {
 
     pub async fn len(&self) -> usize {
         self.inner.lock().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.inner.lock().await.is_empty()
     }
 }
 

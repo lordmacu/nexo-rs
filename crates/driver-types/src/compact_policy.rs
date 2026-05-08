@@ -7,6 +7,7 @@
 //! 2. Age — `session_age_minutes >= max_age_minutes`.
 //! Both respect `min_turns_between` (anti-storm) and
 //! `max_consecutive_failures` (circuit breaker).
+#![allow(clippy::doc_lazy_continuation)]
 
 use async_trait::async_trait;
 use nexo_config::types::llm::AutoCompactionConfig;

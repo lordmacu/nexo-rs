@@ -114,22 +114,12 @@ impl MemorySnapshotConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields, default)]
 pub struct EncryptionSection {
     pub enabled: bool,
     pub recipients: Vec<String>,
     pub identity_path: Option<PathBuf>,
-}
-
-impl Default for EncryptionSection {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            recipients: Vec::new(),
-            identity_path: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

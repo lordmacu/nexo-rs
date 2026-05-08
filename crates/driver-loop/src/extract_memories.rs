@@ -221,10 +221,7 @@ impl ExtractMemories {
         memory_dir: PathBuf,
     ) {
         // Gate checks.
-        let skip_reason = match self.check_gates() {
-            Ok(()) => None,
-            Err(reason) => Some(reason),
-        };
+        let skip_reason = self.check_gates().err();
 
         if let Some(reason) = skip_reason {
             // Coalesce: stash for later if in-progress.

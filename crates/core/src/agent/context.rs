@@ -604,7 +604,6 @@ mod plan_mode_tests {
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
-            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
@@ -623,6 +622,7 @@ mod plan_mode_tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         };
         AgentContext::new(
             "a",
@@ -978,7 +978,6 @@ mod binding_context_tests {
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
-            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
@@ -997,6 +996,7 @@ mod binding_context_tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         }
     }
 
@@ -1139,7 +1139,6 @@ mod build_meta_value_tests {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
-            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
@@ -1158,6 +1157,7 @@ mod build_meta_value_tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

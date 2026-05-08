@@ -56,3 +56,6 @@ tracing-subscriber = { workspace = true }
 [[bench]]
 name = "sse_parsers"
 harness = false
+
+[lints]
+workspace = true

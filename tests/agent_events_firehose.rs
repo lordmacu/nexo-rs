@@ -88,6 +88,8 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            llm_provider_catalog: Vec::new(),
+            pairing_triggers: Default::default(),
         },
         true,
     )
@@ -193,6 +195,8 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            llm_provider_catalog: Vec::new(),
+            pairing_triggers: Default::default(),
         },
         true,
     )

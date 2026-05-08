@@ -38,3 +38,6 @@ scraper      = { version = "0.20", optional = true }
 [dev-dependencies]
 tokio        = { workspace = true }
 serde_json   = { workspace = true }
+
+[lints]
+workspace = true

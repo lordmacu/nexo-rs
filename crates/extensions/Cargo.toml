@@ -55,3 +55,6 @@ tracing-subscriber = { workspace = true }
 [[example]]
 name = "echo_ext"
 path = "examples/echo_ext.rs"
+
+[lints]
+workspace = true

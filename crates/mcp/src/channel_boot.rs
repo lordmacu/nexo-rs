@@ -82,6 +82,7 @@ impl ChannelBootContext {
 /// `(binding, server)` pair. Pure — does not spawn the loop.
 /// The caller decides spawn timing (typically right after the
 /// MCP handshake completes for the server).
+#[allow(clippy::too_many_arguments)]
 pub fn build_inbound_loop_config(
     ctx: &ChannelBootContext,
     server_name: impl Into<String>,

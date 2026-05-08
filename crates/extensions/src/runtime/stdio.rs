@@ -290,6 +290,7 @@ impl StdioRuntime {
     /// + `StdioPairingNotifier` post-spawn (the underlying mpsc
     /// channel is created inside [`spawn_with`], so a reference
     /// can only be obtained after the runtime is up).
+    #[allow(clippy::doc_lazy_continuation)]
     pub fn outbox_sender(&self) -> tokio::sync::mpsc::Sender<String> {
         self.outbox_tx.clone()
     }

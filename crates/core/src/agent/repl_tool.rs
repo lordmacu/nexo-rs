@@ -233,6 +233,7 @@ mod tests {
                 timeout_secs: 1,
                 max_output_bytes: 1024,
             },
+            active: true,
         })
     }
 

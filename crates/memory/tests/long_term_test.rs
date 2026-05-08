@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use chrono::{Duration, Utc};
 use nexo_memory::{EmailFollowupStatus, LongTermMemory};
 use uuid::Uuid;

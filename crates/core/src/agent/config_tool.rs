@@ -1210,6 +1210,7 @@ mod tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         };
         AgentContext::new(
             "cody",

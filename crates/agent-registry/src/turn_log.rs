@@ -18,6 +18,7 @@
 //! The audit log lives in the same database file as the registry
 //! (`agents.db`) so backups / volume snapshots cover both, and so
 //! a single sqlite open serves the runtime + the read tools.
+#![allow(clippy::type_complexity)]
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};

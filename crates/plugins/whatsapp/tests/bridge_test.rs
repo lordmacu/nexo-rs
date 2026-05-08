@@ -48,6 +48,9 @@ fn sample_event(jid: &str) -> InboundEvent {
         is_group: false,
         timestamp: 0,
         msg_id: "M1".into(),
+        media_kind: None,
+        media_path: None,
+        media: None,
     }
 }
 

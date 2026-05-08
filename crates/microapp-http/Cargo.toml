@@ -37,3 +37,6 @@ tempfile = "3"
 # real daemon; the mock lives behind the SDK's `test-harness`
 # feature flag.
 nexo-microapp-sdk = { path = "../microapp-sdk", features = ["admin", "test-harness"] }
+
+[lints]
+workspace = true

@@ -57,3 +57,6 @@ dashmap = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"] }
 chrono = { workspace = true }
 tempfile = "3"
+
+[lints]
+workspace = true

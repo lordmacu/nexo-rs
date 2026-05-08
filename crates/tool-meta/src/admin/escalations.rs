@@ -52,21 +52,16 @@ pub enum EscalationReason {
 }
 
 /// Operator-facing urgency hint. Default `Normal`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EscalationUrgency {
     /// Can wait — log + notify async.
     Low,
     /// Standard SLA.
+    #[default]
     Normal,
     /// Surface aggressively in operator UI.
     High,
-}
-
-impl Default for EscalationUrgency {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// How a previously-pending escalation was settled.

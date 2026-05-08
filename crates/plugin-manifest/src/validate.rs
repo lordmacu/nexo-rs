@@ -324,7 +324,7 @@ fn validate_path_security(
         return;
     }
     // `..` traversal anywhere in the path.
-    if s.split(|c| c == '/' || c == '\\').any(|seg| seg == "..") {
+    if s.split(['/', '\\']).any(|seg| seg == "..") {
         errors.push(ManifestError::PathTraversal {
             field,
             path: s.into_owned(),

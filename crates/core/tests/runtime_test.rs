@@ -152,6 +152,7 @@ fn make_config(
         event_subscribers: Vec::new(),
         tenant_id: None,
         extensions_config: std::collections::BTreeMap::new(),
+        active: true,
     }
 }
 
@@ -522,6 +523,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         },
         behavior_a,
     ));
@@ -587,6 +589,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         },
         behavior_b,
     ));

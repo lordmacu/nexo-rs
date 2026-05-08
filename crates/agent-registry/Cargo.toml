@@ -35,3 +35,6 @@ uuid             = { workspace = true }
 nexo-driver-types = { version = "0.1.1", path = "../driver-types" }
 tempfile = "3"
 
+
+[lints]
+workspace = true

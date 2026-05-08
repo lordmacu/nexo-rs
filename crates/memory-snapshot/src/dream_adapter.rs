@@ -336,15 +336,17 @@ mod tests {
         hook.on_mutation("ana", "default", DtScope::Git, DtOp::Update, "deadbeef")
             .await;
 
-        let evs = rec.events.lock().unwrap();
-        assert_eq!(evs.len(), 2);
-        assert_eq!(evs[0].agent_id, "ana");
-        assert_eq!(evs[0].tenant, "default");
-        assert!(matches!(evs[0].scope, MutationScope::SqliteLongTerm));
-        assert!(matches!(evs[0].op, MutationOp::Insert));
-        assert_eq!(evs[0].key, "row-1");
-        assert!(matches!(evs[1].scope, MutationScope::Git));
-        assert!(matches!(evs[1].op, MutationOp::Update));
+        {
+            let evs = rec.events.lock().unwrap();
+            assert_eq!(evs.len(), 2);
+            assert_eq!(evs[0].agent_id, "ana");
+            assert_eq!(evs[0].tenant, "default");
+            assert!(matches!(evs[0].scope, MutationScope::SqliteLongTerm));
+            assert!(matches!(evs[0].op, MutationOp::Insert));
+            assert_eq!(evs[0].key, "row-1");
+            assert!(matches!(evs[1].scope, MutationScope::Git));
+            assert!(matches!(evs[1].op, MutationOp::Update));
+        } // drop guard before later .await calls
 
         // Smoke: NoopPublisher works as a sink too.
         let noop_hook = MemoryMutationPublisher::new(Arc::new(NoopPublisher) as _);

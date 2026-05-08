@@ -47,6 +47,7 @@ use crate::channel::{ChannelEnvelope, ChannelSessionKey, CHANNEL_INBOX_WILDCARD}
 /// remembers mappings while the process is alive but is good
 /// enough for single-process operators.
 #[async_trait]
+#[allow(clippy::len_without_is_empty)] // diagnostics-only counter
 pub trait SessionRegistry: Send + Sync {
     /// Return the uuid associated with `key`. First-seen keys
     /// get a fresh uuid and a "now" timestamp; repeats refresh

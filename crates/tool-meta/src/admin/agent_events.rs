@@ -26,6 +26,10 @@ pub const AGENT_EVENT_NOTIFY_METHOD: &str = "nexo/notify/agent_event";
 /// `TranscriptAppended`. Other slots are reserved enum entries
 /// surfaced when the corresponding agent kind ships.
 #[non_exhaustive]
+// Variant size variance is intrinsic to the wire shape — boxing would
+// leak `Box<...>` access patterns into every subscriber. Accept the
+// largest-variant-cost so the public schema stays flat.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEventKind {
