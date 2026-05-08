@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.4"
+version       = "0.1.5"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -104,6 +104,13 @@ tracking-store = ["tracking", "dep:sqlx", "dep:chrono"]
 # deps — every microapp / extension that wants tenant-scoped
 # scoring picks the trait up for free.
 scoring = []
+# M15.23.d — Topic guardrail classifier: a pure-rust regex-
+# based tagger that scans inbound text against an operator-
+# configured list of patterns + actions (`force_approval` /
+# `block`). Used by any extension that wants to gate
+# autonomous behaviour on topic-sensitive content. Pulls
+# `regex` + `once_cell` (compile-once cached patterns).
+guardrails = ["dep:regex", "dep:once_cell"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -160,7 +167,7 @@ subtle = { version = "2",    optional = true }
 base64 = { version = "0.22", optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
