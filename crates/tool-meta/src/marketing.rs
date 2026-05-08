@@ -301,6 +301,57 @@ pub struct Seller {
     /// the agent's existing inbound binding).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_settings: Option<SellerNotificationSettings>,
+    /// M15.16 — per-seller SMTP credentials. `None` means
+    /// the operator hasn't registered creds yet — outbound
+    /// publish refuses to fire for this seller and surfaces
+    /// a clear "missing SMTP creds" error. The `password_env`
+    /// field names an environment variable; the secret value
+    /// itself never lands in YAML on disk (matches the
+    /// extension's existing `${ENV_VAR}` posture).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp_credential: Option<SmtpCredential>,
+}
+
+/// M15.16 — operator-registered outbound SMTP credentials per
+/// seller. The marketing extension reads `host` / `port` /
+/// `username` directly; resolves `password` at send time by
+/// reading `${password_env}` from the process environment.
+///
+/// Storage: persisted alongside the seller row in
+/// `sellers.yaml`. The framework's Phase 82.10.n credential
+/// persister is for daemon-side channel registries; SMTP creds
+/// for marketing-extension-owned sellers stay on the
+/// extension's per-tenant config plane.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmtpCredential {
+    /// Stable instance label for logs + the broker topic
+    /// suffix (`plugin.outbound.email.<instance>`). Operator
+    /// convention: `<tenant>-<seller_id>` (e.g.
+    /// `acme-pedro`).
+    pub instance: String,
+    /// SMTP server hostname (e.g. `smtp.gmail.com`).
+    pub host: String,
+    /// TCP port (typically 587 for STARTTLS, 465 for
+    /// implicit TLS).
+    pub port: u16,
+    /// SMTP authentication username (often the seller's
+    /// outbound email address).
+    pub username: String,
+    /// Environment variable name carrying the password /
+    /// app-password / OAuth refresh token. Operator sets the
+    /// env in the systemd unit / docker-compose; the YAML
+    /// only stores the variable NAME, never the value. Empty
+    /// string is rejected at save time.
+    pub password_env: String,
+    /// Whether to use STARTTLS (most modern SMTP servers).
+    /// Defaults to `true` so the operator can author the
+    /// credential without thinking about the field.
+    #[serde(default = "default_smtp_starttls")]
+    pub starttls: bool,
+}
+
+fn default_smtp_starttls() -> bool {
+    true
 }
 
 // ── Notification settings + event payload (M15.38) ──────────────
@@ -919,6 +970,7 @@ mod tests {
             agent_id: None,
             model_override: None,
             notification_settings: None,
+            smtp_credential: None,
         };
         roundtrip(&v);
         // Serialised JSON should not include the optional
@@ -948,6 +1000,7 @@ mod tests {
                 model: "claude-opus-4-7".into(),
             }),
             notification_settings: None,
+            smtp_credential: None,
         };
         roundtrip(&v);
         let s = serde_json::to_string(&v).unwrap();
