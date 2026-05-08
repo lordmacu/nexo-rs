@@ -42,9 +42,17 @@ mod html;
 mod token;
 mod types;
 
+#[cfg(feature = "tracking-store")]
+mod store;
+
 pub use html::{inject_pixel, rewrite_links, RewriteOutcome};
 pub use token::{TokenError, TrackingToken, TrackingTokenSigner};
 pub use types::{
     ClickEvent, LinkId, LinkMapping, MsgId, OpenEvent, PIXEL_GIF_BYTES,
     PIXEL_GIF_CONTENT_TYPE,
+};
+
+#[cfg(feature = "tracking-store")]
+pub use store::{
+    open_pool, SqliteTrackingStore, TrackingStore, TrackingStoreError,
 };
