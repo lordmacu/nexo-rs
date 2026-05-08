@@ -18,6 +18,69 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Subprocess dep removal — pure-Rust pipeline migration in progress
+
+Multi-step effort to drop external binary dependencies from the
+framework. Each step is independently shippable; pure-Rust
+replacements are the precondition for the Phase 90 Android
+embedded build (extensions of the SDK can't `Command::new` on
+Android sandbox).
+
+- **`subprocess.ffmpeg`** — RESOLVED 2026-05-08. STT decoder
+  swapped from `Command::new("ffmpeg")` to `ogg::PacketReader`
+  + `opus_wave::OpusDecoder` (pure Rust SILK+CELT, RFC 6716
+  conformant, cross-validated against C libopus); TTS encoder
+  swapped from the same ffmpeg pipe to `symphonia` (mp3 decode)
+  + `opus_wave::OpusEncoder` (Voip-mode 20 ms frames at 24 kHz
+  mono) + `ogg::PacketWriter` (OpusHead + OpusTags + audio
+  pages per RFC 7845 § 5). Validated end-to-end on real
+  WhatsApp PTT: STT 0.6–0.8 s vs 1.5–3 s with ffmpeg, voice
+  bubble plays correctly on the recipient device. Drops the
+  `ffmpeg` PATH dependency entirely. SDK API non-breaking
+  (signature of `transcode_mp3_to_opus_ogg` and
+  `transcribe_file` preserved); `TranscribeConfig.ffmpeg_path`
+  is now ignored and marked `#[deprecated]`. `SttError` gains
+  `Decode` and `UnsupportedFormat` variants.
+
+- **`subprocess.xdg-open`** — RESOLVED 2026-05-08. Replaced the
+  per-OS `Command::new("open" | "xdg-open" | "start")` heuristic
+  in `crates/setup/src/services/anthropic_oauth.rs` with the
+  `webbrowser` crate. One call site, three `#[cfg]` branches
+  collapsed into a single line.
+
+- **`subprocess.hostname`** — RESOLVED 2026-05-08. Replaced the
+  `Command::new("hostname")` shell-out in
+  `crates/dispatch-tools/src/bin/nexo_driver_tools.rs` with the
+  `gethostname` crate (pure-Rust syscall, ~50 LOC). Works on
+  minimal images that don't ship the `hostname` binary on PATH.
+
+- **`subprocess.cosign`** — DEFERRED. The plugin signing verifier
+  at `crates/ext-installer/src/verify.rs` still spawns the
+  `cosign verify-blob` Go binary. Two viable replacements:
+    - **Heavy:** the `sigstore` crate (v0.13) with the `cosign`
+      feature. ~80 LOC swap, but `cosign` requires `registry`,
+      which transitively pulls `oci-client` and ~258 deps total
+      we don't otherwise use.
+    - **Lean:** a manual implementation against `x509-parser`
+      + `p256` + `sha2` (the latter two already in the
+      workspace). ~250 LOC, ~30 new deps, no OCI baggage. This
+      is the path Phase 90 (Android embedded) needs because the
+      sigstore crate's full feature set won't cross-compile to
+      `aarch64-linux-android` without effort.
+  Decision: pick `manual lean` when the work lands; track the
+  policy logic (cert SAN regex match + Fulcio OIDC issuer
+  extension OID `1.3.6.1.4.1.57264.1.{1,8}`) so we don't lose
+  the existing identity-policy semantics.
+
+- **`subprocess.skill-runners-and-hooks`** — NOT-A-FOLLOWUP.
+  `crates/dispatch-tools/src/hooks/dispatcher.rs` (`sh`),
+  `crates/dispatch-tools/src/program_phase.rs` (`bash`), and
+  `crates/core/src/agent/skills.rs` (user-provided binary) are
+  inherently subprocess by design — operator extensibility hinges
+  on running arbitrary user scripts. Not eligible for Rust
+  replacement; for embedded Android, gate behind a
+  `subprocess-hooks` feature flag (see Phase 90 plan).
+
 ### Phase 81.17.c — plugin-browser standalone repo — shipped, 9/9 follow-ups resolved
 
 Browser plugin extracted to public repo

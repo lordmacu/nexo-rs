@@ -266,11 +266,17 @@ async fn cmd_dispatch(mut args: impl Iterator<Item = String>) -> Result<ExitCode
 }
 
 fn hostname() -> Option<String> {
-    std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
+    // Pure-Rust syscall via `gethostname` — drops the subprocess
+    // spawn the legacy implementation used and works on minimal
+    // images that don't ship the `hostname` binary on PATH.
+    let raw = gethostname::gethostname();
+    let s = raw.into_string().ok()?;
+    let trimmed = s.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
 }
 
 async fn cmd_agents(mut args: impl Iterator<Item = String>) -> Result<ExitCode> {

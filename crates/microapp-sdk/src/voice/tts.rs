@@ -23,11 +23,10 @@
 //! 7. Strip operator markers from the original text → display
 //!    transcript field on [`VoiceNote`].
 
-use std::io::Write;
-use std::process::Stdio;
+use std::borrow::Cow;
+use std::io::Cursor;
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
 
 use super::normalize::{collapse_punctuation, normalise_markdown_for_tts, strip_emojis_for_tts};
 use super::ssml::{apply_ssml_hints, strip_voice_markers};
@@ -35,11 +34,13 @@ use super::{Result, VoiceError};
 
 /// Format we ask Microsoft Edge for. The public endpoint reliably
 /// streams the mp3 profiles; opus profiles are documented but the
-/// WS sometimes closes with zero audio frames (likely an upstream
-/// quirk). We get the mp3, then transcode to OGG/Opus via ffmpeg
-/// before handing the bytes to WhatsApp's PTT path — that combo
-/// is what `send_voice_note` actually needs to render as a voice
-/// bubble that recipients can play.
+/// WS closes with zero audio frames in practice (verified
+/// 2026-05-08 — three retries all empty). We get the mp3, then
+/// transcode to OGG/Opus via ffmpeg before handing the bytes to
+/// WhatsApp's PTT path — that combo is what `send_voice_note`
+/// actually needs to render as a voice bubble that recipients can
+/// play. Pure-Rust mp3→opus transcode is a follow-up (would let
+/// us drop the ffmpeg dep entirely).
 pub const EDGE_AUDIO_FORMAT: &str = "audio-24khz-48kbitrate-mono-mp3";
 
 /// MIME type sent with the OGG/Opus payload after transcode. Both
@@ -189,66 +190,253 @@ fn strip_ssml_tags(input: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Pipe the mp3 through `ffmpeg -i pipe:0 -c:a libopus -b:a 32k
-/// -f ogg pipe:1`. Stays inside the process — no temp files. If
-/// ffmpeg isn't installed or fails, propagate the error so the
-/// caller falls back to text on this turn (better than sending an
-/// unplayable PTT).
+/// Pure-Rust mp3 → ogg-opus transcode. Replaces the legacy
+/// `ffmpeg -c:a libopus` subprocess so the pipeline stays
+/// in-process (no spawn, no PATH lookup, cross-compile friendly).
+///
+/// Stages:
+/// 1. `symphonia` decodes the mp3 to f32 PCM at the source rate
+///    (Edge defaults to 24 kHz mono — same shape we want for the
+///    encoder, so the resample step is usually a no-op).
+/// 2. `opus-wave::OpusEncoder` encodes 20 ms frames at 24 kHz
+///    mono in `Voip` mode (the application opus is tuned for).
+/// 3. `ogg::PacketWriter` muxes the result into an ogg container,
+///    starting with `OpusHead` + `OpusTags` per RFC 7845 § 5.
+///
+/// The resulting bytes are exactly the wire format WhatsApp PTT
+/// renders as a voice-note bubble — same shape `ffmpeg` produced
+/// before, just without the binary dependency.
 pub async fn transcode_mp3_to_opus_ogg(mp3: &[u8]) -> Result<Vec<u8>> {
-    let mut child = tokio::process::Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            "pipe:0",
-            // Voice-note friendly: mono, 16 kHz, opus at 32 kbps.
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "32k",
-            "-f",
-            "ogg",
-            "pipe:1",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| VoiceError::Ffmpeg(format!("spawn (is it installed?): {e}")))?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| VoiceError::Ffmpeg("stdin missing".into()))?;
-        let mp3_owned = mp3.to_vec();
-        tokio::spawn(async move {
-            let _ = stdin.write_all(&mp3_owned).await;
-            // Close stdin so ffmpeg flushes the trailer.
-            drop(stdin);
-            // Silence unused import warn for std::io::Write.
-            let _ = std::io::sink().flush();
-        });
-    }
-    let output = child
-        .wait_with_output()
+    let mp3_owned = mp3.to_vec();
+    tokio::task::spawn_blocking(move || transcode_mp3_to_opus_ogg_blocking(&mp3_owned))
         .await
-        .map_err(|e| VoiceError::Ffmpeg(format!("wait_with_output: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(VoiceError::Ffmpeg(format!(
-            "exit {:?}: {stderr}",
-            output.status.code()
-        )));
+        .map_err(|e| VoiceError::Ffmpeg(format!("transcode join: {e}")))?
+}
+
+/// Synchronous core of [`transcode_mp3_to_opus_ogg`]. Lives here
+/// instead of inline so callers can drive it from inside an
+/// existing `spawn_blocking` if they already own one.
+fn transcode_mp3_to_opus_ogg_blocking(mp3: &[u8]) -> Result<Vec<u8>> {
+    use ogg::PacketWriteEndInfo;
+    use opus_wave::{Application, Channels, OpusEncoder, SampleRate};
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+    use symphonia::core::errors::Error as SymError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    if mp3.is_empty() {
+        return Err(VoiceError::Ffmpeg("mp3 input is empty".into()));
     }
-    if output.stdout.is_empty() {
+
+    // ── Stage 1: decode mp3 → f32 mono PCM at source rate. ────
+    let cursor = Cursor::new(mp3.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension("mp3");
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| VoiceError::Ffmpeg(format!("probe mp3: {e}")))?;
+
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or_else(|| VoiceError::Ffmpeg("no audio track in mp3".into()))?;
+    let track_id = track.id;
+    let source_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or_else(|| VoiceError::Ffmpeg("mp3 has no sample rate".into()))?;
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| VoiceError::Ffmpeg(format!("mp3 decoder init: {e}")))?;
+
+    let mut pcm_at_source: Vec<f32> = Vec::new();
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut input_channels: usize = 1;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymError::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymError::ResetRequired) => break,
+            Err(e) => return Err(VoiceError::Ffmpeg(format!("mp3 packet: {e}"))),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            // Skip frames that the decoder can't recover (rare for
+            // Edge mp3 output — we'd rather lose a few ms than abort
+            // the whole synthesis).
+            Err(SymError::DecodeError(_)) => continue,
+            Err(e) => return Err(VoiceError::Ffmpeg(format!("mp3 decode: {e}"))),
+        };
+        if sample_buf.is_none() {
+            let spec = *decoded.spec();
+            input_channels = spec.channels.count().max(1);
+            sample_buf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+        }
+        let sb = sample_buf.as_mut().unwrap();
+        sb.copy_interleaved_ref(decoded);
+        let interleaved = sb.samples();
+        if input_channels == 1 {
+            pcm_at_source.extend_from_slice(interleaved);
+        } else {
+            for chunk in interleaved.chunks_exact(input_channels) {
+                let avg = chunk.iter().sum::<f32>() / input_channels as f32;
+                pcm_at_source.push(avg);
+            }
+        }
+    }
+    if pcm_at_source.is_empty() {
+        return Err(VoiceError::Ffmpeg("mp3 decoded to empty PCM".into()));
+    }
+
+    // ── Stage 1b: linear resample to 24 kHz if Edge ever ships
+    // a different rate. Edge's default mp3 profile is 24 kHz so
+    // this is usually a no-op.
+    const TARGET_RATE: u32 = 24_000;
+    let pcm_24k = if source_rate == TARGET_RATE {
+        pcm_at_source
+    } else {
+        resample_linear(&pcm_at_source, source_rate, TARGET_RATE)
+    };
+
+    // ── Stage 2: configure opus encoder. ──────────────────────
+    let mut encoder = OpusEncoder::new(SampleRate::Hz24000, Channels::Mono, Application::Voip)
+        .map_err(|e| VoiceError::Ffmpeg(format!("opus encoder init: {e:?}")))?;
+    // 20 ms is the canonical opus voice frame; 480 samples at 24 kHz.
+    const FRAME_MS: u32 = 20;
+    let frame_size_per_channel: i32 = (TARGET_RATE * FRAME_MS / 1000) as i32;
+    let frame_size_usize = frame_size_per_channel as usize;
+
+    // ── Stage 3: ogg muxer with OpusHead + OpusTags + audio. ──
+    let mut output = Vec::<u8>::new();
+    let serial: u32 = 0xCA5C_ADE0; // arbitrary stable stream id
+    {
+        let mut writer = ogg::PacketWriter::new(Cursor::new(&mut output));
+
+        // OpusHead — RFC 7845 § 5.1 (19 bytes, channel mapping
+        // family 0 for the mono case).
+        let mut head = Vec::with_capacity(19);
+        head.extend_from_slice(b"OpusHead");
+        head.push(1); // version
+        head.push(1); // output channel count
+        // Pre-skip: the standard libopus value of 312 samples at
+        // 48 kHz (the encoder's algorithmic delay) is what every
+        // major decoder expects.
+        head.extend_from_slice(&312u16.to_le_bytes());
+        head.extend_from_slice(&TARGET_RATE.to_le_bytes());
+        head.extend_from_slice(&0i16.to_le_bytes()); // output gain
+        head.push(0); // channel mapping family
+
+        writer
+            .write_packet(
+                Cow::<[u8]>::Owned(head),
+                serial,
+                PacketWriteEndInfo::EndPage,
+                0,
+            )
+            .map_err(|e| VoiceError::Ffmpeg(format!("ogg OpusHead: {e}")))?;
+
+        // OpusTags — RFC 7845 § 5.2.
+        let vendor = b"nexo-microapp-sdk";
+        let mut tags = Vec::with_capacity(8 + 4 + vendor.len() + 4);
+        tags.extend_from_slice(b"OpusTags");
+        tags.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
+        tags.extend_from_slice(vendor);
+        tags.extend_from_slice(&0u32.to_le_bytes()); // 0 user comments
+        writer
+            .write_packet(
+                Cow::<[u8]>::Owned(tags),
+                serial,
+                PacketWriteEndInfo::EndPage,
+                0,
+            )
+            .map_err(|e| VoiceError::Ffmpeg(format!("ogg OpusTags: {e}")))?;
+
+        // Audio packets. Granule position counts samples at the
+        // mandatory 48 kHz reference rate (RFC 7845 § 4); each
+        // 24 kHz frame of 480 samples = 960 samples at 48 kHz.
+        let total_frames = pcm_24k.len() / frame_size_usize;
+        if total_frames == 0 {
+            return Err(VoiceError::Ffmpeg(
+                "mp3 too short to encode a single 20 ms opus frame".into(),
+            ));
+        }
+        let mut packet_buf = vec![0u8; 4000];
+        let packet_buf_cap: i32 = packet_buf.len() as i32;
+        let mut granule_48k: u64 = 0;
+        for i in 0..total_frames {
+            let start = i * frame_size_usize;
+            let frame = &pcm_24k[start..start + frame_size_usize];
+            let len = encoder
+                .encode_float(
+                    frame,
+                    frame_size_per_channel,
+                    &mut packet_buf,
+                    packet_buf_cap,
+                )
+                .map_err(|e| VoiceError::Ffmpeg(format!("opus encode: {e:?}")))?;
+            if len <= 0 {
+                continue;
+            }
+            granule_48k += (frame_size_usize as u64) * 2; // 24 kHz → 48 kHz
+            let info = if i + 1 == total_frames {
+                PacketWriteEndInfo::EndStream
+            } else {
+                PacketWriteEndInfo::NormalPacket
+            };
+            let bytes = packet_buf[..len as usize].to_vec();
+            writer
+                .write_packet(Cow::<[u8]>::Owned(bytes), serial, info, granule_48k)
+                .map_err(|e| VoiceError::Ffmpeg(format!("ogg audio: {e}")))?;
+        }
+        // Writer drops here, flushing any pending page state.
+    }
+
+    if output.is_empty() {
         return Err(VoiceError::Ffmpeg("produced 0 bytes".into()));
     }
-    Ok(output.stdout)
+    Ok(output)
+}
+
+/// Linear interpolation resampler. Quality is fine for the
+/// voice-note use case; whisper-grade resampling is overkill when
+/// the consumer is a phone speaker.
+fn resample_linear(input: &[f32], from_hz: u32, to_hz: u32) -> Vec<f32> {
+    if from_hz == to_hz || input.is_empty() {
+        return input.to_vec();
+    }
+    let ratio = from_hz as f64 / to_hz as f64;
+    let out_len = ((input.len() as f64) / ratio).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let last_idx = input.len() - 1;
+    for i in 0..out_len {
+        let src = i as f64 * ratio;
+        let i0 = src.floor() as usize;
+        let i1 = (i0 + 1).min(last_idx);
+        let frac = (src - i0 as f64) as f32;
+        let s0 = input[i0];
+        let s1 = input[i1];
+        out.push(s0 + (s1 - s0) * frac);
+    }
+    out
 }
 
 /// End-to-end pipeline: text → SSML → mp3 → opus/ogg, with the

@@ -100,22 +100,11 @@ async fn run_flow_async() -> Result<OAuthToken> {
 }
 
 fn try_open_browser(url: &str) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(target_os = "windows")]
-    let cmd = "start";
-    let status = std::process::Command::new(cmd)
-        .arg(url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    match status {
-        Ok(mut child) => {
-            let _ = child.wait();
-            Ok(())
-        }
-        Err(e) => Err(e.into()),
-    }
+    // Cross-platform browser open via the `webbrowser` crate —
+    // wraps the per-OS `open` / `xdg-open` / `start` heuristic
+    // without spawning a subprocess we have to wait on. Failure
+    // is fine here; the caller has already printed the URL for
+    // copy-paste fallback.
+    webbrowser::open(url).context("open url in default browser")?;
+    Ok(())
 }

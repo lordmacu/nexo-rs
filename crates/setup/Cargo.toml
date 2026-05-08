@@ -56,6 +56,10 @@ async-trait  = { workspace = true }
 rand         = "0.8"
 secrecy      = "0.8"
 indicatif    = "0.17"
+# Cross-platform browser opener — replaces the per-OS
+# `xdg-open` / `open` / `start` `Command::new` spawn in the
+# Anthropic OAuth flow.
+webbrowser = "1"
 nexo-plugin-whatsapp = { version = "0.1.1", path = "../plugins/whatsapp" }
 nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
 nexo-pairing = { version = "0.1.2", path = "../pairing" }
