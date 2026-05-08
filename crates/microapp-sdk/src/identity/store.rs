@@ -58,6 +58,25 @@ pub trait PersonStore: Send + Sync {
         tenant_id: &str,
         email: &str,
     ) -> Result<Option<Person>, IdentityError>;
+    /// Every person on the tenant whose `company_id` matches
+    /// `company_id`. Powers the M15.23.e duplicate-person
+    /// matcher's name+company fuzzy signal so the search
+    /// space isn't artificially narrowed to email-matched
+    /// candidates only. Caller-supplied `limit` clamps the
+    /// result row count; default impl returns no more than
+    /// 100 rows ordered by `last_seen_at_ms` desc.
+    ///
+    /// Default impl returns an empty `Vec` so existing
+    /// in-tree implementations (test fakes) don't have to
+    /// implement the method until they want the fuzzy signal.
+    async fn list_by_company(
+        &self,
+        _tenant_id: &str,
+        _company_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<Person>, IdentityError> {
+        Ok(Vec::new())
+    }
     async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError>;
 }
 
@@ -314,6 +333,32 @@ impl PersonStore for SqlitePersonStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(PersonRow::into_person))
+    }
+
+    async fn list_by_company(
+        &self,
+        tenant_id: &str,
+        company_id: &str,
+        limit: usize,
+    ) -> Result<Vec<Person>, IdentityError> {
+        // Hard cap so a misconfigured caller can't trigger an
+        // unbounded scan of the tenant's full person table.
+        let bounded = limit.clamp(1, 1000) as i64;
+        let rows = sqlx::query_as::<_, PersonRow>(
+            "SELECT id, tenant_id, primary_name, primary_email, company_id, \
+                    enrichment_status, enrichment_confidence, tags_json, \
+                    created_at_ms, last_seen_at_ms \
+             FROM persons \
+             WHERE tenant_id = ? AND company_id = ? \
+             ORDER BY last_seen_at_ms DESC \
+             LIMIT ?",
+        )
+        .bind(tenant_id)
+        .bind(company_id)
+        .bind(bounded)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(PersonRow::into_person).collect())
     }
 
     async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError> {
@@ -1037,5 +1082,125 @@ mod tests {
                 .map(|p| p.0),
             Some("b".into()),
         );
+    }
+
+    // ─── PersonStore::list_by_company (M15.23.e / F24) ────────
+
+    fn person_with_company(id: &str, email: &str, company: &str) -> Person {
+        let mut p = person_fixture(id, email);
+        p.company_id = Some(CompanyId(company.into()));
+        p
+    }
+
+    #[tokio::test]
+    async fn list_by_company_returns_matching_rows_only() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        store
+            .upsert("acme", &person_with_company("a", "a@globex.io", "globex"))
+            .await
+            .unwrap();
+        store
+            .upsert("acme", &person_with_company("b", "b@globex.io", "globex"))
+            .await
+            .unwrap();
+        store
+            .upsert("acme", &person_with_company("c", "c@acme.com", "acme"))
+            .await
+            .unwrap();
+        let rows = store.list_by_company("acme", "globex", 100).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let ids: Vec<&str> = rows.iter().map(|p| p.id.0.as_str()).collect();
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
+    }
+
+    #[tokio::test]
+    async fn list_by_company_excludes_null_company() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        // No company_id — must NOT match a `company_id = ?` query.
+        store
+            .upsert("acme", &person_fixture("a", "a@x.com"))
+            .await
+            .unwrap();
+        store
+            .upsert("acme", &person_with_company("b", "b@globex.io", "globex"))
+            .await
+            .unwrap();
+        let rows = store.list_by_company("acme", "globex", 100).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id.0, "b");
+    }
+
+    #[tokio::test]
+    async fn list_by_company_is_tenant_scoped() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        store
+            .upsert("acme", &person_with_company("a", "a@globex.io", "globex"))
+            .await
+            .unwrap();
+        // Same company id under a different tenant — must
+        // NOT leak into the acme query.
+        let mut globex_p = person_with_company("g", "g@globex.io", "globex");
+        globex_p.tenant_id = TenantIdRef("globex".into());
+        store.upsert("globex", &globex_p).await.unwrap();
+        let acme_rows =
+            store.list_by_company("acme", "globex", 100).await.unwrap();
+        assert_eq!(acme_rows.len(), 1);
+        assert_eq!(acme_rows[0].id.0, "a");
+    }
+
+    #[tokio::test]
+    async fn list_by_company_orders_recent_first() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        let mut older = person_with_company("old", "o@x.io", "globex");
+        older.last_seen_at_ms = 1_000;
+        let mut newer = person_with_company("new", "n@x.io", "globex");
+        newer.last_seen_at_ms = 2_000;
+        store.upsert("acme", &older).await.unwrap();
+        store.upsert("acme", &newer).await.unwrap();
+        let rows = store.list_by_company("acme", "globex", 100).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        // Most recently seen ranks first.
+        assert_eq!(rows[0].id.0, "new");
+        assert_eq!(rows[1].id.0, "old");
+    }
+
+    #[tokio::test]
+    async fn list_by_company_clamps_limit_at_max() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        for i in 0..5 {
+            store
+                .upsert(
+                    "acme",
+                    &person_with_company(
+                        &format!("p{i}"),
+                        &format!("p{i}@x.io"),
+                        "globex",
+                    ),
+                )
+                .await
+                .unwrap();
+        }
+        // limit=2 caps the result. limit=0 would have used the
+        // 1-floor clamp; limit > 1000 would clamp at 1000.
+        let rows = store.list_by_company("acme", "globex", 2).await.unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_by_company_unknown_company_returns_empty() {
+        let pool = fresh_pool().await;
+        let store = SqlitePersonStore::new(pool);
+        store
+            .upsert("acme", &person_with_company("a", "a@x.io", "globex"))
+            .await
+            .unwrap();
+        let rows = store.list_by_company("acme", "ghost", 100).await.unwrap();
+        assert!(rows.is_empty());
     }
 }
