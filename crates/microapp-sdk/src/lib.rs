@@ -67,6 +67,9 @@ pub mod enrichment;
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
+#[cfg(feature = "tracking")]
+pub mod tracking;
+
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
