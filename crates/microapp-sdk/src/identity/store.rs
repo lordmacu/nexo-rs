@@ -22,6 +22,27 @@ pub struct PersonEmail {
     pub added_at_ms: i64,
 }
 
+/// LID ↔ PN mapping row (M15.23.e / F23). WhatsApp protocol
+/// announces a migration whenever a contact's phone-number
+/// JID (`573001234567@s.whatsapp.net`) gets a corresponding
+/// LID-namespace JID (`123456789@lid`). Both Baileys + whatsmeow
+/// track this as a first-class concept; the marketing
+/// extension's duplicate matcher consults the mapping to
+/// avoid creating a second `Person` for the same human.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LidPnMapping {
+    /// Tenant scope.
+    pub tenant_id: TenantIdRef,
+    /// Canonical LID user portion (no device, no agent).
+    pub lid_user: String,
+    /// Canonical PN user portion (no device, no agent).
+    pub pn_user: String,
+    /// First time the mapping was observed. Subsequent
+    /// upserts of the same pair don't bump this — keep the
+    /// audit-flavoured \"first seen\" stamp.
+    pub observed_at_ms: i64,
+}
+
 /// PersonPhone row — one phone identifier mapped to its
 /// owning person. Mirrors `PersonEmail` for the WhatsApp /
 /// SMS side: a contact's E.164 phone (or platform-specific
@@ -136,6 +157,46 @@ pub trait PersonPhoneStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait LidPnMappingStore: Send + Sync {
+    /// Persist one LID ↔ PN pair. Idempotent on the LID
+    /// side: re-upserting the same `(tenant, lid_user)`
+    /// updates the PN component + leaves `observed_at_ms`
+    /// unchanged (first-seen semantics). Caller normalises
+    /// both JIDs via [`super::parse_jid`] before calling —
+    /// the trait stores the user portion only, so device +
+    /// agent suffixes never enter the index.
+    async fn put(
+        &self,
+        tenant_id: &str,
+        lid_user: &str,
+        pn_user: &str,
+    ) -> Result<LidPnMapping, IdentityError>;
+
+    /// Look up the PN user portion that the protocol paired
+    /// with this LID. `None` ⇒ no mapping recorded yet
+    /// (caller treats the LID as its own identity).
+    async fn get_pn_for_lid(
+        &self,
+        tenant_id: &str,
+        lid_user: &str,
+    ) -> Result<Option<String>, IdentityError>;
+
+    /// Reverse direction — find the LID paired with a PN.
+    async fn get_lid_for_pn(
+        &self,
+        tenant_id: &str,
+        pn_user: &str,
+    ) -> Result<Option<String>, IdentityError>;
+
+    /// Cascade-delete every row for one tenant. Returns the
+    /// number of rows removed.
+    async fn delete_by_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<u64, IdentityError>;
+}
+
+#[async_trait]
 pub trait CompanyStore: Send + Sync {
     async fn upsert(
         &self,
@@ -195,6 +256,16 @@ CREATE TABLE IF NOT EXISTS person_phones (
 );
 CREATE INDEX IF NOT EXISTS idx_person_phones_tenant_person
     ON person_phones(tenant_id, person_id);
+
+CREATE TABLE IF NOT EXISTS lid_pn_mappings (
+    tenant_id      TEXT NOT NULL,
+    lid_user       TEXT NOT NULL,
+    pn_user        TEXT NOT NULL,
+    observed_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, lid_user)
+);
+CREATE INDEX IF NOT EXISTS idx_lid_pn_mappings_pn
+    ON lid_pn_mappings(tenant_id, pn_user);
 
 CREATE TABLE IF NOT EXISTS companies (
     id                  TEXT NOT NULL,
@@ -634,6 +705,118 @@ impl PersonPhoneRow {
     }
 }
 
+/// SQLite-backed [`LidPnMappingStore`] (M15.23.e / F23).
+/// Tenant-keyed; PK on `(tenant_id, lid_user)` with a
+/// covering index on `(tenant_id, pn_user)` so reverse
+/// lookups don't trigger a table scan.
+#[derive(Clone)]
+pub struct SqliteLidPnMappingStore {
+    pool: SqlitePool,
+}
+
+impl SqliteLidPnMappingStore {
+    /// Wrap an open pool. Run [`open_pool`] first.
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+    /// Borrow the underlying pool.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+#[async_trait]
+impl LidPnMappingStore for SqliteLidPnMappingStore {
+    async fn put(
+        &self,
+        tenant_id: &str,
+        lid_user: &str,
+        pn_user: &str,
+    ) -> Result<LidPnMapping, IdentityError> {
+        if lid_user.trim().is_empty() || pn_user.trim().is_empty() {
+            return Err(IdentityError::InvalidEmail(
+                "lid_user / pn_user empty".into(),
+            ));
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        // First-seen semantics: ON CONFLICT updates the
+        // pn_user side but leaves observed_at_ms intact.
+        // Caller can re-key a LID to a different PN without
+        // bumping the audit stamp.
+        sqlx::query(
+            "INSERT INTO lid_pn_mappings (tenant_id, lid_user, pn_user, observed_at_ms) \
+             VALUES (?,?,?,?) \
+             ON CONFLICT(tenant_id, lid_user) DO UPDATE SET pn_user = excluded.pn_user",
+        )
+        .bind(tenant_id)
+        .bind(lid_user)
+        .bind(pn_user)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        // Read back the persisted row so the returned
+        // observed_at_ms reflects the FIRST seen timestamp,
+        // not the upsert clock.
+        let (observed_at_ms,): (i64,) = sqlx::query_as(
+            "SELECT observed_at_ms FROM lid_pn_mappings \
+             WHERE tenant_id = ? AND lid_user = ?",
+        )
+        .bind(tenant_id)
+        .bind(lid_user)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(LidPnMapping {
+            tenant_id: TenantIdRef(tenant_id.to_string()),
+            lid_user: lid_user.to_string(),
+            pn_user: pn_user.to_string(),
+            observed_at_ms,
+        })
+    }
+
+    async fn get_pn_for_lid(
+        &self,
+        tenant_id: &str,
+        lid_user: &str,
+    ) -> Result<Option<String>, IdentityError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT pn_user FROM lid_pn_mappings \
+             WHERE tenant_id = ? AND lid_user = ?",
+        )
+        .bind(tenant_id)
+        .bind(lid_user)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(p,)| p))
+    }
+
+    async fn get_lid_for_pn(
+        &self,
+        tenant_id: &str,
+        pn_user: &str,
+    ) -> Result<Option<String>, IdentityError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT lid_user FROM lid_pn_mappings \
+             WHERE tenant_id = ? AND pn_user = ?",
+        )
+        .bind(tenant_id)
+        .bind(pn_user)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(l,)| l))
+    }
+
+    async fn delete_by_tenant(
+        &self,
+        tenant_id: &str,
+    ) -> Result<u64, IdentityError> {
+        let r = sqlx::query("DELETE FROM lid_pn_mappings WHERE tenant_id = ?")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+}
+
 /// SQLite-backed company store.
 #[derive(Clone)]
 pub struct SqliteCompanyStore {
@@ -953,12 +1136,12 @@ mod tests {
         sqlx::query(MIGRATION_SQL).execute(&pool).await.unwrap();
         // Confirm tables present.
         let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('persons','person_emails','person_phones','companies')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('persons','person_emails','person_phones','companies','lid_pn_mappings')",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count.0, 4);
+        assert_eq!(count.0, 5);
     }
 
     // ─── PersonPhoneStore (M15.23.e) ──────────────────────────
@@ -1202,5 +1385,175 @@ mod tests {
             .unwrap();
         let rows = store.list_by_company("acme", "ghost", 100).await.unwrap();
         assert!(rows.is_empty());
+    }
+
+    // ─── LidPnMappingStore (M15.23.e / F23) ─────────────────────
+
+    async fn fresh_lid_pn_store() -> SqliteLidPnMappingStore {
+        SqliteLidPnMappingStore::new(open_pool(":memory:").await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn lid_pn_put_and_get_round_trips_both_directions() {
+        let store = fresh_lid_pn_store().await;
+        let row = store
+            .put("acme", "123456789", "573001234567")
+            .await
+            .unwrap();
+        assert_eq!(row.lid_user, "123456789");
+        assert_eq!(row.pn_user, "573001234567");
+        // Forward.
+        assert_eq!(
+            store
+                .get_pn_for_lid("acme", "123456789")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("573001234567"),
+        );
+        // Reverse.
+        assert_eq!(
+            store
+                .get_lid_for_pn("acme", "573001234567")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("123456789"),
+        );
+    }
+
+    #[tokio::test]
+    async fn lid_pn_misses_cross_tenant() {
+        let store = fresh_lid_pn_store().await;
+        store
+            .put("acme", "123456789", "573001234567")
+            .await
+            .unwrap();
+        assert!(store
+            .get_pn_for_lid("globex", "123456789")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get_lid_for_pn("globex", "573001234567")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn lid_pn_put_first_seen_observed_at_preserved_on_re_upsert() {
+        let store = fresh_lid_pn_store().await;
+        let first = store
+            .put("acme", "123", "456")
+            .await
+            .unwrap();
+        // Re-upsert the same lid with a fresh pn — observed_at
+        // stays at the first-seen stamp.
+        // chrono::now() resolution is millis; sleep so the
+        // re-upsert wall clock advances.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        let second = store
+            .put("acme", "123", "789")
+            .await
+            .unwrap();
+        assert_eq!(second.observed_at_ms, first.observed_at_ms);
+        assert_eq!(second.pn_user, "789");
+        assert_eq!(
+            store
+                .get_pn_for_lid("acme", "123")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("789"),
+        );
+    }
+
+    #[tokio::test]
+    async fn lid_pn_unknown_lid_returns_none() {
+        let store = fresh_lid_pn_store().await;
+        assert!(store
+            .get_pn_for_lid("acme", "ghost")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get_lid_for_pn("acme", "ghost")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn lid_pn_empty_input_rejected() {
+        let store = fresh_lid_pn_store().await;
+        assert!(matches!(
+            store.put("acme", "", "456").await,
+            Err(IdentityError::InvalidEmail(_))
+        ));
+        assert!(matches!(
+            store.put("acme", "123", "  ").await,
+            Err(IdentityError::InvalidEmail(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn lid_pn_delete_by_tenant_cascades() {
+        let store = fresh_lid_pn_store().await;
+        store
+            .put("acme", "123", "456")
+            .await
+            .unwrap();
+        store
+            .put("globex", "999", "888")
+            .await
+            .unwrap();
+        let n = store.delete_by_tenant("acme").await.unwrap();
+        assert_eq!(n, 1);
+        assert!(store
+            .get_pn_for_lid("acme", "123")
+            .await
+            .unwrap()
+            .is_none());
+        // Globex untouched.
+        assert_eq!(
+            store
+                .get_pn_for_lid("globex", "999")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("888"),
+        );
+    }
+
+    #[tokio::test]
+    async fn lid_pn_distinct_pairs_coexist() {
+        let store = fresh_lid_pn_store().await;
+        store.put("acme", "lid-a", "pn-a").await.unwrap();
+        store.put("acme", "lid-b", "pn-b").await.unwrap();
+        assert_eq!(
+            store
+                .get_pn_for_lid("acme", "lid-a")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("pn-a"),
+        );
+        assert_eq!(
+            store
+                .get_pn_for_lid("acme", "lid-b")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("pn-b"),
+        );
+        assert_eq!(
+            store
+                .get_lid_for_pn("acme", "pn-a")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("lid-a"),
+        );
     }
 }

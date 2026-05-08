@@ -25,8 +25,9 @@ pub use jid::{normalize_jid, parse_jid, same_user, JidParseError, ParsedJid};
 
 pub use error::IdentityError;
 pub use store::{
-    open_pool, CompanyStore, PersonEmail, PersonEmailStore, PersonPhone,
-    PersonPhoneStore, PersonStore, SqliteCompanyStore, SqlitePersonEmailStore,
+    open_pool, CompanyStore, LidPnMapping, LidPnMappingStore, PersonEmail,
+    PersonEmailStore, PersonPhone, PersonPhoneStore, PersonStore,
+    SqliteCompanyStore, SqliteLidPnMappingStore, SqlitePersonEmailStore,
     SqlitePersonPhoneStore, SqlitePersonStore,
 };
 
