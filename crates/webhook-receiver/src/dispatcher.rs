@@ -126,6 +126,11 @@ impl RecordingWebhookDispatcher {
     pub async fn len(&self) -> usize {
         self.inner.lock().await.len()
     }
+
+    /// `true` when no dispatch calls have been recorded yet.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.lock().await.is_empty()
+    }
 }
 
 #[async_trait]

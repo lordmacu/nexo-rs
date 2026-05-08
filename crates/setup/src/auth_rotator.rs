@@ -172,7 +172,7 @@ fn token_hash_16(token: &str) -> String {
 fn generate_url_safe(bytes_wanted: usize) -> String {
     use std::fmt::Write;
     // Each Uuid yields 16 random bytes → ceil(bytes_wanted / 16) Uuids.
-    let needed_uuids = (bytes_wanted + 15) / 16;
+    let needed_uuids = bytes_wanted.div_ceil(16);
     let mut raw = Vec::with_capacity(needed_uuids * 16);
     for _ in 0..needed_uuids {
         raw.extend_from_slice(uuid::Uuid::new_v4().as_bytes());

@@ -21,3 +21,6 @@ anyhow      = "1"
 
 [package.metadata.dist]
 dist = false
+
+[lints]
+workspace = true

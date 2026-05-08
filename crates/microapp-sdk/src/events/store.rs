@@ -511,7 +511,7 @@ mod tests {
         s.append(&pause("ana", now_ms - 45 * day_ms)).await.unwrap();
         s.append(&pause("ana", now_ms - 31 * day_ms)).await.unwrap();
         s.append(&pause("ana", now_ms - 5 * day_ms)).await.unwrap();
-        s.append(&pause("ana", now_ms - 1 * day_ms)).await.unwrap();
+        s.append(&pause("ana", now_ms - day_ms)).await.unwrap();
         let deleted = s.sweep_retention(10, 1_000_000).await.unwrap();
         assert_eq!(deleted, 3);
         assert_eq!(row_count(&s).await, 2);

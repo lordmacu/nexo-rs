@@ -131,22 +131,12 @@ impl Default for SnapshotYamlConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct SnapshotEncryptionYamlConfig {
     pub enabled: bool,
     pub recipients: Vec<String>,
     pub identity_path: String,
-}
-
-impl Default for SnapshotEncryptionYamlConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            recipients: Vec::new(),
-            identity_path: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

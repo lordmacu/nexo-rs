@@ -70,6 +70,7 @@ pub struct DeviceCodeContext {
 /// Pluggable OAuth-session store. Production wires
 /// [`InMemoryVerifierStore`]; tests can substitute a mock.
 #[async_trait]
+#[allow(clippy::len_without_is_empty)] // diagnostics-only counter; no "empty store" semantic
 pub trait VerifierStore: Send + Sync {
     /// Insert a fresh entry under a freshly-generated `session_id`.
     /// Returns the id the caller surfaces to the operator.

@@ -74,6 +74,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         event_subscribers: Vec::new(),
         tenant_id: None,
         extensions_config: std::collections::BTreeMap::new(),
+        active: true,
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

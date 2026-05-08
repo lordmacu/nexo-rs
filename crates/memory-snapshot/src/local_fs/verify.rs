@@ -272,14 +272,12 @@ mod tests {
         // Bit-flip can either be caught by the file-level hash (most
         // likely) or surface as a manifest/artifact decode error.
         // Both outcomes count as detection.
-        match report {
-            Some(r) => {
-                assert!(
-                    !r.bundle_sha256_ok || !r.manifest_ok || !r.per_artifact_ok,
-                    "verify should not accept a bit-flipped bundle"
-                );
-            }
-            None => {} // decode failure also counts as detection
+        // decode failure also counts as detection — `if let` skips that branch silently.
+        if let Some(r) = report {
+            assert!(
+                !r.bundle_sha256_ok || !r.manifest_ok || !r.per_artifact_ok,
+                "verify should not accept a bit-flipped bundle"
+            );
         }
     }
 

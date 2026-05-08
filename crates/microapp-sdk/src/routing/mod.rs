@@ -25,5 +25,5 @@ pub use yaml_loader::{load_rule_set_from_str, RuleSetYaml};
 
 pub use nexo_tool_meta::marketing::{
     AssignTarget, DomainKind, RulePredicate, RuleSet, RoutingRule, TenantIdRef,
-    VendedorId,
+    SellerId,
 };

@@ -40,7 +40,7 @@ pub struct CompanyId(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(transparent)]
-pub struct VendedorId(pub String);
+pub struct SellerId(pub String);
 
 /// Stable kebab-case tenant id. Matches `^[a-z][a-z0-9-]{1,30}$`.
 /// Mirrors `crates/tool-meta/src/admin/tenants.rs::TenantSummary::id`
@@ -157,11 +157,11 @@ pub enum RulePredicate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AssignTarget {
-    Vendedor {
-        id: VendedorId,
+    Seller {
+        id: SellerId,
     },
     RoundRobin {
-        pool: Vec<VendedorId>,
+        pool: Vec<SellerId>,
     },
     /// Drop the inbound silently — never create a lead, never
     /// notify. Used for disposable / spam routing rules.
@@ -189,7 +189,7 @@ pub struct RuleSet {
     pub version: u32,
     pub rules: Vec<RoutingRule>,
     /// Default when no rule matches. Most operators set this to
-    /// a `RoundRobin` pool of every active vendedor.
+    /// a `RoundRobin` pool of every active seller.
     pub default_target: AssignTarget,
 }
 
@@ -208,7 +208,7 @@ pub struct FollowupProfile {
     pub stop_on_reply: bool,
 }
 
-// ── Person / Company / Vendedor records ─────────────────────────
+// ── Person / Company / Seller records ─────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Person {
@@ -258,8 +258,8 @@ pub struct DayWindow {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Vendedor {
-    pub id: VendedorId,
+pub struct Seller {
+    pub id: SellerId,
     pub tenant_id: TenantIdRef,
     pub name: String,
     /// Primary outbound email. The extension publishes outbound
@@ -274,18 +274,18 @@ pub struct Vendedor {
     /// `None` when not on vacation. Inclusive ISO 8601 dates.
     pub vacation_until: Option<DateTime<Utc>>,
     /// Optional language hint that biases the LLM toward this
-    /// vendedor's preferred outbound style.
+    /// seller's preferred outbound style.
     pub preferred_language: Option<String>,
     /// M15.35 — bound `agents.yaml.<id>`. When set, marketing
     /// reuses the agent's `ModelRef` + `system_prompt` for AI
     /// drafts / intent detection / identity resolution. The
     /// daemon's admin RPC `agents/get` is the source of truth;
     /// marketing extension never duplicates the LLM key.
-    /// `None` = vendedor has no AI assist (manual outbound only
+    /// `None` = seller has no AI assist (manual outbound only
     /// — operator writes drafts in the UI without LLM help).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// M15.35 — per-vendedor model override. When `Some`, takes
+    /// M15.35 — per-seller model override. When `Some`, takes
     /// precedence over the agent's default `ModelRef` for
     /// every email-related LLM call. Use case: agent uses
     /// `minimax-flash` for quick WA chat but emails benefit
@@ -293,14 +293,14 @@ pub struct Vendedor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<crate::admin::agents::ModelRef>,
     /// M15.38 — per-event notification toggles + target channel.
-    /// `None` = vendedor receives no notifications about email
+    /// `None` = seller receives no notifications about email
     /// events. When `Some`, the marketing extension publishes to
     /// `agent.email.notification.<agent_id>` for every
     /// enabled event; the agent's runtime / forwarder consumes
     /// the topic and routes per `channel` (today: WhatsApp via
     /// the agent's existing inbound binding).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notification_settings: Option<VendedorNotificationSettings>,
+    pub notification_settings: Option<SellerNotificationSettings>,
 }
 
 // ── Notification settings + event payload (M15.38) ──────────────
@@ -308,11 +308,11 @@ pub struct Vendedor {
 /// Where a notification gets forwarded. Tagged enum so JS
 /// clients pattern-match on `kind`. Each non-trivial variant
 /// carries its **resolved** plugin-bridge instance — the
-/// frontend reads `agent.inbound_bindings` at vendedor-save
+/// frontend reads `agent.inbound_bindings` at seller-save
 /// time and bakes the instance string here so the forwarder
 /// (a plugin subprocess) never needs admin-RPC access to
 /// route. Stale bindings (operator re-pairs WA) require a
-/// vendedor re-save; the form surfaces the warning.
+/// seller re-save; the form surfaces the warning.
 ///
 /// - `Disabled` — even with toggles on, the publisher skips
 ///   the topic frame entirely (useful for "log only" flows).
@@ -347,14 +347,14 @@ impl Default for NotificationChannel {
     }
 }
 
-/// Per-vendedor notification config. Granular toggles so the
+/// Per-seller notification config. Granular toggles so the
 /// operator opts into noisy events (transitions on every
 /// inbound) vs high-signal events (new lead, draft pending).
 ///
-/// Default values via `VendedorNotificationSettings::default`
+/// Default values via `SellerNotificationSettings::default`
 /// — useful when the operator opts in but doesn't fine-tune.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct VendedorNotificationSettings {
+pub struct SellerNotificationSettings {
     /// Notify on cold-thread lead creation. Default: `true`.
     #[serde(default = "default_true")]
     pub on_lead_created: bool,
@@ -389,7 +389,7 @@ fn default_true() -> bool {
     true
 }
 
-impl Default for VendedorNotificationSettings {
+impl Default for SellerNotificationSettings {
     fn default() -> Self {
         Self {
             on_lead_created: true,
@@ -437,17 +437,17 @@ pub struct EmailNotification {
     /// same value so wildcard subscriptions work cleanly.
     pub agent_id: String,
     pub lead_id: LeadId,
-    pub vendedor_id: VendedorId,
-    pub vendedor_email: String,
+    pub seller_id: SellerId,
+    pub seller_email: String,
     /// Sender email — the lead's `from_email`.
     pub from_email: String,
     pub subject: String,
     pub at_ms: i64,
     /// Operator-facing single-paragraph summary the forwarder
     /// can use as the WA message body verbatim. Pre-localised
-    /// to the vendedor's `preferred_language` when set.
+    /// to the seller's `preferred_language` when set.
     pub summary: String,
-    /// Channel the forwarder routes to (mirrors the vendedor's
+    /// Channel the forwarder routes to (mirrors the seller's
     /// `notification_settings.channel`). See
     /// [`NotificationChannel`].
     pub channel: NotificationChannel,
@@ -500,7 +500,7 @@ pub struct Lead {
     pub thread_id: String,
     pub subject: String,
     pub person_id: PersonId,
-    pub vendedor_id: VendedorId,
+    pub seller_id: SellerId,
     pub state: LeadState,
     /// 0..=100 heuristic score. See SDK
     /// `nexo-microapp-sdk::scoring::HeuristicScorer`.
@@ -523,7 +523,7 @@ pub struct Lead {
 pub struct OutboundDraft {
     pub thread_id: String,
     pub lead_id: LeadId,
-    pub vendedor_id: VendedorId,
+    pub seller_id: SellerId,
     pub body: String,
     pub status: DraftStatus,
     pub created_at_ms: i64,
@@ -565,7 +565,7 @@ pub struct LeadRouteArgs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LeadRouteResponse {
-    pub vendedor_id: Option<VendedorId>,
+    pub seller_id: Option<SellerId>,
     pub matched_rule_id: Option<String>,
     /// Empty when `assigns_to: drop` matched.
     pub why_routed: Vec<String>,
@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn assign_target_round_robin_roundtrip() {
         let t = AssignTarget::RoundRobin {
-            pool: vec![VendedorId("pedro".into()), VendedorId("ana".into())],
+            pool: vec![SellerId("pedro".into()), SellerId("ana".into())],
         };
         roundtrip(&t);
     }
@@ -701,8 +701,8 @@ mod tests {
             id: "vip-personal".into(),
             name: "VIP personal".into(),
             conditions: vec![RulePredicate::PersonHasTag { tag: "vip".into() }],
-            assigns_to: AssignTarget::Vendedor {
-                id: VendedorId("ana".into()),
+            assigns_to: AssignTarget::Seller {
+                id: SellerId("ana".into()),
             },
             followup_profile: "vip".into(),
             active: true,
@@ -747,7 +747,7 @@ mod tests {
             thread_id: "th-001".into(),
             subject: "Re: cotización".into(),
             person_id: PersonId("juan".into()),
-            vendedor_id: VendedorId("pedro".into()),
+            seller_id: SellerId("pedro".into()),
             state: LeadState::Engaged,
             score: 73,
             sentiment: SentimentBand::Positive,
@@ -832,12 +832,12 @@ mod tests {
     }
 
     #[test]
-    fn vendedor_without_agent_binding_roundtrip() {
+    fn seller_without_agent_binding_roundtrip() {
         // Backward compat — `agent_id` + `model_override` are
         // optional + skip-on-none, so existing YAML without
         // these fields parses cleanly.
-        let v = Vendedor {
-            id: VendedorId("pedro".into()),
+        let v = Seller {
+            id: SellerId("pedro".into()),
             tenant_id: TenantIdRef("acme".into()),
             name: "Pedro García".into(),
             primary_email: "pedro@acme.com".into(),
@@ -860,10 +860,10 @@ mod tests {
     }
 
     #[test]
-    fn vendedor_with_agent_binding_and_override_roundtrip() {
+    fn seller_with_agent_binding_and_override_roundtrip() {
         use crate::admin::agents::ModelRef;
-        let v = Vendedor {
-            id: VendedorId("pedro".into()),
+        let v = Seller {
+            id: SellerId("pedro".into()),
             tenant_id: TenantIdRef("acme".into()),
             name: "Pedro García".into(),
             primary_email: "pedro@acme.com".into(),
@@ -925,8 +925,8 @@ mod tests {
     }
 
     #[test]
-    fn vendedor_notification_settings_default_matches_spec() {
-        let s = VendedorNotificationSettings::default();
+    fn seller_notification_settings_default_matches_spec() {
+        let s = SellerNotificationSettings::default();
         assert!(s.on_lead_created);
         assert!(s.on_lead_replied);
         assert!(!s.on_lead_transitioned);
@@ -941,7 +941,7 @@ mod tests {
     }
 
     #[test]
-    fn vendedor_notification_settings_partial_payload_uses_serde_defaults() {
+    fn seller_notification_settings_partial_payload_uses_serde_defaults() {
         // Operator writes only `channel` — the toggles default
         // via the field-level `#[serde(default = …)]` attrs.
         let json = r#"{
@@ -951,7 +951,7 @@ mod tests {
                 "to": "ops@acme.com"
             }
         }"#;
-        let parsed: VendedorNotificationSettings = serde_json::from_str(json).unwrap();
+        let parsed: SellerNotificationSettings = serde_json::from_str(json).unwrap();
         assert!(parsed.on_lead_created);
         assert!(parsed.on_lead_replied);
         assert!(!parsed.on_lead_transitioned);
@@ -973,8 +973,8 @@ mod tests {
             tenant_id: TenantIdRef("acme".into()),
             agent_id: "pedro-agent".into(),
             lead_id: LeadId("l-42".into()),
-            vendedor_id: VendedorId("pedro".into()),
-            vendedor_email: "pedro@acme.com".into(),
+            seller_id: SellerId("pedro".into()),
+            seller_email: "pedro@acme.com".into(),
             from_email: "cliente@empresa.com".into(),
             subject: "Cotización".into(),
             at_ms: 1_700_000_000_000,

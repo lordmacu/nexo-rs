@@ -34,3 +34,6 @@ criterion   = { version = "0.5", features = ["async_tokio"] }
 [[bench]]
 name = "tick"
 harness = false
+
+[lints]
+workspace = true

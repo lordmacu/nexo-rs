@@ -25,7 +25,7 @@ use nexo_tool_meta::marketing::{
 ///     conditions:
 ///       - { kind: person_has_tag, tag: vip }
 ///     assigns_to:
-///       kind: vendedor
+///       kind: seller
 ///       id:
 ///         id: ana
 /// ```
@@ -56,7 +56,7 @@ pub fn load_rule_set_from_str(
 mod tests {
     use super::*;
     use nexo_tool_meta::marketing::{
-        AssignTarget, RulePredicate, TenantIdRef, VendedorId,
+        AssignTarget, RulePredicate, TenantIdRef, SellerId,
     };
 
     const SAMPLE: &str = r#"
@@ -75,7 +75,7 @@ rules:
       - kind: person_has_tag
         tag: vip
     assigns_to:
-      kind: vendedor
+      kind: seller
       id: "ana"
 "#;
 
@@ -92,7 +92,7 @@ rules:
         ));
         assert!(matches!(
             rs.default_target,
-            AssignTarget::RoundRobin { ref pool } if pool == &vec![VendedorId("pedro".into()), VendedorId("ana".into())]
+            AssignTarget::RoundRobin { ref pool } if pool == &vec![SellerId("pedro".into()), SellerId("ana".into())]
         ));
     }
 

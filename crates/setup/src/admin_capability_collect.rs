@@ -297,8 +297,7 @@ command = "./legacy-v1"
         let dir = tempfile::tempdir().unwrap();
         let full = dir.path().join("full");
         std::fs::create_dir_all(&full).unwrap();
-        let body = format!(
-            r#"
+        let body = r#"
 [plugin]
 id = "full"
 version = "0.1.0"
@@ -315,7 +314,7 @@ port = 9090
 health_path = "/healthz"
 token_env = "TOKEN"
 "#
-        );
+        .to_string();
         write_manifest(&full, &body);
 
         let admins = collect_admin_capabilities([&full]);

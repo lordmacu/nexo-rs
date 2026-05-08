@@ -141,6 +141,7 @@ fn agent_with_pairing_on() -> AgentConfig {
         event_subscribers: Vec::new(),
         tenant_id: None,
         extensions_config: std::collections::BTreeMap::new(),
+        active: true,
     }
 }
 

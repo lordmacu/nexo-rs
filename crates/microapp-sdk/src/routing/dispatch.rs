@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use nexo_tool_meta::marketing::{
-    AssignTarget, DomainKind, RoutingRule, RulePredicate, RuleSet, TenantIdRef, VendedorId,
+    AssignTarget, DomainKind, RoutingRule, RulePredicate, RuleSet, TenantIdRef, SellerId,
 };
 
 /// Per-call evaluation context. Caller fills the fields they
@@ -23,7 +23,7 @@ pub struct MatchContext<'a> {
 /// Result of dispatching a single inbound through a rule set.
 /// The `matched_rule_id` is `None` when the default target
 /// fired (no rule matched). Operator audit log uses both
-/// fields to render "matched rule X → assigned to vendedor Y".
+/// fields to render "matched rule X → assigned to seller Y".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutingDecision {
     pub target: AssignTarget,
@@ -96,7 +96,7 @@ impl<'a> Dispatcher<'a> {
     /// the cursor (e.g. sqlite counter per tenant); we just
     /// hand back the indexed element so the dispatcher stays
     /// pure.
-    pub fn round_robin_pick(pool: &[VendedorId], cursor: usize) -> Option<&VendedorId> {
+    pub fn round_robin_pick(pool: &[SellerId], cursor: usize) -> Option<&SellerId> {
         if pool.is_empty() {
             return None;
         }
@@ -183,7 +183,7 @@ fn glob_match(pattern: &str, value: &str) -> bool {
 mod tests {
     use super::*;
     use nexo_tool_meta::marketing::{
-        AssignTarget, RoutingRule, RulePredicate, RuleSet, TenantIdRef, VendedorId,
+        AssignTarget, RoutingRule, RulePredicate, RuleSet, TenantIdRef, SellerId,
     };
 
     fn rs(tenant: &str, rules: Vec<RoutingRule>, default: AssignTarget) -> RuleSet {
@@ -195,8 +195,8 @@ mod tests {
         }
     }
 
-    fn vendedor(id: &str) -> VendedorId {
-        VendedorId(id.into())
+    fn seller(id: &str) -> SellerId {
+        SellerId(id.into())
     }
 
     fn rule(id: &str, conds: Vec<RulePredicate>, target: AssignTarget) -> RoutingRule {
@@ -218,12 +218,12 @@ mod tests {
                 rule(
                     "vip",
                     vec![RulePredicate::PersonHasTag { tag: "vip".into() }],
-                    AssignTarget::Vendedor { id: vendedor("ana") },
+                    AssignTarget::Seller { id: seller("ana") },
                 ),
                 rule(
                     "default-rule",
                     vec![RulePredicate::ScoreGte { score: 50 }],
-                    AssignTarget::Vendedor { id: vendedor("pedro") },
+                    AssignTarget::Seller { id: seller("pedro") },
                 ),
             ],
             AssignTarget::Drop,
@@ -237,7 +237,7 @@ mod tests {
             .dispatch(&TenantIdRef("acme".into()), &ctx)
             .unwrap();
         assert_eq!(d.matched_rule_id.as_deref(), Some("vip"));
-        assert!(matches!(d.target, AssignTarget::Vendedor { id } if id == vendedor("ana")));
+        assert!(matches!(d.target, AssignTarget::Seller { id } if id == seller("ana")));
     }
 
     #[test]
@@ -247,16 +247,16 @@ mod tests {
             vec![rule(
                 "vip",
                 vec![RulePredicate::PersonHasTag { tag: "vip".into() }],
-                AssignTarget::Vendedor { id: vendedor("ana") },
+                AssignTarget::Seller { id: seller("ana") },
             )],
-            AssignTarget::Vendedor { id: vendedor("luis") },
+            AssignTarget::Seller { id: seller("luis") },
         );
         let ctx = MatchContext::default();
         let d = Dispatcher::new(&r)
             .dispatch(&TenantIdRef("acme".into()), &ctx)
             .unwrap();
         assert_eq!(d.matched_rule_id, None);
-        assert!(matches!(d.target, AssignTarget::Vendedor { id } if id == vendedor("luis")));
+        assert!(matches!(d.target, AssignTarget::Seller { id } if id == seller("luis")));
     }
 
     #[test]
@@ -264,7 +264,7 @@ mod tests {
         let mut paused = rule(
             "vip",
             vec![RulePredicate::PersonHasTag { tag: "vip".into() }],
-            AssignTarget::Vendedor { id: vendedor("ana") },
+            AssignTarget::Seller { id: seller("ana") },
         );
         paused.active = false;
         let r = rs("acme", vec![paused], AssignTarget::Drop);
@@ -316,7 +316,7 @@ mod tests {
             vec![rule(
                 "warm",
                 vec![RulePredicate::ScoreGte { score: 70 }],
-                AssignTarget::Vendedor { id: vendedor("pedro") },
+                AssignTarget::Seller { id: seller("pedro") },
             )],
             AssignTarget::Drop,
         );
@@ -358,11 +358,11 @@ mod tests {
 
     #[test]
     fn round_robin_pick_wraps() {
-        let pool = vec![vendedor("a"), vendedor("b"), vendedor("c")];
+        let pool = vec![seller("a"), seller("b"), seller("c")];
         assert_eq!(Dispatcher::round_robin_pick(&pool, 0).unwrap().0, "a");
         assert_eq!(Dispatcher::round_robin_pick(&pool, 4).unwrap().0, "b");
         assert_eq!(
-            Dispatcher::round_robin_pick(&[] as &[VendedorId], 0),
+            Dispatcher::round_robin_pick(&[] as &[SellerId], 0),
             None
         );
     }
@@ -381,7 +381,7 @@ mod tests {
                         needle: "rate limit".into(),
                     },
                 ],
-                AssignTarget::Vendedor { id: vendedor("luis") },
+                AssignTarget::Seller { id: seller("luis") },
             )],
             AssignTarget::Drop,
         );

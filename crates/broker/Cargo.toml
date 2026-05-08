@@ -41,3 +41,6 @@ harness = false
 [[bench]]
 name = "local_publish"
 harness = false
+
+[lints]
+workspace = true

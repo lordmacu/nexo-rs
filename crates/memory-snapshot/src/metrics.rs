@@ -134,7 +134,7 @@ pub fn record_snapshot(
     };
     SNAPSHOT_DURATION
         .entry(at_key.clone())
-        .or_insert_with(Histogram::default)
+        .or_default()
         .record(duration.as_millis().min(u128::from(u64::MAX)) as u64);
     if size_bytes > 0 {
         SNAPSHOT_BYTES_TOTAL

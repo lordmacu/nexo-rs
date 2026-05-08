@@ -38,3 +38,6 @@ which             = { workspace = true }
 [dev-dependencies]
 serde_yaml = { workspace = true }
 tempfile   = "3"
+
+[lints]
+workspace = true

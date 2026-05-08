@@ -131,6 +131,7 @@ mod tests {
             event_subscribers: Vec::new(),
             tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
+            active: true,
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 20));

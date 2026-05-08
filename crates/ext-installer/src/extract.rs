@@ -18,6 +18,7 @@
 //! The crate intentionally does NOT read configuration: the
 //! caller resolves `dest_root` from
 //! `plugins.discovery.search_paths[0]` and passes it in.
+#![allow(clippy::result_large_err)]
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
