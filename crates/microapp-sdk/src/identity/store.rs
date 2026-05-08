@@ -22,6 +22,27 @@ pub struct PersonEmail {
     pub added_at_ms: i64,
 }
 
+/// PersonPhone row — one phone identifier mapped to its
+/// owning person. Mirrors `PersonEmail` for the WhatsApp /
+/// SMS side: a contact's E.164 phone (or platform-specific
+/// JID like `573001234567@s.whatsapp.net`) resolves to the
+/// same `Person` already known to the email pipeline,
+/// powering the M15.23.e cross-channel duplicate detector.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersonPhone {
+    pub person_id: PersonId,
+    pub tenant_id: TenantIdRef,
+    /// Canonical phone identifier. The caller normalises:
+    /// E.164 (`+573001234567`) preferred; platform JID
+    /// (`573001234567@s.whatsapp.net`) accepted when the
+    /// caller can't strip the suffix. Match is exact —
+    /// caller is responsible for normalising on upsert AND
+    /// lookup.
+    pub phone: String,
+    pub verified: bool,
+    pub added_at_ms: i64,
+}
+
 // ── Trait surface ───────────────────────────────────────────────
 
 #[async_trait]
@@ -59,6 +80,39 @@ pub trait PersonEmailStore: Send + Sync {
         tenant_id: &str,
         email: &str,
     ) -> Result<Option<PersonId>, IdentityError>;
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError>;
+}
+
+#[async_trait]
+pub trait PersonPhoneStore: Send + Sync {
+    /// Upsert one `(person_id, phone)` link. Idempotent on
+    /// `(tenant_id, phone)` so re-adding the same phone
+    /// updates `verified` + `added_at_ms` instead of
+    /// erroring.
+    async fn add(
+        &self,
+        tenant_id: &str,
+        person_id: &PersonId,
+        phone: &str,
+        verified: bool,
+    ) -> Result<PersonPhone, IdentityError>;
+    /// All phones owned by one person. Useful for the
+    /// duplicate-detection candidate scan.
+    async fn list_for_person(
+        &self,
+        tenant_id: &str,
+        person_id: &PersonId,
+    ) -> Result<Vec<PersonPhone>, IdentityError>;
+    /// Find the person owning a given phone identifier.
+    /// `None` ⇒ unseen. Cross-tenant misses always return
+    /// `None`.
+    async fn find_owner(
+        &self,
+        tenant_id: &str,
+        phone: &str,
+    ) -> Result<Option<PersonId>, IdentityError>;
+    /// Cascade-delete every link for one tenant. Returns
+    /// the number of rows removed.
     async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError>;
 }
 
@@ -111,6 +165,17 @@ CREATE TABLE IF NOT EXISTS person_emails (
 );
 CREATE INDEX IF NOT EXISTS idx_person_emails_tenant_person
     ON person_emails(tenant_id, person_id);
+
+CREATE TABLE IF NOT EXISTS person_phones (
+    tenant_id    TEXT NOT NULL,
+    person_id    TEXT NOT NULL,
+    phone        TEXT NOT NULL,
+    verified     INTEGER NOT NULL DEFAULT 0,
+    added_at_ms  INTEGER NOT NULL,
+    PRIMARY KEY (tenant_id, phone)
+);
+CREATE INDEX IF NOT EXISTS idx_person_phones_tenant_person
+    ON person_phones(tenant_id, person_id);
 
 CREATE TABLE IF NOT EXISTS companies (
     id                  TEXT NOT NULL,
@@ -402,6 +467,122 @@ impl PersonEmailRow {
             person_id: PersonId(self.person_id),
             tenant_id: TenantIdRef(self.tenant_id),
             email: self.email,
+            verified: self.verified != 0,
+            added_at_ms: self.added_at_ms,
+        }
+    }
+}
+
+/// SQLite-backed person_phone store. Mirror of
+/// [`SqlitePersonEmailStore`] for the WhatsApp / SMS side.
+#[derive(Clone)]
+pub struct SqlitePersonPhoneStore {
+    pool: SqlitePool,
+}
+
+impl SqlitePersonPhoneStore {
+    /// Wrap an open pool. Run [`open_pool`] first.
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+    /// Borrow the underlying pool.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+#[async_trait]
+impl PersonPhoneStore for SqlitePersonPhoneStore {
+    async fn add(
+        &self,
+        tenant_id: &str,
+        person_id: &PersonId,
+        phone: &str,
+        verified: bool,
+    ) -> Result<PersonPhone, IdentityError> {
+        if phone.trim().is_empty() {
+            return Err(IdentityError::InvalidEmail("phone empty".into()));
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO person_phones (tenant_id, person_id, phone, verified, added_at_ms) \
+             VALUES (?,?,?,?,?) \
+             ON CONFLICT(tenant_id, phone) DO UPDATE SET \
+              person_id=excluded.person_id, \
+              verified=excluded.verified",
+        )
+        .bind(tenant_id)
+        .bind(&person_id.0)
+        .bind(phone)
+        .bind(verified as i64)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(PersonPhone {
+            person_id: person_id.clone(),
+            tenant_id: TenantIdRef(tenant_id.to_string()),
+            phone: phone.to_string(),
+            verified,
+            added_at_ms: now,
+        })
+    }
+
+    async fn list_for_person(
+        &self,
+        tenant_id: &str,
+        person_id: &PersonId,
+    ) -> Result<Vec<PersonPhone>, IdentityError> {
+        let rows = sqlx::query_as::<_, PersonPhoneRow>(
+            "SELECT person_id, tenant_id, phone, verified, added_at_ms \
+             FROM person_phones WHERE tenant_id = ? AND person_id = ? \
+             ORDER BY added_at_ms ASC",
+        )
+        .bind(tenant_id)
+        .bind(&person_id.0)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(PersonPhoneRow::into_phone).collect())
+    }
+
+    async fn find_owner(
+        &self,
+        tenant_id: &str,
+        phone: &str,
+    ) -> Result<Option<PersonId>, IdentityError> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT person_id FROM person_phones WHERE tenant_id = ? AND phone = ?",
+        )
+        .bind(tenant_id)
+        .bind(phone)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(id,)| PersonId(id)))
+    }
+
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError> {
+        let r = sqlx::query("DELETE FROM person_phones WHERE tenant_id = ?")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PersonPhoneRow {
+    person_id: String,
+    tenant_id: String,
+    phone: String,
+    verified: i64,
+    added_at_ms: i64,
+}
+
+impl PersonPhoneRow {
+    fn into_phone(self) -> PersonPhone {
+        PersonPhone {
+            person_id: PersonId(self.person_id),
+            tenant_id: TenantIdRef(self.tenant_id),
+            phone: self.phone,
             verified: self.verified != 0,
             added_at_ms: self.added_at_ms,
         }
@@ -727,11 +908,134 @@ mod tests {
         sqlx::query(MIGRATION_SQL).execute(&pool).await.unwrap();
         // Confirm tables present.
         let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('persons','person_emails','companies')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('persons','person_emails','person_phones','companies')",
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count.0, 3);
+        assert_eq!(count.0, 4);
+    }
+
+    // ─── PersonPhoneStore (M15.23.e) ──────────────────────────
+
+    async fn fresh_phone_store() -> SqlitePersonPhoneStore {
+        SqlitePersonPhoneStore::new(open_pool(":memory:").await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn phone_add_and_find_owner_round_trips() {
+        let store = fresh_phone_store().await;
+        let pid = PersonId("juan".into());
+        store
+            .add("acme", &pid, "+573001234567", true)
+            .await
+            .unwrap();
+        let owner = store
+            .find_owner("acme", "+573001234567")
+            .await
+            .unwrap();
+        assert_eq!(owner, Some(pid));
+    }
+
+    #[tokio::test]
+    async fn phone_find_owner_misses_cross_tenant() {
+        let store = fresh_phone_store().await;
+        store
+            .add("acme", &PersonId("juan".into()), "+57300", false)
+            .await
+            .unwrap();
+        let cross = store.find_owner("globex", "+57300").await.unwrap();
+        assert!(cross.is_none());
+    }
+
+    #[tokio::test]
+    async fn phone_add_idempotent_on_conflict() {
+        let store = fresh_phone_store().await;
+        let pid_old = PersonId("old".into());
+        let pid_new = PersonId("new".into());
+        store
+            .add("acme", &pid_old, "+57300", false)
+            .await
+            .unwrap();
+        // Same phone re-added with a different owner — last
+        // write wins via ON CONFLICT DO UPDATE.
+        store
+            .add("acme", &pid_new, "+57300", true)
+            .await
+            .unwrap();
+        let owner = store.find_owner("acme", "+57300").await.unwrap();
+        assert_eq!(owner, Some(pid_new));
+    }
+
+    #[tokio::test]
+    async fn phone_list_for_person_returns_all_links() {
+        let store = fresh_phone_store().await;
+        let pid = PersonId("juan".into());
+        for p in &["+573001", "+573002", "+573003"] {
+            store.add("acme", &pid, p, false).await.unwrap();
+        }
+        let rows = store.list_for_person("acme", &pid).await.unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn phone_jid_format_accepted_verbatim() {
+        // Caller hasn't normalised yet (E.164 strip).
+        // Match is exact — both upsert + lookup must use the
+        // same canonical form.
+        let store = fresh_phone_store().await;
+        let pid = PersonId("juan".into());
+        store
+            .add("acme", &pid, "573001234567@s.whatsapp.net", false)
+            .await
+            .unwrap();
+        let owner = store
+            .find_owner("acme", "573001234567@s.whatsapp.net")
+            .await
+            .unwrap();
+        assert_eq!(owner, Some(pid));
+        // E.164 form would NOT match the raw JID.
+        let miss = store
+            .find_owner("acme", "+573001234567")
+            .await
+            .unwrap();
+        assert!(miss.is_none());
+    }
+
+    #[tokio::test]
+    async fn phone_empty_input_rejected() {
+        let store = fresh_phone_store().await;
+        let r = store
+            .add("acme", &PersonId("x".into()), "  ", false)
+            .await;
+        assert!(matches!(r, Err(IdentityError::InvalidEmail(_))));
+    }
+
+    #[tokio::test]
+    async fn phone_delete_by_tenant_cascades() {
+        let store = fresh_phone_store().await;
+        store
+            .add("acme", &PersonId("a".into()), "+57300", false)
+            .await
+            .unwrap();
+        store
+            .add("globex", &PersonId("b".into()), "+12345", false)
+            .await
+            .unwrap();
+        let n = store.delete_by_tenant("acme").await.unwrap();
+        assert_eq!(n, 1);
+        assert!(store
+            .find_owner("acme", "+57300")
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .find_owner("globex", "+12345")
+                .await
+                .unwrap()
+                .map(|p| p.0),
+            Some("b".into()),
+        );
     }
 }
