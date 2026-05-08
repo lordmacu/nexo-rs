@@ -34,8 +34,21 @@ tar               = "0.4"
 flate2            = "1"
 rand              = { workspace = true }
 regex             = { workspace = true }
+# Pure-Rust signature verifier replacing the `cosign verify-blob`
+# subprocess. `x509-parser` reads the PEM Fulcio cert + the
+# Subject Alternative Name + the custom Fulcio OIDC-issuer
+# extension (OID 1.3.6.1.4.1.57264.1.{1,8}). `p256` verifies the
+# ECDSA-P-256 signature over SHA-256 of the blob. Together they
+# replicate the policy semantics cosign enforced via flags.
+x509-parser       = "0.16"
+p256              = { version = "0.13", features = ["ecdsa", "pem"] }
+base64            = { workspace = true }
 
 [dev-dependencies]
 wiremock          = "0.6"
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full", "test-util"] }
+# Generates X.509 certs + ECDSA keys at test time so we can
+# build realistic Fulcio-shaped fixtures without committing
+# binary blobs.
+rcgen             = { version = "0.13", features = ["x509-parser"] }

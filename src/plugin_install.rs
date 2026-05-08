@@ -113,6 +113,14 @@ pub fn verify_error_kind(e: &VerifyError) -> &'static str {
         VerifyError::AssetIncomplete { .. } => "AssetIncomplete",
         VerifyError::TrustedKeysParse { .. } => "TrustedKeysParse",
         VerifyError::IdentityRegexpInvalid { .. } => "IdentityRegexpInvalid",
+        // New variants from the pure-Rust verifier rewrite.
+        VerifyError::CertParseFailed(_) => "CertParseFailed",
+        VerifyError::UnsupportedKey(_) => "UnsupportedKey",
+        VerifyError::SignatureDecodeFailed(_) => "SignatureDecodeFailed",
+        VerifyError::SignatureMismatch => "SignatureMismatch",
+        VerifyError::IdentityNotFound => "IdentityNotFound",
+        VerifyError::IdentityMismatch { .. } => "IdentityMismatch",
+        VerifyError::IssuerMismatch { .. } => "IssuerMismatch",
     }
 }
 

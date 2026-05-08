@@ -54,23 +54,32 @@ Android sandbox).
   `gethostname` crate (pure-Rust syscall, ~50 LOC). Works on
   minimal images that don't ship the `hostname` binary on PATH.
 
-- **`subprocess.cosign`** — DEFERRED. The plugin signing verifier
-  at `crates/ext-installer/src/verify.rs` still spawns the
-  `cosign verify-blob` Go binary. Two viable replacements:
-    - **Heavy:** the `sigstore` crate (v0.13) with the `cosign`
-      feature. ~80 LOC swap, but `cosign` requires `registry`,
-      which transitively pulls `oci-client` and ~258 deps total
-      we don't otherwise use.
-    - **Lean:** a manual implementation against `x509-parser`
-      + `p256` + `sha2` (the latter two already in the
-      workspace). ~250 LOC, ~30 new deps, no OCI baggage. This
-      is the path Phase 90 (Android embedded) needs because the
-      sigstore crate's full feature set won't cross-compile to
-      `aarch64-linux-android` without effort.
-  Decision: pick `manual lean` when the work lands; track the
-  policy logic (cert SAN regex match + Fulcio OIDC issuer
-  extension OID `1.3.6.1.4.1.57264.1.{1,8}`) so we don't lose
-  the existing identity-policy semantics.
+- **`subprocess.cosign`** — RESOLVED 2026-05-08. Replaced the
+  `cosign verify-blob` subprocess in
+  `crates/ext-installer/src/verify.rs` with a pure-Rust pipeline
+  built from `x509-parser` (PEM + X.509 v3 parse, SAN +
+  custom-OID extraction), `p256::ecdsa` (ECDSA-P256 signature
+  verify over `sha2::Sha256` of the blob), `base64` (DER
+  signature decode) and the existing `regex` dep (identity-
+  policy match). Replicates the cosign policy semantics: SAN
+  URI/email matches `policy.identity_regexp`, Fulcio
+  OIDC-issuer extension (OID `1.3.6.1.4.1.57264.1.1` legacy
+  raw-string + `…1.8` modern DER UTF8String) equals
+  `policy.oidc_issuer`. Six new tests cover the happy path,
+  blob-tampering rejection, identity/issuer mismatches, and
+  malformed PEM/signature inputs — all green. Trade-off taken
+  vs. the `sigstore` 0.13 crate's `cosign` feature: that route
+  pulls `oci-client` + 258 transitive deps and won't cross-
+  compile cleanly to `aarch64-linux-android`. Known gap: the
+  Rekor transparency-log proof (`--bundle` path) is no longer
+  enforced; the bundle field on `VerifyInput` is ignored. If
+  multi-tenant SaaS hardening ever needs offline TLog
+  verification, gate it behind an opt-in feature pulling
+  `sigstore`'s bundle path. The legacy `discover_cosign_binary`
+  / `VerifyError::CosignNotFound` / `VerifyError::CosignFailed`
+  surface stays in place as a no-op compatibility shim so the
+  install orchestration keeps compiling until the next major
+  bump.
 
 - **`subprocess.skill-runners-and-hooks`** — NOT-A-FOLLOWUP.
   `crates/dispatch-tools/src/hooks/dispatcher.rs` (`sh`),
