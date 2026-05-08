@@ -79,6 +79,12 @@ pub mod guardrails;
 #[cfg(feature = "templating")]
 pub mod templating;
 
+#[cfg(feature = "email-threading")]
+pub mod email_threading;
+
+#[cfg(feature = "dedup")]
+pub mod dedup;
+
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
