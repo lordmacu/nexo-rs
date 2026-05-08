@@ -17,6 +17,10 @@ anyhow              = { workspace = true }
 async-trait         = { workspace = true }
 chrono              = { workspace = true }
 dashmap             = { workspace = true }
+# Pure-Rust syscall hostname lookup — replaces the `Command::new("hostname")`
+# subprocess in `nexo-driver-tools`. Same wire shape, zero spawn, works on
+# OSes without `hostname` on PATH.
+gethostname         = "1"
 humantime           = { workspace = true }
 humantime-serde     = { workspace = true }
 nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }

@@ -41,9 +41,11 @@ events = ["notifications", "dep:sqlx", "dep:chrono", "dep:tokio-util"]
 # implements `ToolHandler` so a microapp registers the
 # `*_inbound_transform` tool with one line. Whisper.cpp ships as a
 # vendored C build via `whisper-rs` (~30 s on first compile);
-# guarded by this feature so non-voice microapps skip it. Pulls
-# `tokio/process` for the ffmpeg pipe.
-stt = ["dep:whisper-rs", "tokio/process"]
+# guarded by this feature so non-voice microapps skip it. Decoding
+# of arbitrary audio formats (ogg-opus, mp3, aac, flac, wav, …)
+# uses `symphonia` — pure Rust, no external `ffmpeg` binary
+# dependency at runtime.
+stt = ["dep:whisper-rs", "dep:opus-wave", "dep:ogg"]
 # First-run wizard scaffolding: a generic `CachedSnapshot<T>` with
 # TTL invalidation and an `LlmProber` that validates an OpenAI-
 # compatible API key server-side (`GET {base_url}/models`) so the
@@ -53,17 +55,21 @@ wizard = ["dep:reqwest"]
 # Voice-mode reply pipeline — `VoiceModeStore` toggle + text
 # normalizer + SSML hinter + `TtsProvider` trait with a Microsoft
 # Edge Read-Aloud impl + `synthesize_voice_note` end-to-end
-# pipeline (text → SSML → mp3 → opus/ogg). Pulls msedge-tts
-# (websocket against the public Edge endpoint), regex + once_cell
-# (SSML auto-detect), and `tokio/process` for the ffmpeg
-# transcode. Implies `events` so the store can ride on the same
-# SQLite pool the firehose owns.
+# pipeline (text → SSML → mp3 → opus/ogg). Edge's public endpoint
+# only reliably streams the mp3 profiles, so the SDK transcodes
+# the mp3 to ogg-opus in pure Rust before handing the bytes to the
+# WhatsApp PTT path: `symphonia` decodes the mp3, `opus-wave`
+# encodes opus packets, `ogg` muxes the container. Implies
+# `events` so the store can ride on the same SQLite pool the
+# firehose owns.
 voice = [
     "events",
     "dep:msedge_tts",
     "dep:regex",
     "dep:once_cell",
-    "tokio/process",
+    "dep:symphonia",
+    "dep:opus-wave",
+    "dep:ogg",
 ]
 # Phase 81.15.a — child-side `PluginAdapter` for out-of-tree
 # subprocess plugins. Gated so existing microapp consumers don't
@@ -176,6 +182,22 @@ tokio-util = { workspace = true, optional = true }
 # skip the OpenBLAS auto-link (each microapp surfaces its own BLAS
 # preference via system libs if needed).
 whisper-rs = { version = "0.13", default-features = false, optional = true }
+# Pure-Rust audio codec stack shared by `stt` (decoding inbound
+# WhatsApp/Telegram ogg-opus voice notes) and `voice` (encoding
+# the mp3 Edge returns into the ogg-opus PTT format WhatsApp
+# expects). Replaces the `ffmpeg` subprocess in both pipelines:
+#
+# - `opus-wave` is a SILK+CELT codec (RFC 6716 conformant and
+#   cross-validated against C libopus); ships both decoder and
+#   encoder.
+# - `ogg` muxes/demuxes the container.
+# - `symphonia` decodes mp3 (Edge TTS output) and other formats
+#   when broader STT input support is enabled.
+opus-wave = { version = "3.0", optional = true }
+ogg = { version = "0.9", optional = true }
+symphonia = { version = "0.5", default-features = false, features = [
+    "mp3"
+], optional = true }
 # `wizard` feature — server-side LLM key probe. rustls-only to
 # match the agent-creator-microapp baseline (no system OpenSSL).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }

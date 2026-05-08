@@ -3,9 +3,10 @@
 //! Lifts `agent-creator-microapp::stt` into a reusable SDK
 //! feature. Two pieces:
 //!
-//! - [`transcribe::transcribe_file`] — runs an audio file through
-//!   `ffmpeg` (decoded to 16 kHz mono s16le PCM) and then whisper.cpp,
-//!   returning the trimmed transcript.
+//! - [`transcribe::transcribe_file`] — decodes an ogg-opus audio
+//!   file (the format both WhatsApp and Telegram voice notes use)
+//!   to 16 kHz mono s16le PCM via `ogg` + `opus-wave` (pure Rust,
+//!   no `ffmpeg` subprocess) and runs whisper.cpp on the result.
 //! - [`tool::InboundTransformHandler`] — `ToolHandler` impl ready to
 //!   hand to `Microapp::with_tool("audio_stt_inbound_transform", …)`.
 //!   Implements the framework's auto-discovered
@@ -54,11 +55,26 @@ pub enum SttError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
-    /// `ffmpeg` exited non-zero or produced empty output. The
-    /// payload is the captured stderr (truncated by ffmpeg when
-    /// `-loglevel error` is set).
+    /// Legacy variant, kept for backward compatibility with
+    /// callers that pattern-match on it. New code should use
+    /// [`Self::Decode`] / [`Self::UnsupportedFormat`] instead.
+    #[deprecated(note = "ffmpeg is no longer used; map to Decode/UnsupportedFormat")]
     #[error("ffmpeg: {0}")]
     Ffmpeg(String),
+
+    /// Audio decode failed inside the pure-Rust pipeline (ogg
+    /// demux error, opus packet rejected, sample-rate mismatch,
+    /// etc.).
+    #[error("decode: {0}")]
+    Decode(String),
+
+    /// The audio is in a container/codec the SDK doesn't decode.
+    /// The personal-assistant build only supports ogg-opus
+    /// (WhatsApp + Telegram voice notes); add a wider decoder
+    /// behind a feature flag if email attachments must be
+    /// transcribed.
+    #[error("unsupported audio format: {0}")]
+    UnsupportedFormat(String),
 
     /// whisper.cpp reported an error during context init,
     /// `state::full`, or segment retrieval.
@@ -102,9 +118,10 @@ pub struct TranscribeConfig {
     /// bots). Common values: `Some("es")`, `Some("en")`.
     pub lang_hint: Option<String>,
 
-    /// Path to the `ffmpeg` binary. Defaults to `"ffmpeg"` (PATH
-    /// lookup); override when the operator pre-deploys ffmpeg
-    /// somewhere non-standard.
+    /// Legacy field — the pipeline no longer spawns `ffmpeg`, so
+    /// this value is ignored. Kept as a `pub` field so callers
+    /// that destructured `TranscribeConfig` still compile.
+    #[deprecated(note = "ignored — the SDK decodes ogg-opus in pure Rust now")]
     pub ffmpeg_path: PathBuf,
 
     /// Target sample rate for the PCM stream fed to whisper.
@@ -115,9 +132,9 @@ pub struct TranscribeConfig {
 
 impl Default for TranscribeConfig {
     /// Defaults assume the operator places the model at
-    /// `./data/whisper/ggml-tiny-q5_1.bin` and `ffmpeg` is on
-    /// `PATH`. Microapps usually override `model_path` from a
-    /// state-root env var.
+    /// `./data/whisper/ggml-tiny-q5_1.bin`. Microapps usually
+    /// override `model_path` from a state-root env var.
+    #[allow(deprecated)] // populates the legacy `ffmpeg_path` field
     fn default() -> Self {
         Self {
             model_path: PathBuf::from("./data/whisper/ggml-tiny-q5_1.bin"),
