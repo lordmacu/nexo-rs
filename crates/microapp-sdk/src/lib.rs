@@ -76,6 +76,9 @@ pub mod scoring;
 #[cfg(feature = "guardrails")]
 pub mod guardrails;
 
+#[cfg(feature = "templating")]
+pub mod templating;
+
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
