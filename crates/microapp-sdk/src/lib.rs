@@ -88,7 +88,8 @@ pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
 #[cfg(feature = "plugin")]
 pub use plugin::{
     BrokerEventHandler, BrokerSender, LlmCompleteParams, LlmCompleteResult, LlmStream,
-    PluginAdapter, RpcError, ShutdownHandler, TokenCount,
+    PluginAdapter, RpcError, ShutdownHandler, TokenCount, ToolContext,
+    ToolHandlerWithContext,
 };
 // Re-export the broker event type so `on_broker_event` callers
 // can name the closure parameter without depending on
