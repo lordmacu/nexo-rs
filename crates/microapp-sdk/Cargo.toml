@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.10"
+version       = "0.1.11"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -118,6 +118,19 @@ guardrails = ["dep:regex", "dep:once_cell"]
 # by construction — no helpers, no eval, no IO. Pulls only
 # the existing serde + nexo-tool-meta deps already in tree.
 templating = []
+# F29 — email subject normalisation + synthetic thread-id
+# helpers. Pure string primitives mined during M17.3 in the
+# marketing extension; reusable by any microapp that
+# ingests inbound email (helpdesk, archive, CRM). Pulls
+# `sha2` for the deterministic synth-id hash.
+email-threading = ["dep:sha2"]
+# F29 — generic time-bucketed dedup cache. In-memory by
+# default; opt-in `dedup-sled` feature persists across
+# process restarts. Lifted from the marketing extension's
+# F25 work — useful for any notification publisher that
+# needs to suppress at-least-once redelivery duplicates.
+dedup = []
+dedup-sled = ["dedup", "dep:sled"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -172,9 +185,13 @@ hmac   = { version = "0.12", optional = true }
 sha2   = { version = "0.10", optional = true }
 subtle = { version = "2",    optional = true }
 base64 = { version = "0.22", optional = true }
+# F29 — sled keyspace for cross-restart notification dedup.
+# Optional; default builds skip it.
+sled   = { version = "0.34", optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "email-threading", "dedup", "dedup-sled"] }
+tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
