@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.3"
+version       = "0.1.4"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -96,6 +96,14 @@ enrichment = ["dep:sqlx", "dep:once_cell"]
 # HTML rewriting don't pull SQLx.
 tracking = ["dep:hmac", "dep:sha2", "dep:subtle", "dep:base64", "dep:regex", "dep:once_cell"]
 tracking-store = ["tracking", "dep:sqlx", "dep:chrono"]
+# M15.23.f — Lead scoring primitives: a `Scorer` trait, a
+# `Score` newtype (0..=100) carrying reason traces, and a
+# `HeuristicScorer` default that composes weighted rules
+# (domain kind, response time, reply length, intent label,
+# signature seniority hint). Pure-rust, no async, no extra
+# deps — every microapp / extension that wants tenant-scoped
+# scoring picks the trait up for free.
+scoring = []
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -152,7 +160,7 @@ subtle = { version = "2",    optional = true }
 base64 = { version = "0.22", optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring"] }
 tokio             = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
