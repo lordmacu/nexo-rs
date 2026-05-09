@@ -20,9 +20,24 @@ name: release-plz
 #
 # Workflow is skipped when the commit message contains `[skip release-plz]`.
 
+# Phase 81.18.c — release-plz disabled on push events. The
+# workspace's path-deps to out-of-workspace sibling repos
+# (`../nexo-rs-plugin-telegram`, `../nexo-rs-plugin-whatsapp`)
+# can't resolve in release-plz's `/tmp/.tmpXXX/` clone — the
+# siblings live in separate GitHub repos that aren't checked
+# out into the tmp dir. release-plz fails on `cargo package
+# --list` for every crate that transitively walks the
+# workspace dep graph.
+#
+# Until that limitation is solved (either by dropping the
+# path-deps entirely after the full crates publish wave
+# `81.18.c.full`, or by an upstream release-plz feature that
+# checks out external path-deps), publish wave proceeds via
+# manual `cargo publish` invocations from the operator's
+# machine. `workflow_dispatch` keeps the workflow available
+# for one-shot runs once the limitation is resolved.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   pull-requests: write
