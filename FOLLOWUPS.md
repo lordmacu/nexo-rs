@@ -270,10 +270,32 @@ fallback flip is the deferred follow-up below (shared with
 telegram).
 
 - **`81.18.b.subprocess-flip`** (shared) — same concern listed
-  under 81.18 above. Multi-account whatsapp piles the same
-  per-spawn env seeding requirement onto the shared fix.
-  Owner: framework. Trigger: when both plugins need the
-  subprocess flip. Status: pending.
+  under 81.18 above. **Telegram side resolved 2026-05-09 with
+  Phase 81.18.b.1 (commit `907d3c7`)** — daemon flipped to
+  per-instance subprocess via `subprocess_plugin_factory_with_env`
+  + synthetic manifest injection. WhatsApp side pending as
+  `81.18.b.2` because the pairing UI requires a
+  `WhatsappPairingProxy` daemon-side type to bridge the
+  subprocess's broker events back to admin RPC; that's a
+  dedicated phase that mustn't break existing pairing
+  workflows. Status: telegram ✅, whatsapp pending.
+
+- **`81.18.b.2.whatsapp-flip`** — same shape as 81.18.b.1 but
+  needs upstream pairing event emission (we own
+  `whatsapp-rs`), `WhatsappPairingProxy` daemon-side cache,
+  typing-presence RPC bridge (or temporary opt-out), and
+  Cloudflare tunnel handoff. ~3-5h dedicated. Status: pending.
+
+- **`81.18.b.e2e-mock-binary`** — the telegram flip ships
+  without a synthetic mock subprocess binary in `tests/`; the
+  e2e_handshake test inside the standalone repo covers the
+  `tool.invoke` wire surface, but the daemon-side flip path
+  (cfg → factory_registry → subprocess spawn) has unit-test
+  coverage only. A mock binary in `proyecto/tests/fixtures/`
+  that responds to JSON-RPC initialize would close the loop
+  for future subprocess flips. Owner: framework. Trigger:
+  before 81.18.b.2 ships so whatsapp can reuse it. Status:
+  pending.
 
 - **`81.19.a.tls-rustls`** — `wa-agent` upstream uses
   `native-tls` (OpenSSL) via its own reqwest dep; this repo's

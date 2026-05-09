@@ -10,9 +10,43 @@ Source: standalone repo at
 [`PHASES.md`](../../../PHASES.md#phase-8118-plugin-telegram-standalone-repo-extraction-shape-b-)
 for the migration notes). The crate ships as a `lib + bin` Shape B
 package: the lib re-exports `TelegramPlugin` for in-process
-consumers (the daemon today, an Android embedded host tomorrow),
-and the bin is the subprocess entrypoint the daemon will spawn
-once Phase 81.18.b lands.
+consumers (an Android embedded host tomorrow), and the bin is
+the subprocess entrypoint the daemon spawns per
+`cfg.plugins.telegram` entry.
+
+## Install (Phase 81.18.b.1 — operator action required)
+
+The daemon stopped constructing `TelegramPlugin` in-tree as of
+Phase 81.18.b.1; it now spawns the standalone subprocess binary
+per cfg entry. Operators with `cfg.plugins.telegram` populated
+**must** install the binary and surface its directory through
+`plugins.discovery.search_paths` before starting the daemon, or
+the discovery walker logs a clear warning and the plugin never
+boots:
+
+```bash
+# Build + install from source
+cargo install --git https://github.com/lordmacu/nexo-plugin-telegram \
+    --tag v0.1.1
+
+# Or download a release tarball (linux-x64 / macos-arm64) from
+#   https://github.com/lordmacu/nexo-plugin-telegram/releases
+```
+
+Then in `agents.yaml`:
+
+```yaml
+plugins:
+  discovery:
+    search_paths:
+      - ~/.cargo/bin   # or wherever you installed the binary
+```
+
+Each `cfg.plugins.telegram[]` entry maps to one subprocess; per-
+instance state (`offset_path`, `media_dir`, `instance` topic
+suffix, bot token) is seeded into the child via
+`NEXO_PLUGIN_TELEGRAM_*` env vars at spawn time so multi-bot
+operators get true process isolation.
 
 ## Topics
 

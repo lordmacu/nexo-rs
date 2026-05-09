@@ -27,6 +27,42 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Changed
 
+- **Telegram subprocess flip — BREAKING CHANGE (Phase 81.18.b.1).**
+  Daemon no longer constructs `TelegramPlugin` in-tree per
+  `cfg.plugins.telegram` entry. It now spawns the standalone
+  `nexo-plugin-telegram` binary as a subprocess per cfg entry,
+  with each child seeded by per-instance env vars
+  (`NEXO_PLUGIN_TELEGRAM_TOKEN`, `_INSTANCE`, `_OFFSET_PATH`,
+  …). Multi-bot operators get true process isolation — one
+  bot crashing doesn't take down the others.
+
+  **Operator action required**: install the
+  `nexo-plugin-telegram` binary (`cargo install --git
+  https://github.com/lordmacu/nexo-plugin-telegram --tag v0.1.1`
+  or download the v0.1.1+ release tarball) and add its
+  directory to `plugins.discovery.search_paths` in
+  `agents.yaml`. Without this, the daemon logs a clear
+  `WARN telegram is configured … but no manifest was found …`
+  and the plugin doesn't boot. See
+  [`docs/src/plugins/telegram.md`](docs/src/plugins/telegram.md#install-phase-8118b1--operator-action-required)
+  for full instructions.
+
+  The flip introduces a synthetic-manifest mechanism in
+  `wire_plugin_registry_with_runtime` (new `extra_plugins`
+  parameter) so the daemon can clone the discovered
+  `telegram` manifest N times with mutated `plugin.id`
+  (`telegram.<inst>`) — the init loop dispatches one
+  factory call per instance against the new
+  `subprocess_plugin_factory_with_env` factory variant
+  (Phase 81.18.b infra commit `6548d43`).
+
+  WhatsApp + email plugins are NOT yet flipped — they keep
+  the in-tree construction pattern. WhatsApp flip
+  (`81.18.b.2`) needs a `WhatsappPairingProxy` daemon-side
+  type to bridge subprocess → admin RPC pairing UI; that's
+  a dedicated phase. Email (`81.19.b`) is probably
+  permanently deferred.
+
 - **WhatsApp plugin extracted to standalone repo (Phase 81.19.a).**
   `nexo-plugin-whatsapp` (the 4 `whatsapp_*` tools + `wa-agent`
   wrapper + Signal Protocol session lifecycle + QR pairing) now
