@@ -3832,7 +3832,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-config"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "humantime-serde",
@@ -4168,7 +4168,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-llm"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",

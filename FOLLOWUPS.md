@@ -386,6 +386,32 @@ telegram).
   first publish; nexo-dispatch-tools is internal CLI glue
   whose publishability needs an explicit go/no-go.
 
+- **`81.18.c.private-dep-blockers-fork-dream-cascade`** —
+  RESOLVED 2026-05-09. Cascade closed in the publish wave
+  driven by `81.19.b.publish-github`. Crates published this
+  wave (10 total):
+    * nexo-config v0.1.5 (factory_type + api_key_secret_id
+      fields on LlmProviderConfig)
+    * nexo-llm v0.1.3 (registry.unregister)
+    * nexo-memory v0.1.3 (SecretGuard) — already shipped
+      in the prior wave (`81.18.c.private-dep-blockers`)
+    * nexo-mcp v0.1.3 (output_schema + structured_content)
+      — already shipped in the prior wave
+    * nexo-core v0.1.2 (cascade — pulled all the above)
+    * nexo-project-tracker v0.1.5 (first publish — Phase
+      67.A PHASES.md / FOLLOWUPS.md tooling)
+    * nexo-dispatch-tools v0.1.5 (first publish — internal
+      CLI glue; explicit go made under "publish wave to
+      unblock fork/dream + email" rationale)
+    * nexo-fork v0.1.5 (first publish — agent fork primitive)
+    * nexo-dream v0.1.5 (first publish — dream loop)
+    * nexo-plugin-email v0.1.2 (the trigger crate)
+  Workspace builds clean against the new crates.io versions;
+  every internal nexo-* dep version pin in
+  `proyecto/crates/{config,core,llm,fork,dream}/Cargo.toml`
+  + the standalone `nexo-rs-plugin-email/Cargo.toml` was
+  bumped in the same commits. Status: ✅ closed.
+
 - **`81.19.a.release-plz-tool-meta-skip`** — RESOLVED 2026-05-09
   by the manual `nexo-tool-meta v0.1.1` publish above. release-plz
   was failing since 2026-05-07 because its diff walker replayed
@@ -494,17 +520,23 @@ telegram).
   declarative. Owner: framework. Trigger: an operator
   asks for the toggle. Status: pending.
 
-- **`81.19.b.publish-github`** — push the local
-  `nexo-rs-plugin-email/` repo to
-  `git@github.com:lordmacu/nexo-plugin-email.git` and
-  publish `nexo-plugin-email v0.1.2` to crates.io once
-  upstream `nexo-microapp-sdk` / `nexo-broker` /
-  `nexo-config` / `nexo-auth` / `nexo-core` / `nexo-llm`
-  / `nexo-resilience` / `nexo-plugin-manifest` are all
-  on crates.io at the pinned versions. Owner: framework.
-  Trigger: workspace publish wave (overlaps with
-  `81.18.c.private-dep-blockers-fork-dream-cascade`).
-  Status: pending.
+- **`81.19.b.publish-github`** — RESOLVED 2026-05-09.
+  Pushed to `git@github.com:lordmacu/nexo-plugin-email.git`
+  + published `nexo-plugin-email v0.1.2` to crates.io. The
+  publish wave that unblocked it bumped:
+    * nexo-config 0.1.4 → 0.1.5 (factory_type +
+      api_key_secret_id fields on LlmProviderConfig)
+    * nexo-llm 0.1.2 → 0.1.3 (registry.unregister)
+    * nexo-memory 0.1.2 → 0.1.3 (SecretGuard)
+    * nexo-mcp 0.1.2 → 0.1.3 (output_schema +
+      structured_content)
+    * nexo-core 0.1.1 → 0.1.2 (cascade)
+    * nexo-project-tracker 0.1.5 (first publish)
+    * nexo-dispatch-tools 0.1.5 (first publish)
+    * nexo-fork 0.1.5 (first publish)
+    * nexo-dream 0.1.5 (first publish)
+  Resolves `81.18.c.private-dep-blockers-fork-dream-cascade`
+  in the same wave (see entry below).
 
 - **`81.19.a.release-workflow-sibling-checkout`** — three
   release-only workflows (`docker.yml`, `release.yml`,
