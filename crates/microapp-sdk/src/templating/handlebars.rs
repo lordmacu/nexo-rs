@@ -87,10 +87,7 @@ pub fn render_handlebars(
         // through one `RenderError` type; the message text
         // distinguishes them.
         let message = e.to_string();
-        if message.contains("Template")
-            || message.contains("parse")
-            || message.contains("syntax")
-        {
+        if message.contains("Template") || message.contains("parse") || message.contains("syntax") {
             HandlebarsRenderError::Parse(message)
         } else {
             HandlebarsRenderError::Render(message)
@@ -146,10 +143,7 @@ mod tests {
             "standard",
         );
         // Missing key — lenient mode treats as falsy.
-        assert_eq!(
-            render_handlebars(tmpl, &json!({})).unwrap(),
-            "standard",
-        );
+        assert_eq!(render_handlebars(tmpl, &json!({})).unwrap(), "standard",);
     }
 
     #[test]
@@ -197,11 +191,8 @@ mod tests {
         // Handlebars escapes `<`, `>`, `&`, `"` by default —
         // operator-authored bodies that get rendered into a
         // mail body don't accidentally inject HTML.
-        let out = render_handlebars(
-            "{{body}}",
-            &json!({ "body": "<script>alert(1)</script>" }),
-        )
-        .unwrap();
+        let out =
+            render_handlebars("{{body}}", &json!({ "body": "<script>alert(1)</script>" })).unwrap();
         assert!(out.contains("&lt;script&gt;"));
         assert!(!out.contains("<script>"));
     }
@@ -211,21 +202,13 @@ mod tests {
         // `{{{body}}}` opt-out of HTML escaping. Operators
         // who need raw HTML must type the explicit form, so
         // the default stays safe.
-        let out = render_handlebars(
-            "{{{body}}}",
-            &json!({ "body": "<b>bold</b>" }),
-        )
-        .unwrap();
+        let out = render_handlebars("{{{body}}}", &json!({ "body": "<b>bold</b>" })).unwrap();
         assert_eq!(out, "<b>bold</b>");
     }
 
     #[test]
     fn missing_key_renders_empty_in_lenient_mode() {
-        let out = render_handlebars(
-            "v={{not.present}}",
-            &json!({}),
-        )
-        .unwrap();
+        let out = render_handlebars("v={{not.present}}", &json!({})).unwrap();
         assert_eq!(out, "v=");
     }
 
@@ -235,10 +218,7 @@ mod tests {
         // operator template reference disk paths if the
         // engine loaded them. We never register any, so
         // `{{> outside}}` fails cleanly.
-        let r = render_handlebars(
-            "{{> some_partial}}",
-            &json!({}),
-        );
+        let r = render_handlebars("{{> some_partial}}", &json!({}));
         assert!(matches!(r, Err(HandlebarsRenderError::Render(_))));
     }
 
@@ -300,11 +280,7 @@ mod tests {
             body: "{{#if formal}}Estimado{{else}}Hola{{/if}} {{name}}".into(),
         };
         assert_eq!(
-            render_snippet(
-                &s,
-                &json!({ "formal": false, "name": "Ana" })
-            )
-            .unwrap(),
+            render_snippet(&s, &json!({ "formal": false, "name": "Ana" })).unwrap(),
             "Hola Ana",
         );
     }

@@ -9,7 +9,10 @@
 //! 1. `Auto-Submitted` (RFC 3834) — explicit auto-reply / OOO bot
 //! 2. `List-Id` / `List-Unsubscribe` (RFC 2369) — mailing list
 //! 3. `Precedence: bulk|junk|list` (RFC 2076) — non-list bulk
-//! 4. `is_self_thread` — bounce-back of our own outbound
+//! 4. `X-Spam-Flag: YES` — upstream spam filter verdict
+//! 5. `Feedback-ID` — ESP mass-mail tracking (RFC 6438)
+//! 6. `X-Mailer` matches known ESP — mass-mail provider signature
+//! 7. `is_self_thread` — bounce-back of our own outbound
 //!
 //! The DSN path (`Phase 48.8 dsn.rs::parse_bounce`) runs *before*
 //! `should_skip` in `drain_pending` so a delivery report still
@@ -27,6 +30,15 @@ pub enum SkipReason {
     ListMail,
     PrecedenceBulk,
     SelfFrom,
+    /// `X-Spam-Flag: YES` (upstream filter such as SpamAssassin
+    /// / Rspamd already classified the message as spam).
+    SpamFlag,
+    /// `Feedback-ID` header present — ESP mass-mail tracking
+    /// (RFC 6438 / Google FBL convention).
+    FeedbackId,
+    /// `X-Mailer` matches a known ESP signature (Mailchimp,
+    /// SendGrid, Mailgun, Marketo, Constant Contact, …).
+    EspMailer,
     /// Set by `drain_pending` after `parse_bounce` returned `Some`.
     /// Never produced by `should_skip` itself.
     DsnInbound,
@@ -39,10 +51,50 @@ impl SkipReason {
             Self::ListMail => "list_mail",
             Self::PrecedenceBulk => "precedence_bulk",
             Self::SelfFrom => "self_from",
+            Self::SpamFlag => "spam_flag",
+            Self::FeedbackId => "feedback_id",
+            Self::EspMailer => "esp_mailer",
             Self::DsnInbound => "dsn_inbound",
         }
     }
 }
+
+/// Substring signatures that flag the `X-Mailer` / `User-Agent`
+/// header as a known mass-mail ESP. Lowercase comparison; any
+/// hit drops the message. Conservative list — only providers
+/// whose presence implies bulk by definition (the same providers
+/// also power transactional mail, but transactional mail almost
+/// always also ships `Feedback-ID` or `List-Unsubscribe` so it's
+/// already covered by the earlier rules).
+const ESP_MAILER_SIGNATURES: &[&str] = &[
+    "mailchimp",
+    "sendgrid",
+    "mailgun",
+    "marketo",
+    "constant contact",
+    "constantcontact",
+    "sendinblue",
+    "brevo",
+    "campaign monitor",
+    "campaignmonitor",
+    "klaviyo",
+    "hubspot",
+    "amazonses",
+    "amazon ses",
+    "mandrill",
+    "postmark",
+    "elasticemail",
+    "elastic email",
+    "getresponse",
+    "activecampaign",
+    "doppleremailer",
+    "mailerlite",
+    "mailjet",
+    "convertkit",
+    "drip",
+    "omnisend",
+    "moosend",
+];
 
 /// Decide whether the worker should skip publishing this inbound.
 /// Returns `None` for messages that should flow normally to the
@@ -74,6 +126,32 @@ pub fn should_skip(
             let p = prec.trim().to_ascii_lowercase();
             if p == "bulk" || p == "junk" || p == "list" {
                 return Some(SkipReason::PrecedenceBulk);
+            }
+        }
+    }
+
+    if cfg.spam_flag {
+        if let Some(v) = meta.headers_extra.get("x-spam-flag") {
+            // Convention: `YES` (any case) means the upstream
+            // filter classified as spam. Some servers emit
+            // `True` / `Y`; treat any non-`no`/`false` value as
+            // a spam verdict to be safe.
+            let v = v.trim().to_ascii_lowercase();
+            if v == "yes" || v == "true" || v == "y" {
+                return Some(SkipReason::SpamFlag);
+            }
+        }
+    }
+
+    if cfg.feedback_id && meta.headers_extra.contains_key("feedback-id") {
+        return Some(SkipReason::FeedbackId);
+    }
+
+    if cfg.esp_mailer {
+        if let Some(mailer) = meta.headers_extra.get("x-mailer") {
+            let m = mailer.to_ascii_lowercase();
+            if ESP_MAILER_SIGNATURES.iter().any(|sig| m.contains(sig)) {
+                return Some(SkipReason::EspMailer);
             }
         }
     }
@@ -190,12 +268,78 @@ mod tests {
         m.headers_extra
             .insert("auto-submitted".into(), "auto-replied".into());
         m.headers_extra.insert("list-id".into(), "<l@x>".into());
+        m.headers_extra.insert("x-spam-flag".into(), "YES".into());
+        m.headers_extra
+            .insert("feedback-id".into(), "fbl:abc".into());
+        m.headers_extra
+            .insert("x-mailer".into(), "Mailchimp Mailer".into());
         let cfg = LoopPreventionCfg {
             auto_submitted: false,
             list_headers: false,
             self_from: false,
+            spam_flag: false,
+            feedback_id: false,
+            esp_mailer: false,
         };
         assert_eq!(should_skip(&m, "ops@x", &cfg), None);
+    }
+
+    #[test]
+    fn x_spam_flag_yes_skips() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra.insert("x-spam-flag".into(), "YES".into());
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::SpamFlag)
+        );
+    }
+
+    #[test]
+    fn x_spam_flag_no_does_not_skip() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra.insert("x-spam-flag".into(), "NO".into());
+        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), None);
+    }
+
+    #[test]
+    fn feedback_id_skips() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra
+            .insert("feedback-id".into(), "1:campaign:provider".into());
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::FeedbackId)
+        );
+    }
+
+    #[test]
+    fn x_mailer_mailchimp_skips() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra
+            .insert("x-mailer".into(), "Mailchimp Mailer - **CID**".into());
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::EspMailer)
+        );
+    }
+
+    #[test]
+    fn x_mailer_sendgrid_skips_case_insensitive() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra
+            .insert("x-mailer".into(), "SENDGRID/1.0".into());
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::EspMailer)
+        );
+    }
+
+    #[test]
+    fn x_mailer_human_client_does_not_skip() {
+        let mut m = meta_from("alice@x");
+        m.headers_extra
+            .insert("x-mailer".into(), "Apple Mail (2.3654.120.0.1.13)".into());
+        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), None);
     }
 
     #[test]

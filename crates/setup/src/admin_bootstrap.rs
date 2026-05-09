@@ -1134,6 +1134,7 @@ mod tests {
                 bind: "0.0.0.0".into(),
                 token_env: "T".into(),
                 health_path: "/healthz".into(),
+                extra_env_passthrough: Vec::new(),
             },
         );
         let dir = tempfile::tempdir().unwrap();
@@ -1191,6 +1192,7 @@ mod tests {
                 bind: "0.0.0.0".into(),
                 token_env: "T".into(),
                 health_path: "/healthz".into(),
+                extra_env_passthrough: Vec::new(),
             },
         );
         let dir = tempfile::tempdir().unwrap();
@@ -1242,6 +1244,7 @@ mod tests {
                 bind: "127.0.0.1".into(),
                 token_env: "T".into(),
                 health_path: "/healthz".into(),
+                extra_env_passthrough: Vec::new(),
             },
         );
         let dir = tempfile::tempdir().unwrap();

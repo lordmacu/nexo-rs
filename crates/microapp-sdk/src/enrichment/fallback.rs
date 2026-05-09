@@ -44,8 +44,10 @@ pub trait EnrichmentSource: Send + Sync {
     /// chain continues), `Ok(Some(result))` for a hit (chain
     /// stops if confidence ≥ threshold), `Err(_)` for a hard
     /// failure (chain logs + continues).
-    async fn extract(&self, input: &EnrichmentInput<'_>)
-        -> Result<Option<EnrichmentResult>, EnrichmentSourceError>;
+    async fn extract(
+        &self,
+        input: &EnrichmentInput<'_>,
+    ) -> Result<Option<EnrichmentResult>, EnrichmentSourceError>;
 }
 
 /// Cost classes — purely informational. The chain doesn't
@@ -81,10 +83,7 @@ pub enum EnrichmentSourceError {
     /// LLM timeout, paid-API quota). `source_name` avoids the
     /// thiserror `#[source]` attribute keyword collision.
     #[error("source {source_name:?} unavailable: {reason}")]
-    SourceUnavailable {
-        source_name: String,
-        reason: String,
-    },
+    SourceUnavailable { source_name: String, reason: String },
     /// Source's input failed validation (empty email, etc.).
     #[error("invalid input: {0}")]
     InvalidInput(String),
@@ -103,10 +102,7 @@ impl FallbackChain {
     /// Build a chain from an ordered source list + a confidence
     /// threshold (typical: 0.7 — operator confirms anything
     /// below).
-    pub fn new(
-        sources: Vec<Box<dyn EnrichmentSource>>,
-        confidence_threshold: f32,
-    ) -> Self {
+    pub fn new(sources: Vec<Box<dyn EnrichmentSource>>, confidence_threshold: f32) -> Self {
         Self {
             sources,
             confidence_threshold,
@@ -237,7 +233,10 @@ mod tests {
         );
         let out = chain.run(&input()).await;
         match out {
-            FallbackOutcome::Hit { result, source_index } => {
+            FallbackOutcome::Hit {
+                result,
+                source_index,
+            } => {
                 assert_eq!(result.source, "signature");
                 assert_eq!(source_index, 1);
             }
@@ -256,7 +255,10 @@ mod tests {
         );
         let out = chain.run(&input()).await;
         match out {
-            FallbackOutcome::Hit { result, source_index } => {
+            FallbackOutcome::Hit {
+                result,
+                source_index,
+            } => {
                 assert_eq!(result.source, "llm");
                 assert_eq!(source_index, 1);
             }
@@ -274,7 +276,9 @@ mod tests {
             0.7,
         );
         let out = chain.run(&input()).await;
-        assert!(matches!(out, FallbackOutcome::AllExhausted { ref attempts } if attempts.is_empty()));
+        assert!(
+            matches!(out, FallbackOutcome::AllExhausted { ref attempts } if attempts.is_empty())
+        );
     }
 
     #[tokio::test]
@@ -307,7 +311,13 @@ mod tests {
             0.7,
         );
         let out = chain.run(&input()).await;
-        assert!(matches!(out, FallbackOutcome::Hit { source_index: 1, .. }));
+        assert!(matches!(
+            out,
+            FallbackOutcome::Hit {
+                source_index: 1,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]

@@ -25,10 +25,9 @@ pub use jid::{normalize_jid, parse_jid, same_user, JidParseError, ParsedJid};
 
 pub use error::IdentityError;
 pub use store::{
-    open_pool, CompanyStore, LidPnMapping, LidPnMappingStore, PersonEmail,
-    PersonEmailStore, PersonPhone, PersonPhoneStore, PersonStore,
-    SqliteCompanyStore, SqliteLidPnMappingStore, SqlitePersonEmailStore,
-    SqlitePersonPhoneStore, SqlitePersonStore,
+    open_pool, CompanyStore, LidPnMapping, LidPnMappingStore, PersonEmail, PersonEmailStore,
+    PersonPhone, PersonPhoneStore, PersonStore, SqliteCompanyStore, SqliteLidPnMappingStore,
+    SqlitePersonEmailStore, SqlitePersonPhoneStore, SqlitePersonStore,
 };
 
 // Re-export the wire types so consumers don't need to depend

@@ -56,11 +56,7 @@ pub trait EnrichmentCache: Send + Sync {
     /// Force a domain re-fetch on next `get` by removing the
     /// row. Useful for operator-triggered "refresh enrichment"
     /// actions.
-    async fn invalidate(
-        &self,
-        tenant_id: &str,
-        domain: &str,
-    ) -> Result<bool, CacheError>;
+    async fn invalidate(&self, tenant_id: &str, domain: &str) -> Result<bool, CacheError>;
 
     /// Wipe every cached row for a tenant (called on tenant
     /// deletion).
@@ -168,18 +164,12 @@ impl EnrichmentCache for SqliteEnrichmentCache {
         })
     }
 
-    async fn invalidate(
-        &self,
-        tenant_id: &str,
-        domain: &str,
-    ) -> Result<bool, CacheError> {
-        let r = sqlx::query(
-            "DELETE FROM enrichment_cache WHERE tenant_id = ? AND domain = ?",
-        )
-        .bind(tenant_id)
-        .bind(domain.to_ascii_lowercase())
-        .execute(&self.pool)
-        .await?;
+    async fn invalidate(&self, tenant_id: &str, domain: &str) -> Result<bool, CacheError> {
+        let r = sqlx::query("DELETE FROM enrichment_cache WHERE tenant_id = ? AND domain = ?")
+            .bind(tenant_id)
+            .bind(domain.to_ascii_lowercase())
+            .execute(&self.pool)
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -250,7 +240,9 @@ mod tests {
     #[tokio::test]
     async fn expired_row_returns_none() {
         let c = fresh().await;
-        c.put("acme", "globex.io", "{}", 1_000, None, 0).await.unwrap();
+        c.put("acme", "globex.io", "{}", 1_000, None, 0)
+            .await
+            .unwrap();
         let miss = c.get("acme", "globex.io", 5_000).await.unwrap();
         assert!(miss.is_none());
     }
@@ -272,7 +264,9 @@ mod tests {
     #[tokio::test]
     async fn invalidate_removes_row() {
         let c = fresh().await;
-        c.put("acme", "globex.io", "{}", 60_000, None, 0).await.unwrap();
+        c.put("acme", "globex.io", "{}", 60_000, None, 0)
+            .await
+            .unwrap();
         let removed = c.invalidate("acme", "globex.io").await.unwrap();
         assert!(removed);
         let miss = c.get("acme", "globex.io", 0).await.unwrap();
@@ -284,7 +278,9 @@ mod tests {
         let c = fresh().await;
         c.put("acme", "a.io", "{}", 60_000, None, 0).await.unwrap();
         c.put("acme", "b.io", "{}", 60_000, None, 0).await.unwrap();
-        c.put("globex", "a.io", "{}", 60_000, None, 0).await.unwrap();
+        c.put("globex", "a.io", "{}", 60_000, None, 0)
+            .await
+            .unwrap();
         let n = c.delete_by_tenant("acme").await.unwrap();
         assert_eq!(n, 2);
         let globex = c.get("globex", "a.io", 0).await.unwrap();
@@ -294,7 +290,9 @@ mod tests {
     #[tokio::test]
     async fn put_normalises_domain_case() {
         let c = fresh().await;
-        c.put("acme", "Globex.IO", "{}", 60_000, None, 0).await.unwrap();
+        c.put("acme", "Globex.IO", "{}", 60_000, None, 0)
+            .await
+            .unwrap();
         let got = c.get("acme", "globex.io", 0).await.unwrap();
         assert!(got.is_some());
     }

@@ -30,6 +30,13 @@ const HEADERS_EXTRA_WHITELIST: &[&str] = &[
     "list-unsubscribe-post",
     "precedence",
     "x-auto-response-suppress",
+    // ── Spam / mass-mail signals (Phase 48.8 extension) ─────
+    "x-spam-flag",
+    "x-spam-status",
+    "feedback-id",
+    "x-mailer",
+    "x-campaignid",
+    "x-mailchimp-campaign",
 ];
 
 pub struct ParseConfig {

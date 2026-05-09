@@ -310,6 +310,33 @@ pub struct Seller {
     /// extension's existing `${ENV_VAR}` posture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_credential: Option<SmtpCredential>,
+    /// M15.21 (denormalized) — bound agent's `system_prompt`, copied
+    /// at seller-save time from the daemon's `agents/get` response.
+    /// Lets the AI draft generator build a faithful operator
+    /// IDENTITY/SOUL/USER prompt without an admin-RPC round-trip per
+    /// inbound email. `None` = no agent bound (or operator-skipped).
+    /// Stays in sync via the microapp's `stamp_agent_context_on_sellers`
+    /// PUT handler — manual edits to the agent surface a re-save
+    /// hint in the seller form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// M15.21 — denormalized provider id (e.g. `deepseek-19c7`)
+    /// pulled from `agents/get`'s `model.provider`. Used by the
+    /// draft generator to call `nexo/admin/llm/complete` without
+    /// resolving the agent each time. Pairs with `model_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_provider: Option<String>,
+    /// M15.21 — denormalized model id (e.g. `deepseek-v4-flash`).
+    /// `model_override` (above) takes precedence when set; this is
+    /// the agent's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// M15.21 (template fallback) — handlebars draft template for
+    /// the legacy `TemplateDraftGenerator`. Only consulted when
+    /// `system_prompt` is empty (no agent bound) — otherwise
+    /// `AgentDraftGenerator` runs LLM completion directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_template: Option<String>,
 }
 
 /// M15.16 — operator-registered outbound SMTP credentials per
@@ -378,13 +405,8 @@ fn default_smtp_starttls() -> bool {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NotificationChannel {
     Disabled,
-    Whatsapp {
-        instance: String,
-    },
-    Email {
-        from_instance: String,
-        to: String,
-    },
+    Whatsapp { instance: String },
+    Email { from_instance: String, to: String },
 }
 
 impl Default for NotificationChannel {
@@ -637,6 +659,12 @@ pub struct Lead {
     /// readable strings; surfaced in the lead context panel
     /// "why this lead?" section.
     pub why_routed: Vec<String>,
+    /// M15.21.notes — free-form operator notes, edited from the
+    /// lead context panel. `None` = never written; empty string
+    /// = explicitly cleared. Persisted as the `operator_notes`
+    /// column on the lead row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -877,6 +905,7 @@ mod tests {
             next_check_at_ms: Some(1_700_259_200_000),
             followup_attempts: 0,
             why_routed: vec!["score 73 >= 70".into()],
+            operator_notes: None,
         };
         roundtrip(&l);
     }
@@ -971,6 +1000,10 @@ mod tests {
             model_override: None,
             notification_settings: None,
             smtp_credential: None,
+            system_prompt: None,
+            model_provider: None,
+            model_id: None,
+            draft_template: None,
         };
         roundtrip(&v);
         // Serialised JSON should not include the optional
@@ -1001,6 +1034,10 @@ mod tests {
             }),
             notification_settings: None,
             smtp_credential: None,
+            system_prompt: None,
+            model_provider: None,
+            model_id: None,
+            draft_template: None,
         };
         roundtrip(&v);
         let s = serde_json::to_string(&v).unwrap();

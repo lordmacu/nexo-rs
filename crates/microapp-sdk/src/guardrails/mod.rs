@@ -37,9 +37,7 @@ use thiserror::Error;
 
 /// What to do when a guardrail rule fires. Caller's draft
 /// pipeline branches on this.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardrailAction {
     /// Demote autonomous-reply mode to draft-mode for this
@@ -127,12 +125,10 @@ impl GuardrailSet {
                 } else {
                     format!("(?i){raw}")
                 };
-                let re = Regex::new(&prepared).map_err(|e| {
-                    GuardrailLoadError::InvalidPattern {
-                        rule_id: rule.id.clone(),
-                        index: i,
-                        error: e.to_string(),
-                    }
+                let re = Regex::new(&prepared).map_err(|e| GuardrailLoadError::InvalidPattern {
+                    rule_id: rule.id.clone(),
+                    index: i,
+                    error: e.to_string(),
                 })?;
                 pats.push(re);
             }
@@ -233,10 +229,7 @@ fn extract_excerpt(text: &str, start: usize, end: usize) -> String {
     }
     let prefix = if start_idx > 0 { "…" } else { "" };
     let suffix = if end_idx < chars.len() { "…" } else { "" };
-    let body: String = chars[start_idx..end_idx]
-        .iter()
-        .map(|(_, c)| *c)
-        .collect();
+    let body: String = chars[start_idx..end_idx].iter().map(|(_, c)| *c).collect();
     format!("{prefix}{body}{suffix}")
 }
 
@@ -279,11 +272,7 @@ mod tests {
 
     #[test]
     fn build_rejects_empty_pattern_list() {
-        let r = GuardrailSet::build(vec![rule(
-            "x",
-            GuardrailAction::Block,
-            &[],
-        )]);
+        let r = GuardrailSet::build(vec![rule("x", GuardrailAction::Block, &[])]);
         assert!(matches!(r, Err(GuardrailLoadError::EmptyRule(_))));
     }
 
@@ -298,11 +287,7 @@ mod tests {
 
     #[test]
     fn build_rejects_invalid_regex() {
-        let r = GuardrailSet::build(vec![rule(
-            "x",
-            GuardrailAction::Block,
-            &["[unclosed"],
-        )]);
+        let r = GuardrailSet::build(vec![rule("x", GuardrailAction::Block, &["[unclosed"])]);
         assert!(matches!(r, Err(GuardrailLoadError::InvalidPattern { .. })));
     }
 

@@ -107,10 +107,7 @@ mod tests {
 
     #[test]
     fn template_renders_dotted_paths() {
-        let t = template(
-            "welcome",
-            "Hola {{person.name}}, soy {{seller.name}}.",
-        );
+        let t = template("welcome", "Hola {{person.name}}, soy {{seller.name}}.");
         let ctx = json!({
             "person": { "name": "Juan" },
             "seller": { "name": "Pedro" }
@@ -194,10 +191,7 @@ mod tests {
         let ctx = json!({ "person": { "name": "Ana" } });
         let out = render(&t, &ctx);
         // Two `<missing>` placeholders flank the literal `HI`.
-        assert_eq!(
-            out,
-            format!("{m}HI{m}", m = MISSING_PLACEHOLDER),
-        );
+        assert_eq!(out, format!("{m}HI{m}", m = MISSING_PLACEHOLDER),);
         // Helper-style output (e.g. Handlebars conditional
         // suppressing the literal because the test condition
         // was true) would have produced just `HI` or `<empty>`.

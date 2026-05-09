@@ -181,6 +181,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
     use crate::agent::mcp_router_tool::{ListMcpResourcesTool, ReadMcpResourceTool};
     use crate::agent::memory_checkpoint_tool::MemoryCheckpointTool;
     use crate::agent::memory_history_tool::MemoryHistoryTool;
+    use crate::agent::memory_snapshot_tool::MemorySnapshotTool;
     use crate::agent::notebook_edit_tool::NotebookEditTool;
     use crate::agent::plan_mode_tool::{EnterPlanModeTool, ExitPlanModeTool, PlanModeResolveTool};
     use crate::agent::synthetic_output_tool::SyntheticOutputTool;
@@ -319,6 +320,15 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
             ),
             None => BootResult::SkippedInfraMissing {
                 handle: "memory_git",
+            },
+        },
+        "memory_snapshot" => match ctx.memory_snapshotter.as_ref() {
+            Some(s) => BootResult::Registered(
+                MemorySnapshotTool::tool_def(),
+                Arc::new(MemorySnapshotTool::new(Arc::clone(s))),
+            ),
+            None => BootResult::SkippedInfraMissing {
+                handle: "memory_snapshotter",
             },
         },
 

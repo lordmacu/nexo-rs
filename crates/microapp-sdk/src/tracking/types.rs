@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Convention: caller stamps a UUIDv4. Format is opaque to the
 /// SDK — `&str` is the single source of truth. Don't guess
 /// format from the bytes; use the accessor.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MsgId(pub String);
 
 impl MsgId {
@@ -41,9 +39,7 @@ impl std::fmt::Display for MsgId {
 /// stable across the message's lifetime so the ingest counter
 /// converges (one row per `(msg_id, link_id)` regardless of
 /// how many times the operator forwards the email).
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LinkId(pub String);
 
 impl LinkId {
@@ -152,10 +148,7 @@ mod tests {
     #[test]
     fn pixel_gif_is_well_formed() {
         // GIF87a / GIF89a magic.
-        assert!(
-            PIXEL_GIF_BYTES.starts_with(b"GIF89a")
-                || PIXEL_GIF_BYTES.starts_with(b"GIF87a"),
-        );
+        assert!(PIXEL_GIF_BYTES.starts_with(b"GIF89a") || PIXEL_GIF_BYTES.starts_with(b"GIF87a"),);
         // Every GIF ends with the trailer byte.
         assert_eq!(PIXEL_GIF_BYTES.last().copied(), Some(0x3B));
         // Sanity bound — a real 1×1 transparent GIF is < 100 B.

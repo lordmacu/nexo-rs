@@ -125,12 +125,7 @@ impl TrackingTokenSigner {
 
     /// Sign a `(tenant_id, msg_id, link_id)` triple — used by
     /// the click redirector URL.
-    pub fn sign_click(
-        &self,
-        tenant_id: &str,
-        msg_id: &MsgId,
-        link_id: &LinkId,
-    ) -> TrackingToken {
+    pub fn sign_click(&self, tenant_id: &str, msg_id: &MsgId, link_id: &LinkId) -> TrackingToken {
         self.sign(tenant_id, msg_id, Some(link_id))
     }
 
@@ -161,12 +156,7 @@ impl TrackingTokenSigner {
         }
     }
 
-    fn sign(
-        &self,
-        tenant_id: &str,
-        msg_id: &MsgId,
-        link_id: Option<&LinkId>,
-    ) -> TrackingToken {
+    fn sign(&self, tenant_id: &str, msg_id: &MsgId, link_id: Option<&LinkId>) -> TrackingToken {
         let tag = self.compute_tag(tenant_id, msg_id, link_id);
         TrackingToken(URL_SAFE_NO_PAD.encode(tag))
     }
@@ -177,8 +167,8 @@ impl TrackingTokenSigner {
         msg_id: &MsgId,
         link_id: Option<&LinkId>,
     ) -> [u8; TAG_LEN] {
-        let mut mac = HmacSha256::new_from_slice(&self.secret)
-            .expect("HmacSha256 accepts any key length");
+        let mut mac =
+            HmacSha256::new_from_slice(&self.secret).expect("HmacSha256 accepts any key length");
         mac.update(&[VERSION]);
         mac.update(tenant_id.as_bytes());
         mac.update(b"\x00");

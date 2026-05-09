@@ -132,11 +132,9 @@ pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<Stri
 async fn decode_to_pcm_mono(path: &Path, cfg: &TranscribeConfig) -> Result<Vec<u8>> {
     let bytes = tokio::fs::read(path).await?;
     let target_rate = cfg.target_sample_rate;
-    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        decode_ogg_opus(&bytes, target_rate)
-    })
-    .await
-    .map_err(|e| SttError::Decode(format!("decode join: {e}")))?
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> { decode_ogg_opus(&bytes, target_rate) })
+        .await
+        .map_err(|e| SttError::Decode(format!("decode join: {e}")))?
 }
 
 /// Demux an ogg container, decode opus packets with `opus-wave`,
@@ -213,7 +211,12 @@ fn decode_ogg_opus(bytes: &[u8], target_rate: u32) -> Result<Vec<u8>> {
         .map_err(|e| SttError::Decode(format!("ogg packet: {e}")))?
     {
         let n = decoder
-            .decode_float(Some(&packet.data), &mut buf, max_frame_samples as i32, false)
+            .decode_float(
+                Some(&packet.data),
+                &mut buf,
+                max_frame_samples as i32,
+                false,
+            )
             .map_err(|e| SttError::Decode(format!("opus decode: {e:?}")))?;
         let n = n as usize;
         if n == 0 {

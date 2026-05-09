@@ -938,10 +938,7 @@ impl PluginAdapter {
     /// dispatch loop prefers the context-aware variant. Tests
     /// + linters can detect the latent bug; runtime accepts
     /// both for forward / backward migration ergonomics.
-    pub fn on_tool_with_context<H: ToolHandlerWithContext>(
-        mut self,
-        handler: H,
-    ) -> Self {
+    pub fn on_tool_with_context<H: ToolHandlerWithContext>(mut self, handler: H) -> Self {
         self.tool_handler_with_context = Some(Arc::new(handler));
         self
     }
@@ -1623,9 +1620,7 @@ min_nexo_version = ">=0.1.0"
         // the builder doc-comment.
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_tool(
-                |_inv: ToolInvocation| async move { Ok(serde_json::json!({"path": "plain"})) },
-            )
+            .on_tool(|_inv: ToolInvocation| async move { Ok(serde_json::json!({"path": "plain"})) })
             .on_tool_with_context(|_inv, _ctx| async move {
                 Ok(serde_json::json!({"path": "with_context"}))
             });

@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use nexo_tool_meta::marketing::{
-    AssignTarget, DomainKind, RoutingRule, RulePredicate, RuleSet, TenantIdRef, SellerId,
+    AssignTarget, DomainKind, RoutingRule, RulePredicate, RuleSet, SellerId, TenantIdRef,
 };
 
 /// Per-call evaluation context. Caller fills the fields they
@@ -37,9 +37,7 @@ pub enum RoutingError {
     /// set's tenant scope. Defense-in-depth — rule sets are
     /// already loaded per tenant; this catches a bug where a
     /// caller hands tenant A's set + tenant B's match context.
-    #[error(
-        "tenant mismatch: rule set scoped to {expected:?}, dispatcher called with {got:?}"
-    )]
+    #[error("tenant mismatch: rule set scoped to {expected:?}, dispatcher called with {got:?}")]
     TenantMismatch {
         expected: TenantIdRef,
         got: TenantIdRef,
@@ -116,9 +114,9 @@ fn predicate_matches(p: &RulePredicate, ctx: &MatchContext<'_>) -> bool {
         RulePredicate::SenderEmailMatches { pattern } => {
             ctx.sender_email.map_or(false, |e| glob_match(pattern, e))
         }
-        RulePredicate::CompanyIndustry { value } => {
-            ctx.company_industry.map_or(false, |i| i.eq_ignore_ascii_case(value))
-        }
+        RulePredicate::CompanyIndustry { value } => ctx
+            .company_industry
+            .map_or(false, |i| i.eq_ignore_ascii_case(value)),
         RulePredicate::PersonHasTag { tag } => ctx.person_tags.iter().any(|t| t == tag),
         RulePredicate::ScoreGte { score } => ctx.score.map_or(false, |s| s >= *score),
         RulePredicate::BodyContains { needle } => ctx
@@ -183,7 +181,7 @@ fn glob_match(pattern: &str, value: &str) -> bool {
 mod tests {
     use super::*;
     use nexo_tool_meta::marketing::{
-        AssignTarget, RoutingRule, RulePredicate, RuleSet, TenantIdRef, SellerId,
+        AssignTarget, RoutingRule, RulePredicate, RuleSet, SellerId, TenantIdRef,
     };
 
     fn rs(tenant: &str, rules: Vec<RoutingRule>, default: AssignTarget) -> RuleSet {
@@ -223,7 +221,9 @@ mod tests {
                 rule(
                     "default-rule",
                     vec![RulePredicate::ScoreGte { score: 50 }],
-                    AssignTarget::Seller { id: seller("pedro") },
+                    AssignTarget::Seller {
+                        id: seller("pedro"),
+                    },
                 ),
             ],
             AssignTarget::Drop,
@@ -316,7 +316,9 @@ mod tests {
             vec![rule(
                 "warm",
                 vec![RulePredicate::ScoreGte { score: 70 }],
-                AssignTarget::Seller { id: seller("pedro") },
+                AssignTarget::Seller {
+                    id: seller("pedro"),
+                },
             )],
             AssignTarget::Drop,
         );
@@ -361,10 +363,7 @@ mod tests {
         let pool = vec![seller("a"), seller("b"), seller("c")];
         assert_eq!(Dispatcher::round_robin_pick(&pool, 0).unwrap().0, "a");
         assert_eq!(Dispatcher::round_robin_pick(&pool, 4).unwrap().0, "b");
-        assert_eq!(
-            Dispatcher::round_robin_pick(&[] as &[SellerId], 0),
-            None
-        );
+        assert_eq!(Dispatcher::round_robin_pick(&[] as &[SellerId], 0), None);
     }
 
     #[test]

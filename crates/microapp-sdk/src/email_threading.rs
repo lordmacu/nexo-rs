@@ -35,8 +35,21 @@ use sha2::{Digest, Sha256};
 /// prefixes match verbatim (operators rarely localize subjects
 /// beyond the prefix itself).
 const REPLY_PREFIXES: &[&str] = &[
-    "re", "fwd", "fw", "rv", "rsv", "rif", "tr", "ant", "aw",
-    "antwort", "antw", "encaminhar", "encam", "回复", "答复",
+    "re",
+    "fwd",
+    "fw",
+    "rv",
+    "rsv",
+    "rif",
+    "tr",
+    "ant",
+    "aw",
+    "antwort",
+    "antw",
+    "encaminhar",
+    "encam",
+    "回复",
+    "答复",
 ];
 
 /// Strip every leading reply / forward prefix from `subject`,
@@ -197,15 +210,15 @@ mod tests {
     #[test]
     fn normalize_does_not_strip_word_starting_with_re() {
         // `Reservation` is not a reply prefix — strip nothing.
-        assert_eq!(normalize_subject("Reservation: Confirmed"), "Reservation: Confirmed");
+        assert_eq!(
+            normalize_subject("Reservation: Confirmed"),
+            "Reservation: Confirmed"
+        );
     }
 
     #[test]
     fn normalize_preserves_internal_whitespace() {
-        assert_eq!(
-            normalize_subject("Re:    Hola    mundo"),
-            "Hola    mundo",
-        );
+        assert_eq!(normalize_subject("Re:    Hola    mundo"), "Hola    mundo",);
     }
 
     #[test]

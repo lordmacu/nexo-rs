@@ -26,7 +26,13 @@ use crate::sandbox::{
     SandboxSection, SANDBOX_DENYLIST_HOST_PATHS, SANDBOX_STATE_DIR_TOKEN,
 };
 
-const ID_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
+// Phase 81.13 — id regex bumped from 32 to 64 chars in 82.15.bx
+// to admit longer multi-segment tool names that legitimate plugins
+// use (e.g. `marketing_lead_detect_meeting_intent`, 36 chars).
+// `^[a-z][a-z0-9_]{0,63}$` matches the plugin-id regex in
+// `id_regex.rs` so `[plugin.extends].tools` accepts every name a
+// tool defs author can produce without surprise truncation.
+const ID_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,63}$";
 const CHANNEL_KIND_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
 
 fn id_regex() -> &'static Regex {
@@ -192,10 +198,10 @@ fn validate_id(id: &str, errors: &mut Vec<ManifestError>) {
             "must not start with a digit"
         } else if id.chars().any(|c| c.is_ascii_uppercase()) {
             "uppercase letters not allowed; use lowercase + digits + underscore"
-        } else if id.len() > 32 {
-            "max 32 characters"
+        } else if id.len() > 64 {
+            "max 64 characters"
         } else {
-            "must match ^[a-z][a-z0-9_]{0,31}$"
+            "must match ^[a-z][a-z0-9_]{0,63}$"
         };
         errors.push(ManifestError::IdInvalid {
             id: id.to_string(),
@@ -253,7 +259,7 @@ fn validate_extends(extends: &ExtendsSection, errors: &mut Vec<ManifestError>) {
                 errors.push(ManifestError::ExtendsIdInvalid {
                     section,
                     id: id.clone(),
-                    reason: "must match ^[a-z][a-z0-9_]{0,31}$",
+                    reason: "must match ^[a-z][a-z0-9_]{0,63}$",
                 });
                 continue;
             }
@@ -459,7 +465,11 @@ min_nexo_version = ">=0.1.0"
 
     #[test]
     fn reject_invalid_id_too_long() {
-        let long = "a".repeat(40);
+        // 65 chars — one over the new 64-char ceiling bumped in
+        // 82.15.bx for multi-segment tool names. 40 chars used
+        // to be invalid under the old 32-char ceiling but is now
+        // accepted, so the regression target moves with it.
+        let long = "a".repeat(65);
         let toml =
             base_manifest_toml().replace(r#"id = "marketing""#, &format!(r#"id = "{long}""#));
         let m = parse(&toml);

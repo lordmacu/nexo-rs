@@ -194,11 +194,7 @@ impl StdioRuntime {
             // agent-creator forwarding to the marketing
             // extension's loopback admin).
             for name in &http.extra_env_passthrough {
-                if !opts
-                    .env_passthrough_allowlist
-                    .iter()
-                    .any(|n| n == name)
-                {
+                if !opts.env_passthrough_allowlist.iter().any(|n| n == name) {
                     opts.env_passthrough_allowlist.push(name.clone());
                 }
             }

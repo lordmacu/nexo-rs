@@ -27,8 +27,8 @@ use serde::Deserialize;
 
 use crate::error::ManifestError;
 use crate::manifest::{
-    AdminCapabilities, Capabilities, EntrypointSection, HttpServerCapability, MetaSection,
-    PluginManifest, PluginSection,
+    AdminCapabilities, BrokerCapability, Capabilities, EntrypointSection, HttpServerCapability,
+    MetaSection, PluginManifest, PluginSection,
 };
 
 // ── v1 legacy struct mirrors ────────────────────────────────────
@@ -107,6 +107,20 @@ struct LegacyV1Capabilities {
     /// v2 [`HttpServerCapability`].
     #[serde(default)]
     http_server: Option<LegacyV1HttpServerCapability>,
+    /// Phase 82.15.bx — broker subscribe/publish allowlist. Field-
+    /// for-field identical to v2 [`BrokerCapability`]; the migrator
+    /// passes it through without dropping.
+    #[serde(default)]
+    broker: Option<LegacyV1BrokerCapability>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV1BrokerCapability {
+    #[serde(default)]
+    subscribe: Vec<String>,
+    #[serde(default)]
+    publish: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -127,6 +141,11 @@ struct LegacyV1HttpServerCapability {
     token_env: String,
     #[serde(default = "default_legacy_health_path")]
     health_path: String,
+    /// Phase 23fc656 — operator-stamped env keys passed through
+    /// to the spawned binary verbatim. Field-for-field identical
+    /// to v2 [`HttpServerCapability::extra_env_passthrough`].
+    #[serde(default)]
+    extra_env_passthrough: Vec<String>,
 }
 
 fn default_legacy_http_bind() -> String {
@@ -232,10 +251,17 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             bind: h.bind,
             token_env: h.token_env,
             health_path: h.health_path,
-            // v1 manifests pre-date the field; default to an
-            // empty allowlist. Microapps that need extra
-            // passthrough env vars opt into v2.
-            extra_env_passthrough: Vec::new(),
+            extra_env_passthrough: h.extra_env_passthrough,
+        });
+
+    // Phase 82.15.bx — broker capability passes through verbatim.
+    let broker = legacy
+        .capabilities
+        .broker
+        .filter(|b| !b.subscribe.is_empty() || !b.publish.is_empty())
+        .map(|b| BrokerCapability {
+            subscribe: b.subscribe,
+            publish: b.publish,
         });
 
     // Capabilities.tools/hooks/channels/providers/pollers — these
@@ -302,6 +328,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             admin,
             http_server,
             skills: Vec::new(),
+            broker,
         },
         tools: Default::default(),
         advisors: Default::default(),

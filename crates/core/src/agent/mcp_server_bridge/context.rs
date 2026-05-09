@@ -13,6 +13,7 @@ use nexo_broker::AnyBroker;
 use nexo_lsp::LspManager;
 use nexo_mcp::SessionMcpRuntime;
 use nexo_memory::LongTermMemory;
+use nexo_memory_snapshot::MemorySnapshotter;
 use nexo_taskflow::FlowManager;
 use nexo_team_store::TeamStore;
 use nexo_web_search::WebSearchRouter;
@@ -51,6 +52,10 @@ pub struct McpServerBootContext {
     /// (read-only). The mutating Team tools also need a
     /// `TeamMessageRouter`; until then they stay Deferred.
     pub team_store: Option<Arc<dyn TeamStore>>,
+    /// Memory-snapshot driver. Required by `memory_snapshot` —
+    /// boots a `LocalFsSnapshotter` (or any other impl) from the
+    /// daemon's `<state_root>/snapshots/` layout.
+    pub memory_snapshotter: Option<Arc<dyn MemorySnapshotter>>,
     /// Phase 79.M.c.full — Config self-edit handles. Wired only
     /// when the `config-self-edit` Cargo feature is enabled.
     /// Compile-time gate keeps the trait objects out of the type
@@ -100,6 +105,7 @@ impl McpServerBootContext {
             taskflow_manager: None,
             lsp_manager: None,
             team_store: None,
+            memory_snapshotter: None,
             #[cfg(feature = "config-self-edit")]
             config_yaml_applier: None,
             #[cfg(feature = "config-self-edit")]
@@ -135,6 +141,7 @@ pub struct McpServerBootContextBuilder {
     taskflow_manager: Option<Arc<FlowManager>>,
     lsp_manager: Option<Arc<LspManager>>,
     team_store: Option<Arc<dyn TeamStore>>,
+    memory_snapshotter: Option<Arc<dyn MemorySnapshotter>>,
     #[cfg(feature = "config-self-edit")]
     config_yaml_applier: Option<Arc<dyn YamlPatchApplier>>,
     #[cfg(feature = "config-self-edit")]
@@ -202,6 +209,11 @@ impl McpServerBootContextBuilder {
         self
     }
 
+    pub fn memory_snapshotter(mut self, snapshotter: Arc<dyn MemorySnapshotter>) -> Self {
+        self.memory_snapshotter = Some(snapshotter);
+        self
+    }
+
     #[cfg(feature = "config-self-edit")]
     pub fn config_handles(
         mut self,
@@ -238,6 +250,7 @@ impl McpServerBootContextBuilder {
             taskflow_manager: self.taskflow_manager,
             lsp_manager: self.lsp_manager,
             team_store: self.team_store,
+            memory_snapshotter: self.memory_snapshotter,
             #[cfg(feature = "config-self-edit")]
             config_yaml_applier: self.config_yaml_applier,
             #[cfg(feature = "config-self-edit")]
