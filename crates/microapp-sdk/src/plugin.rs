@@ -11,16 +11,24 @@
 //! use nexo_microapp_sdk::plugin::{PluginAdapter, BrokerSender};
 //! use nexo_broker::Event;
 //!
-//! const MANIFEST: &str = include_str!("../nexo-plugin.toml");
+//! // In a real plugin: `include_str!("../nexo-plugin.toml")`.
+//! const MANIFEST: &str = r#"
+//! [plugin]
+//! id = "slack"
+//! version = "0.1.0"
+//! name = "Slack channel"
+//! description = "Slack integration plugin."
+//! min_nexo_version = ">=0.1.0"
+//! "#;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Ok(PluginAdapter::new(MANIFEST)?
-//!         .on_broker_event(|topic, event, broker: BrokerSender| async move {
+//!         .on_broker_event(|_topic: String, event: Event, broker: BrokerSender| async move {
 //!             // Plugin's outbound logic — e.g. send to Slack API,
 //!             // then publish a confirmation event back.
 //!             let ack = Event::new(
-//!                 format!("plugin.inbound.slack"),
+//!                 "plugin.inbound.slack".to_string(),
 //!                 "slack",
 //!                 serde_json::json!({"echo": event.payload}),
 //!             );
