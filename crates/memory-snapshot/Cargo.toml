@@ -35,7 +35,7 @@ zstd           = "0.13"
 regex          = { workspace = true }
 age            = { version = "0.10", optional = true }
 tempfile       = { version = "3", optional = true }
-nexo-driver-types = { path = "../driver-types" }
+nexo-driver-types = { version = "0.1.5", path = "../driver-types" }
 
 [dev-dependencies]
 tempfile       = "3"

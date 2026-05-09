@@ -14,8 +14,8 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 
 [dependencies]
-nexo-driver-types  = { path = "../driver-types" }
-nexo-mcp           = { path = "../mcp" }
+nexo-driver-types  = { version = "0.1.5", path = "../driver-types" }
+nexo-mcp           = { version = "0.1.2", path = "../mcp" }
 anyhow             = { workspace = true }
 async-trait        = { workspace = true }
 dashmap            = { workspace = true }

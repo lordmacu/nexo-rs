@@ -358,6 +358,34 @@ telegram).
   Status: ✅ for what is publishable; remaining 3 crates
   blocked structurally.
 
+- **`81.18.c.private-dep-blockers`** — PARTIAL 2026-05-09:
+  user opted "Full driver subsystem" path. Driver subsystem
+  + memory-snapshot publish wave completed (6 crates):
+    - `nexo-driver-types v0.1.5` ✅
+    - `nexo-driver-claude v0.1.5` ✅
+    - `nexo-driver-permission v0.1.5` ✅
+    - `nexo-agent-registry v0.1.5` ✅
+    - `nexo-driver-loop v0.1.5` ✅ (required cascade-publish
+      `nexo-memory v0.1.3` for new `SecretGuard` type the
+      v0.1.2 published API didn't expose)
+    - `nexo-memory-snapshot v0.1.0` ✅
+  Remaining 2 crates STILL BLOCKED — `nexo-fork v0.1.5` and
+  `nexo-dream v0.1.5` both transitively depend on `nexo-core`,
+  which depends on `nexo-dispatch-tools` (NOT published) which
+  depends on `nexo-project-tracker` (NOT published). Cascade
+  to unblock fork+dream requires publishing nexo-project-tracker
+  + nexo-dispatch-tools + nexo-core (with `nexo-mcp v0.1.3`
+  bump propagated). nexo-mcp v0.1.3 is already on crates.io
+  from this wave, so `nexo-core v0.1.2` local pin is bumped
+  and `crates/dispatch-tools/Cargo.toml` has all path-deps
+  re-pinned to current published versions in this commit.
+  Out of session budget; logged as
+  `81.18.c.private-dep-blockers-fork-dream-cascade`.
+  Owner: framework. Trigger: dedicated publish-wave session.
+  Risk: each new crate needs README + categories review before
+  first publish; nexo-dispatch-tools is internal CLI glue
+  whose publishability needs an explicit go/no-go.
+
 - **`81.19.a.release-plz-tool-meta-skip`** — RESOLVED 2026-05-09
   by the manual `nexo-tool-meta v0.1.1` publish above. release-plz
   was failing since 2026-05-07 because its diff walker replayed
