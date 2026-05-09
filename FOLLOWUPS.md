@@ -322,6 +322,44 @@ telegram).
   `nexo-llm`, `nexo-auth`, `nexo-pairing`, `nexo-resilience`)
   were already at usable versions on crates.io. Status: ✅.
 
+- **`81.18.c.crates-publish-wave-full`** — RESOLVED 2026-05-09:
+  walked the topological publish order (`scripts/publish-order.sh`
+  L1→L13). Three additional crates pushed past the partial-wave
+  scope:
+    - `nexo-ext-registry v0.1.0` (L1 leaf, NEW on crates.io)
+    - `nexo-llm-auth v0.1.0` (L1 leaf, NEW on crates.io)
+    - `nexo-ext-installer v0.1.0` (L2, NEW on crates.io)
+  Layer audits L3–L13 found every other public crate already at
+  the workspace's local version on crates.io
+  (`nexo-cdp v0.1.0`, `nexo-compliance-primitives v0.1.0`,
+  `nexo-lsp v0.1.1`, `nexo-pairing v0.1.3`,
+  `nexo-resilience v0.1.1`, `nexo-taskflow v0.1.1`,
+  `nexo-team-store v0.1.1`, `nexo-tunnel v0.1.2`,
+  `nexo-config v0.1.4`, `nexo-auth v0.1.5`,
+  `nexo-broker v0.1.2`, `nexo-llm v0.1.2`,
+  `nexo-extensions v0.1.2`, `nexo-memory v0.1.2`,
+  `nexo-webhook-server v0.1.5`, `nexo-mcp v0.1.2`,
+  `nexo-microapp-http v0.1.0`, `nexo-plugin-email v0.1.1`,
+  `nexo-plugin-google v0.1.1`, `nexo-poller v0.1.1`,
+  `nexo-setup v0.1.1`, `nexo-poller-ext v0.1.1`,
+  `nexo-poller-tools v0.1.1`, `nexo-web-search v0.1.1`,
+  `nexo-webhook-receiver v0.1.5`).
+
+  Three crates remain unpublished and BLOCKED on private deps
+  (driver subsystem internals + agent-registry are
+  `publish = false` pending security review):
+    - `nexo-memory-snapshot v0.1.0` (depends on `nexo-driver-types`)
+    - `nexo-fork v0.1.5` (depends on `nexo-driver-types`,
+      `nexo-driver-permission`, `nexo-agent-registry`)
+    - `nexo-dream v0.1.5` (depends on `nexo-agent-registry`,
+      `nexo-driver-types`)
+  These can publish only when the driver subsystem clears
+  security review and gets `publish = true` on its own crates,
+  OR when the workspace refactors to remove the dep edge. Out
+  of 81.18.c scope; logged as `81.18.c.private-dep-blockers`.
+  Status: ✅ for what is publishable; remaining 3 crates
+  blocked structurally.
+
 - **`81.19.a.release-plz-tool-meta-skip`** — RESOLVED 2026-05-09
   by the manual `nexo-tool-meta v0.1.1` publish above. release-plz
   was failing since 2026-05-07 because its diff walker replayed
