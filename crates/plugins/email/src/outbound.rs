@@ -100,7 +100,12 @@ impl DispatcherCore {
         let message_id = cmd
             .message_id
             .as_ref()
-            .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string())
+            .map(|s| {
+                s.trim()
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string()
+            })
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| generate_message_id(&from));
         let raw = build_mime(
@@ -404,7 +409,12 @@ impl OutboundWorker {
         let message_id = cmd
             .message_id
             .as_ref()
-            .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string())
+            .map(|s| {
+                s.trim()
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string()
+            })
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| generate_message_id(&from));
         // Phase 48.5 — `build_mime` reads attachment files at this

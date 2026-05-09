@@ -767,6 +767,73 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
     );
 }
 
+/// Phase 81.18.b.1 — per-instance env dict for the telegram
+/// subprocess. Caller iterates `cfg.plugins.telegram` and builds
+/// one dict per entry; each dict is passed via
+/// `subprocess_plugin_factory_with_env` so N spawns don't collide
+/// on `NEXO_PLUGIN_TELEGRAM_*` keys.
+///
+/// The dict starts from a small whitelist of inherited daemon
+/// envs (`PATH`, `HOME`, `RUST_LOG`, `NEXO_BROKER_URL`) so the
+/// child can resolve binaries + reach the broker; everything else
+/// the daemon's process env carried (potentially including
+/// secrets that have nothing to do with telegram) is dropped.
+/// Defense-in-depth — `Command::env_clear().envs(&map)` in
+/// `SubprocessNexoPlugin::spawn_and_handshake` enforces this.
+#[allow(dead_code)] // Wired in the telegram-loop flip step (81.18.b.1 step 5).
+fn seed_telegram_subprocess_env_for(
+    cfg: &nexo_config::types::plugins::TelegramPluginConfig,
+    broker_url: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Whitelist of inherited daemon envs the subprocess legitimately
+    // needs. PATH for binary lookup; HOME for cargo/git tooling
+    // some plugins shell out to; RUST_LOG so operators can crank
+    // tracing at the daemon level and see it in plugins too.
+    for key in ["PATH", "HOME", "RUST_LOG"] {
+        if let Ok(val) = std::env::var(key) {
+            env.insert(key.to_string(), val);
+        }
+    }
+    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    env.insert("NEXO_PLUGIN_TELEGRAM_TOKEN".into(), cfg.token.clone());
+    if let Some(ref instance) = cfg.instance {
+        if !instance.trim().is_empty() {
+            env.insert("NEXO_PLUGIN_TELEGRAM_INSTANCE".into(), instance.clone());
+        }
+    }
+    if let Some(ref offset) = cfg.polling.offset_path {
+        env.insert("NEXO_PLUGIN_TELEGRAM_OFFSET_PATH".into(), offset.clone());
+    }
+    env.insert(
+        "NEXO_PLUGIN_TELEGRAM_INTERVAL_MS".into(),
+        cfg.polling.interval_ms.to_string(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_TELEGRAM_BRIDGE_TIMEOUT_MS".into(),
+        cfg.bridge_timeout_ms.to_string(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_TELEGRAM_ALLOWLIST".into(),
+        serde_json::to_string(&cfg.allowlist.chat_ids).unwrap_or_else(|_| "[]".into()),
+    );
+    if cfg.auto_transcribe.enabled {
+        env.insert("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE".into(), "true".into());
+        env.insert(
+            "NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND".into(),
+            cfg.auto_transcribe.command.clone(),
+        );
+        env.insert(
+            "NEXO_PLUGIN_TELEGRAM_WHISPER_TIMEOUT_MS".into(),
+            cfg.auto_transcribe.timeout_ms.to_string(),
+        );
+        if let Some(ref lang) = cfg.auto_transcribe.language {
+            env.insert("NEXO_PLUGIN_TELEGRAM_WHISPER_LANGUAGE".into(), lang.clone());
+        }
+    }
+    env
+}
+
 /// `tools_per_agent` and `agent_snapshot_handles` are populated
 /// during the boot agent loop and never extended; reload picks up
 /// policy changes for EXISTING agents only.
@@ -15697,8 +15764,151 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
-        route_cron_subcommand, Mode,
+        route_cron_subcommand, seed_telegram_subprocess_env_for, Mode,
     };
+    use nexo_config::types::plugins::{
+        TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
+        TelegramPollingConfig,
+    };
+
+    fn telegram_cfg(token: &str, instance: Option<&str>) -> TelegramPluginConfig {
+        TelegramPluginConfig {
+            token: token.to_string(),
+            polling: TelegramPollingConfig {
+                enabled: true,
+                interval_ms: 1500,
+                offset_path: Some("/tmp/tg.offset".to_string()),
+            },
+            allowlist: TelegramAllowlistConfig {
+                chat_ids: vec![100, 200],
+            },
+            auto_transcribe: TelegramAutoTranscribeConfig {
+                enabled: false,
+                command: String::new(),
+                timeout_ms: 60_000,
+                language: None,
+            },
+            bridge_timeout_ms: 30_000,
+            instance: instance.map(String::from),
+            allow_agents: Vec::new(),
+        }
+    }
+
+    /// Phase 81.18.b.1 — happy path: every operator-facing field
+    /// of `TelegramPluginConfig` lands in the spawn env dict
+    /// under the `NEXO_PLUGIN_TELEGRAM_*` namespace, plus the
+    /// inherited daemon whitelist (PATH/HOME/RUST_LOG/broker URL).
+    #[test]
+    fn seed_telegram_subprocess_env_for_happy_path() {
+        let cfg = telegram_cfg("123:abcdef", Some("bot1"));
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_TOKEN").map(String::as_str),
+            Some("123:abcdef")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_INSTANCE").map(String::as_str),
+            Some("bot1")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_OFFSET_PATH")
+                .map(String::as_str),
+            Some("/tmp/tg.offset"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_INTERVAL_MS")
+                .map(String::as_str),
+            Some("1500")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_BRIDGE_TIMEOUT_MS")
+                .map(String::as_str),
+            Some("30000"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_TELEGRAM_ALLOWLIST")
+                .map(String::as_str),
+            Some("[100,200]"),
+        );
+        assert_eq!(
+            env.get("NEXO_BROKER_URL").map(String::as_str),
+            Some("nats://127.0.0.1:4222")
+        );
+    }
+
+    /// Phase 81.18.b.1 — empty / `None` instance is omitted (not
+    /// emitted as empty string) so the subprocess's
+    /// `whatsapp_config_from_env` analog reads `instance = None`,
+    /// not `instance = Some("")` — matches the YAML loader's
+    /// "absent = default single bot" semantics.
+    #[test]
+    fn seed_telegram_subprocess_env_for_omits_empty_instance() {
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
+
+        let mut cfg2 = telegram_cfg("tok", Some(""));
+        cfg2.instance = Some("   ".into());
+        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats://x");
+        assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
+    }
+
+    /// Phase 81.18.b.1 — auto-transcribe disabled (default) drops
+    /// every whisper-related env var; enabled lights them up.
+    #[test]
+    fn seed_telegram_subprocess_env_for_transcribe_toggle() {
+        let mut cfg = telegram_cfg("tok", None);
+        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE"));
+        assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND"));
+
+        cfg.auto_transcribe = TelegramAutoTranscribeConfig {
+            enabled: true,
+            command: "/usr/bin/whisper".into(),
+            timeout_ms: 45_000,
+            language: Some("es".into()),
+        };
+        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE")
+                .map(String::as_str),
+            Some("true"),
+        );
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND")
+                .map(String::as_str),
+            Some("/usr/bin/whisper"),
+        );
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_TELEGRAM_WHISPER_TIMEOUT_MS")
+                .map(String::as_str),
+            Some("45000"),
+        );
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_TELEGRAM_WHISPER_LANGUAGE")
+                .map(String::as_str),
+            Some("es"),
+        );
+    }
+
+    /// Phase 81.18.b.1 — daemon's full process env is NOT inherited
+    /// by reference; the helper builds a fresh dict whitelisting
+    /// only PATH/HOME/RUST_LOG (defense-in-depth against secrets
+    /// leaking). Set a sentinel env in the test process and assert
+    /// it does NOT appear in the spawn dict.
+    #[test]
+    fn seed_telegram_subprocess_env_for_does_not_leak_random_daemon_env() {
+        std::env::set_var("__NEXO_TG_TEST_LEAK_SENTINEL__", "do-not-leak");
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
+        std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
+    }
 
     fn write_minimal_agents_yaml(dir: &std::path::Path) {
         // Minimal but valid agents.yaml — `load_for_mcp_server`
