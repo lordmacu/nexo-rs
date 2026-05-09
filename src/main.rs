@@ -1001,6 +1001,15 @@ where
 async fn main() -> Result<()> {
     init_tracing();
 
+    // Phase 81.21 follow-up — install the rustls process-wide
+    // CryptoProvider. Several `rustls = { default-features = false }`
+    // dependency closures reach `ClientConfig::builder()` without
+    // first selecting a provider, which panics with "Could not
+    // automatically determine the process-level CryptoProvider".
+    // Install ring once at boot; double-install is idempotent (the
+    // first wins) so we ignore the result.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Phase 11.1 follow-up — make the `agent` binary's version the one
     // compared against `plugin.min_agent_version`, instead of the
     // `nexo-extensions` crate version. Ignore the result: if the

@@ -268,6 +268,30 @@ impl AccountWorker {
             .await?;
         let mut last_uid = cursor_now.last_uid;
 
+        // Bootstrap cap — when the cursor is fresh (`last_uid == 0`) and
+        // the operator has declared `bootstrap_limit = N`, jump the
+        // cursor to `max(0, mb.uid_next - 1 - N)` so the very first
+        // backfill processes at most N historical messages. Without
+        // this, a fresh install on a 5000-message inbox stalls boot
+        // for hours and floods the broker with stale events.
+        if last_uid == 0 {
+            if let Some(limit) = self.account_cfg.bootstrap_limit {
+                if limit > 0 && mb.uid_next > 1 {
+                    let highest_existing = mb.uid_next - 1;
+                    if highest_existing > limit {
+                        last_uid = highest_existing - limit;
+                        info!(
+                            target: "plugin.email",
+                            instance = %self.account_cfg.instance,
+                            bootstrap_limit = limit,
+                            skipped_uid_range = format!("1..={last_uid}"),
+                            "bootstrap_limit applied — skipping historical backfill"
+                        );
+                    }
+                }
+            }
+        }
+
         // Drain anything the server already has past last_uid before
         // entering IDLE — covers the boot case where new mail landed
         // while the daemon was down.

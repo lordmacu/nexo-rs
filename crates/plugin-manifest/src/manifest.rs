@@ -316,6 +316,40 @@ pub struct Capabilities {
     /// skills are unaffected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
+    /// Phase 82.15.bx — declarative broker capability. CRM-style
+    /// plugins (marketing, analytics) consume topics that don't
+    /// fall under `plugin.outbound.<channel-kind>` auto-derivation
+    /// in `nexo_plugin_registry::subprocess`. The daemon merges
+    /// these patterns with the auto-derived ones at spawn time:
+    /// `subscribe` patterns get `broker.subscribe(&pattern)` +
+    /// forwarded to the child as `broker.event` notifications;
+    /// `publish` allowlists which topics the child may publish to
+    /// via the validated `broker.publish` JSON-RPC notification.
+    /// Empty / absent keeps today's auto-derived-only behaviour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker: Option<BrokerCapability>,
+}
+
+/// Phase 82.15.bx — broker capability declaration.
+///
+/// `subscribe` patterns admit standard broker wildcards (`>` =
+/// rest-of-subject, `*` = single-segment). `publish` patterns
+/// are exact-string allowlist entries; the daemon's bridge
+/// rejects publish requests whose topic fails to match any
+/// allowlist entry with `topic_matches`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BrokerCapability {
+    /// Topic patterns the plugin subscribes to. Daemon spawns one
+    /// `broker.subscribe` task per pattern at plugin-start time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subscribe: Vec<String>,
+    /// Topic patterns the plugin is allowed to publish to via
+    /// `broker.publish` notifications over stdio. Defense-in-
+    /// depth: a misbehaving plugin can't broadcast on arbitrary
+    /// topics it didn't declare.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publish: Vec<String>,
 }
 
 /// Phase 82.12 — HTTP server declaration.
@@ -1160,6 +1194,7 @@ min_nexo_version = ">=0.1.0"
             admin: AdminCapabilities::default(),
             http_server: None,
             skills: Vec::new(),
+            broker: None,
         };
         let serialised = toml::to_string(&caps).unwrap();
         assert!(
@@ -1179,6 +1214,7 @@ min_nexo_version = ">=0.1.0"
             admin: AdminCapabilities::default(),
             http_server: None,
             skills: vec!["ventas-flujo".into()],
+            broker: None,
         };
         let paths = validate_contributed_skills(&caps, tmp.path()).expect("ok");
         assert_eq!(paths.len(), 1);
@@ -1193,6 +1229,7 @@ min_nexo_version = ">=0.1.0"
             admin: AdminCapabilities::default(),
             http_server: None,
             skills: vec!["ghost".into()],
+            broker: None,
         };
         let err = validate_contributed_skills(&caps, tmp.path()).unwrap_err();
         assert_eq!(
@@ -1213,6 +1250,7 @@ min_nexo_version = ">=0.1.0"
             // Path-traversal attempt — must be rejected at slug
             // validation BEFORE filesystem access.
             skills: vec!["../../etc/passwd".into()],
+            broker: None,
         };
         let err = validate_contributed_skills(&caps, tmp.path()).unwrap_err();
         match err {
@@ -1232,6 +1270,7 @@ min_nexo_version = ">=0.1.0"
                 admin: AdminCapabilities::default(),
                 http_server: None,
                 skills: vec![bad.into()],
+                broker: None,
             };
             assert!(
                 matches!(
@@ -1251,6 +1290,7 @@ min_nexo_version = ">=0.1.0"
             admin: AdminCapabilities::default(),
             http_server: None,
             skills: Vec::new(),
+            broker: None,
         };
         let paths = validate_contributed_skills(&caps, tmp.path()).unwrap();
         assert!(paths.is_empty());

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use semver::Version;
 use walkdir::WalkDir;
 
-use nexo_plugin_manifest::{validate, ManifestError, PluginManifest};
+use nexo_plugin_manifest::{validate, ManifestError, PluginManifest, PLUGIN_MANIFEST_FILENAMES};
 
 use super::config::{resolve_search_paths, PluginDiscoveryConfig};
 use super::report::{
@@ -20,10 +20,21 @@ use super::report::{
 };
 use super::NexoPluginRegistrySnapshot;
 
-/// Manifest filename anchored at the top level of each plugin dir.
-/// Fixed (no operator override) so a malicious or careless plugin
-/// dir cannot smuggle a manifest under an unexpected name.
+/// Phase 81.13 — canonical manifest filename. Fixed (no operator
+/// override) so a malicious or careless plugin dir cannot smuggle a
+/// manifest under an unexpected name. We also accept the legacy
+/// `nexo-plugin.toml` via [`PLUGIN_MANIFEST_FILENAMES`] so plugins
+/// shipped before the rename keep loading.
+#[cfg(test)]
 pub(crate) const MANIFEST_FILENAME: &str = "nexo-plugin.toml";
+
+/// `true` when `name` matches either the canonical `plugin.toml`
+/// or the legacy `nexo-plugin.toml` filename.
+fn is_manifest_filename(name: &std::ffi::OsStr) -> bool {
+    PLUGIN_MANIFEST_FILENAMES
+        .iter()
+        .any(|candidate| name == std::ffi::OsStr::new(candidate))
+}
 
 /// Walk the configured search paths, parse + validate each
 /// `<entry>/nexo-plugin.toml`, return a snapshot ready to swap into
@@ -93,7 +104,7 @@ pub fn discover(
             if !entry.file_type().is_file() {
                 continue;
             }
-            if entry.file_name() != MANIFEST_FILENAME {
+            if !is_manifest_filename(entry.file_name()) {
                 continue;
             }
 

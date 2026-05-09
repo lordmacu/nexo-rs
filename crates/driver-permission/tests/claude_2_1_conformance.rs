@@ -321,10 +321,12 @@ async fn permission_prompt_deny_response_includes_message() {
     let resp = read_id(&mut reader, 2).await;
     let content = resp["result"]["content"].as_array().expect("content array");
     let text = content[0]["text"].as_str().expect("text content");
-    // Phase 77.8 — text may carry bash security warnings prefix.
-    // Use structured_content for the machine-readable shape.
+    // Phase 77.8 — text may carry advisory warnings prefix.
+    // Label was unified from `bash security` to `tool advisories`
+    // when the advisor framework grew beyond bash. Use
+    // `structured_content` for the machine-readable shape.
     assert!(
-        text.contains("WARNING — bash security"),
+        text.contains("WARNING — tool advisories"),
         "destructive Bash should carry warning; got {text}"
     );
     let parsed = resp["result"]["structuredContent"]

@@ -55,7 +55,7 @@ pub use config_schema::{
 };
 pub use error::ManifestError;
 pub use manifest::{
-    AdminCapabilities, AdvisorsSection, AgentsSection, Capabilities, Capability,
+    AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
     CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection,
     ContractsSection, EntrypointSection, ExtendsSection, GateKind, GateRisk, HttpServerCapability,
     MetaSection, PluginManifest, PluginSection, RequiresSection, SkillsSection, SupervisorSection,

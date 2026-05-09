@@ -63,11 +63,7 @@ impl ScoreReason {
     }
 
     /// Same, with an inline operator-facing detail string.
-    pub fn with_detail(
-        label: impl Into<String>,
-        delta: i32,
-        detail: impl Into<String>,
-    ) -> Self {
+    pub fn with_detail(label: impl Into<String>, delta: i32, detail: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             detail: Some(detail.into()),
@@ -285,36 +281,30 @@ mod tests {
 
     fn marketing_scorer() -> HeuristicScorer<LeadCtx> {
         let mut s = HeuristicScorer::new();
-        s.push(HeuristicRule::new(
-            "corporate_domain",
-            15,
-            |l: &LeadCtx| l.is_corporate,
-        ));
+        s.push(HeuristicRule::new("corporate_domain", 15, |l: &LeadCtx| {
+            l.is_corporate
+        }));
         s.push(HeuristicRule::new(
             "replied_within_1h",
             10,
-            |l: &LeadCtx| {
-                l.replied_minutes_ago.map(|m| m <= 60).unwrap_or(false)
-            },
+            |l: &LeadCtx| l.replied_minutes_ago.map(|m| m <= 60).unwrap_or(false),
         ));
         s.push(HeuristicRule::new(
             "substantive_reply_30plus_words",
             10,
             |l: &LeadCtx| l.body_words >= 30,
         ));
-        s.push(HeuristicRule::new("intent_ready_to_buy", 20, |l: &LeadCtx| {
-            matches!(l.intent_label, Some("ready_to_buy"))
-        }));
         s.push(HeuristicRule::new(
-            "senior_signature",
-            10,
-            |l: &LeadCtx| {
-                matches!(
-                    l.signature_role_hint,
-                    Some("CTO" | "CEO" | "VP" | "Director" | "Head"),
-                )
-            },
+            "intent_ready_to_buy",
+            20,
+            |l: &LeadCtx| matches!(l.intent_label, Some("ready_to_buy")),
         ));
+        s.push(HeuristicRule::new("senior_signature", 10, |l: &LeadCtx| {
+            matches!(
+                l.signature_role_hint,
+                Some("CTO" | "CEO" | "VP" | "Director" | "Head"),
+            )
+        }));
         s
     }
 
@@ -361,11 +351,7 @@ mod tests {
 
     #[test]
     fn score_serde_roundtrips() {
-        let s = Score::from_reasons(vec![ScoreReason::with_detail(
-            "x",
-            10,
-            "rationale",
-        )]);
+        let s = Score::from_reasons(vec![ScoreReason::with_detail("x", 10, "rationale")]);
         let json = serde_json::to_string(&s).unwrap();
         let back: Score = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);

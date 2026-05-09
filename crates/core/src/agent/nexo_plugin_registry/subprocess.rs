@@ -1202,6 +1202,24 @@ impl SubprocessNexoPlugin {
                 publish_allowlist.push(format!("plugin.inbound.{kind}"));
                 publish_allowlist.push(format!("plugin.inbound.{kind}.>"));
             }
+            // Phase 82.15.bx — manifest-declared broker capability.
+            // CRM-style plugins (marketing, analytics) consume topics
+            // outside the auto-derived `plugin.outbound.<kind>` family;
+            // their `[capabilities.broker]` declares the real surface.
+            // Merge after auto-derivation so kind-channel plugins keep
+            // today's behaviour and only the new declarations extend.
+            if let Some(broker_cap) = self.cached_manifest.plugin.capabilities.broker.as_ref() {
+                for pattern in &broker_cap.subscribe {
+                    if !subscribe_patterns.iter().any(|p| p == pattern) {
+                        subscribe_patterns.push(pattern.clone());
+                    }
+                }
+                for pattern in &broker_cap.publish {
+                    if !publish_allowlist.iter().any(|p| p == pattern) {
+                        publish_allowlist.push(pattern.clone());
+                    }
+                }
+            }
             for pattern in subscribe_patterns {
                 let mut sub = match broker.subscribe(&pattern).await {
                     Ok(s) => s,

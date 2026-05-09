@@ -98,9 +98,7 @@ pub enum VerifyError {
 
     /// Certificate's SAN entries do not match the policy's
     /// `identity_regexp`.
-    #[error(
-        "identity `{found}` does not match policy regex `{expected_regex}`"
-    )]
+    #[error("identity `{found}` does not match policy regex `{expected_regex}`")]
     IdentityMismatch {
         /// First SAN entry the verifier inspected (URIs/emails
         /// joined for diagnostic clarity).
@@ -111,9 +109,7 @@ pub enum VerifyError {
 
     /// Certificate's Fulcio OIDC-issuer extension does not match
     /// the policy.
-    #[error(
-        "OIDC issuer mismatch: cert claims `{found}`, policy requires `{expected}`"
-    )]
+    #[error("OIDC issuer mismatch: cert claims `{found}`, policy requires `{expected}`")]
     IssuerMismatch {
         /// What the cert's `1.3.6.1.4.1.57264.1.{1,8}` extension
         /// reported.

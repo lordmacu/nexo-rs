@@ -96,13 +96,8 @@ pub enum JidParseError {
 
 const KNOWN_USER_SERVERS: &[&str] = &["s.whatsapp.net", "lid"];
 const KNOWN_LEGACY_SERVERS: &[&str] = &["c.us"];
-const KNOWN_NON_USER_SERVERS: &[&str] = &[
-    "g.us",
-    "broadcast",
-    "status@broadcast",
-    "bot",
-    "newsletter",
-];
+const KNOWN_NON_USER_SERVERS: &[&str] =
+    &["g.us", "broadcast", "status@broadcast", "bot", "newsletter"];
 
 /// Parse a JID string into [`ParsedJid`]. Canonicalises
 /// legacy `c.us` to `s.whatsapp.net`; lowercases the user
@@ -127,15 +122,14 @@ pub fn parse_jid(input: &str) -> Result<ParsedJid, JidParseError> {
     // `.agent`. We accept both whatsmeow (`agent.device`) and
     // Baileys (`user_agent:device`) forms — `:` always wins as
     // the device separator.
-    let (user_no_device, device) =
-        if let Some((before, dev)) = user_part.rsplit_once(':') {
-            let dev_num = dev
-                .parse::<u16>()
-                .map_err(|_| JidParseError::InvalidDevice(raw.to_string()))?;
-            (before, Some(dev_num))
-        } else {
-            (user_part, None)
-        };
+    let (user_no_device, device) = if let Some((before, dev)) = user_part.rsplit_once(':') {
+        let dev_num = dev
+            .parse::<u16>()
+            .map_err(|_| JidParseError::InvalidDevice(raw.to_string()))?;
+        (before, Some(dev_num))
+    } else {
+        (user_part, None)
+    };
     // Drop any agent suffix `_agent` that Baileys threads
     // into the user portion (whatsmeow uses `.agent` instead).
     let user_no_agent = user_no_device

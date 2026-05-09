@@ -220,7 +220,7 @@ fn transcode_mp3_to_opus_ogg_blocking(mp3: &[u8]) -> Result<Vec<u8>> {
     use ogg::PacketWriteEndInfo;
     use opus_wave::{Application, Channels, OpusEncoder, SampleRate};
     use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
     use symphonia::core::errors::Error as SymError;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
@@ -267,9 +267,7 @@ fn transcode_mp3_to_opus_ogg_blocking(mp3: &[u8]) -> Result<Vec<u8>> {
     loop {
         let packet = match format.next_packet() {
             Ok(p) => p,
-            Err(SymError::IoError(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(SymError::IoError(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 break;
             }
             Err(SymError::ResetRequired) => break,
@@ -337,9 +335,9 @@ fn transcode_mp3_to_opus_ogg_blocking(mp3: &[u8]) -> Result<Vec<u8>> {
         head.extend_from_slice(b"OpusHead");
         head.push(1); // version
         head.push(1); // output channel count
-        // Pre-skip: the standard libopus value of 312 samples at
-        // 48 kHz (the encoder's algorithmic delay) is what every
-        // major decoder expects.
+                      // Pre-skip: the standard libopus value of 312 samples at
+                      // 48 kHz (the encoder's algorithmic delay) is what every
+                      // major decoder expects.
         head.extend_from_slice(&312u16.to_le_bytes());
         head.extend_from_slice(&TARGET_RATE.to_le_bytes());
         head.extend_from_slice(&0i16.to_le_bytes()); // output gain

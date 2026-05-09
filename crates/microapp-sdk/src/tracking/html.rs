@@ -53,10 +53,8 @@ use super::types::{LinkId, LinkMapping, MsgId};
 fn anchor_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r#"(?i)(<a\b[^>]*?\bhref\s*=\s*)(?:"([^"]*)"|'([^']*)')([^>]*>)"#,
-        )
-        .expect("anchor regex compiles")
+        Regex::new(r#"(?i)(<a\b[^>]*?\bhref\s*=\s*)(?:"([^"]*)"|'([^']*)')([^>]*>)"#)
+            .expect("anchor regex compiles")
     })
 }
 
@@ -144,7 +142,9 @@ pub fn rewrite_links(
         let suffix = caps.get(4).map_or("", |m| m.as_str());
 
         if !is_trackable_href(original, &trimmed_base, tenant_id) {
-            return caps.get(0).map_or(String::new(), |m| m.as_str().to_string());
+            return caps
+                .get(0)
+                .map_or(String::new(), |m| m.as_str().to_string());
         }
         let link_id = LinkId(format!("L{next_id}"));
         next_id += 1;
@@ -225,15 +225,12 @@ fn url_query_escape(s: &str) -> String {
 /// for `</body>` and `</BODY>` etc.
 fn ci_rfind(haystack: &str, needle: &str) -> Option<usize> {
     let needle_lower = needle.to_ascii_lowercase();
-    haystack
-        .char_indices()
-        .rev()
-        .find_map(|(i, _)| {
-            haystack
-                .get(i..i + needle.len())
-                .filter(|s| s.eq_ignore_ascii_case(&needle_lower))
-                .map(|_| i)
-        })
+    haystack.char_indices().rev().find_map(|(i, _)| {
+        haystack
+            .get(i..i + needle.len())
+            .filter(|s| s.eq_ignore_ascii_case(&needle_lower))
+            .map(|_| i)
+    })
 }
 
 #[cfg(test)]
@@ -291,8 +288,13 @@ mod tests {
     #[test]
     fn rewrite_links_swaps_http_anchors() {
         let html = r#"<a href="https://acme.com/pricing">price</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         assert_eq!(r.mappings.len(), 1);
         assert_eq!(r.mappings[0].original_url, "https://acme.com/pricing");
         assert!(r.html.contains("/t/c/acme/m1/L0?tag="));
@@ -302,8 +304,13 @@ mod tests {
     #[test]
     fn rewrite_links_assigns_sequential_ids() {
         let html = r#"<a href="https://a.com/">a</a> <a href="https://b.com/">b</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         assert_eq!(r.mappings.len(), 2);
         assert_eq!(r.mappings[0].link_id.as_str(), "L0");
         assert_eq!(r.mappings[1].link_id.as_str(), "L1");
@@ -314,19 +321,28 @@ mod tests {
         // Note: needs `r##"..."##` because the body contains `"#`
         // which would close a `r#"..."#` raw literal early.
         let html = r##"<a href="#section">jump</a>"##;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         assert_eq!(r.mappings.len(), 0);
         assert_eq!(r.html, html);
     }
 
     #[test]
     fn rewrite_links_skips_mailto_tel_js() {
-        for href in ["mailto:x@y", "tel:+1", "javascript:void(0)", "data:text"]
-        {
+        for href in ["mailto:x@y", "tel:+1", "javascript:void(0)", "data:text"] {
             let html = format!(r#"<a href="{href}">x</a>"#);
-            let r = rewrite_links(&html, "https://t.example", "acme",
-                &MsgId::new("m1"), &signer());
+            let r = rewrite_links(
+                &html,
+                "https://t.example",
+                "acme",
+                &MsgId::new("m1"),
+                &signer(),
+            );
             assert_eq!(r.mappings.len(), 0, "should skip {href}");
             assert_eq!(r.html, html, "should not modify {href}");
         }
@@ -335,8 +351,13 @@ mod tests {
     #[test]
     fn rewrite_links_idempotent_on_already_redirector() {
         let html = r#"<a href="https://t.example/t/c/acme/m1/L0?tag=abc">x</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         // Already pointing at our redirector — leave alone.
         assert_eq!(r.mappings.len(), 0);
     }
@@ -344,30 +365,45 @@ mod tests {
     #[test]
     fn rewrite_links_handles_single_quoted_href() {
         let html = r#"<a href='https://acme.com/'>x</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         assert_eq!(r.mappings.len(), 1);
     }
 
     #[test]
     fn rewrite_links_case_insensitive_tag() {
         let html = r#"<A HREF="https://acme.com/">x</A>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         assert_eq!(r.mappings.len(), 1);
     }
 
     #[test]
     fn rewrite_links_signed_token_is_url_safe() {
         let html = r#"<a href="https://acme.com/">x</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         let url = &r.html;
         assert!(url.contains("?tag="));
         // base64url tag is 22 chars after `?tag=`.
         let tag_pos = url.find("?tag=").unwrap() + "?tag=".len();
         let tail = &url[tag_pos..];
-        let tag_end = tail.find(|c| c == '"' || c == '<').unwrap();
+        let tag_end = tail.find(['"', '<']).unwrap();
         let tag = &tail[..tag_end];
         assert_eq!(tag.len(), 22);
         assert!(!tag.contains('+'));
@@ -380,16 +416,26 @@ mod tests {
         let html = r#"<a href="https://acme.com/">x</a>"#;
         // tenant_id with chars that need escaping (slash forbidden
         // by tenant validator but +, space, etc. can show up).
-        let r = rewrite_links(html, "https://t.example", "acme corp",
-            &MsgId::new("msg/1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme corp",
+            &MsgId::new("msg/1"),
+            &signer(),
+        );
         assert!(r.html.contains("/t/c/acme%20corp/msg%2F1/L0"));
     }
 
     #[test]
     fn rewrite_links_preserves_anchor_attributes() {
         let html = r#"<a href="https://acme.com/" target="_blank" rel="noopener">go</a>"#;
-        let r = rewrite_links(html, "https://t.example", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         // Pre + post attributes survive.
         assert!(r.html.contains("target=\"_blank\""));
         assert!(r.html.contains("rel=\"noopener\""));
@@ -398,8 +444,13 @@ mod tests {
     #[test]
     fn rewrite_links_strips_trailing_slash_from_base_url() {
         let html = r#"<a href="https://acme.com/">x</a>"#;
-        let r = rewrite_links(html, "https://t.example/", "acme",
-            &MsgId::new("m1"), &signer());
+        let r = rewrite_links(
+            html,
+            "https://t.example/",
+            "acme",
+            &MsgId::new("m1"),
+            &signer(),
+        );
         // No double-slash in the rewritten URL.
         assert!(!r.html.contains("https://t.example//t/c/"));
         assert!(r.html.contains("https://t.example/t/c/"));

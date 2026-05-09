@@ -228,7 +228,93 @@ async fn full_boot_ctx() -> McpServerBootContext {
         .await
         .expect("teams open");
     bc.team_store = Some(Arc::new(team_store) as Arc<dyn nexo_team_store::TeamStore>);
+
+    // Memory-snapshot — boot only checks the handle is `Some`; the
+    // catalog test never invokes a snapshot call so a no-op stub
+    // satisfies the registry requirement without dragging in
+    // `LocalFsSnapshotter` + filesystem fixtures.
+    bc.memory_snapshotter =
+        Some(Arc::new(NoopSnapshotter) as Arc<dyn nexo_memory_snapshot::MemorySnapshotter>);
+
     bc
+}
+
+/// Test stub — registers as a `MemorySnapshotter` so the catalog
+/// boot helper finds something to clone but every method returns a
+/// well-typed error/empty response instead of touching disk. Real
+/// snapshotter wiring lives in `src/main.rs`; here we only need
+/// boot-time presence.
+struct NoopSnapshotter;
+
+#[async_trait]
+impl nexo_memory_snapshot::MemorySnapshotter for NoopSnapshotter {
+    async fn snapshot(
+        &self,
+        _req: nexo_memory_snapshot::SnapshotRequest,
+    ) -> Result<nexo_memory_snapshot::SnapshotMeta, nexo_memory_snapshot::SnapshotError> {
+        Err(nexo_memory_snapshot::SnapshotError::UnknownAgent(
+            "noop".into(),
+        ))
+    }
+
+    async fn restore(
+        &self,
+        _req: nexo_memory_snapshot::RestoreRequest,
+    ) -> Result<nexo_memory_snapshot::RestoreReport, nexo_memory_snapshot::SnapshotError> {
+        Err(nexo_memory_snapshot::SnapshotError::RestoreRefused(
+            "noop".into(),
+        ))
+    }
+
+    async fn list(
+        &self,
+        _agent_id: &nexo_memory_snapshot::AgentId,
+        _tenant: &str,
+    ) -> Result<Vec<nexo_memory_snapshot::SnapshotMeta>, nexo_memory_snapshot::SnapshotError> {
+        Ok(Vec::new())
+    }
+
+    async fn diff(
+        &self,
+        _agent_id: &nexo_memory_snapshot::AgentId,
+        _tenant: &str,
+        _a: nexo_memory_snapshot::SnapshotId,
+        _b: nexo_memory_snapshot::SnapshotId,
+    ) -> Result<nexo_memory_snapshot::SnapshotDiff, nexo_memory_snapshot::SnapshotError> {
+        Err(nexo_memory_snapshot::SnapshotError::UnknownAgent(
+            "noop".into(),
+        ))
+    }
+
+    async fn verify(
+        &self,
+        _bundle: &std::path::Path,
+    ) -> Result<nexo_memory_snapshot::VerifyReport, nexo_memory_snapshot::SnapshotError> {
+        Err(nexo_memory_snapshot::SnapshotError::UnknownAgent(
+            "noop".into(),
+        ))
+    }
+
+    async fn delete(
+        &self,
+        _agent_id: &nexo_memory_snapshot::AgentId,
+        _tenant: &str,
+        _id: nexo_memory_snapshot::SnapshotId,
+    ) -> Result<(), nexo_memory_snapshot::SnapshotError> {
+        Ok(())
+    }
+
+    async fn export(
+        &self,
+        _agent_id: &nexo_memory_snapshot::AgentId,
+        _tenant: &str,
+        _id: nexo_memory_snapshot::SnapshotId,
+        _target: &std::path::Path,
+    ) -> Result<std::path::PathBuf, nexo_memory_snapshot::SnapshotError> {
+        Err(nexo_memory_snapshot::SnapshotError::UnknownAgent(
+            "noop".into(),
+        ))
+    }
 }
 
 fn empty_boot_ctx() -> McpServerBootContext {

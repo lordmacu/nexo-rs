@@ -92,11 +92,8 @@ pub trait TrackingStore: Send + Sync {
 
     /// Total open hits for one message. Used by the lead
     /// drawer's "📧 Opened 3×" badge.
-    async fn count_opens(
-        &self,
-        tenant_id: &str,
-        msg_id: &MsgId,
-    ) -> Result<u64, TrackingStoreError>;
+    async fn count_opens(&self, tenant_id: &str, msg_id: &MsgId)
+        -> Result<u64, TrackingStoreError>;
 
     /// All click events for one message — every row, in
     /// insertion order, up to 1000 (caller's job to paginate
@@ -117,10 +114,7 @@ pub trait TrackingStore: Send + Sync {
 
     /// Cascade-delete every row for one tenant. Returns the
     /// total number of rows removed across all three tables.
-    async fn delete_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<u64, TrackingStoreError>;
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, TrackingStoreError>;
 }
 
 // ── Sqlite implementation ──────────────────────────────────────
@@ -161,9 +155,7 @@ CREATE INDEX IF NOT EXISTS idx_tracking_click_tenant_msg_link
 
 /// Open a SQLite pool against `path`, run migrations, return.
 /// `:memory:` is supported for tests.
-pub async fn open_pool(
-    path: impl AsRef<Path>,
-) -> Result<SqlitePool, TrackingStoreError> {
+pub async fn open_pool(path: impl AsRef<Path>) -> Result<SqlitePool, TrackingStoreError> {
     let p = path.as_ref().to_string_lossy().to_string();
     let conn_str = if p == ":memory:" {
         "sqlite::memory:".to_string()
@@ -249,10 +241,7 @@ impl TrackingStore for SqliteTrackingStore {
         Ok(row.map(|(url,)| url))
     }
 
-    async fn record_open(
-        &self,
-        event: &OpenEvent,
-    ) -> Result<(), TrackingStoreError> {
+    async fn record_open(&self, event: &OpenEvent) -> Result<(), TrackingStoreError> {
         sqlx::query(
             "INSERT INTO tracking_open
              (tenant_id, msg_id, opened_at_ms, ip_hash, ua_hash)
@@ -268,10 +257,7 @@ impl TrackingStore for SqliteTrackingStore {
         Ok(())
     }
 
-    async fn record_click(
-        &self,
-        event: &ClickEvent,
-    ) -> Result<(), TrackingStoreError> {
+    async fn record_click(&self, event: &ClickEvent) -> Result<(), TrackingStoreError> {
         sqlx::query(
             "INSERT INTO tracking_click
              (tenant_id, msg_id, link_id, clicked_at_ms, ip_hash, ua_hash)
@@ -309,18 +295,17 @@ impl TrackingStore for SqliteTrackingStore {
         tenant_id: &str,
         msg_id: &MsgId,
     ) -> Result<Vec<ClickEvent>, TrackingStoreError> {
-        let rows: Vec<(String, String, i64, Option<String>, Option<String>)> =
-            sqlx::query_as(
-                "SELECT msg_id, link_id, clicked_at_ms, ip_hash, ua_hash
+        let rows: Vec<(String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT msg_id, link_id, clicked_at_ms, ip_hash, ua_hash
                  FROM tracking_click
                  WHERE tenant_id = ? AND msg_id = ?
                  ORDER BY clicked_at_ms ASC
                  LIMIT 1000",
-            )
-            .bind(tenant_id)
-            .bind(msg_id.as_str())
-            .fetch_all(&self.pool)
-            .await?;
+        )
+        .bind(tenant_id)
+        .bind(msg_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(|(m, l, t, ip, ua)| ClickEvent {
@@ -355,18 +340,13 @@ impl TrackingStore for SqliteTrackingStore {
             .collect())
     }
 
-    async fn delete_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<u64, TrackingStoreError> {
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, TrackingStoreError> {
         let mut total: u64 = 0;
         for table in ["tracking_link", "tracking_open", "tracking_click"] {
-            let r = sqlx::query(&format!(
-                "DELETE FROM {table} WHERE tenant_id = ?"
-            ))
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await?;
+            let r = sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = ?"))
+                .bind(tenant_id)
+                .execute(&self.pool)
+                .await?;
             total += r.rows_affected();
         }
         Ok(total)

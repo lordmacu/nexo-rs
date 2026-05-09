@@ -266,19 +266,24 @@ pub fn extract_openai_compat_headers(headers: &HeaderMap) -> Option<RateLimitInf
 // ── Gemini ───────────────────────────────────────────────────────
 
 /// Extract Gemini's `retry-info` header.
+///
+/// Bare `retry-after` is treated as a transient burst signal —
+/// `status` is left `None` so [`crate::retry::classify_429_error`]
+/// returns `LlmError::RateLimit` (retry) instead of promoting to
+/// `QuotaExceeded` (terminal). Only an explicit `x-quota-project`
+/// marker or richer headers escalate to `Rejected`; without them
+/// vanilla 429s would short-circuit retries and surface as quota
+/// errors to the operator.
 pub fn extract_gemini_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
     let retry_after_secs = header_u64(headers, "retry-after");
-    if retry_after_secs.is_none() {
-        // No rate-limit signal — but still return info if there's an
-        // `x-quota-project` header indicating quota tracking is active.
-        if headers.get("x-quota-project").is_none() {
-            return None;
-        }
+    let has_quota_project = headers.get("x-quota-project").is_some();
+    if retry_after_secs.is_none() && !has_quota_project {
+        return None;
     }
 
     Some(RateLimitInfo {
         provider: Some(LlmProvider::Gemini),
-        status: retry_after_secs.map(|_| QuotaStatus::Rejected),
+        status: has_quota_project.then_some(QuotaStatus::Rejected),
         retry_after_secs,
         ..Default::default()
     })
@@ -294,9 +299,16 @@ pub fn extract_generic_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
         return None;
     }
 
+    // `status: None` keeps bare `retry-after` 429s on the retry
+    // path. Promotion to `Rejected` requires explicit quota
+    // markers (utilization, remaining=0, window) extracted by the
+    // provider-specific paths above. Without this guard every
+    // transient burst would surface as `QuotaExceeded` and a
+    // retry-after of "0" — which means "you can retry now" — would
+    // bail out on the first attempt instead of recovering.
     Some(RateLimitInfo {
         provider: Some(LlmProvider::Generic),
-        status: Some(QuotaStatus::Rejected),
+        status: None,
         retry_after_secs,
         ..Default::default()
     })
@@ -781,14 +793,19 @@ mod tests {
     // ── Generic ──
 
     #[test]
-    fn generic_retry_after_only() {
+    fn generic_retry_after_only_stays_on_retry_path() {
+        // Bare `retry-after` with no quota markers is a transient
+        // burst signal: extractor surfaces `retry_after_secs` so
+        // the retry loop can sleep, but leaves `status` unset so
+        // `classify_429_error` returns `RateLimit` (retry) rather
+        // than `QuotaExceeded` (terminate). Without this contract
+        // every burst would short-circuit to the operator as a
+        // quota error.
         let h = build_headers(&[("retry-after", "30")]);
         let info = extract_generic_headers(&h).unwrap();
-        assert_eq!(info.status, Some(QuotaStatus::Rejected));
+        assert_eq!(info.status, None);
         assert_eq!(info.retry_after_secs, Some(30));
-
-        let msg = format_rate_limit_message(&info).unwrap();
-        assert!(msg.text.contains("usage limit"));
+        assert!(format_rate_limit_message(&info).is_none());
     }
 
     #[test]
@@ -908,18 +925,19 @@ mod tests {
     }
 
     #[test]
-    fn extract_gemini_headers_promotes_to_quota_exceeded() {
-        // Gemini's RESOURCE_EXHAUSTED: parser sets status=Rejected
-        // when retry-after present + (provider-specific signal).
-        // We use a retry-after value as the minimal signal that
-        // gemini extractor parses.
+    fn extract_gemini_headers_only_promotes_with_quota_marker() {
+        // Bare retry-after stays on the retry path (status=None)
+        // so transient bursts recover instead of surfacing as
+        // QuotaExceeded.
         let h = build_headers(&[("retry-after", "120")]);
-        let info = extract_gemini_headers(&h);
-        // The extractor may or may not classify based on header-only;
-        // if Some, ensure provider is Gemini. Either way the test
-        // documents the wire path stays Gemini.
-        if let Some(info) = info {
-            assert_eq!(info.provider, Some(LlmProvider::Gemini));
-        }
+        let info = extract_gemini_headers(&h).expect("info extracted");
+        assert_eq!(info.provider, Some(LlmProvider::Gemini));
+        assert_eq!(info.status, None);
+        assert_eq!(info.retry_after_secs, Some(120));
+
+        // x-quota-project marker → escalate to Rejected (terminal).
+        let h = build_headers(&[("retry-after", "120"), ("x-quota-project", "p-123")]);
+        let info = extract_gemini_headers(&h).expect("info extracted");
+        assert_eq!(info.status, Some(QuotaStatus::Rejected));
     }
 }

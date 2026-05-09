@@ -602,6 +602,20 @@ pub struct LoopPreventionCfg {
     pub list_headers: bool,
     #[serde(default = "default_true")]
     pub self_from: bool,
+    /// Drop messages with `X-Spam-Flag: YES` (set by upstream
+    /// spam filters such as SpamAssassin / Rspamd).
+    #[serde(default = "default_true")]
+    pub spam_flag: bool,
+    /// Drop messages carrying an ESP-style `Feedback-ID` header
+    /// (RFC 6438 / Google FBL convention). Almost always
+    /// transactional/marketing mass mail.
+    #[serde(default = "default_true")]
+    pub feedback_id: bool,
+    /// Drop messages whose `X-Mailer` / `User-Agent` matches a
+    /// known mass-mailer ESP signature (Mailchimp, SendGrid,
+    /// Mailgun, Marketo, Constant Contact, Sendinblue, …).
+    #[serde(default = "default_true")]
+    pub esp_mailer: bool,
 }
 
 impl Default for LoopPreventionCfg {
@@ -610,6 +624,9 @@ impl Default for LoopPreventionCfg {
             auto_submitted: true,
             list_headers: true,
             self_from: true,
+            spam_flag: true,
+            feedback_id: true,
+            esp_mailer: true,
         }
     }
 }
@@ -630,6 +647,15 @@ pub struct EmailAccountConfig {
     pub folders: EmailFolders,
     #[serde(default)]
     pub filters: EmailFilters,
+    /// Cap on the number of historical UIDs the IMAP backfill loop
+    /// processes the **first** time the daemon binds this account
+    /// (when `last_uid == 0` in the durable cursor). Skips the
+    /// remainder so a fresh install on a 5000-message inbox doesn't
+    /// stall boot for hours. After bootstrap the cursor advances
+    /// normally and every subsequent message is processed.
+    /// `None` = unlimited (legacy behaviour).
+    #[serde(default)]
+    pub bootstrap_limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]

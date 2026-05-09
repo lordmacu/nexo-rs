@@ -46,7 +46,9 @@ pub(super) async fn run_list(
             }
         }
     }
-    out.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+    // Newest first — wrap in `Reverse` so `sort_by_key` reads
+    // descending without the manual closure clippy flagged.
+    out.sort_by_key(|b| std::cmp::Reverse(b.created_at_ms));
     Ok(out)
 }
 

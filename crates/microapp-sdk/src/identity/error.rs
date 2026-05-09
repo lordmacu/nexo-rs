@@ -15,10 +15,7 @@ pub enum IdentityError {
     /// filter by `tenant_id` in queries; this catches a bug
     /// where a caller accidentally hands a foreign tenant.
     #[error("tenant_unauthorised: caller passed {got:?}, store scoped to {expected:?}")]
-    TenantUnauthorised {
-        expected: String,
-        got: String,
-    },
+    TenantUnauthorised { expected: String, got: String },
 
     /// Migration failed at first open. Corrupt schema or sqlx
     /// version drift.

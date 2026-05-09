@@ -24,6 +24,5 @@ pub use dispatch::{Dispatcher, MatchContext, RoutingDecision, RoutingError};
 pub use yaml_loader::{load_rule_set_from_str, RuleSetYaml};
 
 pub use nexo_tool_meta::marketing::{
-    AssignTarget, DomainKind, RulePredicate, RuleSet, RoutingRule, TenantIdRef,
-    SellerId,
+    AssignTarget, DomainKind, RoutingRule, RulePredicate, RuleSet, SellerId, TenantIdRef,
 };

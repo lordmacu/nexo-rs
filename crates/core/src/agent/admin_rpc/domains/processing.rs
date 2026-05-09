@@ -178,6 +178,24 @@ pub async fn pause(
             )
         }
     };
+    // Idempotent re-pause: scope already paused → ack
+    // changed=false and skip the firehose emit. Without this
+    // guard `set()` rewrites the timestamp + operator hash, which
+    // looks like a state change to the store (timestamp differs)
+    // and produces a phantom `ProcessingStateChanged` for every
+    // retry. Subscribers would re-render the badge, flicker
+    // counters, and double-count operator interventions.
+    if matches!(prev_state, ProcessingControlState::PausedByOperator { .. }) {
+        return crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
+            serde_json::to_value(ProcessingAck {
+                changed: false,
+                correlation_id: uuid::Uuid::new_v4(),
+                transcript_stamped: None,
+                drained_pending: None,
+            })
+            .unwrap_or(serde_json::Value::Null),
+        );
+    }
     let at_ms = now_epoch_ms();
     let new_state = ProcessingControlState::PausedByOperator {
         scope: p.scope.clone(),

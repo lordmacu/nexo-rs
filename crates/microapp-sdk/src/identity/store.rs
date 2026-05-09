@@ -69,11 +69,7 @@ pub struct PersonPhone {
 #[async_trait]
 pub trait PersonStore: Send + Sync {
     async fn upsert(&self, tenant_id: &str, person: &Person) -> Result<Person, IdentityError>;
-    async fn get(
-        &self,
-        tenant_id: &str,
-        id: &PersonId,
-    ) -> Result<Option<Person>, IdentityError>;
+    async fn get(&self, tenant_id: &str, id: &PersonId) -> Result<Option<Person>, IdentityError>;
     async fn find_by_email(
         &self,
         tenant_id: &str,
@@ -190,24 +186,13 @@ pub trait LidPnMappingStore: Send + Sync {
 
     /// Cascade-delete every row for one tenant. Returns the
     /// number of rows removed.
-    async fn delete_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<u64, IdentityError>;
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError>;
 }
 
 #[async_trait]
 pub trait CompanyStore: Send + Sync {
-    async fn upsert(
-        &self,
-        tenant_id: &str,
-        company: &Company,
-    ) -> Result<Company, IdentityError>;
-    async fn get(
-        &self,
-        tenant_id: &str,
-        id: &CompanyId,
-    ) -> Result<Option<Company>, IdentityError>;
+    async fn upsert(&self, tenant_id: &str, company: &Company) -> Result<Company, IdentityError>;
+    async fn get(&self, tenant_id: &str, id: &CompanyId) -> Result<Option<Company>, IdentityError>;
     async fn find_by_domain(
         &self,
         tenant_id: &str,
@@ -327,16 +312,12 @@ impl SqlitePersonStore {
 
 #[async_trait]
 impl PersonStore for SqlitePersonStore {
-    async fn upsert(
-        &self,
-        tenant_id: &str,
-        person: &Person,
-    ) -> Result<Person, IdentityError> {
+    async fn upsert(&self, tenant_id: &str, person: &Person) -> Result<Person, IdentityError> {
         validate_email(&person.primary_email)?;
         let tags_json = serde_json::to_string(&person.tags).unwrap_or_else(|_| "[]".into());
         let company_id_str = person.company_id.as_ref().map(|c| c.0.clone());
-        let status_str = serde_json::to_string(&person.enrichment_status)
-            .unwrap_or_else(|_| "\"none\"".into());
+        let status_str =
+            serde_json::to_string(&person.enrichment_status).unwrap_or_else(|_| "\"none\"".into());
         // Strip serde quotes — store the bare snake_case value.
         let status_bare = status_str.trim_matches('"').to_string();
         sqlx::query(
@@ -369,11 +350,7 @@ impl PersonStore for SqlitePersonStore {
         Ok(person.clone())
     }
 
-    async fn get(
-        &self,
-        tenant_id: &str,
-        id: &PersonId,
-    ) -> Result<Option<Person>, IdentityError> {
+    async fn get(&self, tenant_id: &str, id: &PersonId) -> Result<Option<Person>, IdentityError> {
         let row = sqlx::query_as::<_, PersonRow>(
             "SELECT id, tenant_id, primary_name, primary_email, company_id, \
                     enrichment_status, enrichment_confidence, tags_json, \
@@ -549,13 +526,12 @@ impl PersonEmailStore for SqlitePersonEmailStore {
         email: &str,
     ) -> Result<Option<PersonId>, IdentityError> {
         validate_email(email)?;
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT person_id FROM person_emails WHERE tenant_id = ? AND email = ?",
-        )
-        .bind(tenant_id)
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT person_id FROM person_emails WHERE tenant_id = ? AND email = ?")
+                .bind(tenant_id)
+                .bind(email)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(id,)| PersonId(id)))
     }
 
@@ -665,13 +641,12 @@ impl PersonPhoneStore for SqlitePersonPhoneStore {
         tenant_id: &str,
         phone: &str,
     ) -> Result<Option<PersonId>, IdentityError> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT person_id FROM person_phones WHERE tenant_id = ? AND phone = ?",
-        )
-        .bind(tenant_id)
-        .bind(phone)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT person_id FROM person_phones WHERE tenant_id = ? AND phone = ?")
+                .bind(tenant_id)
+                .bind(phone)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(id,)| PersonId(id)))
     }
 
@@ -805,10 +780,7 @@ impl LidPnMappingStore for SqliteLidPnMappingStore {
         Ok(row.map(|(l,)| l))
     }
 
-    async fn delete_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<u64, IdentityError> {
+    async fn delete_by_tenant(&self, tenant_id: &str) -> Result<u64, IdentityError> {
         let r = sqlx::query("DELETE FROM lid_pn_mappings WHERE tenant_id = ?")
             .bind(tenant_id)
             .execute(&self.pool)
@@ -834,11 +806,7 @@ impl SqliteCompanyStore {
 
 #[async_trait]
 impl CompanyStore for SqliteCompanyStore {
-    async fn upsert(
-        &self,
-        tenant_id: &str,
-        company: &Company,
-    ) -> Result<Company, IdentityError> {
+    async fn upsert(&self, tenant_id: &str, company: &Company) -> Result<Company, IdentityError> {
         sqlx::query(
             "INSERT INTO companies \
              (id, tenant_id, domain, name, industry, size_band, \
@@ -865,11 +833,7 @@ impl CompanyStore for SqliteCompanyStore {
         Ok(company.clone())
     }
 
-    async fn get(
-        &self,
-        tenant_id: &str,
-        id: &CompanyId,
-    ) -> Result<Option<Company>, IdentityError> {
+    async fn get(&self, tenant_id: &str, id: &CompanyId) -> Result<Option<Company>, IdentityError> {
         let row = sqlx::query_as::<_, CompanyRow>(
             "SELECT id, tenant_id, domain, name, industry, size_band, \
                     enriched_at_ms, is_personal_domain \
@@ -1099,7 +1063,11 @@ mod tests {
         c_globex.industry = Some("fintech".into());
         store.upsert("acme", &c_acme).await.unwrap();
         store.upsert("globex", &c_globex).await.unwrap();
-        let acme = store.find_by_domain("acme", "acme.com").await.unwrap().unwrap();
+        let acme = store
+            .find_by_domain("acme", "acme.com")
+            .await
+            .unwrap()
+            .unwrap();
         let globex = store
             .find_by_domain("globex", "acme.com")
             .await
@@ -1124,8 +1092,16 @@ mod tests {
         let n = store.delete_by_tenant("acme").await.unwrap();
         assert_eq!(n, 1);
         // Empresa A wiped, empresa B intact.
-        assert!(store.get("acme", &PersonId("juan".into())).await.unwrap().is_none());
-        assert!(store.get("globex", &PersonId("ana".into())).await.unwrap().is_some());
+        assert!(store
+            .get("acme", &PersonId("juan".into()))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get("globex", &PersonId("ana".into()))
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -1158,10 +1134,7 @@ mod tests {
             .add("acme", &pid, "+573001234567", true)
             .await
             .unwrap();
-        let owner = store
-            .find_owner("acme", "+573001234567")
-            .await
-            .unwrap();
+        let owner = store.find_owner("acme", "+573001234567").await.unwrap();
         assert_eq!(owner, Some(pid));
     }
 
@@ -1181,16 +1154,10 @@ mod tests {
         let store = fresh_phone_store().await;
         let pid_old = PersonId("old".into());
         let pid_new = PersonId("new".into());
-        store
-            .add("acme", &pid_old, "+57300", false)
-            .await
-            .unwrap();
+        store.add("acme", &pid_old, "+57300", false).await.unwrap();
         // Same phone re-added with a different owner — last
         // write wins via ON CONFLICT DO UPDATE.
-        store
-            .add("acme", &pid_new, "+57300", true)
-            .await
-            .unwrap();
+        store.add("acme", &pid_new, "+57300", true).await.unwrap();
         let owner = store.find_owner("acme", "+57300").await.unwrap();
         assert_eq!(owner, Some(pid_new));
     }
@@ -1223,19 +1190,14 @@ mod tests {
             .unwrap();
         assert_eq!(owner, Some(pid));
         // E.164 form would NOT match the raw JID.
-        let miss = store
-            .find_owner("acme", "+573001234567")
-            .await
-            .unwrap();
+        let miss = store.find_owner("acme", "+573001234567").await.unwrap();
         assert!(miss.is_none());
     }
 
     #[tokio::test]
     async fn phone_empty_input_rejected() {
         let store = fresh_phone_store().await;
-        let r = store
-            .add("acme", &PersonId("x".into()), "  ", false)
-            .await;
+        let r = store.add("acme", &PersonId("x".into()), "  ", false).await;
         assert!(matches!(r, Err(IdentityError::InvalidEmail(_))));
     }
 
@@ -1252,11 +1214,7 @@ mod tests {
             .unwrap();
         let n = store.delete_by_tenant("acme").await.unwrap();
         assert_eq!(n, 1);
-        assert!(store
-            .find_owner("acme", "+57300")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(store.find_owner("acme", "+57300").await.unwrap().is_none());
         assert_eq!(
             store
                 .find_owner("globex", "+12345")
@@ -1329,8 +1287,7 @@ mod tests {
         let mut globex_p = person_with_company("g", "g@globex.io", "globex");
         globex_p.tenant_id = TenantIdRef("globex".into());
         store.upsert("globex", &globex_p).await.unwrap();
-        let acme_rows =
-            store.list_by_company("acme", "globex", 100).await.unwrap();
+        let acme_rows = store.list_by_company("acme", "globex", 100).await.unwrap();
         assert_eq!(acme_rows.len(), 1);
         assert_eq!(acme_rows[0].id.0, "a");
     }
@@ -1360,11 +1317,7 @@ mod tests {
             store
                 .upsert(
                     "acme",
-                    &person_with_company(
-                        &format!("p{i}"),
-                        &format!("p{i}@x.io"),
-                        "globex",
-                    ),
+                    &person_with_company(&format!("p{i}"), &format!("p{i}@x.io"), "globex"),
                 )
                 .await
                 .unwrap();
@@ -1444,19 +1397,13 @@ mod tests {
     #[tokio::test]
     async fn lid_pn_put_first_seen_observed_at_preserved_on_re_upsert() {
         let store = fresh_lid_pn_store().await;
-        let first = store
-            .put("acme", "123", "456")
-            .await
-            .unwrap();
+        let first = store.put("acme", "123", "456").await.unwrap();
         // Re-upsert the same lid with a fresh pn — observed_at
         // stays at the first-seen stamp.
         // chrono::now() resolution is millis; sleep so the
         // re-upsert wall clock advances.
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-        let second = store
-            .put("acme", "123", "789")
-            .await
-            .unwrap();
+        let second = store.put("acme", "123", "789").await.unwrap();
         assert_eq!(second.observed_at_ms, first.observed_at_ms);
         assert_eq!(second.pn_user, "789");
         assert_eq!(
@@ -1500,21 +1447,11 @@ mod tests {
     #[tokio::test]
     async fn lid_pn_delete_by_tenant_cascades() {
         let store = fresh_lid_pn_store().await;
-        store
-            .put("acme", "123", "456")
-            .await
-            .unwrap();
-        store
-            .put("globex", "999", "888")
-            .await
-            .unwrap();
+        store.put("acme", "123", "456").await.unwrap();
+        store.put("globex", "999", "888").await.unwrap();
         let n = store.delete_by_tenant("acme").await.unwrap();
         assert_eq!(n, 1);
-        assert!(store
-            .get_pn_for_lid("acme", "123")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(store.get_pn_for_lid("acme", "123").await.unwrap().is_none());
         // Globex untouched.
         assert_eq!(
             store

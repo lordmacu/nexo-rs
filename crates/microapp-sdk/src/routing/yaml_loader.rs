@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use nexo_tool_meta::marketing::{
-    AssignTarget, RoutingRule, RuleSet, TenantIdRef,
-};
+use nexo_tool_meta::marketing::{AssignTarget, RoutingRule, RuleSet, TenantIdRef};
 
 /// Operator-facing YAML schema. Round-trips into `RuleSet` so
 /// the YAML stays editable as the canonical source while the
@@ -55,9 +53,7 @@ pub fn load_rule_set_from_str(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexo_tool_meta::marketing::{
-        AssignTarget, RulePredicate, TenantIdRef, SellerId,
-    };
+    use nexo_tool_meta::marketing::{AssignTarget, RulePredicate, SellerId, TenantIdRef};
 
     const SAMPLE: &str = r#"
 version: 1

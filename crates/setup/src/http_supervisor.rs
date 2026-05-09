@@ -245,6 +245,7 @@ mod tests {
             bind: "127.0.0.1".into(),
             token_env: "TEST_TOKEN".into(),
             health_path: path.into(),
+            extra_env_passthrough: Vec::new(),
         }
     }
 

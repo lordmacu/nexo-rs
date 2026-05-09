@@ -202,9 +202,7 @@ impl DedupCache {
     /// that haven't been evicted by a read pass yet).
     pub fn len(&self) -> usize {
         match &self.backend {
-            Backend::Memory(inner) => {
-                inner.lock().map(|m| m.len()).unwrap_or(0)
-            }
+            Backend::Memory(inner) => inner.lock().map(|m| m.len()).unwrap_or(0),
             #[cfg(feature = "dedup-sled")]
             Backend::Sled(db) => db.len(),
         }
@@ -412,20 +410,12 @@ mod tests {
             // close → reopen → second call is deduped.
             let dir = tempfile::tempdir().unwrap();
             {
-                let cache = DedupCache::with_sled(
-                    dir.path(),
-                    Duration::from_secs(3600),
-                )
-                .unwrap();
+                let cache = DedupCache::with_sled(dir.path(), Duration::from_secs(3600)).unwrap();
                 assert!(!cache.is_duplicate(&k("l-1")));
                 // Drop scope — sled flushes on drop.
             }
             // Re-open the same path.
-            let cache = DedupCache::with_sled(
-                dir.path(),
-                Duration::from_secs(3600),
-            )
-            .unwrap();
+            let cache = DedupCache::with_sled(dir.path(), Duration::from_secs(3600)).unwrap();
             assert!(
                 cache.is_duplicate(&k("l-1")),
                 "sled-backed cache must persist across restarts"
@@ -438,19 +428,11 @@ mod tests {
             // from the previous run get treated as fresh.
             let dir = tempfile::tempdir().unwrap();
             {
-                let cache = DedupCache::with_sled(
-                    dir.path(),
-                    Duration::from_millis(50),
-                )
-                .unwrap();
+                let cache = DedupCache::with_sled(dir.path(), Duration::from_millis(50)).unwrap();
                 assert!(!cache.is_duplicate(&k("l-1")));
             }
             std::thread::sleep(Duration::from_millis(60));
-            let cache = DedupCache::with_sled(
-                dir.path(),
-                Duration::from_millis(50),
-            )
-            .unwrap();
+            let cache = DedupCache::with_sled(dir.path(), Duration::from_millis(50)).unwrap();
             assert!(
                 !cache.is_duplicate(&k("l-1")),
                 "stale row must be treated as fresh after restart"

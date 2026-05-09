@@ -1072,6 +1072,7 @@ mod drift_tests {
         "NEXO_PLUGIN_LLM_TIMEOUT_MS",     // 81.25 RemoteLlmClient timeout.
         "NEXO_PLUGIN_HOOK_TIMEOUT_MS",    // 81.27 RemoteHookHandler timeout.
         "NEXO_PLUGIN_MEMORY_TIMEOUT_MS",  // 81.26 RemoteVectorBackend timeout.
+        "NEXO_PLUGIN_TOOL_TIMEOUT_MS",    // 81.x RemoteTool timeout (tool_remote.rs).
         // ---- LLM provider tuning (non-destructive) ----
         // Anthropic
         "ANTHROPIC_VERSION",

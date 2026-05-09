@@ -29,8 +29,8 @@
 
 use std::path::{Path, PathBuf};
 
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STD;
+use base64::Engine as _;
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature as EcdsaSig, VerifyingKey};
 use sha2::{Digest as _, Sha256};
@@ -164,12 +164,11 @@ fn verify_blocking(
     if san_entries.is_empty() {
         return Err(VerifyError::IdentityNotFound);
     }
-    let regex = regex::Regex::new(identity_regexp).map_err(|e| {
-        VerifyError::IdentityRegexpInvalid {
+    let regex =
+        regex::Regex::new(identity_regexp).map_err(|e| VerifyError::IdentityRegexpInvalid {
             got: identity_regexp.to_string(),
             reason: e.to_string(),
-        }
-    })?;
+        })?;
     let identity = san_entries
         .iter()
         .find(|entry| regex.is_match(entry))
@@ -208,9 +207,7 @@ fn extract_p256_pubkey(cert: &X509Certificate<'_>) -> Result<VerifyingKey, Verif
     // that isn't a valid P-256 point.
     let raw = spki.subject_public_key.data.as_ref();
     VerifyingKey::from_sec1_bytes(raw).map_err(|e| {
-        VerifyError::UnsupportedKey(format!(
-            "expected ECDSA-P256 SEC1 point, parse failed: {e}"
-        ))
+        VerifyError::UnsupportedKey(format!("expected ECDSA-P256 SEC1 point, parse failed: {e}"))
     })
 }
 
@@ -283,7 +280,7 @@ fn parse_der_utf8_string(bytes: &[u8]) -> Option<String> {
     } else {
         // Long-form length: low 7 bits of the first byte give
         // the count of length octets that follow.
-        let count = (length_byte & 0x7f) as usize;
+        let count = length_byte & 0x7f;
         if count == 0 || bytes.len() < 2 + count {
             return None;
         }
@@ -307,8 +304,7 @@ mod tests {
     use super::*;
     use crate::trusted_keys::TrustMode;
     use rcgen::{
-        Certificate, CertificateParams, CustomExtension, DistinguishedName, KeyPair,
-        SanType,
+        Certificate, CertificateParams, CustomExtension, DistinguishedName, KeyPair, SanType,
     };
     use std::fs;
     use tempfile::TempDir;
@@ -341,7 +337,8 @@ mod tests {
         ext_value.push(0x0c); // UTF8String tag
         ext_value.push(issuer.len() as u8); // short-form length (issuers fit < 128 bytes)
         ext_value.extend_from_slice(issuer.as_bytes());
-        let issuer_ext = CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 57264, 1, 8], ext_value);
+        let issuer_ext =
+            CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 57264, 1, 8], ext_value);
         params.custom_extensions.push(issuer_ext);
 
         let cert = params.self_signed(&key).unwrap();
@@ -355,8 +352,7 @@ mod tests {
         // re-import into `p256::ecdsa::SigningKey` so we sign
         // exactly the way `p256` would verify.
         use p256::pkcs8::DecodePrivateKey;
-        let signing_key =
-            p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der()).unwrap();
+        let signing_key = p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der()).unwrap();
         let digest = Sha256::digest(blob);
         let signature: EcdsaSig = p256::ecdsa::signature::Signer::sign(&signing_key, &digest);
         BASE64_STD.encode(signature.to_der().as_bytes())
