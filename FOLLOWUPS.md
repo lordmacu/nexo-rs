@@ -422,30 +422,73 @@ telegram).
   The override cleanup landed in `release-plz-cleanup-and-reenable`
   below. Status: ✅ closed.
 
-- **`release-plz-cleanup-and-reenable`** — RESOLVED 2026-05-09.
-  Cleanup wave following the publish chain that closed
-  `81.18.c.private-dep-blockers-fork-dream-cascade` and
-  `81.19.b.publish-github`. Three changes:
-    * `release-plz.toml` reduced from 42 `[[package]]` overrides
-      to 5 survivors: `nexo-rs` (root, `release = true`),
-      `nexo-plugin-{telegram,whatsapp,email}`
-      (`release = false` permanent — extracted to standalone
-      repos), and `nexo-companion-tui` (`release = false`
-      until external consumer demand).
-    * `.github/workflows/release-plz.yml` re-enabled
-      `on: push: branches: [main]`. Sibling-repo checkout
-      step added for `lordmacu/nexo-plugin-email`
-      (telegram + whatsapp already had checkouts since
-      Phase 81.18). The prior `workflow_dispatch:` only
-      trigger reflected the pre-publish-wave state where
-      driver subsystem internals were not on crates.io.
+- **`release-plz-cleanup-and-reenable`** — PARTIAL 2026-05-09.
+  Cleanup landed; on:push trigger reverted after 2 failed
+  workflow runs revealed a structural blocker.
+
+  **Shipped (kept):**
+    * `release-plz.toml` reduced from 42 `[[package]]`
+      overrides to 2 survivors: `nexo-rs` (root,
+      `release = true`) + `nexo-companion-tui`
+      (`release = false`, internal TUI). The 3
+      standalone-plugin overrides (`nexo-plugin-{telegram,
+      whatsapp,email}`) were attempted but rejected by
+      release-plz with "overrides are not present in the
+      workspace" — they're path-deps not members.
     * 35 git tags backfilled (`<crate>-v<version>` for
-      every crate published in the manual wave) so
-      release-plz's diff walker doesn't propose phantom
-      bumps on the first push trigger after re-enable.
-  Operational verification deferred to operator: trigger
-  one `workflow_dispatch` run + review the Release PR
-  before relying on `on: push` automation.
+      every crate published in the manual wave).
+    * `.github/workflows/release-plz.yml` sibling-repo
+      checkout step for `nexo-plugin-email` added to both
+      jobs (alongside the existing telegram + whatsapp
+      checkouts).
+
+  **Reverted:**
+    * `on: push: branches: [main]` rolled back to
+      `workflow_dispatch:` only. Two consecutive runs
+      failed: workflow run 25613927378 hit the
+      "overrides not present in workspace" error;
+      25614022345 (after fix) hit the deeper structural
+      blocker — release-plz makes its own git clone of
+      proyecto into `/tmp/.tmpXXX/proyecto/` and resolves
+      `path = "../nexo-rs-plugin-X"` relative to THAT
+      tmp dir, so sibling checkouts in
+      `$GITHUB_WORKSPACE/nexo-rs-plugin-X` are invisible
+      to the tmp clone. Even probing an unrelated crate
+      (nexo-config) walks the workspace dep graph and
+      aborts on the unresolvable path-dep.
+    * Attempted version-only deps (drop path) but the
+      workspace requires `nexo-plugin-whatsapp 0.1.3`
+      while crates.io only has 0.1.1 — the local 0.1.3
+      carries Phase 81.20.c (typing-presence broker) +
+      81.19.a.tls-rustls features the daemon depends on.
+      Downgrading to 0.1.1 broke 13 nexo-setup symbols.
+
+  Status: ✅ for cleanup of obsolete overrides; ❌
+  on:push remains `workflow_dispatch:` only. Tracked as
+  `release-plz.path-dep-walk-blocker` follow-up below.
+
+- **`release-plz.path-dep-walk-blocker`** — release-plz
+  cannot resolve workspace path-deps that point outside
+  the repo's git checkout (`../nexo-rs-plugin-X`). Three
+  unblocking paths, each with its own cost:
+    1. **Publish nexo-plugin-whatsapp 0.1.3** — currently
+       blocked on `wa-agent` git-dep lacking a crates.io
+       version (`cargo publish` rejects deps without
+       version reqs). Sub-blocker:
+       `wa-agent.crates-publish` (upstream).
+       After publish, drop workspace path-dep.
+    2. **Add release-plz config knob to inject siblings
+       into its tmp clone** — upstream feature request to
+       `MarcoIeni/release-plz`. PR effort ~1d.
+    3. **Vendor sibling repos as git submodules** — keeps
+       path-deps but submodule init runs in release-plz
+       tmp clone. Loses the "siblings publish independently"
+       property — they re-couple to monorepo lifecycle.
+  Owner: framework. Trigger: release-plz on:push
+  automation desired. Status: pending. Workaround until
+  then: `gh workflow run release-plz.yml` for one-shot
+  manual runs (gracefully degrades to manual `cargo publish`
+  for emergency releases).
 
 - **`81.18.b.qr-event-bridge`** — daemon's pairing state
   subscriber expects subprocess plugins to publish
