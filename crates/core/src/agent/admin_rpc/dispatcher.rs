@@ -282,6 +282,12 @@ pub struct AdminRpcDispatcher {
     /// reflects the same config agent traffic would resolve.
     /// Resolves M9.frame.b (microapp follow-up).
     llm_provider_probe: Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
+    /// Phase 82.10.t.x — runtime LLM completer. Pluggable so the
+    /// binary can wire `nexo_setup::llm_completer::RegistryLlmCompleter`
+    /// (production) and tests can swap in a mock that captures
+    /// inputs without touching the network. `None` disables
+    /// `nexo/admin/llm/complete` (returns `Internal`).
+    llm_completer: Option<Arc<dyn super::domains::llm::LlmCompleter>>,
     /// Phase 82.10.o — operator bearer rotator. `None` disables
     /// `nexo/admin/auth/rotate_token` (returns `Internal`).
     /// Production wires `nexo_setup::auth_rotator::FsAuthRotator`
@@ -342,6 +348,7 @@ impl AdminRpcDispatcher {
             event_emitter: None,
             secrets_store: None,
             llm_provider_probe: None,
+            llm_completer: None,
             auth_rotator: None,
         }
     }
@@ -368,6 +375,19 @@ impl AdminRpcDispatcher {
         probe: Arc<dyn super::domains::llm_providers::LlmProvidersProbe>,
     ) -> Self {
         self.llm_provider_probe = Some(probe);
+        self
+    }
+
+    /// Phase 82.10.t.x — runtime LLM completer. Wire at boot
+    /// from `nexo_setup::llm_completer::RegistryLlmCompleter::new(
+    /// registry, llm_cfg)`. Without one,
+    /// `nexo/admin/llm/complete` returns
+    /// `Internal("llm completer not configured")`.
+    pub fn with_llm_completer(
+        mut self,
+        completer: Arc<dyn super::domains::llm::LlmCompleter>,
+    ) -> Self {
+        self.llm_completer = Some(completer);
         self
     }
 
@@ -647,6 +667,11 @@ impl AdminRpcDispatcher {
             | "nexo/admin/llm_providers/oauth_start"
             | "nexo/admin/llm_providers/oauth_finish"
             | "nexo/admin/llm_providers/catalog" => Some("llm_keys_crud"),
+            // Phase 82.10.t.x — runtime LLM completion. Distinct
+            // capability from llm_keys_crud: an extension can
+            // *use* the LLM (drafts, classification) without the
+            // ability to mutate provider configs.
+            "nexo/admin/llm/complete" => Some("llm_complete"),
             "nexo/admin/channels/list"
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
@@ -1242,6 +1267,12 @@ impl AdminRpcDispatcher {
                 Some(p) => super::domains::llm_providers::probe(p.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers probe not configured".into(),
+                )),
+            },
+            "nexo/admin/llm/complete" => match &self.llm_completer {
+                Some(c) => super::domains::llm::complete(c.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm completer not configured".into(),
                 )),
             },
             "nexo/admin/llm_providers/probe_draft" => match &self.llm_provider_probe {

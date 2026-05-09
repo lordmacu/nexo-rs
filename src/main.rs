@@ -1001,13 +1001,19 @@ where
 async fn main() -> Result<()> {
     init_tracing();
 
-    // Phase 81.21 follow-up — install the rustls process-wide
-    // CryptoProvider. Several `rustls = { default-features = false }`
-    // dependency closures reach `ClientConfig::builder()` without
-    // first selecting a provider, which panics with "Could not
-    // automatically determine the process-level CryptoProvider".
-    // Install ring once at boot; double-install is idempotent (the
-    // first wins) so we ignore the result.
+    // rustls 0.23 requires a process-wide `CryptoProvider`. The
+    // daemon links both `ring` and `aws-lc-rs` transitively
+    // (sqlx, reqwest, lettre, …); without an explicit
+    // `install_default` the first rustls user panics with
+    // "Could not automatically determine the process-level
+    // CryptoProvider from Rustls crate features." The
+    // EmailPersister probe is the first hot path that hits this
+    // (TLS handshake to imap.gmail.com on
+    // `credentials/register`), but every microapp / extension
+    // that touches HTTPS via a transitively-pinned rustls also
+    // benefits. `install_default` returns Err on a duplicate
+    // install — we ignore so a host-process embedder can pin
+    // their own provider before main() runs.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Phase 11.1 follow-up — make the `agent` binary's version the one
@@ -1679,6 +1685,24 @@ async fn main() -> Result<()> {
                 // against the local `LlmYamlPatcherFs`. Tests
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
+                // Phase 82.10.t.x — production LLM completer:
+                // wraps a fresh `LlmRegistry` + an `Arc` of the
+                // current `LlmConfig` so admin/llm/complete
+                // resolves providers exactly the way the agent
+                // runtime does. The runtime registry built later
+                // in main.rs is a different Arc but identical
+                // contents (both `with_builtins()` against the
+                // same `cfg.llm`); divergence would require a
+                // dynamic plugin-registered factory landing
+                // between these two construction sites — rare in
+                // practice + audited if it lands.
+                llm_completer: Some(nexo_setup::llm_completer::RegistryLlmCompleter::new(
+                    std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                    std::sync::Arc::new(cfg.llm.clone()),
+                )
+                    as std::sync::Arc<
+                        dyn nexo_core::agent::admin_rpc::domains::llm::LlmCompleter,
+                    >),
                 // Snapshot the LLM provider catalogue from a fresh
                 // `LlmRegistry::with_builtins()` so the admin RPC
                 // can serve `nexo/admin/llm_providers/catalog` from

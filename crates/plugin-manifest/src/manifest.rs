@@ -161,6 +161,32 @@ pub struct PluginSection {
     /// integration deferred to 81.22.macos).
     #[serde(default)]
     pub sandbox: crate::sandbox::SandboxSection,
+
+    /// Broker subscriptions — NATS subjects the daemon
+    /// forwards to this plugin's stdin. Out-of-tree plugins
+    /// (marketing, browser) declare their topic prefixes here
+    /// instead of negotiating at handshake time. Empty
+    /// (default) means "no broker traffic" — purely tool-call
+    /// driven plugins keep working unchanged.
+    #[serde(default)]
+    pub subscriptions: SubscriptionsSection,
+
+    /// Top-level `[plugin.http_server]` — operator-facing
+    /// documentation for plugins that bind their own loopback
+    /// admin port outside the daemon's spawn supervision
+    /// (the marketing extension reads `MARKETING_HTTP_PORT`
+    /// directly at boot rather than through a daemon-injected
+    /// channel). Distinct from `[plugin.capabilities.http_server]`,
+    /// which the daemon DOES consume to supervise spawn-time
+    /// bind policy + token allowlisting.
+    ///
+    /// Accepts an opaque toml table so the field shape stays
+    /// permissive — env-driven port (`port_env` + `default_port`)
+    /// vs fixed `port` are both legal. Today nothing on the
+    /// daemon side reads it; lifting to a typed shape lands
+    /// when a second plugin adopts the same pattern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_server: Option<toml::Value>,
 }
 
 // ── Subprocess entrypoint (Phase 81.14) ─────────────────────────
@@ -316,38 +342,42 @@ pub struct Capabilities {
     /// skills are unaffected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
-    /// Phase 82.15.bx — declarative broker capability. CRM-style
-    /// plugins (marketing, analytics) consume topics that don't
-    /// fall under `plugin.outbound.<channel-kind>` auto-derivation
-    /// in `nexo_plugin_registry::subprocess`. The daemon merges
-    /// these patterns with the auto-derived ones at spawn time:
-    /// `subscribe` patterns get `broker.subscribe(&pattern)` +
-    /// forwarded to the child as `broker.event` notifications;
-    /// `publish` allowlists which topics the child may publish to
-    /// via the validated `broker.publish` JSON-RPC notification.
-    /// Empty / absent keeps today's auto-derived-only behaviour.
+    /// Phase 82.15.bx — extension broker subscriptions /
+    /// publish allowlist. Lifts the channel-plugin assumption
+    /// that the only broker traffic of interest is
+    /// `plugin.outbound.<kind>` (subscribe) +
+    /// `plugin.inbound.<kind>` (publish): CRM-style extensions
+    /// like marketing flip the directionality (CONSUME
+    /// `plugin.inbound.email.>` to ingest leads, PUBLISH
+    /// `plugin.outbound.email.>` when the operator approves a
+    /// reply). The daemon merges these patterns with the auto-
+    /// derived ones at spawn time and rejects publish requests
+    /// whose topic fails to match any allowlist entry. Empty /
+    /// absent keeps today's auto-derived-only behaviour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broker: Option<BrokerCapability>,
 }
 
-/// Phase 82.15.bx — broker capability declaration.
-///
-/// `subscribe` patterns admit standard broker wildcards (`>` =
-/// rest-of-subject, `*` = single-segment). `publish` patterns
-/// are exact-string allowlist entries; the daemon's bridge
-/// rejects publish requests whose topic fails to match any
-/// allowlist entry with `topic_matches`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+/// Phase 82.15.bx — declarative broker access. Patterns use the
+/// NATS-style wildcard grammar (`plugin.inbound.email.>` matches
+/// every instance suffix, `*` matches a single segment). Publish
+/// patterns are exact-string allowlist entries; the daemon's
+/// bridge rejects publish requests whose topic fails to match
+/// any allowlist entry via `topic_matches`. Defense-in-depth:
+/// a misbehaving plugin can't broadcast on arbitrary topics it
+/// didn't declare.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BrokerCapability {
-    /// Topic patterns the plugin subscribes to. Daemon spawns one
-    /// `broker.subscribe` task per pattern at plugin-start time.
+    /// Topic patterns the plugin subscribes to. Daemon spawns
+    /// one `broker.subscribe` task per pattern at plugin-start
+    /// time and pumps `broker.event` frames over stdio.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subscribe: Vec<String>,
     /// Topic patterns the plugin is allowed to publish to via
-    /// `broker.publish` notifications over stdio. Defense-in-
-    /// depth: a misbehaving plugin can't broadcast on arbitrary
-    /// topics it didn't declare.
+    /// the validated `broker.publish` JSON-RPC notification.
+    /// Empty list keeps the default `plugin.inbound.<kind>`
+    /// allowlist derived from `[extends.channels]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub publish: Vec<String>,
 }
@@ -424,6 +454,23 @@ impl HttpServerCapability {
 ///   these methods return `-32004 capability_not_granted`. The
 ///   microapp branches gracefully (e.g. hide an LLM key editor
 ///   tab when `llm_keys_crud` is missing).
+/// Broker subscription declarations — NATS subjects the
+/// daemon forwards to the plugin's stdin. Empty by default;
+/// plugins that don't subscribe to any broker traffic (purely
+/// tool-call driven, e.g. `agent-creator`) leave it unset and
+/// keep working unchanged.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SubscriptionsSection {
+    /// Subject patterns (`*` glob in the rightmost segment is
+    /// honoured by the broker dispatch layer). Examples:
+    /// `plugin.inbound.email.*` (every email plugin
+    /// instance), `agent.email.notification.*` (notifications
+    /// the plugin itself published).
+    #[serde(default)]
+    pub broker_topics: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AdminCapabilities {
@@ -982,6 +1029,78 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(m.id(), "marketing");
         assert_eq!(m.version().to_string(), "0.1.0");
         assert!(!m.plugin.enabled_by_default, "default opt-in is false");
+        // M15.21.followup-override sweep — `subscriptions`
+        // defaults to an empty section so legacy manifests
+        // (no `[plugin.subscriptions]`) keep parsing.
+        assert!(m.plugin.subscriptions.broker_topics.is_empty());
+    }
+
+    /// Top-level `[plugin.http_server]` is operator-facing
+    /// documentation for self-supervised plugins (marketing
+    /// reads `MARKETING_HTTP_PORT` directly). The strict v2
+    /// parse must accept the section as an opaque toml::Value
+    /// so legacy manifests don't crash boot. Daemon-supervised
+    /// HTTP capabilities live under `[plugin.capabilities.http_server]`
+    /// (the typed `HttpServerCapability`).
+    #[test]
+    fn parse_top_level_plugin_http_server_block_accepted_as_opaque() {
+        let raw = r#"
+[plugin]
+id = "marketing"
+version = "0.1.0"
+name = "Marketing"
+description = "Lead pipeline"
+min_nexo_version = ">=0.1.0"
+
+[plugin.http_server]
+port_env = "MARKETING_HTTP_PORT"
+default_port = 18766
+bind = "127.0.0.1"
+token_env = "MARKETING_ADMIN_TOKEN"
+health_path = "/healthz"
+"#;
+        let m = PluginManifest::from_str(raw).unwrap();
+        let block = m.plugin.http_server.expect("http_server block");
+        // Opaque block — caller can introspect when they
+        // need to (today nobody does).
+        assert_eq!(
+            block.get("port_env").and_then(|v| v.as_str()),
+            Some("MARKETING_HTTP_PORT"),
+        );
+        assert_eq!(
+            block.get("default_port").and_then(|v| v.as_integer()),
+            Some(18766),
+        );
+    }
+
+    /// Plugins that subscribe to broker traffic declare
+    /// `[plugin.subscriptions] broker_topics = [...]`.
+    /// Strict v2 parse must accept the section + populate
+    /// the topic vec verbatim.
+    #[test]
+    fn parse_plugin_subscriptions_broker_topics() {
+        let raw = r#"
+[plugin]
+id = "marketing"
+version = "0.1.0"
+name = "Marketing"
+description = "Lead pipeline"
+min_nexo_version = ">=0.1.0"
+
+[plugin.subscriptions]
+broker_topics = [
+    "plugin.inbound.email.*",
+    "agent.email.notification.*",
+]
+"#;
+        let m = PluginManifest::from_str(raw).unwrap();
+        assert_eq!(
+            m.plugin.subscriptions.broker_topics,
+            vec![
+                "plugin.inbound.email.*".to_string(),
+                "agent.email.notification.*".to_string(),
+            ]
+        );
     }
 
     #[test]

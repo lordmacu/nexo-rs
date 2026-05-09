@@ -27,8 +27,8 @@ use serde::Deserialize;
 
 use crate::error::ManifestError;
 use crate::manifest::{
-    AdminCapabilities, BrokerCapability, Capabilities, EntrypointSection, HttpServerCapability,
-    MetaSection, PluginManifest, PluginSection,
+    AdminCapabilities, Capabilities, EntrypointSection, HttpServerCapability, MetaSection,
+    PluginManifest, PluginSection, SubscriptionsSection,
 };
 
 // ── v1 legacy struct mirrors ────────────────────────────────────
@@ -141,9 +141,15 @@ struct LegacyV1HttpServerCapability {
     token_env: String,
     #[serde(default = "default_legacy_health_path")]
     health_path: String,
-    /// Phase 23fc656 — operator-stamped env keys passed through
-    /// to the spawned binary verbatim. Field-for-field identical
-    /// to v2 [`HttpServerCapability::extra_env_passthrough`].
+    /// Phase 82.12.b — extra env-var passthrough allowlist.
+    /// Microapps that proxy to a sibling extension on a
+    /// shared bearer (e.g. agent-creator → marketing on
+    /// `MARKETING_ADMIN_TOKEN`) declare them here so the
+    /// daemon's secret-suffix blocklist doesn't strip the
+    /// var at spawn. Field-for-field identical to v2
+    /// [`HttpServerCapability::extra_env_passthrough`].
+    /// Backwards-compat: v1 manifests pre-dating the field
+    /// omit it; the migrator defaults to an empty vec.
     #[serde(default)]
     extra_env_passthrough: Vec<String>,
 }
@@ -251,17 +257,10 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             bind: h.bind,
             token_env: h.token_env,
             health_path: h.health_path,
+            // Phase 82.12.b — pass the allowlist through
+            // verbatim. Pre-82.12.b v1 manifests omit the
+            // field and arrive here as an empty vec.
             extra_env_passthrough: h.extra_env_passthrough,
-        });
-
-    // Phase 82.15.bx — broker capability passes through verbatim.
-    let broker = legacy
-        .capabilities
-        .broker
-        .filter(|b| !b.subscribe.is_empty() || !b.publish.is_empty())
-        .map(|b| BrokerCapability {
-            subscribe: b.subscribe,
-            publish: b.publish,
         });
 
     // Capabilities.tools/hooks/channels/providers/pollers — these
@@ -328,7 +327,10 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             admin,
             http_server,
             skills: Vec::new(),
-            broker,
+            // V1 legacy plugins don't get auto-mapped broker
+            // capability — broker access opts in via v2 manifest
+            // and an explicit `[capabilities.broker]` table.
+            broker: None,
         },
         tools: Default::default(),
         advisors: Default::default(),
@@ -349,6 +351,14 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         },
         supervisor: Default::default(),
         sandbox: Default::default(),
+        // V1 manifests pre-date `[plugin.subscriptions]`;
+        // default to empty so legacy in-tree plugins keep
+        // booting unchanged. Out-of-tree plugins that need
+        // broker traffic upgraded to v2 alongside this field.
+        subscriptions: SubscriptionsSection::default(),
+        // V1 manifests pre-date the top-level `[plugin.http_server]`
+        // documentation block — None matches the v1 wire shape.
+        http_server: None,
         entrypoint,
     };
 
@@ -581,6 +591,62 @@ command = "./agent-creator"
         assert_eq!(http.bind, "127.0.0.1");
         assert_eq!(http.token_env, "AGENT_CREATOR_TOKEN");
         assert_eq!(http.health_path, "/healthz");
+    }
+
+    /// Phase 82.12.b — v1 manifests with the allowlist must
+    /// translate verbatim. Without this fix the parser rejects
+    /// the field as `deny_unknown_fields`, the manifest fails to
+    /// load, and the microapp boots without an admin router →
+    /// every admin RPC times out.
+    #[test]
+    fn migrate_legacy_http_server_propagates_extra_env_passthrough() {
+        let raw = r#"
+[plugin]
+id = "agent-creator"
+version = "0.0.1"
+name = "Agent Creator"
+description = "Operator UI."
+
+[capabilities.http_server]
+port = 8765
+bind = "127.0.0.1"
+token_env = "AGENT_CREATOR_TOKEN"
+health_path = "/healthz"
+extra_env_passthrough = ["MARKETING_ADMIN_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./agent-creator"
+"#;
+        let (m, was_v1) = try_parse_v2_or_v1(raw).unwrap();
+        assert!(was_v1);
+        let http = m.plugin.capabilities.http_server.expect("http_server");
+        assert_eq!(http.extra_env_passthrough, vec!["MARKETING_ADMIN_TOKEN"]);
+    }
+
+    /// Phase 82.12.b — v1 manifests without the field default
+    /// to empty (back-compat).
+    #[test]
+    fn migrate_legacy_http_server_defaults_extra_env_passthrough_empty() {
+        let raw = r#"
+[plugin]
+id = "agent-creator"
+version = "0.0.1"
+name = "Agent Creator"
+description = "Operator UI."
+
+[capabilities.http_server]
+port = 8765
+bind = "127.0.0.1"
+token_env = "AGENT_CREATOR_TOKEN"
+
+[transport]
+kind = "stdio"
+command = "./agent-creator"
+"#;
+        let (m, _) = try_parse_v2_or_v1(raw).unwrap();
+        let http = m.plugin.capabilities.http_server.expect("http_server");
+        assert!(http.extra_env_passthrough.is_empty());
     }
 
     #[test]

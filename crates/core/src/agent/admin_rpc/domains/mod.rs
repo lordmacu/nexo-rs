@@ -17,6 +17,7 @@ pub mod auth;
 pub mod channels;
 pub mod credentials;
 pub mod escalations;
+pub mod llm;
 pub mod llm_providers;
 pub mod pairing;
 pub mod processing;

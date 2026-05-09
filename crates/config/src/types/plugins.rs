@@ -647,13 +647,12 @@ pub struct EmailAccountConfig {
     pub folders: EmailFolders,
     #[serde(default)]
     pub filters: EmailFilters,
-    /// Cap on the number of historical UIDs the IMAP backfill loop
-    /// processes the **first** time the daemon binds this account
-    /// (when `last_uid == 0` in the durable cursor). Skips the
-    /// remainder so a fresh install on a 5000-message inbox doesn't
-    /// stall boot for hours. After bootstrap the cursor advances
-    /// normally and every subsequent message is processed.
-    /// `None` = unlimited (legacy behaviour).
+    /// On a brand-new cursor (first boot OR `UIDVALIDITY` change),
+    /// cap the historical backfill to the most recent N UIDs.
+    /// `None` (default) processes the entire inbox — the
+    /// pre-existing behaviour. Set to e.g. `50` on accounts with
+    /// huge inboxes so the operator's first run doesn't churn
+    /// through years of newsletters before reaching today's mail.
     #[serde(default)]
     pub bootstrap_limit: Option<u32>,
 }

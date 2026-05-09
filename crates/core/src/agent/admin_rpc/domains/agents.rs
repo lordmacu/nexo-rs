@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use nexo_tool_meta::admin::agents::{
     AgentDetail, AgentSummary, AgentUpsertInput, AgentsDeleteParams, AgentsDeleteResponse,
-    AgentsGetParams, AgentsListFilter, AgentsListResponse, BindingSummary, ModelRef,
+    AgentsGetParams, AgentsListFilter, AgentsListResponse, BindingSummary, HeartbeatWire, ModelRef,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -266,6 +266,23 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
             _ => Vec::new(),
         };
 
+    // M15.18.d — heartbeat is `Some(..)` whenever the operator has
+    // authored the block at least once. Absent yaml → None so the
+    // microapp distinguishes "framework default" from "explicitly
+    // configured but disabled".
+    let heartbeat_enabled = patcher.read_agent_field(agent_id, "heartbeat.enabled")?;
+    let heartbeat_interval = patcher.read_agent_field(agent_id, "heartbeat.interval")?;
+    let heartbeat = match (heartbeat_enabled, heartbeat_interval) {
+        (None, None) => None,
+        (en, iv) => Some(HeartbeatWire {
+            enabled: matches!(en, Some(Value::Bool(true))),
+            interval: match iv {
+                Some(Value::String(s)) => s,
+                _ => "5m".to_string(),
+            },
+        }),
+    };
+
     Ok(Some(AgentDetail {
         id: agent_id.to_string(),
         model: ModelRef { provider, model },
@@ -276,6 +293,7 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
         language,
         workspace,
         extra_docs,
+        heartbeat,
     }))
 }
 
@@ -331,6 +349,23 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
                 .collect(),
         );
         patcher.upsert_agent_field(&input.id, "extra_docs", arr)?;
+    }
+    // M15.18.d — heartbeat is replace-whole. `Some` writes both
+    // `heartbeat.enabled` + `heartbeat.interval`; `None` leaves
+    // the existing yaml block untouched. The empty-string
+    // interval guard mirrors the `model.*` no-op semantic above —
+    // operators sending an empty literal should not silently
+    // brick the daemon at next boot, which would refuse to parse
+    // an empty humantime string.
+    if let Some(hb) = &input.heartbeat {
+        patcher.upsert_agent_field(&input.id, "heartbeat.enabled", Value::Bool(hb.enabled))?;
+        if !hb.interval.is_empty() {
+            patcher.upsert_agent_field(
+                &input.id,
+                "heartbeat.interval",
+                Value::String(hb.interval.clone()),
+            )?;
+        }
     }
     if let Some(bindings) = &input.inbound_bindings {
         let arr: Vec<Value> = bindings
@@ -525,6 +560,7 @@ mod tests {
             transcripts_dir: None,
             workspace: None,
             extra_docs: None,
+            heartbeat: None,
         };
         let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
@@ -558,5 +594,84 @@ mod tests {
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(!response.removed);
         assert_eq!(count.load(Ordering::Relaxed), 0);
+    }
+
+    /// M15.18.d — agent without `heartbeat.*` fields surfaces
+    /// `heartbeat: None` so the microapp shows the framework
+    /// default (disabled, 5m).
+    #[test]
+    fn agents_get_returns_none_heartbeat_when_yaml_omits_block() {
+        let yaml = MockYaml::with_fixture();
+        let result = get(&*yaml, serde_json::json!({ "agent_id": "ana" }));
+        let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(detail.heartbeat.is_none());
+    }
+
+    /// M15.18.d — upsert with `Some(HeartbeatWire { enabled: true,
+    /// interval: "30m" })` writes both yaml fields and the next
+    /// `get` returns them on the wire.
+    #[test]
+    fn agents_upsert_writes_heartbeat_block() {
+        let yaml = MockYaml::with_fixture();
+        let (_count, reload) = reload_counter();
+        let input = AgentUpsertInput {
+            id: "ana".into(),
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            active: None,
+            allowed_tools: None,
+            inbound_bindings: None,
+            system_prompt: None,
+            language: None,
+            transcripts_dir: None,
+            workspace: None,
+            extra_docs: None,
+            heartbeat: Some(HeartbeatWire {
+                enabled: true,
+                interval: "30m".into(),
+            }),
+        };
+        let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
+        let hb = detail.heartbeat.expect("heartbeat persisted");
+        assert!(hb.enabled);
+        assert_eq!(hb.interval, "30m");
+    }
+
+    /// M15.18.d — empty-string interval is a no-op write so the
+    /// daemon doesn't brick on next boot. The toggle still flips.
+    #[test]
+    fn agents_upsert_heartbeat_with_empty_interval_keeps_existing() {
+        let yaml = MockYaml::with_fixture();
+        // Seed an existing heartbeat block.
+        yaml.set("ana", "heartbeat.enabled", Value::Bool(true));
+        yaml.set("ana", "heartbeat.interval", Value::String("1h".into()));
+        let (_count, reload) = reload_counter();
+        let input = AgentUpsertInput {
+            id: "ana".into(),
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            active: None,
+            allowed_tools: None,
+            inbound_bindings: None,
+            system_prompt: None,
+            language: None,
+            transcripts_dir: None,
+            workspace: None,
+            extra_docs: None,
+            heartbeat: Some(HeartbeatWire {
+                enabled: false,
+                interval: String::new(),
+            }),
+        };
+        let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
+        let hb = detail.heartbeat.expect("heartbeat persisted");
+        assert!(!hb.enabled);
+        assert_eq!(hb.interval, "1h");
     }
 }

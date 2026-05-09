@@ -310,31 +310,40 @@ pub struct Seller {
     /// extension's existing `${ENV_VAR}` posture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_credential: Option<SmtpCredential>,
-    /// M15.21 (denormalized) — bound agent's `system_prompt`, copied
-    /// at seller-save time from the daemon's `agents/get` response.
-    /// Lets the AI draft generator build a faithful operator
-    /// IDENTITY/SOUL/USER prompt without an admin-RPC round-trip per
-    /// inbound email. `None` = no agent bound (or operator-skipped).
-    /// Stays in sync via the microapp's `stamp_agent_context_on_sellers`
-    /// PUT handler — manual edits to the agent surface a re-save
-    /// hint in the seller form.
+    /// Phase 82.10.t.x — denormalised agent system prompt.
+    /// Stamped by the operator microapp at PUT-time from the
+    /// bound agent's config (`nexo/admin/agents/get`); reads
+    /// it back at draft-generation time so the LLM uses the
+    /// same persona the agent advertises elsewhere. `None`
+    /// when the seller has no `agent_id` or the resolution
+    /// failed at save time. Drift after the agent's
+    /// `system_prompt` changes is corrected by re-saving the
+    /// seller (operator microapp triggers a re-stamp on
+    /// `agents/upsert`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    /// M15.21 — denormalized provider id (e.g. `deepseek-19c7`)
-    /// pulled from `agents/get`'s `model.provider`. Used by the
-    /// draft generator to call `nexo/admin/llm/complete` without
-    /// resolving the agent each time. Pairs with `model_id`.
+    /// Phase 82.10.t.x — denormalised provider id from the
+    /// bound agent's `ModelRef.provider`. Same staleness
+    /// caveat as `system_prompt`. `None` when no agent is
+    /// bound; drafts then refuse to fire (operator must wire
+    /// an agent or pick `model_override` explicitly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
-    /// M15.21 — denormalized model id (e.g. `deepseek-v4-flash`).
-    /// `model_override` (above) takes precedence when set; this is
-    /// the agent's default.
+    /// Phase 82.10.t.x — denormalised model id paired with
+    /// `model_provider`. `model_override`, when set, takes
+    /// precedence over both fields at draft time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
-    /// M15.21 (template fallback) — handlebars draft template for
-    /// the legacy `TemplateDraftGenerator`. Only consulted when
-    /// `system_prompt` is empty (no agent bound) — otherwise
-    /// `AgentDraftGenerator` runs LLM completion directly.
+    /// M15.21.seller-template — per-seller Handlebars draft
+    /// template that overrides the tenant default when set.
+    /// `None` (default) inherits the tenant template (the
+    /// hot-swappable handle wired by `PUT /config/draft_template`).
+    /// `Some(body)` replaces the body verbatim for every draft
+    /// targeting this seller; the renderer validates against
+    /// the same fixture context the tenant-level endpoint uses
+    /// before persisting so a malformed override never lands.
+    /// Empty string is treated as "inherit" — keeps the editor
+    /// UX symmetric with the tenant-level field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_template: Option<String>,
 }
@@ -659,10 +668,14 @@ pub struct Lead {
     /// readable strings; surfaced in the lead context panel
     /// "why this lead?" section.
     pub why_routed: Vec<String>,
-    /// M15.21.notes — free-form operator notes, edited from the
-    /// lead context panel. `None` = never written; empty string
-    /// = explicitly cleared. Persisted as the `operator_notes`
-    /// column on the lead row.
+    /// M15.21.notes — free-form operator notes (markdown).
+    /// Editable from the lead drawer in the microapp; never
+    /// authored by the LLM — strictly a human-only scratch pad
+    /// for context that doesn't fit any other column ("called
+    /// the buyer's PA twice, no answer", "wants to compare with
+    /// SKU-7 first"). `None` = column NULL on disk; empty
+    /// string is also legal and round-trips as `Some("")`.
+    /// Tenant-scoped by construction (the row already is).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_notes: Option<String>,
 }
@@ -905,7 +918,7 @@ mod tests {
             next_check_at_ms: Some(1_700_259_200_000),
             followup_attempts: 0,
             why_routed: vec!["score 73 >= 70".into()],
-            operator_notes: None,
+            operator_notes: Some("called PA, voicemail".into()),
         };
         roundtrip(&l);
     }
@@ -1011,6 +1024,7 @@ mod tests {
         let s = serde_json::to_string(&v).unwrap();
         assert!(!s.contains("agent_id"), "agent_id leaked: {s}");
         assert!(!s.contains("model_override"), "model_override leaked: {s}");
+        assert!(!s.contains("draft_template"), "draft_template leaked: {s}");
     }
 
     #[test]
@@ -1043,6 +1057,36 @@ mod tests {
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"agent_id\":\"ana\""), "{s}");
         assert!(s.contains("\"provider\":\"anthropic\""), "{s}");
+    }
+
+    /// M15.21.seller-template — `draft_template = Some(...)`
+    /// round-trips through serde and surfaces in the JSON
+    /// payload so the operator UI can render the editor.
+    #[test]
+    fn seller_with_draft_template_roundtrip() {
+        let v = Seller {
+            id: SellerId("pedro".into()),
+            tenant_id: TenantIdRef("acme".into()),
+            name: "Pedro García".into(),
+            primary_email: "pedro@acme.com".into(),
+            alt_emails: Vec::new(),
+            signature_text: "—\nPedro".into(),
+            working_hours: None,
+            on_vacation: false,
+            vacation_until: None,
+            preferred_language: None,
+            agent_id: None,
+            model_override: None,
+            notification_settings: None,
+            smtp_credential: None,
+            system_prompt: None,
+            model_provider: None,
+            model_id: None,
+            draft_template: Some("Hola {{person.name}}, soy {{seller.name}}.".into()),
+        };
+        roundtrip(&v);
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(s.contains("draft_template"), "{s}");
     }
 
     #[test]
