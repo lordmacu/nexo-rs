@@ -56,9 +56,10 @@ members = [
     "crates/mcp",
     "crates/resilience",
     "crates/taskflow",
-    "crates/plugins/whatsapp",
     # Phase 81.18 — telegram plugin extracted to standalone repo
     # at `../nexo-rs-plugin-telegram/`; no longer a workspace member.
+    # Phase 81.19.a — whatsapp plugin extracted to standalone repo
+    # at `../nexo-rs-plugin-whatsapp/`; no longer a workspace member.
     "crates/plugins/email",
     "crates/plugins/google",
     "crates/setup",
@@ -257,6 +258,11 @@ serde_bytes        = "0.11"
 rand               = "0.8"
 nexo-tool-meta     = { version = "0.1.0", path = "crates/tool-meta" }
 nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
+# Phase 81.19.a — declared at workspace scope so member crates
+# (e.g. `crates/setup`) can pull through `workspace = true` and
+# stay synchronised on version + path. The proyecto binary's
+# `[dependencies]` block below also references this name.
+nexo-plugin-whatsapp = { version = "0.1.2", path = "../nexo-rs-plugin-whatsapp" }
 
 [dependencies]
 tokio               = { workspace = true }
@@ -282,7 +288,11 @@ semver              = { workspace = true }
 # its own workspace crate `nexo-cdp` for any future
 # browser-flavoured plugins.
 nexo-cdp = { version = "0.1.0", path = "crates/cdp" }
-nexo-plugin-whatsapp = { version = "0.1.1", path = "crates/plugins/whatsapp" }
+# Phase 81.19.a — whatsapp plugin extracted to standalone repo
+# `../nexo-rs-plugin-whatsapp/` (Shape B: lib + bin). Pulled
+# through `[workspace.dependencies]` above so member crates +
+# the proyecto binary stay synchronised on version + path.
+nexo-plugin-whatsapp = { workspace = true }
 # Phase 81.18 — telegram plugin extracted to standalone repo
 # `../nexo-rs-plugin-telegram/` (Shape B: lib + bin). Daemon
 # imports the lib re-exports today; subprocess subscription

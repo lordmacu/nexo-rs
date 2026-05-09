@@ -4367,6 +4367,122 @@ inputs scoped per-subprocess (same shape as the existing telegram
 yaml flow); no `crates/setup/src/capabilities.rs::INVENTORY`
 entry needed.
 
+### Phase 81.19.a — Plugin-whatsapp standalone repo extraction (Shape B)   ✅
+
+**Goal:** Lift `crates/plugins/whatsapp/` out of the workspace
+into a sibling repo `nexo-rs-plugin-whatsapp`, mirroring the
+Shape B pattern shipped by 81.17.c (browser) and 81.18
+(telegram): one `Cargo.toml` with a `lib` (default) AND a
+`[[bin]]` target. The lib re-exports the plugin types so a
+future Android embedded build (Phase 90) can pull
+`WhatsappPlugin` straight out of the lib surface; the bin
+wraps the plugin in `nexo_microapp_sdk::plugin::PluginAdapter`
++ JSON-RPC stdio loop for the daemon's deferred subprocess
+fallback path (`81.18.b`, shared with telegram).
+
+**Status:** shipped 2026-05-09. The standalone repo lives at
+`/home/familia/chat/nexo-rs-plugin-whatsapp/` (initial tag
+`v0.1.2`). Daemon imports the lib via path-dep
+(`nexo-plugin-whatsapp = { path = "../nexo-rs-plugin-whatsapp" }`)
+so today's in-tree usage stays byte-equivalent; the subprocess
+fallback flip is deferred follow-up `81.18.b`.
+
+**Surface re-exports (lib):** `WhatsappPlugin`,
+`WhatsappPairingAdapter`, `WhatsappPairingTrigger`,
+`pairing::CHANNEL_ID`, `pairing::{SharedPairingState,
+dispatch_route, WhatsappRoute, QrSnapshot, StatusSnapshot}`,
+`InboundEvent`, `register_whatsapp_tools`,
+`whatsapp_plugin_factory`, `session_id_for_jid`. Subprocess-
+only re-exports gated off the `embedded` feature:
+`whatsapp_config_from_env`, `dispatch_whatsapp_tool`,
+`whatsapp_tool_defs`.
+
+**Bin (`src/main.rs`):**
+- `PluginAdapter::new(MANIFEST)?.declare_tools(...).on_tool(...)`
+- Lazy-boots one `WhatsappPlugin` per process from env vars on
+  the first `tool.invoke` (broker connect + plugin.start happen
+  there so `initialize` handshake never blocks on broker / wa-
+  agent / Signal Protocol).
+- Manifest bundled at compile-time via
+  `include_str!("../nexo-plugin.toml")`; manifest declares
+  `[plugin.capabilities.broker]` allowlist
+  (`subscribe = ["plugin.outbound.whatsapp", "plugin.outbound.whatsapp.>"]`,
+  `publish  = ["plugin.inbound.whatsapp",  "plugin.inbound.whatsapp.>"]`).
+
+**Workspace surgery:**
+- `crates/plugins/whatsapp/` removed (15 source modules + 4
+  integration tests + manifest, all moved to the standalone
+  repo). 4044 LOC ported verbatim.
+- `proyecto/Cargo.toml` `[workspace] members` drops the entry;
+  `[workspace.dependencies] nexo-plugin-whatsapp` flips path to
+  `../nexo-rs-plugin-whatsapp`. `crates/setup/Cargo.toml`
+  parallel update for the dev-deps reference.
+- Daemon source (`proyecto/src/main.rs`) untouched — same
+  imports, same in-process plugin construction (5 import sites
+  including pairing trigger + adapter + tool registration).
+
+**Tests:**
+- 50 tests ported verbatim into the standalone repo (bridge /
+  dispatch / config_parse / live_wa-gated / plugin / pairing /
+  session_id / transcriber / session). `live-wa` feature
+  preserved.
+- 2 e2e handshake tests added: spawn the binary, validate the
+  JSON-RPC `initialize` reply (manifest + 4 `whatsapp_*` tool
+  defs) and verify `tool.invoke` short-circuits with
+  `-33402 ArgumentInvalid` when `NEXO_PLUGIN_WHATSAPP_SESSION_DIR`
+  is missing — fully offline (no broker, no wa-agent, no
+  Signal Protocol).
+- 4 unit tests in `env_config.rs` covering happy / missing /
+  invalid / empty session_dir paths.
+- Workspace-side `cargo nextest run --workspace`: 6057 passed,
+  2 skipped (50 whatsapp tests now live out of tree).
+- `cargo clippy --workspace --all-targets --no-deps -- -D warnings`
+  + `cargo fmt --all -- --check`: clean.
+
+**Mining references:**
+- `proyecto/design-agent-framework.md:101, 339-430, 566-583` —
+  whatsapp config shape, multi-account routing, session
+  persistence layout.
+- `proyecto/docs/wa-agent-integration.md:1-231, 127-150` —
+  Signal Protocol session lifecycle ADR.
+- `research/VISION.md:52-82` — bundled vs out-of-tree split
+  rationale; OpenClaw shipped wacli alongside other plugins
+  in monorepo, the Rust framework moves them out one-by-one
+  for independent versioning + lighter mobile binaries.
+- `research/src/channels/AGENTS.md:1-51` — channel plugins
+  consume contracts from the SDK seam, not channel internals.
+- `research/src/plugins/AGENTS.md:23-70` — manifest-first
+  discovery + control-plane / runtime-plane separation.
+
+**Deferred:**
+- `81.18.b.subprocess-flip` — daemon swaps in-tree `new()`
+  for subprocess discovery. Shared concern with telegram —
+  multi-account whatsapp adds the same per-spawn env seeding
+  requirement. Single fix-once.
+- `81.19.a.tls-rustls` — coordinate with `wa-agent` upstream
+  to expose a `rustls-tls` feature flag so the Android NDK
+  build (Phase 90) doesn't need pre-built OpenSSL. Today the
+  binary mixes two TLS stacks (this repo's `reqwest` =
+  rustls; `wa-agent`'s = openssl) — works but bloats size.
+- `81.19.a.publish-github` — push the local repo to
+  `github.com/lordmacu/nexo-plugin-whatsapp` + tag `v0.1.2`.
+- `81.19.a.crates-publish` — blocked on the proyecto crates
+  publish wave (shared with `81.18.c`).
+- `81.19.a.voice-codec` — feature-gate the whisper transcribe
+  path so the embedded build can drop ~25MB of binary.
+- `81.19.a.e2e-test-fixture` — wiremock-served wa-agent /
+  Signal Protocol mock for tool.invoke live coverage.
+- `81.19.b` — email plugin extract. Email is **not** required
+  for the personal Android use case (Phase 90 driver), so this
+  may stay permanently in-tree unless a downstream consumer
+  asks for it.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour. The `NEXO_PLUGIN_WHATSAPP_*` vars are operator-
+config inputs scoped per-subprocess (same shape as the
+existing whatsapp yaml flow); no
+`crates/setup/src/capabilities.rs::INVENTORY` entry needed.
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47

@@ -260,6 +260,64 @@ fallback flip is the deferred follow-up below.
   a CHANGELOG entry + `docs/src/plugins/manifest-v2.md`
   upgrade note.
 
+### Phase 81.19.a — plugin-whatsapp standalone repo — shipped, follow-ups open
+
+WhatsApp plugin extracted to a standalone repo at
+`/home/familia/chat/nexo-rs-plugin-whatsapp/` (Shape B: lib +
+bin) on 2026-05-09. Daemon imports the lib via path-dep so
+today's in-tree behaviour is byte-equivalent; the subprocess
+fallback flip is the deferred follow-up below (shared with
+telegram).
+
+- **`81.18.b.subprocess-flip`** (shared) — same concern listed
+  under 81.18 above. Multi-account whatsapp piles the same
+  per-spawn env seeding requirement onto the shared fix.
+  Owner: framework. Trigger: when both plugins need the
+  subprocess flip. Status: pending.
+
+- **`81.19.a.tls-rustls`** — `wa-agent` upstream uses
+  `native-tls` (OpenSSL) via its own reqwest dep; this repo's
+  direct reqwest dep uses `rustls-tls`. Both stacks live in
+  the binary today, slightly bloating size. The clean fix is
+  asking the wa-agent maintainer to expose a `rustls-tls`
+  feature flag — without it the Android NDK build (Phase 90)
+  needs pre-built OpenSSL for the target. Owner: ops + wa-
+  agent upstream. Trigger: Phase 90 mobile cross-compile.
+  Status: pending upstream conversation.
+
+- **`81.19.a.publish-github`** — push the local repo to
+  `github.com/lordmacu/nexo-plugin-whatsapp` (PUBLIC) +
+  tag `v0.1.2` so the release workflow can build linux-x64
+  / macos-arm64 binaries. Owner: ops. Status: pending; the
+  initial commit lives in the local repo only.
+
+- **`81.19.a.crates-publish`** — same as 81.18.c —
+  blocked on the proyecto crates publish wave (5 internal
+  deps still pending crates.io). External operators install
+  via `cargo install --git https://github.com/lordmacu/nexo-plugin-whatsapp`
+  in the meantime. Owner: ops. Status: blocked.
+
+- **`81.19.a.voice-codec`** — feature-gate the whisper
+  transcribe path so the embedded build can drop ~25MB of
+  binary. Today `transcriber.rs` ships unconditionally with
+  the lib. Owner: framework. Trigger: Phase 90 mobile binary
+  size budget. Status: pending.
+
+- **`81.19.a.e2e-test-fixture`** — same gap as
+  `81.18.f.e2e-test-fixture`: the offline e2e_handshake test
+  verifies wire shape but doesn't exercise the live wa-agent
+  / Signal Protocol round-trip. A wiremock-served Bot API +
+  Signal-state fixture would close the loop. Owner:
+  framework. Trigger: when 81.18.b ships. Status: pending.
+
+- **`81.19.b.email-extract`** — email plugin extract,
+  parallel to 81.19.a. **Probably permanently deferred** —
+  the personal Android use case driving Phase 90 doesn't
+  need email, and `crates/plugins/email/` stays in-tree with
+  zero friction. Re-evaluate if a downstream consumer
+  surfaces a mobile email requirement. Owner: framework.
+  Trigger: explicit demand. Status: deferred (not blocked).
+
 ### Locale-aware agent language — shipped, follow-ups open
 
 BCP-47 locale model + per-locale addenda + voice picker shipped

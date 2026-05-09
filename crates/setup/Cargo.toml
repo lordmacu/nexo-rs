@@ -60,7 +60,10 @@ indicatif    = "0.17"
 # `xdg-open` / `open` / `start` `Command::new` spawn in the
 # Anthropic OAuth flow.
 webbrowser = "1"
-nexo-plugin-whatsapp = { version = "0.1.1", path = "../plugins/whatsapp" }
+# Phase 81.19.a — pulled through `[workspace.dependencies]` so the
+# version + path stay synchronised with the proyecto Cargo.toml
+# entry that points at the standalone repo.
+nexo-plugin-whatsapp = { workspace = true }
 nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
 nexo-pairing = { version = "0.1.2", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher

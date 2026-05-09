@@ -4,8 +4,18 @@ End-to-end WhatsApp channel: Signal Protocol pairing, inbound
 message bridge, outbound send/reply/reaction/media tools, optional
 voice transcription.
 
-Source: `crates/plugins/whatsapp/` (thin wrapper over the
-`whatsapp-rs` crate).
+Source: standalone repo at
+[`nexo-rs-plugin-whatsapp`](https://github.com/lordmacu/nexo-plugin-whatsapp)
+(extracted from `crates/plugins/whatsapp/` per Phase 81.19.a;
+see [`PHASES.md`](../../../PHASES.md#phase-8119a-plugin-whatsapp-standalone-repo-extraction-shape-b-)
+for the migration notes). The crate ships as a `lib + bin`
+Shape B package: the lib re-exports `WhatsappPlugin` for
+in-process consumers (the daemon today, an Android embedded
+host tomorrow), the bin is the subprocess entrypoint the
+daemon will spawn once Phase 81.18.b lands. Internally the
+plugin still wraps the `wa-agent` (a.k.a. `whatsapp-rs`) crate
+for Signal Protocol session lifecycle, QR pairing and the Bot
+API surface.
 
 ## Topics
 
