@@ -141,11 +141,28 @@ pub struct OutboundCommand {
     pub message_id: Option<String>,
 }
 
-/// Path-by-reference outbound attachment (Phase 48.5).
+/// Outbound attachment reference. Pre-existing form is
+/// `data_path` (filesystem read at dispatch time). Phase 95
+/// adds `data_inline` so callers that already hold the bytes
+/// in memory (e.g. the marketing extension's email-template
+/// asset BLOB store) can pass them directly without an
+/// intermediate tmpfile dance. The dispatcher prefers
+/// `data_inline` when present and falls back to reading
+/// `data_path` otherwise — older callers don't change.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutboundAttachmentRef {
-    /// Absolute or daemon-CWD-relative path the dispatcher reads.
+    /// Absolute or daemon-CWD-relative path the dispatcher
+    /// reads when `data_inline` is `None`. Empty + `data_inline`
+    /// also `None` is a build-time error surfaced as ack
+    /// `Failed`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub data_path: String,
+    /// Bytes the caller already has in memory. When `Some`,
+    /// the dispatcher uses these directly and ignores
+    /// `data_path` — no filesystem read, no tmpfile lifecycle.
+    /// `None` ⇒ legacy filesystem path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_inline: Option<Vec<u8>>,
     /// Display filename used in the `Content-Disposition` header.
     pub filename: String,
     /// `None` → inferred via `mime_guess` from `filename`.

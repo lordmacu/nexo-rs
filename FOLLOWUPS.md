@@ -270,32 +270,53 @@ fallback flip is the deferred follow-up below (shared with
 telegram).
 
 - **`81.18.b.subprocess-flip`** (shared) — same concern listed
-  under 81.18 above. **Telegram side resolved 2026-05-09 with
-  Phase 81.18.b.1 (commit `907d3c7`)** — daemon flipped to
-  per-instance subprocess via `subprocess_plugin_factory_with_env`
-  + synthetic manifest injection. WhatsApp side pending as
-  `81.18.b.2` because the pairing UI requires a
-  `WhatsappPairingProxy` daemon-side type to bridge the
-  subprocess's broker events back to admin RPC; that's a
-  dedicated phase that mustn't break existing pairing
-  workflows. Status: telegram ✅, whatsapp pending.
+  under 81.18 above. **Resolved 2026-05-09**: telegram via
+  Phase 81.18.b.1 (commit `907d3c7`), whatsapp via Phase
+  81.18.b.2 (commit `91f5a54`). Both daemon flips landed:
+  per-instance subprocess via
+  `subprocess_plugin_factory_with_env` + synthetic manifest
+  injection; whatsapp pairing UI preserved via daemon-side
+  broker subscriber (`spawn_whatsapp_pairing_state_subscriber`)
+  that mirrors `plugin.inbound.whatsapp.>` events into
+  daemon-owned `PairingState` slots. Status: ✅ both ✅.
 
-- **`81.18.b.2.whatsapp-flip`** — same shape as 81.18.b.1 but
-  needs upstream pairing event emission (we own
-  `whatsapp-rs`), `WhatsappPairingProxy` daemon-side cache,
-  typing-presence RPC bridge (or temporary opt-out), and
-  Cloudflare tunnel handoff. ~3-5h dedicated. Status: pending.
-
-- **`81.18.b.e2e-mock-binary`** — the telegram flip ships
-  without a synthetic mock subprocess binary in `tests/`; the
-  e2e_handshake test inside the standalone repo covers the
+- **`81.18.b.e2e-mock-binary`** — both flips ship without a
+  synthetic mock subprocess binary in `tests/`; the
+  e2e_handshake test inside each standalone repo covers the
   `tool.invoke` wire surface, but the daemon-side flip path
-  (cfg → factory_registry → subprocess spawn) has unit-test
-  coverage only. A mock binary in `proyecto/tests/fixtures/`
-  that responds to JSON-RPC initialize would close the loop
-  for future subprocess flips. Owner: framework. Trigger:
-  before 81.18.b.2 ships so whatsapp can reuse it. Status:
-  pending.
+  (cfg → factory_registry → subprocess spawn → broker event
+  roundtrip) has unit-test coverage only. A mock binary in
+  `proyecto/tests/fixtures/` that responds to JSON-RPC
+  initialize + emits scripted `plugin.inbound.<plugin>.<inst>`
+  events would close the loop end-to-end. Owner: framework.
+  Trigger: before the next subprocess flip (email if it ever
+  flips, or any new channel plugin). Status: pending.
+
+- **`81.20.c.typing-presence-rpc`** — Phase 82.10.r typing-
+  presence forwarding (`AgentEventKind::PeerTyping` on the SSE
+  live transcript firehose) was wired via
+  `WhatsappPlugin::with_emitter(bs.event_emitter())` in the
+  in-tree path. Subprocess plugins can't access the daemon's
+  emitter Arc; bridging typing events through the broker
+  (`plugin.lifecycle.whatsapp.<inst>.peer_typing` →
+  daemon subscriber → emitter.emit) is the missing piece.
+  Same pattern applies to telegram if telegram ever exposes a
+  typing surface. Owner: framework. Trigger: when operators
+  notice the regression on the SSE stream. Status: pending,
+  documented as known limitation in
+  `docs/src/plugins/whatsapp.md`.
+
+- **`81.18.b.qr-event-bridge`** — daemon's pairing state
+  subscriber expects subprocess plugins to publish
+  `InboundEvent::Qr { ascii, png_b64, expires_at }` on the
+  inbound topic so the `kind=qr` arm in
+  `spawn_whatsapp_pairing_state_subscriber` populates the
+  daemon-owned `PairingState`. The standalone whatsapp
+  v0.1.2 manifest emits `Qr` via lifecycle.rs — verify the
+  exact wire shape (field naming, payload shape) end-to-end
+  on a real bot before declaring 81.18.b.2 production-ready.
+  Owner: framework. Trigger: live pairing flow smoke test.
+  Status: pending live verification.
 
 - **`81.19.a.tls-rustls`** — `wa-agent` upstream uses
   `native-tls` (OpenSSL) via its own reqwest dep; this repo's
