@@ -15,13 +15,13 @@ readme        = "README.md"
 workspace = true
 
 [dependencies]
-nexo-core             = { version = "0.1.1", path = "../core" }
-nexo-config           = { version = "0.1.1", path = "../config" }
-nexo-llm              = { version = "0.1.1", path = "../llm" }
-nexo-fork             = { version = "0.1.1", path = "../fork" }
-nexo-agent-registry   = { version = "0.1.1", path = "../agent-registry" }
-nexo-memory           = { version = "0.1.2", path = "../memory" }
-nexo-driver-types     = { version = "0.1.1", path = "../driver-types" }
+nexo-core             = { version = "0.1.2", path = "../core" }
+nexo-config           = { version = "0.1.5", path = "../config" }
+nexo-llm              = { version = "0.1.3", path = "../llm" }
+nexo-fork             = { version = "0.1.5", path = "../fork" }
+nexo-agent-registry   = { version = "0.1.5", path = "../agent-registry" }
+nexo-memory           = { version = "0.1.3", path = "../memory" }
+nexo-driver-types     = { version = "0.1.5", path = "../driver-types" }
 anyhow                = { workspace = true }
 arc-swap              = { workspace = true }
 async-trait           = { workspace = true }
@@ -42,5 +42,5 @@ tempfile              = "3"
 anyhow                = { workspace = true }
 futures               = { workspace = true }
 filetime              = "0.2"
-nexo-broker           = { version = "0.1.1", path = "../broker" }
-nexo-config           = { version = "0.1.1", path = "../config" }
+nexo-broker           = { version = "0.1.2", path = "../broker" }
+nexo-config           = { version = "0.1.5", path = "../config" }
