@@ -293,7 +293,7 @@ mod tests {
     fn outbound_attachment_ref_round_trip() {
         let a = OutboundAttachmentRef {
             data_path: "/tmp/x.pdf".into(),
-                data_inline: None,
+            data_inline: None,
             filename: "x.pdf".into(),
             mime_type: Some("application/pdf".into()),
             content_id: None,
