@@ -27,6 +27,45 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Changed
 
+- **WhatsApp subprocess flip + pairing state broker bridge —
+  BREAKING CHANGE (Phase 81.18.b.2).** Daemon no longer
+  constructs `WhatsappPlugin` in-tree per
+  `cfg.plugins.whatsapp` entry. It now spawns the standalone
+  `nexo-plugin-whatsapp` binary as a subprocess per cfg entry,
+  with each child seeded by per-instance env vars
+  (`NEXO_PLUGIN_WHATSAPP_SESSION_DIR`, `_MEDIA_DIR`, `_INSTANCE`,
+  `_BRIDGE_TIMEOUT_MS`, `_ALLOWLIST`, …). Multi-account operators
+  get true process isolation — one bot's `creds.json`
+  corruption can't take down the others.
+
+  Pairing UI compatibility is preserved by a daemon-side broker
+  subscriber (`spawn_whatsapp_pairing_state_subscriber`) that
+  listens on `plugin.inbound.whatsapp.>` and mirrors the
+  subprocess's `Connected` / `Disconnected` / `Reconnecting` /
+  `Qr` events into a daemon-owned `PairingState` per instance,
+  driving the admin RPC `/whatsapp/<inst>/pair*` HTTP endpoints
+  the same way the in-tree Arc-shared state did.
+
+  **Operator action required**: install the
+  `nexo-plugin-whatsapp` binary (`cargo install --git
+  https://github.com/lordmacu/nexo-plugin-whatsapp --tag v0.1.2`
+  or download the v0.1.2+ release tarball) and add its
+  directory to `plugins.discovery.search_paths` in
+  `agents.yaml`. Without this, the daemon logs a clear
+  `WARN whatsapp is configured … but no manifest was found …`
+  and the plugin doesn't boot. See
+  [`docs/src/plugins/whatsapp.md`](docs/src/plugins/whatsapp.md#install-phase-8118b2--operator-action-required)
+  for full instructions.
+
+  **Known limitation**: subprocess whatsapp instances do NOT
+  surface `AgentEventKind::PeerTyping` events on the SSE live
+  transcript firehose (Phase 82.10.r). The daemon's
+  `AgentEventEmitter` Arc doesn't cross the process boundary;
+  bridging typing events through the broker is the deferred
+  follow-up `81.20.c.typing-presence-rpc`. Inbound message
+  routing, outbound dispatch, pairing UI, reconnect telemetry —
+  all unaffected.
+
 - **Telegram subprocess flip — BREAKING CHANGE (Phase 81.18.b.1).**
   Daemon no longer constructs `TelegramPlugin` in-tree per
   `cfg.plugins.telegram` entry. It now spawns the standalone

@@ -9,13 +9,65 @@ Source: standalone repo at
 (extracted from `crates/plugins/whatsapp/` per Phase 81.19.a;
 see [`PHASES.md`](../../../PHASES.md#phase-8119a-plugin-whatsapp-standalone-repo-extraction-shape-b-)
 for the migration notes). The crate ships as a `lib + bin`
-Shape B package: the lib re-exports `WhatsappPlugin` for
-in-process consumers (the daemon today, an Android embedded
-host tomorrow), the bin is the subprocess entrypoint the
-daemon will spawn once Phase 81.18.b lands. Internally the
-plugin still wraps the `wa-agent` (a.k.a. `whatsapp-rs`) crate
-for Signal Protocol session lifecycle, QR pairing and the Bot
-API surface.
+Shape B package: the lib re-exports `WhatsappPlugin` for an
+Android embedded host tomorrow, the bin is the subprocess
+entrypoint the daemon spawns per `cfg.plugins.whatsapp` entry
+(Phase 81.18.b.2). Internally the plugin wraps the `wa-agent`
+(a.k.a. `whatsapp-rs`) crate for Signal Protocol session
+lifecycle, QR pairing and the Bot API surface.
+
+## Install (Phase 81.18.b.2 — operator action required)
+
+The daemon stopped constructing `WhatsappPlugin` in-tree as of
+Phase 81.18.b.2; it spawns the standalone subprocess binary
+per cfg entry. Operators with `cfg.plugins.whatsapp` populated
+**must** install the binary and surface its directory through
+`plugins.discovery.search_paths` before starting the daemon, or
+the discovery walker logs a clear warning and the plugin never
+boots:
+
+```bash
+# Build + install from source
+cargo install --git https://github.com/lordmacu/nexo-plugin-whatsapp \
+    --tag v0.1.2
+
+# Or download a release tarball (linux-x64 / macos-arm64) from
+#   https://github.com/lordmacu/nexo-plugin-whatsapp/releases
+```
+
+Then in `agents.yaml`:
+
+```yaml
+plugins:
+  discovery:
+    search_paths:
+      - ~/.cargo/bin   # or wherever you installed the binary
+```
+
+Each `cfg.plugins.whatsapp[]` entry maps to one subprocess; per-
+instance state (`session_dir` Signal Protocol creds, `media_dir`,
+`instance` topic suffix, `bridge.response_timeout_ms`,
+`acl.allow_list`) is seeded into the child via
+`NEXO_PLUGIN_WHATSAPP_*` env vars at spawn time. Multi-account
+operators get true process isolation — one bot's
+`creds.json` corruption can't take down the others.
+
+The admin RPC `/whatsapp/<instance>/pair*` HTTP endpoints keep
+working: a daemon-side broker subscriber
+(`spawn_whatsapp_pairing_state_subscriber`) listens on
+`plugin.inbound.whatsapp.>` and mirrors the subprocess's
+`Connected` / `Disconnected` / `Reconnecting` / `Qr` events
+into a daemon-owned `PairingState` per instance.
+
+### Known limitation (Phase 81.20.c follow-up)
+
+Subprocess whatsapp instances do **not** currently surface
+`AgentEventKind::PeerTyping` events on the SSE live transcript
+stream. The daemon's `AgentEventEmitter` Arc doesn't cross the
+process boundary; bridging typing events through the broker
+ships in follow-up `81.20.c.typing-presence-rpc`. Inbound
+message routing, outbound dispatch, pairing UI, and reconnect
+telemetry are unaffected.
 
 ## Topics
 

@@ -48,15 +48,28 @@ pub async fn build_mime(ctx: BuildContext<'_>, cmd: &OutboundCommand) -> Result<
         return Ok(build_text_only(&ctx, cmd));
     }
 
-    // Read attachments first so a missing file fails fast (before we
-    // start composing). The dispatcher's `enqueue_command` will surface
-    // this as ack `Failed`.
+    // Resolve attachment bytes — caller-supplied `data_inline`
+    // wins, otherwise read from `data_path`. Reading happens
+    // here (not in the drain loop) so a missing file fails
+    // fast and the dispatcher's `enqueue_command` surfaces ack
+    // `Failed` instead of a phantom retry storm.
     let mut loaded: Vec<(OutboundAttachmentRef, Vec<u8>, String)> =
         Vec::with_capacity(cmd.attachments.len());
     for a in &cmd.attachments {
-        let bytes = tokio::fs::read(&a.data_path)
-            .await
-            .with_context(|| format!("email/mime: read attachment {}", a.data_path))?;
+        let bytes = match &a.data_inline {
+            Some(b) => b.clone(),
+            None => {
+                if a.data_path.is_empty() {
+                    anyhow::bail!(
+                        "email/mime: attachment {:?} has neither data_inline nor data_path",
+                        a.filename
+                    );
+                }
+                tokio::fs::read(&a.data_path)
+                    .await
+                    .with_context(|| format!("email/mime: read attachment {}", a.data_path))?
+            }
+        };
         let mime_type = a.mime_type.clone().unwrap_or_else(|| {
             mime_guess::from_path(&a.filename)
                 .first_raw()
