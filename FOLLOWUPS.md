@@ -280,17 +280,15 @@ telegram).
   that mirrors `plugin.inbound.whatsapp.>` events into
   daemon-owned `PairingState` slots. Status: ✅ both ✅.
 
-- **`81.18.b.e2e-mock-binary`** — both flips ship without a
-  synthetic mock subprocess binary in `tests/`; the
-  e2e_handshake test inside each standalone repo covers the
-  `tool.invoke` wire surface, but the daemon-side flip path
-  (cfg → factory_registry → subprocess spawn → broker event
-  roundtrip) has unit-test coverage only. A mock binary in
-  `proyecto/tests/fixtures/` that responds to JSON-RPC
-  initialize + emits scripted `plugin.inbound.<plugin>.<inst>`
-  events would close the loop end-to-end. Owner: framework.
-  Trigger: before the next subprocess flip (email if it ever
-  flips, or any new channel plugin). Status: pending.
+- **`81.18.b.e2e-mock-binary`** — RESOLVED 2026-05-09 commit
+  `4be0c4e`. Synthetic mock subprocess plugin
+  (`tests/fixtures/mock_subprocess_plugin.rs`, ~80 LOC, zero
+  plugin-specific deps) shipped along with 5 `#[serial]`
+  integration tests in `tests/subprocess_flip_e2e.rs` covering
+  initialize handshake, env_clear passthrough, multi-instance
+  isolation, unknown-method error path, and malformed-JSON
+  resilience. Future subprocess plugins reuse the binary via
+  `env!("CARGO_BIN_EXE_mock_subprocess_plugin")`. Status: ✅.
 
 - **`81.20.c.typing-presence-rpc`** — RESOLVED 2026-05-09.
   Subprocess plugin (standalone whatsapp v0.1.3, commit
