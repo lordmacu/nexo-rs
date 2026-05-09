@@ -260,6 +260,13 @@ nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 [dependencies]
 tokio               = { workspace = true }
 anyhow              = { workspace = true }
+# Phase 82.10.n followup — pin the rustls CryptoProvider at
+# main(). Multiple providers (ring, aws-lc-rs) arrive
+# transitively via sqlx/reqwest/lettre and rustls 0.23 panics
+# on auto-pick when more than one is linked. The
+# `EmailPersister` probe (TLS handshake on imap.gmail.com:993)
+# is the first hot path that hit this.
+rustls              = { workspace = true }
 async-nats          = { workspace = true }
 futures             = { workspace = true }
 uuid                = { workspace = true }
@@ -319,7 +326,6 @@ tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 base64              = { workspace = true }
 reqwest             = { workspace = true }
-rustls              = { workspace = true }
 serde               = { workspace = true }
 serde_json          = { workspace = true }
 serde_yaml          = { workspace = true }

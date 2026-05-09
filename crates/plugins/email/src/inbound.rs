@@ -268,26 +268,34 @@ impl AccountWorker {
             .await?;
         let mut last_uid = cursor_now.last_uid;
 
-        // Bootstrap cap — when the cursor is fresh (`last_uid == 0`) and
-        // the operator has declared `bootstrap_limit = N`, jump the
-        // cursor to `max(0, mb.uid_next - 1 - N)` so the very first
-        // backfill processes at most N historical messages. Without
-        // this, a fresh install on a 5000-message inbox stalls boot
-        // for hours and floods the broker with stale events.
+        // Bootstrap-limit: on a fresh cursor (`last_uid == 0` after a
+        // first run OR a UIDVALIDITY rotation) AND the operator
+        // configured a cap, jump the cursor past the historical
+        // inbox so only the most recent N UIDs flow through. Persist
+        // immediately so a crash before the first drain doesn't
+        // re-trigger the skip from scratch.
         if last_uid == 0 {
             if let Some(limit) = self.account_cfg.bootstrap_limit {
-                if limit > 0 && mb.uid_next > 1 {
-                    let highest_existing = mb.uid_next - 1;
-                    if highest_existing > limit {
-                        last_uid = highest_existing - limit;
-                        info!(
-                            target: "plugin.email",
-                            instance = %self.account_cfg.instance,
-                            bootstrap_limit = limit,
-                            skipped_uid_range = format!("1..={last_uid}"),
-                            "bootstrap_limit applied — skipping historical backfill"
-                        );
-                    }
+                if mb.uid_next > limit + 1 {
+                    last_uid = mb.uid_next.saturating_sub(limit + 1);
+                    self.cursor
+                        .set(
+                            &self.account_cfg.instance,
+                            &crate::cursor::UidCursor {
+                                uid_validity: mb.uid_validity,
+                                last_uid,
+                                updated_at: chrono::Utc::now().timestamp(),
+                            },
+                        )
+                        .await?;
+                    info!(
+                        target: "plugin.email",
+                        instance = %self.account_cfg.instance,
+                        limit,
+                        last_uid,
+                        uid_next = mb.uid_next,
+                        "bootstrap_limit applied — skipping historical inbox"
+                    );
                 }
             }
         }

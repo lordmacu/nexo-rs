@@ -231,6 +231,14 @@ pub struct AdminBootstrapInputs<'a> {
     /// M9.frame.b (microapp follow-up).
     pub llm_provider_probe:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>>,
+    /// Phase 82.10.t.x — runtime LLM completer. `None` keeps
+    /// `nexo/admin/llm/complete` returning the typed
+    /// `llm completer not configured` -32603. Production wires
+    /// `crate::llm_completer::RegistryLlmCompleter::new(
+    /// registry, llm_cfg)` so extensions / microapps can
+    /// delegate completions through the daemon's existing
+    /// provider plumbing.
+    pub llm_completer: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::llm::LlmCompleter>>,
     /// Snapshot of every LLM provider factory the daemon registered
     /// at boot. Drives the `nexo/admin/llm_providers/catalog` RPC.
     /// Production passes
@@ -635,6 +643,18 @@ impl AdminRpcBootstrap {
                 crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
             });
             dispatcher = dispatcher.with_llm_provider_probe(probe);
+            // Phase 82.10.t.x — install the runtime LLM
+            // completer (drives `nexo/admin/llm/complete`).
+            // Caller-supplied wins; with no override the
+            // bootstrap leaves `None` so the dispatch path
+            // returns `Internal("llm completer not configured")`.
+            // Production wires this from `main.rs` against the
+            // daemon's `LlmRegistry` + the live `LlmConfig`
+            // ArcSwap handle so completions reflect the same
+            // provider config the agent loop sees.
+            if let Some(c) = inputs.llm_completer.clone() {
+                dispatcher = dispatcher.with_llm_completer(c);
+            }
             // Phase 82.10.o — install the auth rotator. Test
             // override (`auth_rotator: Some(...)`) wins;
             // otherwise build the production `FsAuthRotator` if
@@ -889,6 +909,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            llm_completer: None,
             llm_provider_catalog: Vec::new(),
             auth_rotator: None,
             auth_token_path: None,
@@ -925,6 +946,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            llm_completer: None,
             llm_provider_catalog: Vec::new(),
             auth_rotator: None,
             auth_token_path: None,
@@ -962,6 +984,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            llm_completer: None,
             llm_provider_catalog: Vec::new(),
             auth_rotator: None,
             auth_token_path: None,
@@ -1014,6 +1037,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1058,6 +1082,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1102,6 +1127,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1154,6 +1180,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1212,6 +1239,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1265,6 +1293,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1317,6 +1346,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            llm_completer: None,
             llm_provider_catalog: Vec::new(),
             auth_rotator: None,
             auth_token_path: None,
@@ -1390,6 +1420,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,
@@ -1445,6 +1476,7 @@ mod tests {
                 tenant_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
+                llm_completer: None,
                 llm_provider_catalog: Vec::new(),
                 auth_rotator: None,
                 auth_token_path: None,

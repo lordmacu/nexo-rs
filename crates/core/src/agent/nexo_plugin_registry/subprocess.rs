@@ -1206,8 +1206,11 @@ impl SubprocessNexoPlugin {
             // CRM-style plugins (marketing, analytics) consume topics
             // outside the auto-derived `plugin.outbound.<kind>` family;
             // their `[capabilities.broker]` declares the real surface.
-            // Merge after auto-derivation so kind-channel plugins keep
-            // today's behaviour and only the new declarations extend.
+            // Merge after auto-derivation with dedup so kind-channel
+            // plugins that ALSO list a duplicate pattern stay harmless
+            // (broker subscribe is idempotent, but the publish
+            // allowlist matches on first hit so a duplicate would just
+            // waste a slot).
             if let Some(broker_cap) = self.cached_manifest.plugin.capabilities.broker.as_ref() {
                 for pattern in &broker_cap.subscribe {
                     if !subscribe_patterns.iter().any(|p| p == pattern) {

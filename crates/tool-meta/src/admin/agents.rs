@@ -85,6 +85,30 @@ pub struct AgentDetail {
     /// knowledge is wired.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_docs: Vec<String>,
+    /// M15.18.d — proactive tick-loop config. `None` when the
+    /// yaml omits the `heartbeat` block (back-compat — pre-existing
+    /// agents keep the framework default of disabled). When
+    /// `Some`, the operator UI renders the on/off toggle + interval
+    /// preset picker. Mirrors `nexo_config::types::agents::
+    /// HeartbeatConfig`; humantime parsing of `interval` happens at
+    /// the daemon yaml-load layer, so this wire shape is opaque
+    /// to the microapp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat: Option<HeartbeatWire>,
+}
+
+/// Wire mirror of `nexo_config::types::agents::HeartbeatConfig`.
+/// `interval` is a humantime literal (`"5m"`, `"30s"`, `"1h"`)
+/// passed through verbatim — daemon yaml-load parses it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeartbeatWire {
+    /// Master switch — `false` keeps the runtime quiet (default
+    /// when the yaml omits the field).
+    pub enabled: bool,
+    /// humantime literal (`"5m"`, `"30s"`, `"1h"`, `"4h"`,
+    /// `"1d"`). Empty / malformed values fall back to the
+    /// daemon-side default (`"5m"`) at boot.
+    pub interval: String,
 }
 
 /// LLM provider + model pointer.
@@ -156,6 +180,12 @@ pub struct AgentUpsertInput {
     /// the existing list; empty vec clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_docs: Option<Vec<String>>,
+    /// M15.18.d — proactive tick-loop. `None` keeps the existing
+    /// yaml block (or default-disabled for new agents). `Some`
+    /// replaces the whole `heartbeat` block on disk so flipping
+    /// the toggle off explicitly persists `enabled: false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat: Option<HeartbeatWire>,
 }
 
 /// Params for `nexo/admin/agents/delete`. Soft-delete:
@@ -216,10 +246,39 @@ mod tests {
             language: None,
             workspace: String::new(),
             extra_docs: vec![],
+            heartbeat: None,
         };
         let v = serde_json::to_value(&d).unwrap();
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("language"));
+        // M15.18.d — heartbeat skips when None.
+        assert!(!obj.contains_key("heartbeat"));
+    }
+
+    /// M15.18.d — `Some(HeartbeatWire)` round-trips through serde.
+    #[test]
+    fn agent_detail_heartbeat_round_trip() {
+        let d = AgentDetail {
+            id: "ana".into(),
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            active: true,
+            allowed_tools: vec!["*".into()],
+            inbound_bindings: vec![],
+            system_prompt: String::new(),
+            language: None,
+            workspace: String::new(),
+            extra_docs: vec![],
+            heartbeat: Some(HeartbeatWire {
+                enabled: true,
+                interval: "30m".into(),
+            }),
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        let back: AgentDetail = serde_json::from_value(v).unwrap();
+        assert_eq!(d, back);
     }
 
     #[test]
@@ -238,6 +297,7 @@ mod tests {
             transcripts_dir: None,
             workspace: None,
             extra_docs: None,
+            heartbeat: None,
         };
         let v = serde_json::to_value(&i).unwrap();
         let obj = v.as_object().unwrap();

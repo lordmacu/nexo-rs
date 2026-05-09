@@ -30,6 +30,7 @@ pub mod capabilities;
 pub mod config_tool_bridge;
 pub mod credentials_check;
 pub mod http_supervisor;
+pub mod llm_completer;
 pub mod llm_provider_probe;
 pub mod pairing_check;
 pub mod persisters;

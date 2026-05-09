@@ -68,18 +68,27 @@ impl EmailPersister {
         let final_path = self.secret_path(instance);
         let tmp_path = dir.join(format!(".{instance}.tmp"));
 
-        // Build TOML body. We hand-format (no toml crate dep)
-        // because the shape is trivial and adding a dep for two
-        // keys is wasteful.
+        // Build TOML body matching the runtime loader's tagged
+        // enum shape (`crates/auth/src/email.rs::EmailAuthFile`).
+        // The loader uses `#[serde(tag = "kind", deny_unknown_fields)]`
+        // so we MUST emit `kind` + the variant's required fields
+        // (username + password XOR oauth2 access_token). The
+        // `username` we get from the payload's `address` — same
+        // value the operator types in the wizard, matches the
+        // typical Gmail/Outlook auth where login = address.
         let mut body = String::from("[auth]\n");
+        let username = payload.get("address").and_then(Value::as_str).unwrap_or("");
         if let Some(pw) = payload.get("password").and_then(Value::as_str) {
-            // Single-quoted TOML literal (no escaping needed
-            // unless the password contains `'`, which is
-            // exceedingly rare; we reject it in validate_shape).
+            // Single-quoted TOML literals — no escaping needed
+            // because `validate_shape` already rejects payloads
+            // containing `'`.
+            body.push_str("kind = 'password'\n");
+            body.push_str(&format!("username = '{username}'\n"));
             body.push_str(&format!("password = '{pw}'\n"));
-        }
-        if let Some(tok) = payload.get("xoauth2_token").and_then(Value::as_str) {
-            body.push_str(&format!("xoauth2_token = '{tok}'\n"));
+        } else if let Some(tok) = payload.get("xoauth2_token").and_then(Value::as_str) {
+            body.push_str("kind = 'oauth2_static'\n");
+            body.push_str(&format!("username = '{username}'\n"));
+            body.push_str(&format!("access_token = '{tok}'\n"));
         }
         std::fs::write(&tmp_path, body.as_bytes())
             .map_err(|e| AdminRpcError::Internal(format!("write tmp email secret: {e}")))?;
@@ -161,6 +170,21 @@ impl EmailPersister {
         entry.insert(
             YamlValue::String("folders".into()),
             YamlValue::Mapping(folders),
+        );
+        // Bootstrap limit — operator's first run on a large
+        // mailbox shouldn't churn through years of historicals.
+        // Default 50 covers "a couple of days back" for most
+        // operators; override via direct YAML edit when retro
+        // ingest is wanted (see EmailAccountConfig docs). The
+        // metadata.bootstrap_limit field overrides the default
+        // when the wizard wants to expose a custom value.
+        let limit = metadata
+            .get("bootstrap_limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50);
+        entry.insert(
+            YamlValue::String("bootstrap_limit".into()),
+            YamlValue::Number(limit.into()),
         );
         Ok(entry)
     }

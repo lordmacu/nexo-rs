@@ -4515,7 +4515,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-manifest"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "regex",
@@ -4840,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-tool-meta"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
