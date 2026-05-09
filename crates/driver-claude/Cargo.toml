@@ -20,7 +20,7 @@ default = ["sqlite"]
 sqlite = ["dep:sqlx"]
 
 [dependencies]
-nexo-driver-types = { path = "../driver-types" }
+nexo-driver-types = { version = "0.1.5", path = "../driver-types" }
 async-trait       = { workspace = true }
 chrono            = { workspace = true }
 dashmap           = { workspace = true }
