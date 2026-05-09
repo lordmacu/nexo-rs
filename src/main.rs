@@ -38,7 +38,13 @@ use nexo_memory::LongTermMemory;
 // The crate stays in the workspace dormant until 81.17.c.in-tree-removal.
 // `seed_browser_subprocess_env` (below) translates yaml config into
 // env vars the standalone subprocess reads.
-use nexo_plugin_whatsapp::WhatsappPlugin;
+// Phase 81.18.b.2 — `WhatsappPlugin` import dropped after the
+// daemon's subprocess flip; the lib type is reachable on demand
+// via `nexo_plugin_whatsapp::WhatsappPlugin` from the standalone
+// repo path-dep, but the daemon no longer constructs it directly.
+// `WhatsappPairingAdapter`, `register_whatsapp_tools`, and the
+// `pairing::*` types are still imported via fully-qualified
+// paths inline.
 
 enum Mode {
     Run,
@@ -830,6 +836,178 @@ fn seed_telegram_subprocess_env_for(
         if let Some(ref lang) = cfg.auto_transcribe.language {
             env.insert("NEXO_PLUGIN_TELEGRAM_WHISPER_LANGUAGE".into(), lang.clone());
         }
+    }
+    env
+}
+
+/// Phase 81.18.b.2 — daemon-side broker subscriber that watches
+/// `plugin.inbound.whatsapp.<inst>` for connection state events
+/// (Connected / Disconnected / Reconnecting / Qr / CredentialsExpired)
+/// and mirrors them into the daemon's `wa_pairing` map. With the
+/// in-tree plugin gone after the subprocess flip, the pairing
+/// `Arc` no longer travels through shared memory; this subscriber
+/// closes the loop so the admin RPC `/whatsapp/<inst>/pair*`
+/// endpoints keep rendering accurate state.
+///
+/// `pairings` is a `BTreeMap<String, SharedPairingState>` keyed by
+/// instance label. Events arriving for an unknown instance are
+/// silently dropped (operator deleted the cfg entry between events
+/// and this task draining them).
+#[allow(dead_code)] // Wired in the whatsapp-loop flip below.
+fn spawn_whatsapp_pairing_state_subscriber(
+    broker: nexo_broker::AnyBroker,
+    pairings: std::sync::Arc<
+        std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
+    >,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    use nexo_broker::BrokerHandle;
+    tokio::spawn(async move {
+        let mut sub = match broker.subscribe("plugin.inbound.whatsapp.>").await {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "whatsapp pairing state subscriber: broker subscribe failed; \
+                     pairing UI will show stale state until daemon restart",
+                );
+                return;
+            }
+        };
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    tracing::debug!("whatsapp pairing state subscriber: shutdown signalled");
+                    break;
+                }
+                next = sub.next() => {
+                    let Some(msg) = next else {
+                        tracing::debug!("whatsapp pairing state subscriber: stream ended");
+                        break;
+                    };
+                    let topic = msg.topic.clone();
+                    let instance = topic
+                        .strip_prefix("plugin.inbound.whatsapp.")
+                        .unwrap_or("default");
+                    let Some(state) = pairings.get(instance) else {
+                        // Unknown instance — operator may have removed
+                        // the cfg entry. Drop silently; trace at debug
+                        // level so the operator can opt in via
+                        // RUST_LOG.
+                        tracing::debug!(
+                            instance = %instance,
+                            "whatsapp pairing state event for unknown instance; dropped",
+                        );
+                        continue;
+                    };
+                    let kind = msg
+                        .payload
+                        .get("kind")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    match kind {
+                        "connected" => {
+                            state.set_connected(true);
+                            let our_jid = msg
+                                .payload
+                                .get("our_jid")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
+                            state.set_our_jid(our_jid).await;
+                            state.clear_qr().await;
+                        }
+                        "disconnected" => {
+                            state.set_connected(false);
+                        }
+                        "reconnecting" => {
+                            let attempt = msg
+                                .payload
+                                .get("attempt")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                            state.set_reconnect_attempt(attempt).await;
+                        }
+                        "qr" => {
+                            let ascii = msg
+                                .payload
+                                .get("ascii")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let png_b64 = msg
+                                .payload
+                                .get("png_base64")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let expires_at = msg
+                                .payload
+                                .get("expires_at")
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0);
+                            let snap = nexo_plugin_whatsapp::pairing::QrSnapshot {
+                                ascii,
+                                png_b64,
+                                expires_at,
+                                captured_at: chrono::Utc::now().timestamp(),
+                            };
+                            state.set_qr(snap).await;
+                        }
+                        _ => {} // Message / MediaReceived / BridgeTimeout etc — not pairing state.
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// Phase 81.18.b.2 — per-instance env dict for the whatsapp
+/// subprocess. Mirrors the telegram helper above; whitelists
+/// only PATH/HOME/RUST_LOG from the daemon's process env so
+/// secrets unrelated to the whatsapp plugin never leak into the
+/// child.
+#[allow(dead_code)] // Wired in the whatsapp-loop flip below.
+fn seed_whatsapp_subprocess_env_for(
+    cfg: &nexo_config::WhatsappPluginConfig,
+    broker_url: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for key in ["PATH", "HOME", "RUST_LOG"] {
+        if let Ok(val) = std::env::var(key) {
+            env.insert(key.to_string(), val);
+        }
+    }
+    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    env.insert(
+        "NEXO_PLUGIN_WHATSAPP_SESSION_DIR".into(),
+        cfg.session_dir.clone(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_WHATSAPP_MEDIA_DIR".into(),
+        cfg.media_dir.clone(),
+    );
+    if let Some(ref instance) = cfg.instance {
+        if !instance.trim().is_empty() {
+            env.insert("NEXO_PLUGIN_WHATSAPP_INSTANCE".into(), instance.clone());
+        }
+    }
+    env.insert(
+        "NEXO_PLUGIN_WHATSAPP_BRIDGE_TIMEOUT_MS".into(),
+        cfg.bridge.response_timeout_ms.to_string(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_WHATSAPP_ALLOWLIST".into(),
+        serde_json::to_string(&cfg.acl.allow_list).unwrap_or_else(|_| "[]".into()),
+    );
+    if cfg.transcriber.enabled {
+        env.insert(
+            "NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED".into(),
+            "true".into(),
+        );
+        env.insert(
+            "NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS".into(),
+            cfg.transcriber.timeout_ms.to_string(),
+        );
     }
     env
 }
@@ -2321,11 +2499,23 @@ async fn main() -> Result<()> {
     // (no `let browser_plugin = ...` — gone)
     // (no `register_browser_tools(...)` — gone; tools register
     //  via the 81.29 RemoteToolHandler path inside the init loop.)
-    // WhatsApp plugins — zero, one, or many accounts. Each one registers
-    // under `whatsapp` (legacy single-account) or `whatsapp.<instance>`.
-    // Pairing states are collected per-instance so the health server
-    // can expose `/whatsapp/<instance>/pair*` alongside the legacy
-    // `/whatsapp/pair*` that targets the first account for back-compat.
+    // Phase 81.18.b.2 — whatsapp subprocess flip mirrors the
+    // telegram pattern: daemon owns one `PairingState` per cfg
+    // entry (so the admin RPC `/whatsapp/<inst>/pair*` HTTP
+    // endpoints render accurate state) and a broker subscriber
+    // (`spawn_whatsapp_pairing_state_subscriber`, registered
+    // further below near `factory_registry`) bridges the
+    // subprocess's `plugin.inbound.whatsapp.<inst>` events into
+    // those daemon-owned states. The in-tree
+    // `WhatsappPlugin::new(cfg) + plugins.register(plugin)` block
+    // is gone; per-cfg factories register on the discovery snapshot
+    // alongside telegram.
+    //
+    // Typing-presence forwarding (Phase 82.10.r) doesn't yet have a
+    // broker bridge, so subprocess instances don't surface
+    // `AgentEventKind::PeerTyping` events on the firehose until
+    // follow-up `81.20.c` ships the RPC callback. Tracked in
+    // FOLLOWUPS.md.
     let mut wa_pairing: std::collections::BTreeMap<
         String,
         nexo_plugin_whatsapp::pairing::SharedPairingState,
@@ -2341,18 +2531,17 @@ async fn main() -> Result<()> {
         if idx == 0 {
             wa_tunnel_cfg = Some(wa_cfg.public_tunnel.clone());
         }
-        let plugin = WhatsappPlugin::new(wa_cfg);
-        // Phase 82.10.r — pass the bootstrap firehose emitter so
-        // wa-agent typing-presence events surface as
-        // `AgentEventKind::PeerTyping` on the live SSE stream.
-        let plugin = if let Some(ref bs) = admin_bootstrap {
-            plugin.with_emitter(bs.event_emitter())
-        } else {
-            plugin
-        };
-        wa_pairing.insert(instance_label.clone(), plugin.pairing_state());
-        plugins.register(plugin);
-        tracing::info!(instance = %instance_label, "registered plugin: whatsapp");
+        // Daemon-owned PairingState for HTTP UI rendering. The
+        // subprocess plugin holds its own internal state (used by
+        // its own dispatcher) — the two are populated in parallel:
+        // subprocess via wa-agent callbacks, daemon via the broker
+        // subscriber that listens on `plugin.inbound.whatsapp.<inst>`.
+        let pairing = nexo_plugin_whatsapp::pairing::PairingState::new();
+        wa_pairing.insert(instance_label.clone(), pairing);
+        tracing::info!(
+            instance = %instance_label,
+            "registered whatsapp pairing slot (Phase 81.18.b.2 subprocess flip)",
+        );
     }
     // Phase 81.18.b.1 — telegram subprocess flip. The in-tree
     // `TelegramPlugin::new(cfg) + plugins.register(plugin)` block
@@ -2515,6 +2704,96 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Phase 81.18.b.2 — whatsapp subprocess flip mirrors telegram.
+    // Pre-discover the `whatsapp` manifest, register one factory
+    // per cfg entry under `whatsapp` (legacy single-account) or
+    // `whatsapp.<inst>` (multi-account), inject synthetic discovered
+    // plugins. The pairing state subscriber is spawned right after
+    // so events arriving on `plugin.inbound.whatsapp.<inst>` find
+    // the daemon-owned `wa_pairing` slots already populated above.
+    if !cfg.plugins.whatsapp.is_empty() {
+        let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
+            &discovery_cfg_clone,
+            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        );
+        let base_whatsapp = pre_snap
+            .plugins
+            .iter()
+            .find(|p| p.manifest.plugin.id == "whatsapp")
+            .cloned();
+
+        match base_whatsapp {
+            Some(base) => {
+                let broker_url = std::env::var("NEXO_BROKER_URL")
+                    .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                for wa_cfg in cfg.plugins.whatsapp.clone() {
+                    if !wa_cfg.enabled {
+                        continue;
+                    }
+                    let instance_label = wa_cfg.instance.clone().unwrap_or_default();
+                    let trimmed = instance_label.trim();
+                    let plugin_id = if trimmed.is_empty() {
+                        "whatsapp".to_string()
+                    } else {
+                        format!("whatsapp.{trimmed}")
+                    };
+                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, &broker_url);
+                    let synthetic =
+                        nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
+                            &base, trimmed,
+                        );
+                    let factory =
+                        nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
+                            synthetic.manifest.clone(),
+                            env,
+                            trimmed.to_string(),
+                        );
+                    if let Err(e) = factory_registry.register(plugin_id.clone(), factory) {
+                        tracing::warn!(
+                            plugin_id = %plugin_id,
+                            error = %e,
+                            "whatsapp subprocess factory registration failed; instance skipped",
+                        );
+                    } else {
+                        tracing::info!(
+                            plugin_id = %plugin_id,
+                            "registered whatsapp subprocess factory (Phase 81.18.b.2)",
+                        );
+                        extra_subprocess_plugins.push(synthetic);
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "whatsapp is configured in cfg.plugins.whatsapp but no \
+                     `whatsapp` manifest was found in `plugins.discovery.search_paths` \
+                     — install the binary via `cargo install nexo-plugin-whatsapp` \
+                     (or download the v0.1.2+ release tarball) and add its directory \
+                     to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
+                     will not run until the manifest is reachable.",
+                );
+            }
+        }
+    }
+
+    // Phase 81.18.b.2 — spawn the whatsapp pairing state broker
+    // subscriber. Lives for the duration of the daemon's broker
+    // session; cancellation handle wired into the existing
+    // subprocess shutdown token so a graceful shutdown stops the
+    // subscriber alongside the subprocess plugins.
+    let wa_pairing_arc = std::sync::Arc::new(wa_pairing.clone());
+    let wa_pairing_subscriber_shutdown = tokio_util::sync::CancellationToken::new();
+    let _wa_pairing_subscriber_handle = if !wa_pairing.is_empty() {
+        Some(spawn_whatsapp_pairing_state_subscriber(
+            broker.clone(),
+            wa_pairing_arc,
+            wa_pairing_subscriber_shutdown.clone(),
+        ))
+    } else {
+        None
+    };
 
     let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
         .map(std::path::PathBuf::from)
@@ -15858,11 +16137,14 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
-        route_cron_subcommand, seed_telegram_subprocess_env_for, Mode,
+        route_cron_subcommand, seed_telegram_subprocess_env_for, seed_whatsapp_subprocess_env_for,
+        Mode,
     };
     use nexo_config::types::plugins::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
-        TelegramPollingConfig,
+        TelegramPollingConfig, WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
+        WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
+        WhatsappRateLimitConfig, WhatsappTranscriberConfig,
     };
 
     fn telegram_cfg(token: &str, instance: Option<&str>) -> TelegramPluginConfig {
@@ -16002,6 +16284,129 @@ mod tests {
         let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
         assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
+    }
+
+    fn whatsapp_cfg(session_dir: &str, instance: Option<&str>) -> WhatsappPluginConfig {
+        WhatsappPluginConfig {
+            enabled: true,
+            session_dir: session_dir.to_string(),
+            media_dir: "/tmp/wa-media".to_string(),
+            credentials_file: None,
+            acl: WhatsappAclConfig {
+                allow_list: vec!["+5491100000000".into()],
+                from_env: String::new(),
+            },
+            behavior: WhatsappBehaviorConfig::default(),
+            rate_limit: WhatsappRateLimitConfig::default(),
+            bridge: WhatsappBridgeConfig {
+                response_timeout_ms: 45_000,
+                on_timeout: "noop".into(),
+                apology_text: String::new(),
+            },
+            transcriber: WhatsappTranscriberConfig {
+                enabled: false,
+                skill: "whisper".into(),
+                timeout_ms: 60_000,
+            },
+            daemon: WhatsappDaemonConfig::default(),
+            public_tunnel: WhatsappPublicTunnelConfig::default(),
+            instance: instance.map(String::from),
+            allow_agents: Vec::new(),
+            typing_mode: Default::default(),
+        }
+    }
+
+    /// Phase 81.18.b.2 — happy path: every operator-facing field
+    /// of `WhatsappPluginConfig` lands in the spawn env dict
+    /// under the `NEXO_PLUGIN_WHATSAPP_*` namespace plus the
+    /// inherited daemon whitelist.
+    #[test]
+    fn seed_whatsapp_subprocess_env_for_happy_path() {
+        let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+
+        assert_eq!(
+            env.get("NEXO_PLUGIN_WHATSAPP_SESSION_DIR")
+                .map(String::as_str),
+            Some("/tmp/wa-session"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_WHATSAPP_MEDIA_DIR")
+                .map(String::as_str),
+            Some("/tmp/wa-media"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_WHATSAPP_INSTANCE").map(String::as_str),
+            Some("ventas"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_WHATSAPP_BRIDGE_TIMEOUT_MS")
+                .map(String::as_str),
+            Some("45000"),
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_WHATSAPP_ALLOWLIST")
+                .map(String::as_str),
+            Some(r#"["+5491100000000"]"#),
+        );
+        assert_eq!(
+            env.get("NEXO_BROKER_URL").map(String::as_str),
+            Some("nats://127.0.0.1:4222"),
+        );
+        assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
+    }
+
+    /// Phase 81.18.b.2 — empty / `None` instance is omitted (not
+    /// emitted as empty string) so the subprocess's
+    /// `whatsapp_config_from_env` reads `instance = None`.
+    #[test]
+    fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
+        let cfg = whatsapp_cfg("/tmp/x", None);
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
+
+        let cfg2 = whatsapp_cfg("/tmp/x", Some("   "));
+        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats://x");
+        assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
+    }
+
+    /// Phase 81.18.b.2 — transcriber disabled drops whisper env;
+    /// enabled lights it up.
+    #[test]
+    fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
+        let mut cfg = whatsapp_cfg("/tmp/x", None);
+        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env_off.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
+
+        cfg.transcriber = WhatsappTranscriberConfig {
+            enabled: true,
+            skill: "whisper".into(),
+            timeout_ms: 30_000,
+        };
+        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED")
+                .map(String::as_str),
+            Some("true"),
+        );
+        assert_eq!(
+            env_on
+                .get("NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS")
+                .map(String::as_str),
+            Some("30000"),
+        );
+    }
+
+    /// Phase 81.18.b.2 — sentinel daemon env var does NOT leak
+    /// into the spawn dict (defense-in-depth).
+    #[test]
+    fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
+        std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");
+        let cfg = whatsapp_cfg("/tmp/x", None);
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        assert!(!env.contains_key("__NEXO_WA_TEST_LEAK_SENTINEL__"));
+        std::env::remove_var("__NEXO_WA_TEST_LEAK_SENTINEL__");
     }
 
     fn write_minimal_agents_yaml(dir: &std::path::Path) {
