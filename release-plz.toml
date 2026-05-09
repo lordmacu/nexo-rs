@@ -103,14 +103,15 @@ release = false
 # (`wa-agent = { path = "/home/familia/whatsapp-rs" }`). The
 # patch was rewritten to a `git`/`rev` source in the next commit
 # but the bad commit lives in history forever, and release-plz
-# replays it for the equality check. `semver_check = false`
-# tells release-plz to skip the cargo package + cargo
-# semver-checks comparison for this crate; the version bump
-# logic (`local > registry`) still runs. Drop this override
-# once a future commit re-publishes `nexo-tool-meta` (any
-# version > 0.1.0) past the bad commit, since release-plz
-# only diffs against the LAST published version, not arbitrary
-# history.
+# replays it for the equality check, blowing up before any
+# semver / publish logic runs.
+#
+# `release = false` skips the crate entirely from the release-PR
+# walk. Drop this override once `nexo-tool-meta` is bumped to
+# v0.1.2 and published manually past the bad commit — release-plz
+# only diffs against the LAST published version after that, so
+# the bad commit becomes invisible and the override is dead code.
+# Tracked as `81.19.a.release-plz-tool-meta-skip`.
 [[package]]
 name = "nexo-tool-meta"
-semver_check = false
+release = false
