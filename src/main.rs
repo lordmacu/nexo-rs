@@ -2925,9 +2925,38 @@ async fn main() -> Result<()> {
             })
         };
         match factory_registry.register("email".to_string(), factory) {
-            Ok(()) => tracing::info!(
-                "registered email factory (in-process; Phase 81.19.b)"
-            ),
+            Ok(()) => {
+                // Phase 81.19.b — push a synthetic DiscoveredPlugin so
+                // the init_loop sees the email manifest WITHOUT
+                // requiring the operator to place it in
+                // `plugins.discovery.search_paths`. This preserves
+                // the pre-extract default (email always boots when
+                // configured) while still letting the operator opt
+                // into discovery-mode by stripping this block.
+                let synthetic =
+                    nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin {
+                        manifest: nexo_core::agent::plugin_host::NexoPlugin::manifest(
+                            email_arc.as_ref(),
+                        )
+                        .clone(),
+                        // Synthetic root_dir / manifest_path: the
+                        // config loader only consults `manifest.config
+                        // .schema_path` and the email manifest has no
+                        // schema, so any path works. The loader's
+                        // `<config_dir>/plugins/email/*.yaml` lookup
+                        // is unaffected by these values.
+                        root_dir: std::path::PathBuf::from(
+                            "<synthetic email plugin root>",
+                        ),
+                        manifest_path: std::path::PathBuf::from(
+                            "<synthetic email manifest>",
+                        ),
+                    };
+                extra_subprocess_plugins.push(synthetic);
+                tracing::info!(
+                    "registered email factory + synthetic discovered plugin (in-process; Phase 81.19.b)"
+                );
+            }
             Err(e) => tracing::warn!(error = %e, "email factory registration failed"),
         }
     }
@@ -6382,6 +6411,18 @@ async fn main() -> Result<()> {
     // Stop plugin intake first to avoid accepting new inbound events during drain.
     if let Err(e) = plugins.stop_all().await {
         tracing::error!(error = %e, "plugin shutdown error");
+    }
+
+    // Phase 81.19.b — email plugin no longer lives in `plugins`
+    // after the factory_registry flip; stop it explicitly so IMAP
+    // IDLE workers + SMTP outbound queue drain before the runtime
+    // terminates. Idempotent — `EmailPlugin::stop` returns Ok if
+    // already stopped (e.g., autonomous worker shutdown path at
+    // line ~14848 already touched it).
+    if let Some(p) = email_plugin.as_ref() {
+        if let Err(e) = nexo_core::agent::plugin::Plugin::stop(p.as_ref()).await {
+            tracing::error!(error = %e, "email plugin shutdown error");
+        }
     }
 
     // Shut down the MCP runtime before draining agents: in-flight tool calls
@@ -16312,8 +16353,8 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
-        route_cron_subcommand, seed_telegram_subprocess_env_for, seed_whatsapp_subprocess_env_for,
-        Mode,
+        route_cron_subcommand, seed_email_subprocess_env_for, seed_telegram_subprocess_env_for,
+        seed_whatsapp_subprocess_env_for, Mode,
     };
     use nexo_config::types::plugins::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
@@ -16570,6 +16611,74 @@ mod tests {
                 .get("NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS")
                 .map(String::as_str),
             Some("30000"),
+        );
+    }
+
+    /// Phase 81.19.b — happy path: every env key the standalone
+    /// `nexo-plugin-email` subprocess reads on boot lands in the
+    /// spawn dict.
+    #[test]
+    fn seed_email_subprocess_env_for_happy_path() {
+        let cfg_path = std::path::PathBuf::from("/etc/nexo/email.yaml");
+        let secrets = std::path::PathBuf::from("/run/secrets/nexo");
+        let data = std::path::PathBuf::from("/var/lib/nexo");
+        let google = std::path::PathBuf::from("/etc/nexo/google-auth.yaml");
+
+        let env = seed_email_subprocess_env_for(
+            "nats://127.0.0.1:4222",
+            &cfg_path,
+            &secrets,
+            &data,
+            Some(&google),
+        );
+
+        assert_eq!(
+            env.get("NEXO_BROKER_URL").map(String::as_str),
+            Some("nats://127.0.0.1:4222")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_EMAIL_CONFIG_PATH")
+                .map(String::as_str),
+            Some("/etc/nexo/email.yaml")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR")
+                .map(String::as_str),
+            Some("/run/secrets/nexo")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_EMAIL_DATA_DIR").map(String::as_str),
+            Some("/var/lib/nexo")
+        );
+        assert_eq!(
+            env.get("NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH")
+                .map(String::as_str),
+            Some("/etc/nexo/google-auth.yaml")
+        );
+    }
+
+    /// Phase 81.19.b — Gmail OAuth optional: when google_auth_path
+    /// is None the env var is OMITTED (subprocess interprets as
+    /// "no Gmail OAuth accounts" and boots with
+    /// `GoogleCredentialStore::empty()`).
+    #[test]
+    fn seed_email_subprocess_env_for_omits_google_when_none() {
+        let cfg_path = std::path::PathBuf::from("/x.yaml");
+        let secrets = std::path::PathBuf::from("/sec");
+        let data = std::path::PathBuf::from("/data");
+
+        let env = seed_email_subprocess_env_for(
+            "local://test",
+            &cfg_path,
+            &secrets,
+            &data,
+            None,
+        );
+
+        assert!(!env.contains_key("NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH"));
+        assert_eq!(
+            env.get("NEXO_BROKER_URL").map(String::as_str),
+            Some("local://test")
         );
     }
 
