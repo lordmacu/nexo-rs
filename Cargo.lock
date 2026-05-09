@@ -4448,6 +4448,8 @@ dependencies = [
 [[package]]
 name = "nexo-plugin-email"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31a3e80fcd9df9679eb9d423e6fa8664c25b176daa9bcc66ece595f621f5a38d"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -4534,6 +4536,8 @@ dependencies = [
 [[package]]
 name = "nexo-plugin-telegram"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04730bc5cee9e33d89a31940562c51a1133a40fc53894142f26a1c2e77fe4a9f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4545,26 +4549,21 @@ dependencies = [
  "nexo-config",
  "nexo-core",
  "nexo-llm",
- "nexo-microapp-sdk",
  "nexo-pairing",
- "nexo-plugin-manifest",
- "nexo-resilience",
- "once_cell",
  "reqwest",
- "rustls 0.23.38",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
- "toml 0.8.23",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
 [[package]]
 name = "nexo-plugin-whatsapp"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5db132d3b07e6729fd481cfddaec2a6f23cb15bbb70c2d3c7cbab93288d19c1c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8250,8 +8249,9 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "wa-agent"
-version = "0.1.5"
-source = "git+https://github.com/lordmacu/whatsapp-rs?rev=c9ccec0#c9ccec0c945c097ca8bfc82d2b78417c863da0a3"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3c551d1640d5a3c1dbb37db91752d41f3093b704b31ca73fc3c8c5cd60070cf"
 dependencies = [
  "aes",
  "aes-gcm",

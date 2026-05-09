@@ -422,9 +422,54 @@ telegram).
   The override cleanup landed in `release-plz-cleanup-and-reenable`
   below. Status: ✅ closed.
 
-- **`release-plz-cleanup-and-reenable`** — PARTIAL 2026-05-09.
-  Cleanup landed; on:push trigger reverted after 2 failed
-  workflow runs revealed a structural blocker.
+- **`release-plz-cleanup-and-reenable`** — RESOLVED 2026-05-09
+  (third pass — first two attempts revealed a structural
+  blocker, third closed it by publishing the missing
+  upstream `wa-agent v0.1.6`).
+
+  Sequence:
+    1. First push fired workflow run 25613927378 with the
+       3 plugin overrides referencing non-member crates →
+       "overrides are not present in workspace".
+    2. Fixed by dropping those overrides; run 25614022345
+       failed deeper: release-plz makes its own git clone of
+       proyecto into `/tmp/.tmpXXX/proyecto/` and resolves
+       `path = "../nexo-rs-plugin-X"` relative to THAT tmp
+       dir; sibling checkouts were invisible.
+    3. Resolution: publish `wa-agent v0.1.6` (TLS feature
+       split that the published v0.1.5 lacked) → publish
+       `nexo-plugin-whatsapp v0.1.3` (now buildable from
+       crates.io with the v0.1.6 dep) → drop ALL workspace
+       path-deps for the 3 extracted plugins → add
+       `[patch.crates-io]` block redirecting every
+       internal `nexo-*` crate back to local paths so the
+       dep graph unifies (one copy per crate; without the
+       patch, registry-pinned plugin crates would drag in
+       a second copy of `nexo-core` etc., breaking trait
+       identity for `WaBotHandle`, `TlsMode`, …).
+
+  Net of this entry:
+    * `release-plz.toml` reduced to 2 survivors
+      (`nexo-rs` + `nexo-companion-tui`).
+    * `.github/workflows/release-plz.yml` re-enabled
+      `on: push: branches: [main]`. Sibling-repo checkout
+      steps removed (no longer needed; workspace path-deps
+      are gone).
+    * Workspace `Cargo.toml` consumes the 3 extracted
+      plugins via crates.io only.
+    * `[patch.crates-io]` block redirects 23 internal
+      `nexo-*` crates back to local paths.
+    * 35 git tags backfilled in the prior commit stay.
+    * `wa-agent v0.1.6` + `nexo-plugin-whatsapp v0.1.3`
+      published in this wave.
+
+  Status: ✅ closed.
+
+- ~~**`release-plz.path-dep-walk-blocker`**~~ — RESOLVED in
+  the same wave above. The fix was option (1) from the
+  spec — publish the missing upstream + drop workspace
+  path-deps for the three extracted plugins + add a
+  `[patch.crates-io]` unification block.
 
   **Shipped (kept):**
     * `release-plz.toml` reduced from 42 `[[package]]`

@@ -278,15 +278,16 @@ nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 # proyecto binary's `[dependencies]` block below also references
 # this name.
 #
-# Path-dep against the sibling repo. The standalone repo
-# transitively path-depends on `proyecto/crates/...` (microapp-
-# sdk, broker, core, …) and ships features ahead of the last
-# crates.io publish (e.g. whatsapp 0.1.3 carries 81.20.c
-# typing-presence; the published 0.1.1 doesn't). CI workflows
-# clone the sibling repo via `actions/checkout` so the path
-# resolves on the runner.
-nexo-plugin-whatsapp = { version = "0.1.3", path = "../nexo-rs-plugin-whatsapp" }
-nexo-plugin-email    = { version = "0.1.2", path = "../nexo-rs-plugin-email" }
+# Phase 81.19.b cleanup — extracted plugins consumed via crates.io
+# only (no path-dep). All three (telegram 0.1.1, whatsapp 0.1.3,
+# email 0.1.2) are on crates.io with their full dep graphs
+# resolvable, so release-plz's tmp-clone walk doesn't fail anymore.
+# Local-dev override against an unpublished sibling change uses a
+# `[patch.crates-io]` block in `.cargo/config.toml` (gitignored)
+# rather than path-deps in this file — release-plz would otherwise
+# try to resolve the path inside its tmp clone and fail again.
+nexo-plugin-whatsapp = { version = "0.1.3" }
+nexo-plugin-email    = { version = "0.1.2" }
 
 [dependencies]
 tokio               = { workspace = true }
@@ -318,9 +319,10 @@ nexo-cdp = { version = "0.1.0", path = "crates/cdp" }
 # the proyecto binary stay synchronised on version + path.
 nexo-plugin-whatsapp = { workspace = true }
 # Phase 81.18 — telegram plugin extracted to standalone repo.
-# Same path-dep wire as `nexo-plugin-whatsapp` above; CI clones
-# the sibling repo before `cargo build`.
-nexo-plugin-telegram = { version = "0.1.1", path = "../nexo-rs-plugin-telegram" }
+# crates.io-only dep wire (no `path =`); see the
+# nexo-plugin-whatsapp comment in [workspace.dependencies] for
+# why path-deps were dropped in Phase 81.19.b cleanup.
+nexo-plugin-telegram = { version = "0.1.1" }
 nexo-plugin-email = { workspace = true }
 nexo-plugin-google = { version = "0.1.1", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.1", path = "crates/setup" }
@@ -409,7 +411,38 @@ strip         = "none"
 # `lordmacu/whatsapp-rs` so the typing-clear fix in
 # `src/agent.rs::run_agent_with` (explicit `send_typing(false)`
 # await before `apply_response`) ships in the daemon binary.
-# Pinned rev tracks the committed fix on `main`. Drop this override
-# once the upstream crate publishes >=0.1.5 to crates.io with the fix.
+# Phase 81.19.b cleanup — when crates.io-pinned plugins
+# (nexo-plugin-{telegram,whatsapp,email}) reference monorepo
+# crates by their PUBLISHED versions (e.g. `nexo-config = "0.1.1"`),
+# cargo by default fetches the registry copy alongside the
+# workspace's path-dep copy — two versions of the same crate
+# in the resolved graph, which breaks trait + type identity
+# (e.g. `WaBotHandle` from registry-nexo-core != `WaBotHandle`
+# from path-nexo-core). The `[patch.crates-io]` block below
+# redirects every public nexo-* crate back to the local path,
+# unifying the dep graph. Add an entry here whenever a new
+# nexo-* crate gets published.
 [patch.crates-io]
-wa-agent = { git = "https://github.com/lordmacu/whatsapp-rs", rev = "c9ccec0" }
+nexo-config = { path = "crates/config" }
+nexo-broker = { path = "crates/broker" }
+nexo-core = { path = "crates/core" }
+nexo-llm = { path = "crates/llm" }
+nexo-mcp = { path = "crates/mcp" }
+nexo-memory = { path = "crates/memory" }
+nexo-auth = { path = "crates/auth" }
+nexo-pairing = { path = "crates/pairing" }
+nexo-resilience = { path = "crates/resilience" }
+nexo-plugin-manifest = { path = "crates/plugin-manifest" }
+nexo-microapp-sdk = { path = "crates/microapp-sdk" }
+nexo-driver-types = { path = "crates/driver-types" }
+nexo-driver-claude = { path = "crates/driver-claude" }
+nexo-driver-permission = { path = "crates/driver-permission" }
+nexo-driver-loop = { path = "crates/driver-loop" }
+nexo-agent-registry = { path = "crates/agent-registry" }
+nexo-project-tracker = { path = "crates/project-tracker" }
+nexo-dispatch-tools = { path = "crates/dispatch-tools" }
+nexo-fork = { path = "crates/fork" }
+nexo-dream = { path = "crates/dream" }
+nexo-memory-snapshot = { path = "crates/memory-snapshot" }
+nexo-extensions = { path = "crates/extensions" }
+nexo-tool-meta = { path = "crates/tool-meta" }
