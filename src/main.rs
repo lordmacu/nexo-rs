@@ -2354,19 +2354,25 @@ async fn main() -> Result<()> {
         plugins.register(plugin);
         tracing::info!(instance = %instance_label, "registered plugin: whatsapp");
     }
-    // Telegram Bot plugins — zero, one, or many. Each instance registers
-    // under its own unique name (`telegram` for legacy single-bot,
-    // `telegram.<instance>` for multi-bot) so PluginRegistry doesn't
-    // collapse them. Agents target a specific bot via `inbound_bindings`.
-    for tg_cfg in cfg.plugins.telegram.clone() {
-        let instance_label = tg_cfg
-            .instance
-            .clone()
-            .unwrap_or_else(|| "<default>".into());
-        let plugin = nexo_plugin_telegram::TelegramPlugin::new(tg_cfg);
-        plugins.register(plugin);
-        tracing::info!(instance = %instance_label, "registered plugin: telegram");
-    }
+    // Phase 81.18.b.1 — telegram subprocess flip. The in-tree
+    // `TelegramPlugin::new(cfg) + plugins.register(plugin)` block
+    // is gone; daemon now seeds per-instance env dicts +
+    // registers a `subprocess_plugin_factory_with_env` factory
+    // per cfg entry. Discovery walker has to find the
+    // `nexo-plugin-telegram` binary's manifest in
+    // `plugins.discovery.search_paths` (operator action: install
+    // via `cargo install nexo-plugin-telegram` or download the
+    // release binary). Multi-instance support comes from cloning
+    // the discovered manifest with mutated `plugin.id` per
+    // instance (`telegram.<inst>`) so the init loop dispatches a
+    // separate factory call per bot.
+    //
+    // Helpers + factory wiring live alongside the
+    // `factory_registry` build below; this loop body becomes a
+    // `// done in factory_registry block` placeholder so the
+    // existing whatsapp loop still flows correctly.
+    // (Telegram in-tree construction removed; see
+    //  `factory_registry` block at line ~2425.)
     // Email plugin (Phase 48). Wrapped in `Arc` so the email tool
     // registry below can pull `dispatcher_handle()` after `start_all`
     // arms the OutboundDispatcher (the handle is `None` until then).
@@ -2422,7 +2428,94 @@ async fn main() -> Result<()> {
     // (browser/telegram/whatsapp/email) keep their dormant
     // manifests OUT of `search_paths` and continue via the legacy
     // block above until 81.18-81.19 extract them out-of-tree.
-    let factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
+    let mut factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
+
+    // Phase 81.18.b.1 — telegram subprocess flip. For each cfg
+    // entry we (1) build a per-spawn env dict whitelisting only
+    // the daemon envs the plugin legitimately needs (PATH/HOME/
+    // RUST_LOG/NEXO_BROKER_URL) plus the operator-provided
+    // `NEXO_PLUGIN_TELEGRAM_*` config; (2) pre-discover the
+    // telegram manifest from `plugins.discovery.search_paths`;
+    // (3) clone the manifest with a mutated `plugin.id` so each
+    // instance gets a distinct factory entry; (4) register a
+    // `subprocess_plugin_factory_with_env` factory under that
+    // instance id. The injected synthetic plugin entries are
+    // collected in `extra_subprocess_plugins` and passed to
+    // `wire_plugin_registry_with_runtime` so the init loop
+    // dispatches one factory call per instance.
+    //
+    // Operators with `cfg.plugins.telegram` populated MUST install
+    // the `nexo-plugin-telegram` binary; the discovery walker fails
+    // to find the manifest otherwise and the loop logs a clear
+    // hint instead of silently skipping the plugin.
+    let mut extra_subprocess_plugins: Vec<
+        nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
+    > = Vec::new();
+    if !cfg.plugins.telegram.is_empty() {
+        // Pre-discovery scan to fetch the telegram manifest from
+        // the operator's configured search paths.
+        let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
+            &discovery_cfg_clone,
+            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        );
+        let base_telegram = pre_snap
+            .plugins
+            .iter()
+            .find(|p| p.manifest.plugin.id == "telegram")
+            .cloned();
+
+        match base_telegram {
+            Some(base) => {
+                let broker_url = std::env::var("NEXO_BROKER_URL")
+                    .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                for tg_cfg in cfg.plugins.telegram.clone() {
+                    let instance_label = tg_cfg.instance.clone().unwrap_or_default();
+                    let trimmed = instance_label.trim();
+                    let plugin_id = if trimmed.is_empty() {
+                        "telegram".to_string()
+                    } else {
+                        format!("telegram.{trimmed}")
+                    };
+                    let env = seed_telegram_subprocess_env_for(&tg_cfg, &broker_url);
+                    let synthetic =
+                        nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
+                            &base, trimmed,
+                        );
+                    let factory =
+                        nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
+                            synthetic.manifest.clone(),
+                            env,
+                            trimmed.to_string(),
+                        );
+                    if let Err(e) = factory_registry.register(plugin_id.clone(), factory) {
+                        tracing::warn!(
+                            plugin_id = %plugin_id,
+                            error = %e,
+                            "telegram subprocess factory registration failed; instance skipped",
+                        );
+                    } else {
+                        tracing::info!(
+                            plugin_id = %plugin_id,
+                            "registered telegram subprocess factory (Phase 81.18.b.1)",
+                        );
+                        extra_subprocess_plugins.push(synthetic);
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "telegram is configured in cfg.plugins.telegram but no \
+                     `telegram` manifest was found in `plugins.discovery.search_paths` \
+                     — install the binary via `cargo install nexo-plugin-telegram` \
+                     (or download the v0.1.1+ release tarball) and add its directory \
+                     to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
+                     will not run until the manifest is reachable.",
+                );
+            }
+        }
+    }
+
     let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| config_dir.clone());
@@ -2469,6 +2562,7 @@ async fn main() -> Result<()> {
         &available_caps,
         Some(&factory_registry),
         Some(&subprocess_runtime),
+        &extra_subprocess_plugins,
     )
     .await;
     // `wire.registry` + `wire.skill_roots` +
