@@ -39,8 +39,20 @@ release_always      = false      # only release crates that the release-PR bumpe
 # the prior 42 `release = false` entries were obsolete after the
 # 81.18.c.private-dep-blockers and 81.19.b.publish-github wave
 # published the driver subsystem, fork/dream, project-tracker,
-# dispatch-tools, plus the regular ecosystem crates. The 5 entries
+# dispatch-tools, plus the regular ecosystem crates. The 2 entries
 # below are KEPT permanent for the documented reason on each.
+#
+# Note about the 3 standalone plugin repos
+# (`nexo-plugin-{telegram,whatsapp,email}`): they are NOT
+# `[workspace.members]` (extracted in Phase 81.18 / 81.19.a /
+# 81.19.b respectively) — the workspace consumes them via
+# `[workspace.dependencies] X = { path = "../nexo-rs-plugin-X" }`.
+# release-plz rejects `[[package]]` overrides that don't match
+# a member ("not present in the workspace"), so we DON'T list
+# them here. They publish from their own repos' release-plz
+# config; the sibling-repo checkout in
+# `.github/workflows/release-plz.yml` is for path-dep
+# resolution only, not for releasing them.
 # ────────────────────────────────────────────────────────────────────
 
 # The workspace bin (`nexo-rs`) is the last node in the topo order; release-plz
@@ -50,28 +62,6 @@ release_always      = false      # only release crates that the release-PR bumpe
 name = "nexo-rs"
 publish = true
 release = true
-
-# Plugin extracted to standalone repo `../nexo-rs-plugin-telegram/`
-# in Phase 81.18 — released from THAT repo's release-plz, not this
-# one. The monorepo `path = "../nexo-rs-plugin-telegram"` workspace
-# dep keeps the daemon buildable but release-plz must skip it here.
-[[package]]
-name = "nexo-plugin-telegram"
-release = false
-
-# Plugin extracted to standalone repo `../nexo-rs-plugin-whatsapp/`
-# in Phase 81.19.a — released from THAT repo's release-plz.
-[[package]]
-name = "nexo-plugin-whatsapp"
-release = false
-
-# Plugin extracted to standalone repo `../nexo-rs-plugin-email/`
-# in Phase 81.19.b — released from THAT repo's release-plz.
-# Both lib + bin live in the standalone repo; the monorepo only
-# consumes via path-dep.
-[[package]]
-name = "nexo-plugin-email"
-release = false
 
 # Internal TUI binary — never published to crates.io until an
 # external consumer surfaces. Modern TUI distribution favours
