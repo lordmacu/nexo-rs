@@ -448,13 +448,63 @@ telegram).
   Signal-state fixture would close the loop. Owner:
   framework. Trigger: when 81.18.b ships. Status: pending.
 
-- **`81.19.b.email-extract`** — email plugin extract,
-  parallel to 81.19.a. **Probably permanently deferred** —
-  the personal Android use case driving Phase 90 doesn't
-  need email, and `crates/plugins/email/` stays in-tree with
-  zero friction. Re-evaluate if a downstream consumer
-  surfaces a mobile email requirement. Owner: framework.
-  Trigger: explicit demand. Status: deferred (not blocked).
+- **`81.19.b.email-extract`** — RESOLVED 2026-05-09. Email
+  plugin moved out-of-tree to `../nexo-rs-plugin-email/`
+  (`nexo-plugin-email v0.1.2`), mirror layout of telegram /
+  whatsapp extracts (`[lib]` + `[[bin]]`, `nexo-plugin.toml`
+  at repo root, `Cargo.lock` committed). DORMANT marker
+  removed. Daemon flip:
+    * `proyecto/src/main.rs` legacy `plugins.register_arc`
+      block dropped (lines 2632-2655 in pre-extract HEAD).
+    * Replaced with `factory_registry.register("email",
+      singleton-factory)` that hands the existing
+      `Arc<EmailPlugin>` to the init loop. Factory wins
+      over discovery's auto-subprocess fallback per
+      `init_loop.rs:417`, so a manifest in `search_paths`
+      is harmless.
+    * `seed_email_subprocess_env_for(broker, config_path,
+      secrets_dir, data_dir, google_auth_path)` helper
+      added near `seed_telegram_subprocess_env_for`.
+  Workspace member removed; `[workspace.dependencies]
+  nexo-plugin-email` redirected to the standalone path.
+  Test count: 5843/5843 workspace + 236/236 standalone.
+  Three deferreds logged below
+  (`81.19.b.tool-dispatch-subprocess`,
+  `81.19.b.subprocess-flip-conditional-toggle`,
+  `81.19.b.publish-github`).
+
+- **`81.19.b.tool-dispatch-subprocess`** — the standalone
+  subprocess advertises **zero tool defs** in its
+  `initialize` reply because the 12 email tools share heavy
+  in-process state (IMAP IDLE workers, SMTP queue, SQLite
+  stores) that doesn't translate cleanly to JSON-RPC
+  dispatch. Tool dispatch stays on the in-process lib
+  surface (`register_email_tools_filtered`). Trigger: a
+  non-daemon consumer (mobile embedded client without a
+  daemon, or a microservice that wants tools but no
+  in-process plugin). Owner: framework. Status: pending.
+
+- **`81.19.b.subprocess-flip-conditional-toggle`** — the
+  daemon currently registers the email factory unconditionally
+  whenever `cfg.plugins.email` resolves to a non-empty
+  account list. Operators that want subprocess isolation
+  must edit `proyecto/src/main.rs` to strip the factory
+  registration. A future `email.runtime: in_process |
+  subprocess` config field would make the toggle
+  declarative. Owner: framework. Trigger: an operator
+  asks for the toggle. Status: pending.
+
+- **`81.19.b.publish-github`** — push the local
+  `nexo-rs-plugin-email/` repo to
+  `git@github.com:lordmacu/nexo-plugin-email.git` and
+  publish `nexo-plugin-email v0.1.2` to crates.io once
+  upstream `nexo-microapp-sdk` / `nexo-broker` /
+  `nexo-config` / `nexo-auth` / `nexo-core` / `nexo-llm`
+  / `nexo-resilience` / `nexo-plugin-manifest` are all
+  on crates.io at the pinned versions. Owner: framework.
+  Trigger: workspace publish wave (overlaps with
+  `81.18.c.private-dep-blockers-fork-dream-cascade`).
+  Status: pending.
 
 - **`81.19.a.release-workflow-sibling-checkout`** — three
   release-only workflows (`docker.yml`, `release.yml`,

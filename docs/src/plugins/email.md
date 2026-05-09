@@ -289,3 +289,52 @@ are deliberately out of scope for v1.
 | HTML body in outbound                 | (text/plain only in v1)                              |
 | `.ics` calendar invites               | Phase 65                                              |
 | Vision OCR over attached images       | Phase 49                                              |
+
+## Deployment (Phase 81.19.b)
+
+The email plugin is shipped as a **standalone repo**:
+[`nexo-rs-plugin-email`](https://github.com/lordmacu/nexo-plugin-email)
+(`nexo-plugin-email v0.1.2`+ on crates.io). The crate is dual-mode:
+
+| Mode       | Used for                                           | Wire path                                                       |
+|------------|----------------------------------------------------|-----------------------------------------------------------------|
+| In-process | Default — daemon registers a singleton factory     | `factory_registry.register("email", email_plugin_factory(...))` |
+| Subprocess | Operator drops manifest in `search_paths` and removes the in-tree factory | discovery walker auto-spawns the binary via JSON-RPC stdio       |
+
+**By default the daemon runs the email plugin in-process**, exactly
+as before the extract. The factory wins over discovery's
+auto-subprocess fallback (`init_loop.rs:417`), so an email manifest
+in `plugins.discovery.search_paths` does NOT spawn the subprocess
+unless the operator strips the in-tree factory registration.
+
+### Subprocess opt-in (advanced)
+
+For deployments that want process-level isolation of the IMAP/SMTP
+work, install the binary and remove the in-tree factory:
+
+```bash
+cargo install nexo-plugin-email
+mkdir -p ~/.config/nexo/plugins.d/
+cp $(which nexo-plugin-email) ~/.config/nexo/plugins.d/
+# Copy the manifest from $CARGO_HOME/.../nexo-plugin-email-0.1.2/
+# nexo-plugin.toml into the same dir.
+```
+
+Then in `agents.yaml`:
+
+```yaml
+plugins:
+  discovery:
+    search_paths:
+      - ~/.config/nexo/plugins.d
+```
+
+And **strip** the in-tree `email_plugin_factory` registration from
+the daemon source (`proyecto/src/main.rs` Phase 81.19.b block).
+Without that strip, both paths are visible but the factory wins.
+
+The subprocess advertises **zero tool defs** in its `initialize`
+reply — tool dispatch (`email_send` / `email_reply` / …) requires
+the in-process surface and currently doesn't work in pure
+subprocess mode. Follow-up `81.19.b.tool-dispatch-subprocess`
+tracks closing that gap.
