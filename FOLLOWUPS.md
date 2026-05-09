@@ -195,6 +195,71 @@ dropped.
   Mark FOLLOWUPS entry as completed when sweeping resolved
   items.
 
+### Phase 81.18 — plugin-telegram standalone repo — shipped, follow-ups open
+
+Telegram plugin extracted to a standalone repo at
+`/home/familia/chat/nexo-rs-plugin-telegram/` (Shape B: lib +
+bin) on 2026-05-09. Daemon imports the lib via path-dep so
+today's in-tree behaviour is byte-equivalent; the subprocess
+fallback flip is the deferred follow-up below.
+
+- **`81.18.b.subprocess-flip`** — daemon currently builds
+  `TelegramPlugin` in-process via the lib import (paths
+  through `proyecto/src/main.rs:2294-2302`). Phase 81.18.b
+  drops that block and lets the subprocess discovery walker
+  (Phase 81.17 + 81.17.b) spawn the binary. Multi-bot
+  operators have N entries in `cfg.plugins.telegram` so the
+  daemon must seed env per-spawn (one subprocess per
+  instance) — the current `seed_browser_subprocess_env`
+  pattern is process-wide and can't carry over verbatim.
+  Owner: framework. Trigger: when whatsapp 81.19 needs the
+  same multi-instance subprocess plumbing — fix once for
+  both. Status: pending.
+
+- **`81.18.c.crates-publish`** — the standalone repo's
+  `Cargo.toml` carries 9 path-deps to
+  `../proyecto/crates/...` (`nexo-microapp-sdk`,
+  `nexo-broker`, `nexo-core`, `nexo-config`, `nexo-llm`,
+  `nexo-auth`, `nexo-pairing`, `nexo-resilience`,
+  `nexo-plugin-manifest`). Publishing requires those crates
+  on crates.io first — bundled with the wider workspace
+  publish wave (Phase 83.14.b territory; 81.17.c covered
+  4 of them, 5 remain). Until then operators install via
+  `cargo install --git https://github.com/lordmacu/nexo-plugin-telegram`.
+  Owner: ops. Status: blocked on workspace publish wave.
+
+- **`81.18.d.voice-feature-gate`** — `voice = ["dep:whisper-rs"]`
+  feature gate to drop ~25MB of binary on the embedded
+  (Phase 90 — Android) build. Requires refactoring
+  `tool::dispatch_telegram_tool` so the transcribe branch
+  is opt-in (today the whisper subprocess spawn is
+  unconditional in `auto_transcribe.enabled`). Owner:
+  framework. Trigger: Phase 90 mobile binary size budget.
+  Status: pending.
+
+- **`81.18.e.publish-github`** — push the local repo to
+  `github.com/lordmacu/nexo-plugin-telegram` (PUBLIC) +
+  tag `v0.1.1` so the release workflow can build linux-x64
+  / macos-arm64 binaries. Owner: ops. Status: pending; the
+  initial commit lives in the local repo only.
+
+- **`81.18.f.e2e-test-fixture`** — same gap as
+  `81.17.c.e2e-test-fixture`: the offline e2e_handshake
+  test verifies wire shape but doesn't exercise the live
+  Bot API path. A bash-mock fixture (or wiremock-served
+  Telegram API mock) would close the loop. Owner:
+  framework. Trigger: when 81.18.b ships and the
+  subprocess path becomes the production wire. Status:
+  pending.
+
+- **`81.18.g.legacy-broker-cap-warn`** — v1 manifests with
+  `[capabilities.broker]` now surface as `dropped =
+  ["capabilities.broker"]` (compat_v1 migrator) instead of
+  silently passing through. Operators MUST upgrade to v2 to
+  keep broker auto-mapping. Owner: docs / ops. Status: needs
+  a CHANGELOG entry + `docs/src/plugins/manifest-v2.md`
+  upgrade note.
+
 ### Locale-aware agent language — shipped, follow-ups open
 
 BCP-47 locale model + per-locale addenda + voice picker shipped

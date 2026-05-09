@@ -17,7 +17,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use nexo_tool_meta::admin::llm::{LlmCompleteInput, LlmCompleteResponse, LlmUsage};
+#[cfg(test)]
+use nexo_tool_meta::admin::llm::LlmUsage;
+use nexo_tool_meta::admin::llm::{LlmCompleteInput, LlmCompleteResponse};
 
 use super::super::dispatcher::{AdminRpcError, AdminRpcResult};
 
