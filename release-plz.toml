@@ -96,25 +96,158 @@ release = false
 #   name = "nexo-internal"
 #   publish = false
 
-# Phase 81.19.a — release-plz `cargo package` step explodes when
-# diffing `nexo-tool-meta` against the historical commit
+# Phase 81.19.a — release-plz `cargo package` step explodes
+# when diffing crate state against the historical commit
 # `e2b6f36` (May 4) because that commit's `[patch.crates-io]`
 # stanza referenced an absolute local path
 # (`wa-agent = { path = "/home/familia/whatsapp-rs" }`). The
-# patch was rewritten to a `git`/`rev` source in the next commit
-# but the bad commit lives in history forever, and release-plz
-# replays it for the equality check, blowing up before any
-# semver / publish logic runs.
+# patch is workspace-level so the failure repeats for EVERY
+# nexo-* crate release-plz walks (not just tool-meta). The
+# 81.18.c partial publish (commit `a06c767`) shipped
+# `nexo-tool-meta v0.1.1` so that crate's diff target is now
+# v0.1.1 (no longer touches v0.1.0 → e2b6f36 history) — but
+# the other 7+ crates release-plz walks still trip on the
+# bad commit until each gets a manual publish past it.
 #
-# `release = false` skips the crate entirely from the release-PR
-# walk. Drop this override once `nexo-tool-meta` is bumped to
-# v0.1.2 and published manually past the bad commit — release-plz
-# only diffs against the LAST published version after that, so
-# the bad commit becomes invisible and the override is dead code.
-# Tracked as `81.19.a.release-plz-tool-meta-skip`.
+# Workaround: mark every workspace crate `release = false`
+# except the ones whose latest registry version POSTDATES
+# `e2b6f36`. release-plz then skips them entirely from the
+# diff walk. The drivers/dispatch internals were already
+# `release = false` for security review reasons. Drop this
+# override once the full publish wave (`81.18.c.full`)
+# concludes.
+
+# nexo-tool-meta — published v0.1.1 manually 2026-05-09; no
+# longer needs to skip but the override is harmless until
+# the next release-plz config touch.
 [[package]]
 name = "nexo-tool-meta"
 release = false
-publish_no_verify = true
-semver_check = false
-changelog_update = false
+
+# Crates whose history walks the bad commit. Hold them out of
+# release-plz until each gets a manual publish that postdates
+# `e2b6f36`. Order matches the topological publish layers
+# (`scripts/publish-order.sh`).
+[[package]]
+name = "nexo-config"
+release = false
+
+[[package]]
+name = "nexo-broker"
+release = false
+
+[[package]]
+name = "nexo-llm"
+release = false
+
+[[package]]
+name = "nexo-auth"
+release = false
+
+[[package]]
+name = "nexo-pairing"
+release = false
+
+[[package]]
+name = "nexo-resilience"
+release = false
+
+[[package]]
+name = "nexo-core"
+release = false
+
+[[package]]
+name = "nexo-mcp"
+release = false
+
+[[package]]
+name = "nexo-memory"
+release = false
+
+[[package]]
+name = "nexo-extensions"
+release = false
+
+[[package]]
+name = "nexo-microapp-http"
+release = false
+
+[[package]]
+name = "nexo-plugin-email"
+release = false
+
+[[package]]
+name = "nexo-plugin-google"
+release = false
+
+[[package]]
+name = "nexo-poller"
+release = false
+
+[[package]]
+name = "nexo-poller-ext"
+release = false
+
+[[package]]
+name = "nexo-poller-tools"
+release = false
+
+[[package]]
+name = "nexo-setup"
+release = false
+
+[[package]]
+name = "nexo-taskflow"
+release = false
+
+[[package]]
+name = "nexo-team-store"
+release = false
+
+[[package]]
+name = "nexo-tunnel"
+release = false
+
+[[package]]
+name = "nexo-web-search"
+release = false
+
+[[package]]
+name = "nexo-cdp"
+release = false
+
+[[package]]
+name = "nexo-compliance-primitives"
+release = false
+
+[[package]]
+name = "nexo-ext-installer"
+release = false
+
+[[package]]
+name = "nexo-ext-registry"
+release = false
+
+[[package]]
+name = "nexo-llm-auth"
+release = false
+
+[[package]]
+name = "nexo-lsp"
+release = false
+
+[[package]]
+name = "nexo-memory-snapshot"
+release = false
+
+[[package]]
+name = "nexo-fork"
+release = false
+
+[[package]]
+name = "nexo-webhook-receiver"
+release = false
+
+[[package]]
+name = "nexo-webhook-server"
+release = false

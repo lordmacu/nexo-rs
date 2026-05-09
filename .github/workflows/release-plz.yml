@@ -64,6 +64,7 @@ jobs:
         with:
           command: release-pr
           manifest_path: proyecto/Cargo.toml
+          config: proyecto/release-plz.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
