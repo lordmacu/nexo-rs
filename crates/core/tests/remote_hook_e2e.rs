@@ -116,6 +116,7 @@ async fn hook_block_decision_round_trips_via_mock_subprocess() {
         &BTreeSet::new(),
         Some(&factory_registry),
         Some(&runtime),
+        &[],
     )
     .await;
 

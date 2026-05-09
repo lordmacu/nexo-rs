@@ -162,6 +162,7 @@ pub async fn wire_plugin_registry(
         available_capabilities,
         factory_registry,
         None,
+        &[],
     )
     .await
 }
@@ -178,6 +179,15 @@ pub async fn wire_plugin_registry(
 /// factory_registry, the legacy `unreachable!()` ctx_factory
 /// fires — preserving the existing 81.12.0 contract for callers
 /// that haven't migrated.
+///
+/// Phase 81.18.b — `extra_plugins` are appended to the
+/// post-discovery snapshot before the agent / skill / init-loop
+/// passes run. Multi-instance subprocess plugins (telegram /
+/// whatsapp) clone a base discovered manifest N times with
+/// mutated `plugin.id` (`telegram.<inst>`) and pass them here so
+/// the init loop dispatches one factory call per instance.
+/// Empty slice preserves single-discovery behaviour for callers
+/// that don't multiplex.
 pub async fn wire_plugin_registry_with_runtime(
     cfg: &mut AgentsConfig,
     discovery_cfg: &PluginDiscoveryConfig,
@@ -186,9 +196,25 @@ pub async fn wire_plugin_registry_with_runtime(
     available_capabilities: &BTreeSet<String>,
     factory_registry: Option<&PluginFactoryRegistry>,
     subprocess_runtime: Option<&SubprocessRuntime>,
+    extra_plugins: &[super::DiscoveredPlugin],
 ) -> WirePluginRegistryOutput {
     // 1. discover.
     let snap = discover(discovery_cfg, current_version);
+    // 1.b. Phase 81.18.b — merge synthetic instance plugins from
+    // the daemon's multi-instance loop. Each entry has a
+    // mutated `plugin.id` (`telegram.<inst>`) so the init loop's
+    // factory_registry lookup hits the per-instance factory the
+    // daemon registered before calling this function. `discover`
+    // returns an `Arc<NexoPluginRegistrySnapshot>` to keep
+    // hot-reload cheap; clone-into-owned for the merge then re-
+    // wrap so downstream sees the same Arc shape.
+    let snap: Arc<super::NexoPluginRegistrySnapshot> = if extra_plugins.is_empty() {
+        snap
+    } else {
+        let mut owned: super::NexoPluginRegistrySnapshot = (*snap).clone();
+        owned.plugins.extend(extra_plugins.iter().cloned());
+        Arc::new(owned)
+    };
 
     // 2. merge plugin-contributed agents into the runtime config.
     let agent_merge = merge_plugin_contributed_agents(&snap, cfg);

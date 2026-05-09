@@ -52,6 +52,29 @@ pub use subprocess::{
     subprocess_plugin_factory, subprocess_plugin_factory_with_env, SubprocessNexoPlugin,
 };
 
+/// Phase 81.18.b — build a synthetic [`DiscoveredPlugin`] for
+/// the N-th instance of a multi-instance subprocess plugin. The
+/// caller passes a base manifest the discovery walker found at
+/// boot (e.g. `id = "telegram"` from `nexo-plugin-telegram`'s
+/// manifest); this helper clones it and rewrites
+/// `manifest.plugin.id` to `<base_id>.<instance_label>` so the
+/// init loop dispatches a separate factory call per instance.
+///
+/// `instance_label` MUST already be normalised — empty strings
+/// are interpreted as "use the base id verbatim" (legacy
+/// single-instance compat). Trim before calling.
+pub fn synthesize_instance_plugin(
+    base: &DiscoveredPlugin,
+    instance_label: &str,
+) -> DiscoveredPlugin {
+    let mut clone = base.clone();
+    if !instance_label.is_empty() {
+        let new_id = format!("{}.{}", base.manifest.plugin.id, instance_label);
+        clone.manifest.plugin.id = new_id;
+    }
+    clone
+}
+
 /// Hot-reloadable snapshot container. Read paths are zero-contention
 /// thanks to `ArcSwap`; Phase 18 hot-reload will call
 /// [`Self::swap`] with a freshly-discovered snapshot.
@@ -60,7 +83,7 @@ pub struct NexoPluginRegistry {
     inner: ArcSwap<NexoPluginRegistrySnapshot>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct NexoPluginRegistrySnapshot {
     pub plugins: Vec<DiscoveredPlugin>,
     pub last_report: PluginDiscoveryReport,

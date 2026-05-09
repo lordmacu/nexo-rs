@@ -132,6 +132,7 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
         &BTreeSet::new(),
         Some(&factory_registry),
         Some(&runtime),
+        &[],
     )
     .await;
 
@@ -232,6 +233,7 @@ nexo_capabilities = ["broker"]
         &BTreeSet::new(),
         Some(&factory_registry),
         Some(&runtime),
+        &[],
     )
     .await;
 

@@ -126,6 +126,7 @@ async fn vector_ops_round_trip_via_mock_subprocess() {
         &BTreeSet::new(),
         Some(&factory_registry),
         Some(&runtime),
+        &[],
     )
     .await;
 

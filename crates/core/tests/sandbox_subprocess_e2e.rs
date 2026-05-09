@@ -136,6 +136,7 @@ async fn sandboxed_plugin_cannot_read_shadow() {
         &BTreeSet::new(),
         Some(&factory_registry),
         Some(&runtime),
+        &[],
     )
     .await;
 
