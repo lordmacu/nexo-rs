@@ -161,6 +161,7 @@ impl EmailSendTool {
             in_reply_to: None,
             references: vec![],
             attachments: parsed.attachments,
+            message_id: None,
         };
         match self
             .ctx

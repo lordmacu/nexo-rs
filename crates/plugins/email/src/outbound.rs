@@ -93,7 +93,16 @@ impl DispatcherCore {
             .ok_or_else(|| anyhow!("unknown email instance: {instance}"))?
             .clone();
         let from = state.address.clone();
-        let message_id = generate_message_id(&from);
+        // Honour caller-supplied Message-Id when present so a
+        // CRM consumer can pre-track it for inbound-reply
+        // resolution. Strip surrounding angle brackets — the
+        // builder re-adds them — and reject empty strings.
+        let message_id = cmd
+            .message_id
+            .as_ref()
+            .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| generate_message_id(&from));
         let raw = build_mime(
             BuildContext {
                 message_id: &message_id,
@@ -387,10 +396,17 @@ impl OutboundWorker {
 
     /// Generate a Message-ID, build MIME, persist a fresh job. Caller
     /// receives the message_id so a tool wrapping `email_send` (Phase
-    /// 48.7) can return it to the agent.
+    /// 48.7) can return it to the agent. Honours
+    /// `cmd.message_id` when present (CRM-supplied tracking id);
+    /// otherwise generates a fresh one.
     pub async fn enqueue_command(&self, cmd: OutboundCommand) -> Result<String> {
         let from = self.account_cfg.address.clone();
-        let message_id = generate_message_id(&from);
+        let message_id = cmd
+            .message_id
+            .as_ref()
+            .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| generate_message_id(&from));
         // Phase 48.5 — `build_mime` reads attachment files at this
         // point. Missing files surface here (not at drain time) so
         // the dispatcher can fail fast and ack `Failed` instead of

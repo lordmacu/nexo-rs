@@ -80,6 +80,7 @@ async fn outbound_enqueue_through_dispatcher_returns_message_id() {
         in_reply_to: None,
         references: vec![],
         attachments: vec![],
+        message_id: None,
     };
     let msg_id = dispatcher.enqueue_for_instance("ops", cmd).await.unwrap();
     assert!(msg_id.starts_with('<') && msg_id.ends_with('>'));
@@ -120,6 +121,7 @@ async fn enqueue_unknown_instance_errors() {
         in_reply_to: None,
         references: vec![],
         attachments: vec![],
+        message_id: None,
     };
     let err = dispatcher
         .enqueue_for_instance("ghost", cmd)
@@ -164,6 +166,7 @@ yes\r\n";
         in_reply_to: None,
         references: vec![],
         attachments: vec![],
+        message_id: None,
     };
     enrich_reply_threading(&parsed.meta, &mut cmd);
     assert_eq!(cmd.in_reply_to.as_deref(), Some("reply@example.com"));

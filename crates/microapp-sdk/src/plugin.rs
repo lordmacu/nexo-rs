@@ -15,7 +15,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     PluginAdapter::new(MANIFEST)?
+//!     Ok(PluginAdapter::new(MANIFEST)?
 //!         .on_broker_event(|topic, event, broker: BrokerSender| async move {
 //!             // Plugin's outbound logic — e.g. send to Slack API,
 //!             // then publish a confirmation event back.
@@ -28,7 +28,7 @@
 //!         })
 //!         .on_shutdown(|| async { Ok(()) })
 //!         .run_stdio()
-//!         .await
+//!         .await?)
 //! }
 //! # }
 //! ```

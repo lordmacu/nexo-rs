@@ -151,6 +151,7 @@ impl EmailReplyTool {
             in_reply_to: None,
             references: vec![],
             attachments: args.attachments,
+            message_id: None,
         };
         enrich_reply_threading(&parent_meta, &mut cmd);
 
