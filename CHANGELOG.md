@@ -27,6 +27,54 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Changed
 
+- **WhatsApp plugin extracted to standalone repo (Phase 81.19.a).**
+  `nexo-plugin-whatsapp` (the 4 `whatsapp_*` tools + `wa-agent`
+  wrapper + Signal Protocol session lifecycle + QR pairing) now
+  ships out-of-tree at
+  [`nexo-rs-plugin-whatsapp`](https://github.com/lordmacu/nexo-plugin-whatsapp)
+  (sibling to `proyecto/` — same Shape B layout 81.17.c
+  pioneered for browser and 81.18 followed for telegram). The
+  lib re-exports `WhatsappPlugin`, `WhatsappPairingAdapter`,
+  `WhatsappPairingTrigger`, the embedded-path
+  `whatsapp_plugin_factory`, the inbound event enum, the
+  pairing route helpers, and (subprocess only)
+  `whatsapp_config_from_env` + `dispatch_whatsapp_tool` +
+  `whatsapp_tool_defs`; the bin wraps the plugin in
+  `nexo_microapp_sdk::plugin::PluginAdapter` for the future
+  subprocess fallback path.
+
+  **Operator action**: today **none** — the daemon still
+  imports the lib via path-dep
+  (`nexo-plugin-whatsapp = { path = "../nexo-rs-plugin-whatsapp" }`)
+  and constructs `WhatsappPlugin` in-process, so existing
+  `cfg.plugins.whatsapp` YAML config keeps working byte-
+  equivalent. The subprocess flip is the deferred follow-up
+  `81.18.b` (shared with telegram); once it ships,
+  multi-account operators will need
+  `cargo install nexo-plugin-whatsapp` (or download the
+  release binary) plus an entry in
+  `plugins.discovery.search_paths`, with the daemon
+  spawning one subprocess per `[plugin.whatsapp]` entry.
+
+  Workspace surgery: `crates/plugins/whatsapp/` removed (15
+  source modules + 4 integration tests + manifest, 4044 LOC
+  ported verbatim); `proyecto/Cargo.toml` `[workspace]
+  members` drops the entry; `[workspace.dependencies]
+  nexo-plugin-whatsapp` flips path to
+  `../nexo-rs-plugin-whatsapp` (and `crates/setup/Cargo.toml`
+  parallel update). 50 unit + 2 e2e handshake tests pass in
+  the standalone repo; 6057 workspace tests pass on the
+  proyecto side (50 whatsapp tests now live out of tree).
+
+  TLS caveat: `wa-agent` upstream uses `native-tls`
+  (OpenSSL); this repo's direct `reqwest` dep uses
+  `rustls-tls`. Both stacks live in the binary today —
+  slightly bloating size, but functional. Phase 90 Android
+  cross-compile requires resolving this (tracked under
+  `81.19.a.tls-rustls`).
+
+  Mining + design rationale lives in `PHASES.md` § 81.19.a.
+
 - **Telegram plugin extracted to standalone repo (Phase 81.18).**
   `nexo-plugin-telegram` (the 6 `telegram_*` tools + `BotClient`
   HTTP wrapper + long-polling loop + pairing adapter) now ships
