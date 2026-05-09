@@ -56,9 +56,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: nexo-rs
+
+      # Phase 81.18 + 81.19.a — `check-registry.sh` invokes
+      # `cargo metadata` which expands path-deps to the sibling
+      # repos. Without these checkouts the script aborts before
+      # producing output.
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-telegram
+          path: nexo-rs-plugin-telegram
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-whatsapp
+          path: nexo-rs-plugin-whatsapp
 
       - name: Run check-registry.sh
         id: check
+        working-directory: nexo-rs
         run: |
           set -euo pipefail
           chmod +x scripts/check-registry.sh

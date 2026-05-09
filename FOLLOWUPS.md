@@ -318,6 +318,23 @@ telegram).
   surfaces a mobile email requirement. Owner: framework.
   Trigger: explicit demand. Status: deferred (not blocked).
 
+- **`81.19.a.release-workflow-sibling-checkout`** — three
+  release-only workflows (`docker.yml`, `release.yml`,
+  `sbom.yml`) still assume the proyecto repo is the only
+  checkout. `docker.yml` builds from `Dockerfile` with
+  `context: .` (path-deps to siblings live outside the
+  context); `release.yml` fires on tag push and uses
+  `cargo dist` against the workspace (same path-dep
+  resolution issue); `sbom.yml` walks `cargo metadata`
+  after a successful release. None auto-fire on every
+  commit, so they didn't block the active CI gate, but the
+  next `nexo-rs-v*` tag push will explode unless these
+  three are updated to (a) check out
+  `nexo-plugin-{telegram,whatsapp}` as siblings + (b) the
+  Dockerfile copies the siblings into its build context.
+  Owner: ops. Trigger: before the next release tag.
+  Status: pending.
+
 ### Locale-aware agent language — shipped, follow-ups open
 
 BCP-47 locale model + per-locale addenda + voice picker shipped

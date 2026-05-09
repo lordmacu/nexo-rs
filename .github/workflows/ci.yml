@@ -25,11 +25,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: nexo-rs
+      # Phase 81.18 + 81.19.a — `nexo-plugin-{telegram,whatsapp}`
+      # live out of the workspace; check them out as siblings so
+      # the path-deps in `nexo-rs/Cargo.toml` resolve.
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-telegram
+          path: nexo-rs-plugin-telegram
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-whatsapp
+          path: nexo-rs-plugin-whatsapp
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
+        with:
+          workspaces: nexo-rs
+      - working-directory: nexo-rs
+        run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
 
   build-test:
     name: build + test
@@ -37,34 +53,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: nexo-rs
           # nexo-project-tracker::git tests grep `git log` for
           # "Phase 67.9" — needs full history, not the depth=1
           # shallow clone actions/checkout defaults to.
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-telegram
+          path: nexo-rs-plugin-telegram
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-whatsapp
+          path: nexo-rs-plugin-whatsapp
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --workspace --locked
-      - run: cargo test --workspace --locked
+        with:
+          workspaces: nexo-rs
+      - working-directory: nexo-rs
+        run: cargo build --workspace --locked
+      - working-directory: nexo-rs
+        run: cargo test --workspace --locked
       # Phase 79.10 — exercise the gated config-self-edit tool too
       # so a regression in the gated body doesn't ship without
       # CI catching it. Single-threaded because the SQLite tests
       # share temp dirs.
-      - run: cargo test --workspace --locked --features config-self-edit -- --test-threads=1
+      - working-directory: nexo-rs
+        run: cargo test --workspace --locked --features config-self-edit -- --test-threads=1
 
   cross-arm64:
     # Sanity-check that the workspace still compiles for aarch64 so
-    # Termux-on-phone and Linux-ARM server deploys don't regress. Uses
-    # `cross` (Docker-based cross-compile). Not required by branch
-    # protection — it's a portability smoke test, not a release gate.
+    # Termux-on-phone and Linux-ARM server deploys don't regress.
     name: cross-check aarch64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: nexo-rs
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-telegram
+          path: nexo-rs-plugin-telegram
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-whatsapp
+          path: nexo-rs-plugin-whatsapp
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          workspaces: nexo-rs
           key: aarch64
       - name: Install cross
         run: cargo install cross --locked --version ^0.2
       - name: cross check --target aarch64-unknown-linux-gnu
+        working-directory: nexo-rs
         run: cross check --workspace --target aarch64-unknown-linux-gnu --locked

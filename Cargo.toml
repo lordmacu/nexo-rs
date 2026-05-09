@@ -259,9 +259,16 @@ rand               = "0.8"
 nexo-tool-meta     = { version = "0.1.0", path = "crates/tool-meta" }
 nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 # Phase 81.19.a — declared at workspace scope so member crates
-# (e.g. `crates/setup`) can pull through `workspace = true` and
-# stay synchronised on version + path. The proyecto binary's
-# `[dependencies]` block below also references this name.
+# (e.g. `crates/setup`) can pull through `workspace = true`. The
+# proyecto binary's `[dependencies]` block below also references
+# this name.
+#
+# Path-dep against the sibling repo. The standalone repo
+# transitively path-depends on `proyecto/crates/...` (microapp-
+# sdk, broker, core, …) so a `git`/`tag` dep can't resolve until
+# those crates publish to crates.io (deferred wave `81.18.c`).
+# CI workflows clone the sibling repo via `actions/checkout` so
+# the path resolves on the runner.
 nexo-plugin-whatsapp = { version = "0.1.2", path = "../nexo-rs-plugin-whatsapp" }
 
 [dependencies]
@@ -293,10 +300,9 @@ nexo-cdp = { version = "0.1.0", path = "crates/cdp" }
 # through `[workspace.dependencies]` above so member crates +
 # the proyecto binary stay synchronised on version + path.
 nexo-plugin-whatsapp = { workspace = true }
-# Phase 81.18 — telegram plugin extracted to standalone repo
-# `../nexo-rs-plugin-telegram/` (Shape B: lib + bin). Daemon
-# imports the lib re-exports today; subprocess subscription
-# fallback is the deferred follow-up `81.18.b`.
+# Phase 81.18 — telegram plugin extracted to standalone repo.
+# Same path-dep wire as `nexo-plugin-whatsapp` above; CI clones
+# the sibling repo before `cargo build`.
 nexo-plugin-telegram = { version = "0.1.1", path = "../nexo-rs-plugin-telegram" }
 nexo-plugin-email = { version = "0.1.1", path = "crates/plugins/email" }
 nexo-plugin-google = { version = "0.1.1", path = "crates/plugins/google" }
