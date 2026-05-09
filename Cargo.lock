@@ -2669,7 +2669,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
- "webpki-roots",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -3318,7 +3318,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.4",
  "url",
- "webpki-roots",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -4447,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-email"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -4470,8 +4470,10 @@ dependencies = [
  "nexo-config",
  "nexo-core",
  "nexo-llm",
+ "nexo-microapp-sdk",
  "nexo-plugin-manifest",
  "nexo-resilience",
+ "once_cell",
  "rand 0.8.6",
  "rustls 0.23.38",
  "rustls-native-certs",
@@ -4483,12 +4485,13 @@ dependencies = [
  "sha2",
  "socket2 0.5.10",
  "sqlx",
- "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-rustls 0.26.4",
  "tokio-util",
  "toml 0.8.23",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -6205,7 +6208,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "webpki-roots",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -7074,6 +7077,7 @@ checksum = "ee6798b1838b6a0f69c007c133b8df5866302197e404e8b6ee8ed3e3a5e68dc6"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "crc",
  "crossbeam-queue",
  "either",
@@ -7089,6 +7093,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
+ "rustls 0.23.38",
  "serde",
  "serde_json",
  "sha2",
@@ -7098,6 +7103,8 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -7149,6 +7156,7 @@ dependencies = [
  "bitflags 2.11.1",
  "byteorder",
  "bytes",
+ "chrono",
  "crc",
  "digest",
  "dotenvy",
@@ -7177,6 +7185,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -7190,6 +7199,7 @@ dependencies = [
  "base64 0.22.1",
  "bitflags 2.11.1",
  "byteorder",
+ "chrono",
  "crc",
  "dotenvy",
  "etcetera",
@@ -7214,6 +7224,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -7224,6 +7235,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea"
 dependencies = [
  "atoi",
+ "chrono",
  "flume",
  "futures-channel",
  "futures-core",
@@ -7239,6 +7251,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -8474,6 +8487,15 @@ dependencies = [
  "objc2-foundation",
  "url",
  "web-sys",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]

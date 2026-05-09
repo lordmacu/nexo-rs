@@ -1076,6 +1076,53 @@ fn seed_whatsapp_subprocess_env_for(
     env
 }
 
+/// Phase 81.19.b — daemon-side helper that seeds the env dict the
+/// `nexo-plugin-email` subprocess reads on boot. Mirror of
+/// `seed_telegram_subprocess_env_for` but adapted to email's
+/// single-process / multi-account-internal model: one env dict
+/// covers every account in `cfg.accounts`, no per-account spawn.
+///
+/// `secrets_dir`, `data_dir`, `config_path`, and `google_auth_path`
+/// are absolute paths. `google_auth_path` may be empty — the
+/// subprocess interprets that as "no Gmail OAuth accounts" and
+/// boots with `GoogleCredentialStore::empty()`.
+fn seed_email_subprocess_env_for(
+    broker_url: &str,
+    config_path: &std::path::Path,
+    secrets_dir: &std::path::Path,
+    data_dir: &std::path::Path,
+    google_auth_path: Option<&std::path::Path>,
+) -> std::collections::HashMap<String, String> {
+    let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // Whitelist of inherited daemon envs the subprocess legitimately
+    // needs. Same set as telegram / whatsapp.
+    for key in ["PATH", "HOME", "RUST_LOG"] {
+        if let Ok(val) = std::env::var(key) {
+            env.insert(key.to_string(), val);
+        }
+    }
+    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    env.insert(
+        "NEXO_PLUGIN_EMAIL_CONFIG_PATH".into(),
+        config_path.display().to_string(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_EMAIL_SECRETS_DIR".into(),
+        secrets_dir.display().to_string(),
+    );
+    env.insert(
+        "NEXO_PLUGIN_EMAIL_DATA_DIR".into(),
+        data_dir.display().to_string(),
+    );
+    if let Some(p) = google_auth_path {
+        env.insert(
+            "NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH".into(),
+            p.display().to_string(),
+        );
+    }
+    env
+}
+
 /// `tools_per_agent` and `agent_snapshot_handles` are populated
 /// during the boot agent loop and never extended; reload picks up
 /// policy changes for EXISTING agents only.
@@ -2626,9 +2673,25 @@ async fn main() -> Result<()> {
     // existing whatsapp loop still flows correctly.
     // (Telegram in-tree construction removed; see
     //  `factory_registry` block at line ~2425.)
-    // Email plugin (Phase 48). Wrapped in `Arc` so the email tool
-    // registry below can pull `dispatcher_handle()` after `start_all`
-    // arms the OutboundDispatcher (the handle is `None` until then).
+    // Email plugin (Phase 48 → flipped in 81.19.b). Single Arc lives
+    // for two purposes:
+    //   1. The factory_registry-driven init loop registers a
+    //      singleton factory that hands this Arc to the discovery
+    //      walker (replaces the legacy `plugins.register_arc`
+    //      path; explicit factory wins over discovery's
+    //      auto-subprocess fallback per `init_loop.rs:417`).
+    //   2. The MCP autonomous worker + email tool ctx + email
+    //      tool registration sites consume the same Arc to call
+    //      `dispatcher_handle()`, `bounce_store_handle()`,
+    //      `attachments_dir()`, `health_map()` — all in-process
+    //      methods the broker subprocess can't expose.
+    //
+    // Dual-boot risk (subprocess discovery + in-process register)
+    // is foreclosed: as long as the factory is registered, the
+    // init loop never falls through to the auto-subprocess
+    // branch (`init_loop.rs:417` checks `is_registered` first).
+    // Operators that genuinely want subprocess isolation must
+    // strip this block and place the manifest in `search_paths`.
     let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = cfg
         .plugins
         .email
@@ -2647,10 +2710,7 @@ async fn main() -> Result<()> {
                 ))
             })
         });
-    if let Some(plugin) = email_plugin.clone() {
-        plugins.register_arc(plugin as Arc<dyn nexo_core::agent::plugin::Plugin>);
-        tracing::info!("registered plugin: email");
-    } else if cfg.plugins.email.is_some() {
+    if email_plugin.is_none() && cfg.plugins.email.is_some() {
         tracing::info!("email plugin present but disabled / empty / missing creds — skipping");
     }
     plugins
@@ -2839,6 +2899,36 @@ async fn main() -> Result<()> {
                      will not run until the manifest is reachable.",
                 );
             }
+        }
+    }
+
+    // Phase 81.19.b — email factory wiring. Replaces the legacy
+    // `plugins.register_arc` block dropped earlier. We register a
+    // singleton factory that hands the existing in-process
+    // `Arc<EmailPlugin>` to the init loop. Because the explicit
+    // factory wins over discovery's auto-subprocess fallback
+    // (`init_loop.rs:417`), an email manifest in `search_paths`
+    // does NOT spawn the standalone `nexo-plugin-email` binary —
+    // operators that want subprocess isolation must strip this
+    // block before placing the manifest.
+    //
+    // Unlike telegram / whatsapp this block does NOT touch
+    // `extra_subprocess_plugins` because email runs in-process;
+    // discovery's regular walk picks up the manifest if present
+    // and our factory satisfies it without spawning.
+    if let Some(email_arc) = email_plugin.clone() {
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = {
+            let p = email_arc.clone();
+            Box::new(move |_manifest| {
+                let plugin: Arc<dyn nexo_core::agent::plugin_host::NexoPlugin> = p.clone();
+                Ok(plugin)
+            })
+        };
+        match factory_registry.register("email".to_string(), factory) {
+            Ok(()) => tracing::info!(
+                "registered email factory (in-process; Phase 81.19.b)"
+            ),
+            Err(e) => tracing::warn!(error = %e, "email factory registration failed"),
         }
     }
 

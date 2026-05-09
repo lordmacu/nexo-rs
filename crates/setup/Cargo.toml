@@ -22,7 +22,7 @@ config-self-edit = ["nexo-core/config-self-edit"]
 
 [dependencies]
 nexo-config = { version = "0.1.1", path = "../config" }
-nexo-plugin-email = { version = "0.1.1", path = "../plugins/email" }
+nexo-plugin-email = { workspace = true }
 nexo-core = { version = "0.1.1", path = "../core" }
 nexo-extensions = { version = "0.1.1", path = "../extensions" }
 nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest" }

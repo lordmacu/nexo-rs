@@ -60,7 +60,8 @@ members = [
     # at `../nexo-rs-plugin-telegram/`; no longer a workspace member.
     # Phase 81.19.a — whatsapp plugin extracted to standalone repo
     # at `../nexo-rs-plugin-whatsapp/`; no longer a workspace member.
-    "crates/plugins/email",
+    # Phase 81.19.b — email plugin extracted to standalone repo
+    # at `../nexo-rs-plugin-email/`; no longer a workspace member.
     "crates/plugins/google",
     "crates/setup",
     "crates/tunnel",
@@ -284,6 +285,7 @@ nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 # CI workflows clone the sibling repo via `actions/checkout` so
 # the path resolves on the runner.
 nexo-plugin-whatsapp = { version = "0.1.3", path = "../nexo-rs-plugin-whatsapp" }
+nexo-plugin-email    = { version = "0.1.2", path = "../nexo-rs-plugin-email" }
 
 [dependencies]
 tokio               = { workspace = true }
@@ -318,7 +320,7 @@ nexo-plugin-whatsapp = { workspace = true }
 # Same path-dep wire as `nexo-plugin-whatsapp` above; CI clones
 # the sibling repo before `cargo build`.
 nexo-plugin-telegram = { version = "0.1.1", path = "../nexo-rs-plugin-telegram" }
-nexo-plugin-email = { version = "0.1.1", path = "crates/plugins/email" }
+nexo-plugin-email = { version = "0.1.2", path = "../nexo-rs-plugin-email" }
 nexo-plugin-google = { version = "0.1.1", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.1", path = "crates/setup" }
 nexo-tunnel = { version = "0.1.2", path = "crates/tunnel" }

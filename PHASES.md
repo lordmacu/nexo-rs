@@ -4472,10 +4472,29 @@ only re-exports gated off the `embedded` feature:
   path so the embedded build can drop ~25MB of binary.
 - `81.19.a.e2e-test-fixture` — wiremock-served wa-agent /
   Signal Protocol mock for tool.invoke live coverage.
-- `81.19.b` — email plugin extract. Email is **not** required
-  for the personal Android use case (Phase 90 driver), so this
-  may stay permanently in-tree unless a downstream consumer
-  asks for it.
+- `81.19.b` ✅ — email plugin extracted to standalone repo
+  `../nexo-rs-plugin-email/` (`nexo-plugin-email v0.1.2`).
+  Layout matches telegram / whatsapp extracts (lib + bin,
+  manifest at root, `Cargo.lock` committed). DORMANT marker
+  removed. Daemon flip:
+    * Legacy `plugins.register_arc` block in
+      `proyecto/src/main.rs` (pre-extract HEAD lines
+      2632-2655) dropped.
+    * Replaced with `factory_registry.register("email",
+      singleton-factory)` that hands the existing
+      `Arc<EmailPlugin>` to the init loop. Factory wins
+      over discovery's auto-subprocess fallback per
+      `init_loop.rs:417`.
+    * `seed_email_subprocess_env_for(broker, config_path,
+      secrets_dir, data_dir, google_auth_path)` helper
+      added near `seed_telegram_subprocess_env_for`.
+  In-process tool surface preserved (MCP autonomous worker
+  + `register_email_tools_filtered` unchanged). Subprocess
+  binary is **opt-in only** today; advertises zero tool
+  defs. Three follow-ups logged: tool-dispatch-subprocess,
+  subprocess-flip-conditional-toggle, publish-github.
+  Shipped 2026-05-09. Test count: 5843/5843 workspace +
+  236/236 standalone.
 
 **Capability inventory:** no new env-toggle gating dangerous
 behaviour. The `NEXO_PLUGIN_WHATSAPP_*` vars are operator-
