@@ -46,12 +46,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.tag.outputs.tag }}
+          path: nexo-rs
+
+      # Phase 81.18 + 81.19.a — cargo-cyclonedx walks the
+      # workspace metadata and follows the path-deps to the
+      # sibling repos. Without these checkouts the SBOM run
+      # dies before producing any output.
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-telegram
+          path: nexo-rs-plugin-telegram
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-whatsapp
+          path: nexo-rs-plugin-whatsapp
 
       # ----- Cargo deps SBOM (CycloneDX) -----
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --locked
 
       - name: Generate CycloneDX SBOM from Cargo.lock
+        working-directory: nexo-rs
         run: |
           cargo cyclonedx --format json --all --output-pattern bom \
             --output-cdx -v
@@ -64,6 +79,7 @@ jobs:
         uses: anchore/sbom-action/download-syft@v0
 
       - name: Generate SPDX SBOM from workspace
+        working-directory: nexo-rs
         run: |
           syft . -o spdx-json=sbom-spdx.json
           ls -la sbom-spdx.json
@@ -75,6 +91,7 @@ jobs:
           cosign-release: v2.4.1
 
       - name: Sign SBOMs (keyless OIDC)
+        working-directory: nexo-rs
         env:
           COSIGN_EXPERIMENTAL: "true"
         run: |
@@ -87,6 +104,7 @@ jobs:
 
       # ----- Upload to release -----
       - name: Attach SBOMs to release
+        working-directory: nexo-rs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
