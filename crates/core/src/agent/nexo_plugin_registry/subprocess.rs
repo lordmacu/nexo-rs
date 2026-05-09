@@ -114,6 +114,27 @@ pub struct SubprocessNexoPlugin {
     /// Threaded from `PluginInitContext::plugin_state_dir(...)`
     /// at init time.
     plugin_state_dir: Mutex<Option<std::path::PathBuf>>,
+
+    /// Phase 81.18.b — daemon-supplied per-spawn env dict. When
+    /// `Some`, `spawn_and_handshake` calls
+    /// `Command::env_clear().envs(&map)` so the child sees ONLY
+    /// the keys the daemon explicitly seeded — defense-in-depth
+    /// against secrets leaking from the daemon's process env.
+    /// When `None`, the child inherits the daemon's full env (the
+    /// pre-81.18.b behaviour, still in use by the single-instance
+    /// browser plugin). Multi-instance plugins (telegram /
+    /// whatsapp) populate this with `seed_*_subprocess_env_for(cfg)`
+    /// per cfg entry so N spawns don't see colliding `NEXO_PLUGIN_*`
+    /// vars.
+    spawn_env: Option<std::collections::HashMap<String, String>>,
+
+    /// Phase 81.18.b — operator-visible label disambiguating N
+    /// instances of the same plugin id (`"telegram.bot1"`,
+    /// `"telegram.bot2"`). Threaded into log fields so admin
+    /// diagnostics list each subprocess distinctly. `None` for
+    /// single-instance plugins or in-tree paths that don't
+    /// multiplex.
+    instance_label: Option<String>,
 }
 
 /// Per-instance live state. Separated from the outer struct so
@@ -185,7 +206,32 @@ impl SubprocessNexoPlugin {
             inner: Mutex::new(None),
             sandbox: Mutex::new(None),
             plugin_state_dir: Mutex::new(None),
+            spawn_env: None,
+            instance_label: None,
         }
+    }
+
+    /// Phase 81.18.b — supply a per-spawn env dict that replaces
+    /// the daemon's process env at child spawn time. See
+    /// [`spawn_env`](#structfield.spawn_env) for the full
+    /// rationale. Builder API; chain after `new()`.
+    pub fn with_spawn_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
+        self.spawn_env = Some(env);
+        self
+    }
+
+    /// Phase 81.18.b — operator-visible label for multi-instance
+    /// plugins. Threaded into tracing log fields so admin
+    /// diagnostics distinguish concurrent subprocesses. Empty
+    /// strings are normalised to `None`.
+    pub fn with_instance_label(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
+        self.instance_label = if label.trim().is_empty() {
+            None
+        } else {
+            Some(label)
+        };
+        self
     }
 
     /// Phase 81.26 — for each backend name in
@@ -568,6 +614,19 @@ impl SubprocessNexoPlugin {
             // operator-visible debug output filtered by `plugin_id`.
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        // Phase 81.18.b — when the daemon supplied a per-spawn env
+        // dict via `with_spawn_env`, wipe the inherited env first
+        // so the child sees ONLY what the daemon explicitly seeded.
+        // Defense-in-depth against secrets leaking from the daemon
+        // process env (e.g. `OPENAI_API_KEY`) into a plugin that has
+        // no business reading them. The single-instance browser
+        // path leaves `spawn_env` as `None` and falls through to
+        // the inherit-everything behaviour pre-81.18.b consumers
+        // already depended on.
+        if let Some(env_map) = &self.spawn_env {
+            cmd.env_clear()
+                .envs(env_map.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        }
         for (k, v) in &entry.env {
             cmd.env(k, v);
         }
@@ -1852,6 +1911,33 @@ pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
     })
 }
 
+/// Phase 81.18.b — factory variant that captures a per-spawn env
+/// dict + instance label at registration time. Used by the daemon's
+/// multi-instance loops in `proyecto/src/main.rs` so each entry of
+/// `cfg.plugins.{telegram,whatsapp}` produces a distinct adapter
+/// whose subprocess spawns with a unique env scope.
+///
+/// Single-instance subprocess plugins (browser) keep using
+/// [`subprocess_plugin_factory`] which doesn't tweak the spawn env
+/// — those plugins inherit the daemon's process env (the
+/// pre-81.18.b behaviour) so their existing operator workflows
+/// (`seed_browser_subprocess_env` populating daemon env at boot)
+/// keep working unchanged.
+pub fn subprocess_plugin_factory_with_env(
+    manifest: PluginManifest,
+    spawn_env: std::collections::HashMap<String, String>,
+    instance_label: String,
+) -> PluginFactory {
+    Box::new(move |_reg_manifest| {
+        let plugin: Arc<dyn NexoPlugin> = Arc::new(
+            SubprocessNexoPlugin::new(manifest.clone())
+                .with_spawn_env(spawn_env.clone())
+                .with_instance_label(instance_label.clone()),
+        );
+        Ok(plugin)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2698,5 +2784,69 @@ stderr_tail_lines = {}
                 );
             }
         }
+    }
+
+    /// Phase 81.18.b — `with_spawn_env` populates the field; the
+    /// builder is otherwise a no-op (state isn't visible at the
+    /// public API level until `spawn_and_handshake` runs). Verify
+    /// the dict survives the builder + that `with_instance_label`
+    /// normalises empty strings to `None`.
+    #[test]
+    fn with_spawn_env_populates_field() {
+        let manifest = manifest_with_entrypoint(Some("/bin/cat"));
+        let mut env = std::collections::HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+        let plugin = SubprocessNexoPlugin::new(manifest)
+            .with_spawn_env(env.clone())
+            .with_instance_label("bot1");
+        assert_eq!(
+            plugin
+                .spawn_env
+                .as_ref()
+                .unwrap()
+                .get("FOO")
+                .map(|s| s.as_str()),
+            Some("bar")
+        );
+        assert_eq!(
+            plugin
+                .spawn_env
+                .as_ref()
+                .unwrap()
+                .get("PATH")
+                .map(|s| s.as_str()),
+            Some("/usr/bin")
+        );
+        assert_eq!(plugin.instance_label.as_deref(), Some("bot1"));
+    }
+
+    #[test]
+    fn with_instance_label_normalises_empty_to_none() {
+        let manifest = manifest_with_entrypoint(Some("/bin/cat"));
+
+        let plugin1 = SubprocessNexoPlugin::new(manifest.clone()).with_instance_label("");
+        assert_eq!(plugin1.instance_label, None);
+
+        let plugin2 = SubprocessNexoPlugin::new(manifest.clone()).with_instance_label("   ");
+        assert_eq!(plugin2.instance_label, None);
+
+        let plugin3 = SubprocessNexoPlugin::new(manifest).with_instance_label("real");
+        assert_eq!(plugin3.instance_label.as_deref(), Some("real"));
+    }
+
+    /// Phase 81.18.b — by default (`SubprocessNexoPlugin::new`
+    /// alone), `spawn_env` stays `None` so `spawn_and_handshake`
+    /// keeps the pre-81.18.b inherit-daemon-env behaviour. The
+    /// single-instance browser plugin and any test that calls
+    /// `spawn_and_handshake` without going through the per-spawn
+    /// factory variant relies on this default.
+    #[test]
+    fn default_inherits_daemon_env_when_spawn_env_not_set() {
+        let manifest = manifest_with_entrypoint(Some("/bin/cat"));
+        let plugin = SubprocessNexoPlugin::new(manifest);
+        assert!(plugin.spawn_env.is_none());
+        assert!(plugin.instance_label.is_none());
     }
 }

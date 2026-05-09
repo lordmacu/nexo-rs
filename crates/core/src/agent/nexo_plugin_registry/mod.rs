@@ -48,7 +48,9 @@ pub use report::{
     DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic, DiscoveryDiagnosticKind,
     PluginDiscoveryReport,
 };
-pub use subprocess::{subprocess_plugin_factory, SubprocessNexoPlugin};
+pub use subprocess::{
+    subprocess_plugin_factory, subprocess_plugin_factory_with_env, SubprocessNexoPlugin,
+};
 
 /// Hot-reloadable snapshot container. Read paths are zero-contention
 /// thanks to `ArcSwap`; Phase 18 hot-reload will call
