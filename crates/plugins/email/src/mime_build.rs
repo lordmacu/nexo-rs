@@ -199,6 +199,7 @@ mod tests {
             in_reply_to: None,
             references: vec![],
             attachments: vec![],
+            message_id: None,
         }
     }
 
@@ -287,6 +288,7 @@ mod tests {
                 content_id: None,
                 disposition: AttachmentDisposition::Attachment,
             }],
+            message_id: None,
         };
         let bytes = build_mime(ctx(), &cmd).await.unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
@@ -318,6 +320,7 @@ mod tests {
                 content_id: None,
                 disposition: AttachmentDisposition::Attachment,
             }],
+            message_id: None,
         };
         let r = build_mime(ctx(), &cmd).await;
         assert!(r.is_err());
@@ -343,6 +346,7 @@ mod tests {
                 content_id: None,
                 disposition: AttachmentDisposition::Attachment,
             }],
+            message_id: None,
         };
         let bytes = build_mime(ctx(), &cmd).await.unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();

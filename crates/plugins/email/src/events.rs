@@ -128,6 +128,17 @@ pub struct OutboundCommand {
     /// tick.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<OutboundAttachmentRef>,
+    /// Optional caller-supplied RFC 5322 `Message-Id` (with or
+    /// without angle brackets). When set, the plugin uses this
+    /// value verbatim for the outbound's `Message-ID:` header
+    /// instead of generating one. Lets a CRM consumer (e.g.
+    /// the marketing extension) persist the id ahead of send so
+    /// the recipient's reply (whose `In-Reply-To` echoes this
+    /// id) can be threaded back to the originating Lead.
+    /// `None` ⇒ legacy behaviour: plugin generates the id via
+    /// `generate_message_id(from)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 /// Path-by-reference outbound attachment (Phase 48.5).
@@ -198,6 +209,7 @@ mod tests {
             in_reply_to: None,
             references: vec![],
             attachments: vec![],
+            message_id: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let back: OutboundCommand = serde_json::from_str(&json).unwrap();
@@ -215,6 +227,7 @@ mod tests {
             in_reply_to: Some("<root@x.com>".into()),
             references: vec!["<root@x.com>".into(), "<reply1@x.com>".into()],
             attachments: vec![],
+            message_id: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let back: OutboundCommand = serde_json::from_str(&json).unwrap();

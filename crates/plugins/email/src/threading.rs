@@ -337,6 +337,7 @@ mod tests {
             in_reply_to: None,
             references: vec![],
             attachments: vec![],
+            message_id: None,
         }
     }
 
