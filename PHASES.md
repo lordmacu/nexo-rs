@@ -4261,6 +4261,112 @@ follow-up (`81.17.c.latency-numbers`); v1 commits the bench
 harness placeholder, operators run + populate the README
 table.
 
+### Phase 81.18 — Plugin-telegram standalone repo extraction (Shape B)   ✅
+
+**Goal:** Lift `crates/plugins/telegram/` out of the workspace
+into a standalone `nexo-rs-plugin-telegram` repo, mirroring the
+Shape B pattern shipped by 81.17.c (browser): one `Cargo.toml`
+with a `lib` (default) AND a `[[bin]]` target. The lib re-
+exports the plugin types so a future embedded build (Phase 90 —
+Android) can pull `TelegramPlugin` straight out of the lib
+surface; the bin wraps the plugin in
+`nexo_microapp_sdk::plugin::PluginAdapter` + JSON-RPC stdio
+loop for the daemon's subprocess fallback path.
+
+**Status:** shipped 2026-05-09. The standalone repo lives at
+`/home/familia/chat/nexo-rs-plugin-telegram/` (initial tag
+`v0.1.1`). Daemon imports the lib via path-dep
+(`nexo-plugin-telegram = { path = "../nexo-rs-plugin-telegram" }`)
+so today's in-tree usage stays byte-equivalent; the subprocess
+fallback flip is deferred follow-up `81.18.b`.
+
+**Surface re-exports (lib):**
+- `TelegramPlugin`, `TOPIC_INBOUND`, `TOPIC_OUTBOUND`
+- `InboundEvent`
+- `register_telegram_tools` (in-process broker-publish handlers)
+- `session_id_for_chat`
+- `TelegramPairingAdapter` (lib-only — daemon registers its own
+  copy of the same shape via the existing import)
+- `telegram_plugin_factory` (embedded path consumer)
+- `telegram_config_from_env` + `telegram_tool_defs` +
+  `dispatch_telegram_tool` (subprocess path consumers; gated off
+  the `embedded` feature for the embedded build)
+
+**Bin (`src/main.rs`):**
+- `PluginAdapter::new(MANIFEST)?.declare_tools(...).on_tool(...)`
+- Lazy-boots one `TelegramPlugin` per process from env vars on
+  the first `tool.invoke` (broker connect + plugin.start happen
+  there so `initialize` handshake never blocks on Telegram or
+  NATS).
+- Manifest bundled at compile-time via
+  `include_str!("../nexo-plugin.toml")`; manifest declares
+  `[plugin.capabilities.broker]` allowlist
+  (`subscribe = ["plugin.outbound.telegram", "plugin.outbound.telegram.>"]`,
+  `publish  = ["plugin.inbound.telegram",  "plugin.inbound.telegram.>"]`).
+
+**Workspace surgery:**
+- `crates/plugins/telegram/` removed (10 files: `Cargo.toml`,
+  `nexo-plugin.toml`, `README.md`, `src/{bot,events,lib,
+  pairing_adapter,plugin,session_id,tool}.rs`,
+  `tests/{bridge_audit,dispatch_test}.rs`).
+- `proyecto/Cargo.toml` `[workspace] members` drops the entry;
+  `[workspace.dependencies] nexo-plugin-telegram` flips path to
+  `../nexo-rs-plugin-telegram`.
+- Daemon source (`proyecto/src/main.rs`) untouched — same
+  imports, same in-process plugin construction, same pairing
+  adapter wiring. The Phase 81.18.b flip swaps in-tree `new()`
+  for subprocess discovery + per-instance env seeding.
+
+**Tests:**
+- 53 tests ported verbatim into the standalone repo
+  (`bridge_audit.rs` + `dispatch_test.rs` + plugin/bot/tool unit
+  tests). Run via `cargo nextest run` inside
+  `nexo-rs-plugin-telegram/`.
+- 2 e2e handshake tests added: spawn the binary, validate the
+  JSON-RPC `initialize` reply (manifest + 6 `telegram_*` tool
+  defs) and verify `tool.invoke` short-circuits with
+  `-33402 ArgumentInvalid` when the env config is incomplete —
+  fully offline (no broker, no Telegram round-trip).
+- Workspace-side `cargo nextest run --workspace`: 6105 passed,
+  2 skipped (53 telegram tests now live out of tree).
+- `cargo clippy --workspace --all-targets --no-deps -- -D warnings`
+  + `cargo fmt --all -- --check`: clean.
+
+**Mining references:**
+- `research/VISION.md:52-82` — bundled vs out-of-tree plugin
+  split; OpenClaw shipped 115 plugins as `private: true` in the
+  monorepo, the Rust framework moves them out one-by-one for
+  independent versioning + lighter mobile binaries.
+- `research/src/channels/AGENTS.md:1-51` — channel plugins
+  consume contracts from `src/plugin-sdk/channel-contract.ts`,
+  not `src/channels/**` internals; the standalone repo only
+  imports `nexo_microapp_sdk::plugin::*` + the public manifest /
+  broker / config crates.
+- `research/src/plugins/AGENTS.md:23-70` — manifest-first
+  discovery + control-plane / runtime-plane separation;
+  bundled `nexo-plugin.toml` parses at compile-time so the
+  binary is self-contained.
+
+**Deferred:**
+- `81.18.b` — daemon subprocess flip. Today the daemon still
+  builds `TelegramPlugin` in-process via the lib import; the
+  subprocess fallback path needs per-instance env seeding (the
+  current `seed_browser_subprocess_env` pattern is single-
+  instance and won't carry over to multi-bot operators).
+- `81.18.c` — crates.io publish wave. The standalone repo's
+  `Cargo.toml` carries 9 path-deps to `../proyecto/crates/...`;
+  publishing requires those crates to land on crates.io first.
+- `81.18.d` — `voice = ["dep:whisper-rs"]` feature gate. Useful
+  for the mobile build to drop ~25MB of binary, but requires a
+  refactor of `tool::dispatch_telegram_tool` so the transcribe
+  branch is opt-in.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour. The `NEXO_PLUGIN_TELEGRAM_*` vars are operator-config
+inputs scoped per-subprocess (same shape as the existing telegram
+yaml flow); no `crates/setup/src/capabilities.rs::INVENTORY`
+entry needed.
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47

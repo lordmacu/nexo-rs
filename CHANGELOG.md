@@ -27,6 +27,41 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Changed
 
+- **Telegram plugin extracted to standalone repo (Phase 81.18).**
+  `nexo-plugin-telegram` (the 6 `telegram_*` tools + `BotClient`
+  HTTP wrapper + long-polling loop + pairing adapter) now ships
+  out-of-tree at
+  [`nexo-rs-plugin-telegram`](https://github.com/lordmacu/nexo-plugin-telegram)
+  (sibling to `proyecto/` — same Shape B layout the browser
+  extract pioneered in 81.17.c: one `Cargo.toml` with a `lib`
+  default + `[[bin]]` target). The lib re-exports `TelegramPlugin`,
+  `InboundEvent`, `register_telegram_tools`, `session_id_for_chat`,
+  `TelegramPairingAdapter`, and the embedded-path
+  `telegram_plugin_factory`; the bin wraps the plugin in
+  `nexo_microapp_sdk::plugin::PluginAdapter` for the future
+  subprocess fallback path.
+
+  **Operator action**: today **none** — the daemon still imports
+  the lib via path-dep
+  (`nexo-plugin-telegram = { path = "../nexo-rs-plugin-telegram" }`)
+  and constructs `TelegramPlugin` in-process, so existing
+  `cfg.plugins.telegram` YAML config keeps working byte-equivalent.
+  The subprocess flip is the deferred follow-up `81.18.b`; once
+  it ships, operators will need
+  `cargo install nexo-plugin-telegram` (or download the release
+  binary) plus an entry in `plugins.discovery.search_paths`.
+
+  Workspace surgery: `crates/plugins/telegram/` removed (10
+  files — sources + manifest + 2 integration tests moved to
+  the standalone repo); `proyecto/Cargo.toml` `[workspace]
+  members` drops the entry; `[workspace.dependencies]
+  nexo-plugin-telegram` flips path to `../nexo-rs-plugin-telegram`.
+  53 unit + 2 e2e handshake tests pass in the standalone repo;
+  6105 workspace tests pass on the proyecto side
+  (53 telegram tests now live out of tree).
+
+  Mining + design rationale lives in `PHASES.md` § 81.18.
+
 - **Browser plugin extracted to standalone repo (Phase 81.17.c).**
   `nexo-plugin-browser` (the 12 `browser_*` tools + CDP client +
   Chrome launcher) now ships as a standalone binary at

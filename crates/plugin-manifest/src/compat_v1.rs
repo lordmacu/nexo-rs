@@ -282,6 +282,16 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
     if !legacy.capabilities.pollers.is_empty() {
         dropped.push("capabilities.pollers");
     }
+    if legacy
+        .capabilities
+        .broker
+        .as_ref()
+        .is_some_and(|b| !b.subscribe.is_empty() || !b.publish.is_empty())
+    {
+        // V1 manifests pre-date the v2 [plugin.capabilities.broker]
+        // home; broker auto-mapping is opt-in via v2 manifest.
+        dropped.push("capabilities.broker");
+    }
 
     // Top-level v1 tables that don't yet have v2 homes (deferred
     // to 81.13.b for the wire surface; runtime consumers still

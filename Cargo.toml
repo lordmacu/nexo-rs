@@ -57,7 +57,8 @@ members = [
     "crates/resilience",
     "crates/taskflow",
     "crates/plugins/whatsapp",
-    "crates/plugins/telegram",
+    # Phase 81.18 — telegram plugin extracted to standalone repo
+    # at `../nexo-rs-plugin-telegram/`; no longer a workspace member.
     "crates/plugins/email",
     "crates/plugins/google",
     "crates/setup",
@@ -282,7 +283,11 @@ semver              = { workspace = true }
 # browser-flavoured plugins.
 nexo-cdp = { version = "0.1.0", path = "crates/cdp" }
 nexo-plugin-whatsapp = { version = "0.1.1", path = "crates/plugins/whatsapp" }
-nexo-plugin-telegram = { version = "0.1.1", path = "crates/plugins/telegram" }
+# Phase 81.18 — telegram plugin extracted to standalone repo
+# `../nexo-rs-plugin-telegram/` (Shape B: lib + bin). Daemon
+# imports the lib re-exports today; subprocess subscription
+# fallback is the deferred follow-up `81.18.b`.
+nexo-plugin-telegram = { version = "0.1.1", path = "../nexo-rs-plugin-telegram" }
 nexo-plugin-email = { version = "0.1.1", path = "crates/plugins/email" }
 nexo-plugin-google = { version = "0.1.1", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.1", path = "crates/setup" }
