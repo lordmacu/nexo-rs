@@ -115,3 +115,6 @@ release = false
 [[package]]
 name = "nexo-tool-meta"
 release = false
+publish_no_verify = true
+semver_check = false
+changelog_update = false
