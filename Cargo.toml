@@ -186,6 +186,20 @@ dist = true
 name = "nexo"
 path = "src/main.rs"
 
+# Phase 81.18.b.e2e-mock-binary — tiny JSON-RPC mock subprocess
+# used by `tests/subprocess_flip_e2e.rs` to validate the
+# daemon-side spawn wire shape (env passthrough, initialize
+# handshake, shutdown reply) without dragging real plugin
+# binaries + network deps into CI. Excluded from `cargo dist`
+# by virtue of NOT being in `[workspace.metadata.dist]
+# bin-aliases`.
+[[bin]]
+name = "mock_subprocess_plugin"
+path = "tests/fixtures/mock_subprocess_plugin.rs"
+test = false
+doc = false
+bench = false
+
 # Phase 27.1 — dev/smoke programs live as examples so cargo-dist
 # doesn't pick them up. Run with
 # `cargo run --example integration-browser-check` or
@@ -368,6 +382,11 @@ serde_json          = { workspace = true }
 serde_yaml          = { workspace = true }
 chrono              = { workspace = true }
 uuid                = { workspace = true }
+# Phase 81.18.b.e2e-mock-binary — `serial_test::serial` keeps the
+# subprocess flip e2e tests from racing on shared OS resources
+# (env vars, stdin/stdout pipes) when nextest fans them out
+# across threads.
+serial_test         = "3"
 
 # The profile that 'dist' will build with
 [profile.dist]
