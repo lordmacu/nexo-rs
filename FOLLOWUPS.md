@@ -306,6 +306,37 @@ telegram).
   documented as known limitation in
   `docs/src/plugins/whatsapp.md`.
 
+- **`81.18.c.crates-publish-wave-partial`** — RESOLVED 2026-05-09
+  partial: 3 crates published to unblock external operator
+  installs (`cargo install --git ... --tag ...`) without
+  needing a sibling proyecto checkout:
+    - `nexo-plugin-manifest v0.1.2`
+    - `nexo-tool-meta v0.1.1` (unblocks release-plz pre-existing
+      red — see entry below)
+    - `nexo-microapp-sdk v0.1.12`
+  Standalone whatsapp + telegram Cargo.toml `version =` pins
+  for these crates now resolve cleanly against crates.io;
+  external `cargo install --git --tag v0.1.1` for telegram
+  and `--tag v0.1.2` for whatsapp work end-to-end. Other
+  internal deps (`nexo-broker`, `nexo-core`, `nexo-config`,
+  `nexo-llm`, `nexo-auth`, `nexo-pairing`, `nexo-resilience`)
+  were already at usable versions on crates.io. Status: ✅.
+
+- **`81.19.a.release-plz-tool-meta-skip`** — RESOLVED 2026-05-09
+  by the manual `nexo-tool-meta v0.1.1` publish above. release-plz
+  was failing since 2026-05-07 because its diff walker replayed
+  commit `e2b6f36` (which had `[patch.crates-io] wa-agent = path
+  "/home/familia/whatsapp-rs"` absolute). Now that tool-meta
+  is at v0.1.1 on crates.io, release-plz only diffs against
+  v0.1.1 (no longer touches the v0.1.0 → e2b6f36 history).
+  The `release-plz.toml` workaround flags
+  (`release = false`, `semver_check = false`,
+  `publish_no_verify = true`, `changelog_update = false` for
+  `nexo-tool-meta`) can be dropped on the next release-plz
+  config touch since they're now dead code. Status: ✅
+  conceptually; cleanup of the override is a follow-up
+  housekeeping task.
+
 - **`81.18.b.qr-event-bridge`** — daemon's pairing state
   subscriber expects subprocess plugins to publish
   `InboundEvent::Qr { ascii, png_b64, expires_at }` on the
