@@ -390,4 +390,4 @@ strip         = "none"
 # Pinned rev tracks the committed fix on `main`. Drop this override
 # once the upstream crate publishes >=0.1.5 to crates.io with the fix.
 [patch.crates-io]
-wa-agent = { git = "https://github.com/lordmacu/whatsapp-rs", rev = "3970dcca644db7d17172766ed0dfe00fd644cfdc" }
+wa-agent = { git = "https://github.com/lordmacu/whatsapp-rs", rev = "c9ccec0" }
