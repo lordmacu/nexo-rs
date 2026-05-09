@@ -110,10 +110,21 @@ pub async fn build_mime(ctx: BuildContext<'_>, cmd: &OutboundCommand) -> Result<
         builder = builder.references(MessageId::from(stripped_refs.as_slice()));
     }
 
-    // text/plain body — `text_body` is the multipart-friendly setter.
-    // Combined with `attachment`/`inline`, mail-builder wraps the
-    // message in `multipart/mixed` automatically.
-    builder = builder.text_body(cmd.body.as_str());
+    // Body Content-Type: html when the payload looks like a
+    // full HTML document, plain otherwise. Marketing's email
+    // template renderer emits `<!DOCTYPE html ...>` so its
+    // output lands as text/html — without this branch every
+    // template-rendered email goes out as text/plain and the
+    // recipient sees raw `<table>...` markup. Plain-text agent
+    // replies still hit text_body.
+    if looks_like_html(&cmd.body) {
+        builder = builder.html_body(cmd.body.as_str());
+    } else {
+        // text/plain body — `text_body` is the multipart-friendly
+        // setter. Combined with `attachment`/`inline`, mail-builder
+        // wraps the message in `multipart/mixed` automatically.
+        builder = builder.text_body(cmd.body.as_str());
+    }
 
     for (att, bytes, mime_type) in loaded {
         match att.disposition {
@@ -154,8 +165,13 @@ fn strip_brackets(s: &str) -> &str {
 /// expectations don't shift.
 fn build_text_only(ctx: &BuildContext, cmd: &OutboundCommand) -> Vec<u8> {
     let mut out = String::with_capacity(256 + cmd.body.len());
+    let content_type = if looks_like_html(&cmd.body) {
+        "text/html; charset=utf-8"
+    } else {
+        "text/plain; charset=utf-8"
+    };
     out.push_str("MIME-Version: 1.0\r\n");
-    out.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+    out.push_str(&format!("Content-Type: {content_type}\r\n"));
     out.push_str("Content-Transfer-Encoding: 8bit\r\n");
     out.push_str(&format!("Date: {}\r\n", rfc2822(ctx.now)));
     out.push_str(&format!("Message-ID: {}\r\n", ctx.message_id));
@@ -186,6 +202,20 @@ fn build_text_only(ctx: &BuildContext, cmd: &OutboundCommand) -> Vec<u8> {
 
 fn rfc2822(dt: DateTime<Utc>) -> String {
     dt.format("%a, %d %b %Y %H:%M:%S %z").to_string()
+}
+
+/// Cheap heuristic — peek the first ~64 chars and check for a
+/// document-level HTML marker. Avoids a full parse on every
+/// outbound; false positives (a plain-text body that happens
+/// to start with `<html>`) are vanishingly rare in real
+/// email traffic.
+fn looks_like_html(body: &str) -> bool {
+    let head = body.trim_start();
+    let head = if head.len() > 64 { &head[..64] } else { head };
+    let lower = head.to_ascii_lowercase();
+    lower.starts_with("<!doctype html")
+        || lower.starts_with("<html")
+        || lower.contains("<html")
 }
 
 fn encode_subject_if_needed(s: &str) -> String {
