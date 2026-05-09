@@ -296,6 +296,7 @@ mod tests {
             references: vec![],
             attachments: vec![OutboundAttachmentRef {
                 data_path: pdf.to_string_lossy().into_owned(),
+                data_inline: None,
                 filename: "report.pdf".into(),
                 mime_type: None,
                 content_id: None,
@@ -328,6 +329,7 @@ mod tests {
             references: vec![],
             attachments: vec![OutboundAttachmentRef {
                 data_path: "/tmp/definitely-does-not-exist-48-5".into(),
+                data_inline: None,
                 filename: "ghost.bin".into(),
                 mime_type: None,
                 content_id: None,
@@ -337,6 +339,66 @@ mod tests {
         };
         let r = build_mime(ctx(), &cmd).await;
         assert!(r.is_err());
+    }
+
+    /// Phase 95 — `data_inline` lets a caller pass bytes
+    /// directly. Builder uses them and never touches the
+    /// filesystem (data_path empty).
+    #[tokio::test]
+    async fn data_inline_bypasses_filesystem_read() {
+        let cmd = OutboundCommand {
+            to: vec!["a@x".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Hi".into(),
+            body: "see inline".into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: vec![OutboundAttachmentRef {
+                data_path: String::new(),
+                data_inline: Some(b"\x89PNG\r\n\x1a\nfake".to_vec()),
+                filename: "logo.png".into(),
+                mime_type: Some("image/png".into()),
+                content_id: Some("logo123".into()),
+                disposition: AttachmentDisposition::Inline,
+            }],
+            message_id: None,
+        };
+        let bytes = build_mime(ctx(), &cmd).await.unwrap();
+        let s = std::str::from_utf8(&bytes).unwrap();
+        assert!(s.contains("multipart/mixed"));
+        assert!(s.contains("image/png"));
+        // Inline part carries the operator-supplied CID so the
+        // HTML body's `<img src=cid:logo123>` resolves.
+        assert!(s.contains("logo123"));
+    }
+
+    /// Both data_path empty + data_inline None ⇒ build error
+    /// instead of phantom retry.
+    #[tokio::test]
+    async fn neither_inline_nor_path_errors() {
+        let cmd = OutboundCommand {
+            to: vec!["a@x".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Hi".into(),
+            body: "x".into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: vec![OutboundAttachmentRef {
+                data_path: String::new(),
+                data_inline: None,
+                filename: "ghost.bin".into(),
+                mime_type: None,
+                content_id: None,
+                disposition: AttachmentDisposition::Attachment,
+            }],
+            message_id: None,
+        };
+        let r = build_mime(ctx(), &cmd).await;
+        assert!(r.is_err());
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("data_inline"), "got: {msg}");
     }
 
     #[tokio::test]
@@ -354,6 +416,7 @@ mod tests {
             references: vec![],
             attachments: vec![OutboundAttachmentRef {
                 data_path: p.to_string_lossy().into_owned(),
+                data_inline: None,
                 filename: "data.bin".into(),
                 mime_type: Some("application/x-custom".into()),
                 content_id: None,
