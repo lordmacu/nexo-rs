@@ -20,29 +20,22 @@ name: release-plz
 #
 # Workflow is skipped when the commit message contains `[skip release-plz]`.
 
-# Phase 81.19.b cleanup attempted re-enable on push 2026-05-09
-# but reverted: release-plz makes its own git clone of the
-# proyecto repo into `/tmp/.tmpXXX/proyecto/` and resolves the
-# workspace's `path = "../nexo-rs-plugin-X"` deps relative to
-# THAT tmp dir — sibling repos checked out into the runner's
-# `$GITHUB_WORKSPACE/nexo-rs-plugin-X` are NOT visible to the
-# tmp clone. Even checking an unrelated crate (e.g. nexo-config)
-# fails because cargo workspace validation walks every member,
-# and any member that transitively depends on the unresolvable
-# path-dep aborts.
+# Phase 81.19.b cleanup — re-enabled on push to main after the
+# wa-agent v0.1.6 + nexo-plugin-whatsapp v0.1.3 publish wave
+# eliminated the last sibling-repo path-dep blocker. The
+# workspace `[workspace.dependencies]` now consumes the 3
+# extracted plugins via crates.io versions only (no `path = `).
+# A `[patch.crates-io]` block in `proyecto/Cargo.toml` redirects
+# every internal `nexo-*` crate back to local paths so the dep
+# graph unifies (one copy of every crate, no trait/type identity
+# splits between registry and path sources).
 #
-# Three paths to truly re-enable (tracked as
-# `release-plz.path-dep-walk-blocker` follow-up):
-#   1. Publish nexo-plugin-whatsapp 0.1.3 (currently blocked
-#      on wa-agent git-dep needing a published version) and
-#      drop the workspace path-dep entirely.
-#   2. Find a release-plz config flag to inject the sibling
-#      checkouts into its tmp clone.
-#   3. Patch release-plz upstream to accept `external-path-deps`.
-#
-# Until then: `workflow_dispatch:` only.  `[skip release-plz]`
-# commit-message escape hatch still works.
+# Skip the workflow on a commit by including `[skip release-plz]`
+# in the message — useful during manual `cargo publish` waves
+# to avoid race conditions with the workflow.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -64,22 +57,6 @@ jobs:
         with:
           path: proyecto
           fetch-depth: 0   # release-plz needs full history to compute diffs
-
-      # Phase 81.18 + 81.19.a + 81.19.b — sibling repos required
-      # so the path-deps in `proyecto/Cargo.toml` resolve before
-      # release-plz computes the diff against the registry.
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-telegram
-          path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-whatsapp
-          path: nexo-rs-plugin-whatsapp
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-email
-          path: nexo-rs-plugin-email
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -113,20 +90,6 @@ jobs:
           path: proyecto
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      # Same sibling-repo checkout as `release-pr` above.
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-telegram
-          path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-whatsapp
-          path: nexo-rs-plugin-whatsapp
-      - uses: actions/checkout@v4
-        with:
-          repository: lordmacu/nexo-plugin-email
-          path: nexo-rs-plugin-email
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
