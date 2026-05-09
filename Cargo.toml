@@ -269,7 +269,7 @@ nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 # those crates publish to crates.io (deferred wave `81.18.c`).
 # CI workflows clone the sibling repo via `actions/checkout` so
 # the path resolves on the runner.
-nexo-plugin-whatsapp = { version = "0.1.2", path = "../nexo-rs-plugin-whatsapp" }
+nexo-plugin-whatsapp = { version = "0.1.3", path = "../nexo-rs-plugin-whatsapp" }
 
 [dependencies]
 tokio               = { workspace = true }

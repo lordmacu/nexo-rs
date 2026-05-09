@@ -961,6 +961,70 @@ fn spawn_whatsapp_pairing_state_subscriber(
     })
 }
 
+/// Phase 81.20.c — daemon-side broker subscriber that watches
+/// `plugin.lifecycle.whatsapp.<inst>.peer_typing` events from
+/// the subprocess plugin and bridges them into the daemon's
+/// `AgentEventEmitter` so `AgentEventKind::PeerTyping` keeps
+/// surfacing on the SSE live transcript firehose. Pre-81.18.b.2
+/// the in-tree `WhatsappPlugin::with_emitter` wired the emitter
+/// directly; after the subprocess flip the emitter Arc doesn't
+/// cross the process boundary, so the broker hop closes the loop.
+#[allow(dead_code)] // Wired in the whatsapp-loop block below.
+fn spawn_whatsapp_typing_presence_subscriber(
+    broker: nexo_broker::AnyBroker,
+    emitter: std::sync::Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    use nexo_broker::BrokerHandle;
+    tokio::spawn(async move {
+        let mut sub = match broker.subscribe("plugin.lifecycle.whatsapp.>").await {
+            Ok(s) => s,
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "whatsapp typing presence subscriber: broker subscribe failed; \
+                     SSE firehose won't surface PeerTyping until daemon restart",
+                );
+                return;
+            }
+        };
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                next = sub.next() => {
+                    let Some(msg) = next else { break; };
+                    let kind = msg.payload.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                    if kind != "peer_typing" {
+                        continue;
+                    }
+                    let account_id = msg
+                        .payload.get("account_id").and_then(|v| v.as_str())
+                        .unwrap_or("default").to_string();
+                    let sender_id = msg
+                        .payload.get("sender_id").and_then(|v| v.as_str())
+                        .unwrap_or("").to_string();
+                    let composing = msg
+                        .payload.get("composing").and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let at_ms = msg
+                        .payload.get("at_ms").and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let evt = nexo_tool_meta::admin::agent_events::AgentEventKind::PeerTyping {
+                        channel: "whatsapp".to_string(),
+                        account_id,
+                        sender_id,
+                        composing,
+                        at_ms,
+                        agent_id: None,
+                        tenant_id: None,
+                    };
+                    emitter.emit(evt).await;
+                }
+            }
+        }
+    })
+}
+
 /// Phase 81.18.b.2 — per-instance env dict for the whatsapp
 /// subprocess. Mirrors the telegram helper above; whitelists
 /// only PATH/HOME/RUST_LOG from the daemon's process env so
@@ -2793,6 +2857,27 @@ async fn main() -> Result<()> {
         ))
     } else {
         None
+    };
+
+    // Phase 81.20.c — typing presence broker bridge. Subprocess
+    // whatsapp publishes `plugin.lifecycle.whatsapp.<inst>.peer_typing`
+    // events; this subscriber translates them to
+    // `AgentEventKind::PeerTyping` on the SSE firehose so live
+    // transcript indicators light up the same way the in-tree
+    // `with_emitter` path did pre-81.18.b.2. Skipped when no
+    // whatsapp instances are configured OR the bootstrap
+    // emitter isn't wired yet (test boots without the SSE
+    // firehose).
+    let _wa_typing_subscriber_handle = match (
+        wa_pairing.is_empty(),
+        admin_bootstrap.as_ref().map(|bs| bs.event_emitter()),
+    ) {
+        (false, Some(emitter)) => Some(spawn_whatsapp_typing_presence_subscriber(
+            broker.clone(),
+            emitter,
+            wa_pairing_subscriber_shutdown.clone(),
+        )),
+        _ => None,
     };
 
     let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
