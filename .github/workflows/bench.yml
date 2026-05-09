@@ -51,7 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: nexo-rs
+          path: proyecto
       # Phase 81.18 + 81.19.a — workspace path-deps require the
       # sibling repos for `cargo bench`'s lockfile resolution.
       - uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: nexo-rs
+          workspaces: proyecto
           shared-key: bench-${{ matrix.crate }}
           # Bench artifacts go in target/criterion/; cache them so a
           # weekly schedule run picks up the previous run's baseline
@@ -77,11 +77,11 @@ jobs:
           cache-targets: true
 
       - name: Build benches
-        working-directory: nexo-rs
+        working-directory: proyecto
         run: cargo bench -p ${{ matrix.crate }} --no-run
 
       - name: Run benches
-        working-directory: nexo-rs
+        working-directory: proyecto
         # `--save-baseline pr-${{ github.event.pull_request.number }}` saves
         # under target/criterion/<group>/<bench>/pr-<n>/. PR runs
         # produce a per-PR baseline; main runs produce `main`.
@@ -94,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-${{ matrix.crate }}-${{ github.run_id }}
-          path: nexo-rs/target/criterion/
+          path: proyecto/target/criterion/
           retention-days: 30
 
       # Future: compare PR baseline vs `main` baseline and post a
