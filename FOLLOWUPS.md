@@ -292,19 +292,19 @@ telegram).
   Trigger: before the next subprocess flip (email if it ever
   flips, or any new channel plugin). Status: pending.
 
-- **`81.20.c.typing-presence-rpc`** — Phase 82.10.r typing-
-  presence forwarding (`AgentEventKind::PeerTyping` on the SSE
-  live transcript firehose) was wired via
-  `WhatsappPlugin::with_emitter(bs.event_emitter())` in the
-  in-tree path. Subprocess plugins can't access the daemon's
-  emitter Arc; bridging typing events through the broker
-  (`plugin.lifecycle.whatsapp.<inst>.peer_typing` →
-  daemon subscriber → emitter.emit) is the missing piece.
-  Same pattern applies to telegram if telegram ever exposes a
-  typing surface. Owner: framework. Trigger: when operators
-  notice the regression on the SSE stream. Status: pending,
-  documented as known limitation in
-  `docs/src/plugins/whatsapp.md`.
+- **`81.20.c.typing-presence-rpc`** — RESOLVED 2026-05-09.
+  Subprocess plugin (standalone whatsapp v0.1.3, commit
+  `778b5eb`) now publishes
+  `plugin.lifecycle.whatsapp.<inst>.peer_typing` broker
+  events alongside the (None) in-process emitter call.
+  Daemon-side `spawn_whatsapp_typing_presence_subscriber`
+  (proyecto commit `b049a87`) translates them to
+  `AgentEventKind::PeerTyping` and feeds the SSE firehose.
+  In-tree path stays byte-equivalent (emitter call still
+  fires when present; broker publish is a no-op for legacy
+  deployments that don't run the daemon subscriber).
+  Status: ✅. Telegram side stays a no-op — telegram doesn't
+  expose a typing surface today.
 
 - **`81.18.c.crates-publish-wave-partial`** — RESOLVED 2026-05-09
   partial: 3 crates published to unblock external operator
