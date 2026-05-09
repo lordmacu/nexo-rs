@@ -41,11 +41,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: nexo-rs
+          path: proyecto
           fetch-depth: 0   # release-plz needs full history to compute diffs
 
       # Phase 81.18 + 81.19.a — sibling repos required so the
-      # path-deps in `nexo-rs/Cargo.toml` resolve before
+      # path-deps in `proyecto/Cargo.toml` resolve before
       # release-plz computes the diff against the registry.
       - uses: actions/checkout@v4
         with:
@@ -63,7 +63,7 @@ jobs:
         uses: MarcoIeni/release-plz-action@v0.5
         with:
           command: release-pr
-          manifest_path: nexo-rs/Cargo.toml
+          manifest_path: proyecto/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,7 +84,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: nexo-rs
+          path: proyecto
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -103,7 +103,7 @@ jobs:
 
       - name: Compute publish order (skip already-up-to-date)
         id: order
-        working-directory: nexo-rs
+        working-directory: proyecto
         run: |
           set -euo pipefail
           chmod +x scripts/publish-order.sh scripts/check-registry.sh
@@ -135,7 +135,7 @@ jobs:
           echo "count=${#PENDING[@]}" >> "$GITHUB_OUTPUT"
 
       - name: Publish in batches of 5 with 10-min spacing
-        working-directory: nexo-rs
+        working-directory: proyecto
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           PENDING_COUNT: ${{ steps.order.outputs.count }}

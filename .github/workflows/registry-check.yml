@@ -57,7 +57,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          path: nexo-rs
+          path: proyecto
 
       # Phase 81.18 + 81.19.a — `check-registry.sh` invokes
       # `cargo metadata` which expands path-deps to the sibling
@@ -74,7 +74,7 @@ jobs:
 
       - name: Run check-registry.sh
         id: check
-        working-directory: nexo-rs
+        working-directory: proyecto
         run: |
           set -euo pipefail
           chmod +x scripts/check-registry.sh
