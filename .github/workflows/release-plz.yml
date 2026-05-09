@@ -20,22 +20,29 @@ name: release-plz
 #
 # Workflow is skipped when the commit message contains `[skip release-plz]`.
 
-# Phase 81.19.b cleanup — re-enabled on push to main after the
-# manual publish wave (driver subsystem + project-tracker +
-# dispatch-tools + fork + dream + email) closed
-# `81.18.c.private-dep-blockers-fork-dream-cascade` and
-# `81.19.b.publish-github`. Sibling-repo checkouts below
-# (`actions/checkout@v4` per `nexo-rs-plugin-{telegram,whatsapp,
-# email}`) resolve the workspace path-deps before release-plz
-# walks the dep graph, so the prior `cargo package --list`
-# failure no longer applies.
+# Phase 81.19.b cleanup attempted re-enable on push 2026-05-09
+# but reverted: release-plz makes its own git clone of the
+# proyecto repo into `/tmp/.tmpXXX/proyecto/` and resolves the
+# workspace's `path = "../nexo-rs-plugin-X"` deps relative to
+# THAT tmp dir — sibling repos checked out into the runner's
+# `$GITHUB_WORKSPACE/nexo-rs-plugin-X` are NOT visible to the
+# tmp clone. Even checking an unrelated crate (e.g. nexo-config)
+# fails because cargo workspace validation walks every member,
+# and any member that transitively depends on the unresolvable
+# path-dep aborts.
 #
-# Skip the workflow on a commit by including `[skip release-plz]`
-# in the message — useful during manual `cargo publish` waves
-# to avoid race conditions with the workflow.
+# Three paths to truly re-enable (tracked as
+# `release-plz.path-dep-walk-blocker` follow-up):
+#   1. Publish nexo-plugin-whatsapp 0.1.3 (currently blocked
+#      on wa-agent git-dep needing a published version) and
+#      drop the workspace path-dep entirely.
+#   2. Find a release-plz config flag to inject the sibling
+#      checkouts into its tmp clone.
+#   3. Patch release-plz upstream to accept `external-path-deps`.
+#
+# Until then: `workflow_dispatch:` only.  `[skip release-plz]`
+# commit-message escape hatch still works.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
