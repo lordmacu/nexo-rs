@@ -213,9 +213,7 @@ fn looks_like_html(body: &str) -> bool {
     let head = body.trim_start();
     let head = if head.len() > 64 { &head[..64] } else { head };
     let lower = head.to_ascii_lowercase();
-    lower.starts_with("<!doctype html")
-        || lower.starts_with("<html")
-        || lower.contains("<html")
+    lower.starts_with("<!doctype html") || lower.starts_with("<html") || lower.contains("<html")
 }
 
 fn encode_subject_if_needed(s: &str) -> String {
