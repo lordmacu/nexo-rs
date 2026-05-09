@@ -20,23 +20,22 @@ name: release-plz
 #
 # Workflow is skipped when the commit message contains `[skip release-plz]`.
 
-# Phase 81.18.c — release-plz disabled on push events. The
-# workspace's path-deps to out-of-workspace sibling repos
-# (`../nexo-rs-plugin-telegram`, `../nexo-rs-plugin-whatsapp`)
-# can't resolve in release-plz's `/tmp/.tmpXXX/` clone — the
-# siblings live in separate GitHub repos that aren't checked
-# out into the tmp dir. release-plz fails on `cargo package
-# --list` for every crate that transitively walks the
-# workspace dep graph.
+# Phase 81.19.b cleanup — re-enabled on push to main after the
+# manual publish wave (driver subsystem + project-tracker +
+# dispatch-tools + fork + dream + email) closed
+# `81.18.c.private-dep-blockers-fork-dream-cascade` and
+# `81.19.b.publish-github`. Sibling-repo checkouts below
+# (`actions/checkout@v4` per `nexo-rs-plugin-{telegram,whatsapp,
+# email}`) resolve the workspace path-deps before release-plz
+# walks the dep graph, so the prior `cargo package --list`
+# failure no longer applies.
 #
-# Until that limitation is solved (either by dropping the
-# path-deps entirely after the full crates publish wave
-# `81.18.c.full`, or by an upstream release-plz feature that
-# checks out external path-deps), publish wave proceeds via
-# manual `cargo publish` invocations from the operator's
-# machine. `workflow_dispatch` keeps the workflow available
-# for one-shot runs once the limitation is resolved.
+# Skip the workflow on a commit by including `[skip release-plz]`
+# in the message — useful during manual `cargo publish` waves
+# to avoid race conditions with the workflow.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -59,8 +58,8 @@ jobs:
           path: proyecto
           fetch-depth: 0   # release-plz needs full history to compute diffs
 
-      # Phase 81.18 + 81.19.a — sibling repos required so the
-      # path-deps in `proyecto/Cargo.toml` resolve before
+      # Phase 81.18 + 81.19.a + 81.19.b — sibling repos required
+      # so the path-deps in `proyecto/Cargo.toml` resolve before
       # release-plz computes the diff against the registry.
       - uses: actions/checkout@v4
         with:
@@ -70,6 +69,10 @@ jobs:
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-email
+          path: nexo-rs-plugin-email
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -113,6 +116,10 @@ jobs:
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
+      - uses: actions/checkout@v4
+        with:
+          repository: lordmacu/nexo-plugin-email
+          path: nexo-rs-plugin-email
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

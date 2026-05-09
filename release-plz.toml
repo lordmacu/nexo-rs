@@ -34,6 +34,15 @@ publish_timeout     = "10m"      # per-crate timeout
 release_always      = false      # only release crates that the release-PR bumped
                                  # — avoids retrying old publishes on every push.
 
+# ────────────────────────────────────────────────────────────────────
+# Per-package overrides — survivors only. Cleanup 2026-05-09:
+# the prior 42 `release = false` entries were obsolete after the
+# 81.18.c.private-dep-blockers and 81.19.b.publish-github wave
+# published the driver subsystem, fork/dream, project-tracker,
+# dispatch-tools, plus the regular ecosystem crates. The 5 entries
+# below are KEPT permanent for the documented reason on each.
+# ────────────────────────────────────────────────────────────────────
+
 # The workspace bin (`nexo-rs`) is the last node in the topo order; release-plz
 # already infers this from the dep graph, but we mark it explicitly so a crate
 # rename never accidentally drops it from the publish set.
@@ -42,212 +51,32 @@ name = "nexo-rs"
 publish = true
 release = true
 
-# Crates that are not part of the public release surface (Phase 67
-# driver subsystem internals + the dispatch tooling that backs the
-# CLI). Set `publish = false` so release-plz never tries to push
-# them to crates.io and never tries to create their git release tag.
-# Operators on the published track only need the runtime + plugins;
-# the driver layer ships separately when its security review closes.
+# Plugin extracted to standalone repo `../nexo-rs-plugin-telegram/`
+# in Phase 81.18 — released from THAT repo's release-plz, not this
+# one. The monorepo `path = "../nexo-rs-plugin-telegram"` workspace
+# dep keeps the daemon buildable but release-plz must skip it here.
 [[package]]
-name = "nexo-driver-types"
-publish = false
+name = "nexo-plugin-telegram"
 release = false
 
+# Plugin extracted to standalone repo `../nexo-rs-plugin-whatsapp/`
+# in Phase 81.19.a — released from THAT repo's release-plz.
 [[package]]
-name = "nexo-driver-permission"
-publish = false
+name = "nexo-plugin-whatsapp"
 release = false
 
-[[package]]
-name = "nexo-driver-claude"
-publish = false
-release = false
-
-[[package]]
-name = "nexo-driver-loop"
-publish = false
-release = false
-
-[[package]]
-name = "nexo-project-tracker"
-publish = false
-release = false
-
-[[package]]
-name = "nexo-agent-registry"
-publish = false
-release = false
-
-[[package]]
-name = "nexo-dispatch-tools"
-publish = false
-release = false
-
-# Companion-tui is also private for now — the WS handshake hasn't
-# landed yet so the surface area isn't stable enough to publish.
-# Will flip to publish=true once PR-4.x ships.
-[[package]]
-name = "nexo-companion-tui"
-publish = false
-release = false
-
-# To skip a crate, add:
-#   [[package]]
-#   name = "nexo-internal"
-#   publish = false
-
-# Phase 81.19.a — release-plz `cargo package` step explodes
-# when diffing crate state against the historical commit
-# `e2b6f36` (May 4) because that commit's `[patch.crates-io]`
-# stanza referenced an absolute local path
-# (`wa-agent = { path = "/home/familia/whatsapp-rs" }`). The
-# patch is workspace-level so the failure repeats for EVERY
-# nexo-* crate release-plz walks (not just tool-meta). The
-# 81.18.c partial publish (commit `a06c767`) shipped
-# `nexo-tool-meta v0.1.1` so that crate's diff target is now
-# v0.1.1 (no longer touches v0.1.0 → e2b6f36 history) — but
-# the other 7+ crates release-plz walks still trip on the
-# bad commit until each gets a manual publish past it.
-#
-# Workaround: mark every workspace crate `release = false`
-# except the ones whose latest registry version POSTDATES
-# `e2b6f36`. release-plz then skips them entirely from the
-# diff walk. The drivers/dispatch internals were already
-# `release = false` for security review reasons. Drop this
-# override once the full publish wave (`81.18.c.full`)
-# concludes.
-
-# nexo-tool-meta — published v0.1.1 manually 2026-05-09; no
-# longer needs to skip but the override is harmless until
-# the next release-plz config touch.
-[[package]]
-name = "nexo-tool-meta"
-release = false
-
-# Crates whose history walks the bad commit. Hold them out of
-# release-plz until each gets a manual publish that postdates
-# `e2b6f36`. Order matches the topological publish layers
-# (`scripts/publish-order.sh`).
-[[package]]
-name = "nexo-config"
-release = false
-
-[[package]]
-name = "nexo-broker"
-release = false
-
-[[package]]
-name = "nexo-llm"
-release = false
-
-[[package]]
-name = "nexo-auth"
-release = false
-
-[[package]]
-name = "nexo-pairing"
-release = false
-
-[[package]]
-name = "nexo-resilience"
-release = false
-
-[[package]]
-name = "nexo-core"
-release = false
-
-[[package]]
-name = "nexo-mcp"
-release = false
-
-[[package]]
-name = "nexo-memory"
-release = false
-
-[[package]]
-name = "nexo-extensions"
-release = false
-
-[[package]]
-name = "nexo-microapp-http"
-release = false
-
+# Plugin extracted to standalone repo `../nexo-rs-plugin-email/`
+# in Phase 81.19.b — released from THAT repo's release-plz.
+# Both lib + bin live in the standalone repo; the monorepo only
+# consumes via path-dep.
 [[package]]
 name = "nexo-plugin-email"
 release = false
 
+# Internal TUI binary — never published to crates.io until an
+# external consumer surfaces. Modern TUI distribution favours
+# `cargo dist` artifacts over `cargo install <tui>`. Reverse the
+# decision when an operator asks for `cargo install`.
 [[package]]
-name = "nexo-plugin-google"
-release = false
-
-[[package]]
-name = "nexo-poller"
-release = false
-
-[[package]]
-name = "nexo-poller-ext"
-release = false
-
-[[package]]
-name = "nexo-poller-tools"
-release = false
-
-[[package]]
-name = "nexo-setup"
-release = false
-
-[[package]]
-name = "nexo-taskflow"
-release = false
-
-[[package]]
-name = "nexo-team-store"
-release = false
-
-[[package]]
-name = "nexo-tunnel"
-release = false
-
-[[package]]
-name = "nexo-web-search"
-release = false
-
-[[package]]
-name = "nexo-cdp"
-release = false
-
-[[package]]
-name = "nexo-compliance-primitives"
-release = false
-
-[[package]]
-name = "nexo-ext-installer"
-release = false
-
-[[package]]
-name = "nexo-ext-registry"
-release = false
-
-[[package]]
-name = "nexo-llm-auth"
-release = false
-
-[[package]]
-name = "nexo-lsp"
-release = false
-
-[[package]]
-name = "nexo-memory-snapshot"
-release = false
-
-[[package]]
-name = "nexo-fork"
-release = false
-
-[[package]]
-name = "nexo-webhook-receiver"
-release = false
-
-[[package]]
-name = "nexo-webhook-server"
+name = "nexo-companion-tui"
 release = false

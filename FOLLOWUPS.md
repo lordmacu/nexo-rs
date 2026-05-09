@@ -419,13 +419,33 @@ telegram).
   "/home/familia/whatsapp-rs"` absolute). Now that tool-meta
   is at v0.1.1 on crates.io, release-plz only diffs against
   v0.1.1 (no longer touches the v0.1.0 → e2b6f36 history).
-  The `release-plz.toml` workaround flags
-  (`release = false`, `semver_check = false`,
-  `publish_no_verify = true`, `changelog_update = false` for
-  `nexo-tool-meta`) can be dropped on the next release-plz
-  config touch since they're now dead code. Status: ✅
-  conceptually; cleanup of the override is a follow-up
-  housekeeping task.
+  The override cleanup landed in `release-plz-cleanup-and-reenable`
+  below. Status: ✅ closed.
+
+- **`release-plz-cleanup-and-reenable`** — RESOLVED 2026-05-09.
+  Cleanup wave following the publish chain that closed
+  `81.18.c.private-dep-blockers-fork-dream-cascade` and
+  `81.19.b.publish-github`. Three changes:
+    * `release-plz.toml` reduced from 42 `[[package]]` overrides
+      to 5 survivors: `nexo-rs` (root, `release = true`),
+      `nexo-plugin-{telegram,whatsapp,email}`
+      (`release = false` permanent — extracted to standalone
+      repos), and `nexo-companion-tui` (`release = false`
+      until external consumer demand).
+    * `.github/workflows/release-plz.yml` re-enabled
+      `on: push: branches: [main]`. Sibling-repo checkout
+      step added for `lordmacu/nexo-plugin-email`
+      (telegram + whatsapp already had checkouts since
+      Phase 81.18). The prior `workflow_dispatch:` only
+      trigger reflected the pre-publish-wave state where
+      driver subsystem internals were not on crates.io.
+    * 35 git tags backfilled (`<crate>-v<version>` for
+      every crate published in the manual wave) so
+      release-plz's diff walker doesn't propose phantom
+      bumps on the first push trigger after re-enable.
+  Operational verification deferred to operator: trigger
+  one `workflow_dispatch` run + review the Release PR
+  before relying on `on: push` automation.
 
 - **`81.18.b.qr-event-bridge`** — daemon's pairing state
   subscriber expects subprocess plugins to publish
