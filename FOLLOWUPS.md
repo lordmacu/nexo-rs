@@ -20,54 +20,65 @@ for the detailed close-out.
   in microapp telemetry + parity tests green across two
   consecutive RCs.
 
-- 🟡 **91.x.wasm — unblock `wasm32-unknown-unknown`** — partial
-  (commit ada8514, phase-1). The STT-specific blocker (hf-hub →
-  mio) is resolved: `stt-candle` no longer pulls `hf-hub`; the
-  auto-fetch path lives behind a new `stt-candle-hub`
-  sub-feature. WASM consumers build `--features stt-candle
-  --no-default-features` and pin
-  `TranscribeConfig.model_path` to a SafeTensors directory
-  bundled in the WASM artifact. `uuid` gains the `js` feature
-  on wasm32 so browser `crypto.getRandomValues` powers v4/v5
-  generation.
+- ✅ ~~**91.x.wasm — unblock `wasm32-unknown-unknown`**~~ shipped
+  2026-05-10 across three sub-commits. SDK now compiles clean
+  on `wasm32-unknown-unknown`:
 
-- 🟡 **91.x.wasm.phase-2 — microapp-sdk tokio scope-narrowed**
-  (commit 6f94393). Targeted fix: `microapp-sdk`'s tokio dep
-  switched from `workspace = true` to a direct `version = "1"`
-  pin so the workspace-level `tokio = { features = ["full"] }`
-  doesn't unionise `net` into this crate's tokio. WASM baseline
-  features: `["macros", "rt", "sync", "io-util", "time"]`.
-  Native targets get `io-std`, `rt-multi-thread`, `fs`,
-  `process` via `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
-  Result on wasm32-unknown-unknown: `mio` blocker ✅ gone,
-  `tokio` ✅ accepts the feature set. Native compile ✅ across
-  all three stt feature configs; stt:: tests 25/25 green.
+  - **phase-1** (ada8514) — `hf-hub` gated behind
+    `stt-candle-hub` sub-feature + `uuid` gains the `js`
+    feature on wasm32 so browser `crypto.getRandomValues`
+    powers v4/v5 generation.
+  - **phase-2** (6f94393) — `microapp-sdk`'s `tokio` dep
+    switched from `workspace = true` to a direct
+    `version = "1"` pin so the workspace-level
+    `tokio = { features = ["full"] }` doesn't unionise `net`
+    into this crate. WASM baseline features:
+    `["macros", "rt", "sync", "io-util", "time"]`. Native
+    targets get `io-std`, `rt-multi-thread`, `fs`, `process`
+    via `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
+  - **phase-3** (a222f61) — `pub mod stt` gated on
+    `not(target_arch = "wasm32")` so the heavy STT deps
+    (opus-wave, ogg, candle-{core,nn,transformers},
+    tokenizers, hf-hub) drop out on WASM.
+    `Microapp::run_stdio` similarly gated since tokio's
+    `io::stdin`/`stdout` aren't available on wasm32. WASM
+    consumers use `run_with` against a caller-supplied
+    transport (MessageChannel / wasm-bindgen pipe).
 
-- ⬜ **91.x.wasm.phase-3 — downstream WASM compat audit** — the
-  remaining wasm32 blockers are independent crates that don't
-  target-exclude themselves cleanly on wasm32:
-  `opus-wave 3.0`, `ogg 0.9`, `candle-core 0.8`, `candle-nn`,
-  `candle-transformers`, `tokenizers 0.22`. Each is its own
-  upstream-support audit. Three pragmatic paths (any one):
-  (a) cfg-target-exclude the audio / inference modules on
-  wasm32 — WASM consumers only use the SDK for non-STT paths.
-  (b) Upstream PRs adding `wasm32-unknown-unknown` support to
-  the audio decoders + candle GEMM kernels.
-  (c) Drop wasm32 from the matrix entirely; defer until a
-  microapp actually demands browser-side STT.
-  Recommended path: (a) — sub-feature `stt-candle-native` that
-  pulls the heavy crates only on non-wasm32, leaving
-  `stt-candle` itself usable as a "type definitions + audio
-  decode contract" layer on WASM.
+  Result: SDK compiles on `wasm32-unknown-unknown` (0.44 s
+  default, 1.65 s `--features stt-candle`) AND native
+  (Linux gnu/musl × 2, macOS Apple Silicon, Windows MSVC,
+  Android NDK r27c). 25 stt:: native unit tests still green
+  across both backend configs.
 
-- ⬜ **91.x.wasm.phase-4 — workspace-wide tokio "full" split** —
-  the original phase-2 framing (touch every workspace crate's
-  Cargo.toml). Still useful for the broader workspace WASM
-  goal (e.g. compiling the daemon binary as a WASM artifact for
-  edge deployment). High blast radius; do it as a dedicated
-  cross-cutting refactor when the demand materialises. Today
-  the daemon binary itself isn't a WASM target — only the SDK
-  is.
+- ⬜ **91.x.wasm.phase-4 — WASM-side STT inference** — Phase 91
+  v1 WASM consumers get the wire types (`TranscribeConfig`,
+  `SttError`, microapp builder) but no `transcribe_file`.
+  Bringing local STT to WASM requires upstream WASM support
+  per dep: `opus-wave` (audio decode), `ogg` (container demux),
+  `candle-{core,nn,transformers}` (Candle has a
+  `candle-wasm-examples` directory but its GEMM kernels need
+  the wasm32-simd128 target feature, plus the Whisper example
+  hard-codes a fixed bundled model). Three pragmatic paths:
+  (a) Upstream PRs per dep — slow.
+  (b) Cloud STT fallback — new `stt-cloud` feature pointing at
+      Groq / OpenAI Whisper / Deepgram via reqwest's wasm32
+      HTTP support. WASM consumer uploads audio to the cloud
+      and gets the transcript back. Reasonable workaround.
+  (c) Pure-Rust browser inference via `transformers.js` /
+      `whisper-wasm` interop. Adds a wasm-bindgen bridge;
+      defer.
+  Defer until a microapp demands browser-side STT.
+
+- ⬜ **91.x.wasm.phase-5 — workspace-wide tokio "full" split** —
+  if the daemon binary itself ever needs to compile as WASM
+  (edge / serverless deployment), the workspace-level
+  `tokio = { features = ["full"] }` pin in
+  `proyecto/Cargo.toml` would need to be split into
+  per-consumer feature lists. High blast radius — touches
+  every workspace crate's Cargo.toml. Today only
+  `nexo-microapp-sdk` targets WASM (via the targeted phase-2
+  override); the daemon stays native-only.
 
 - ⬜ **91.x.long-form — audio clips > 30 seconds** — Phase 91 v1
   rejects clips exceeding `m::N_SAMPLES` (30 s @ 16 kHz) with
