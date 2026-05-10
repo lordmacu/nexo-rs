@@ -875,24 +875,22 @@ Open work the v1 deliberately punted:
   with `cfg.max_duration = 100ms` + `cfg.max_consecutive_failures = 1`
   fixtures, assert the loop exits.
 
-- **`whatsapp-bridge-test-pre-existing-break`** — Pre-existing
-  break in `crates/plugins/whatsapp/tests/bridge_test.rs`:
-  `InboundEvent::Message` literal is missing the `media`,
-  `media_kind`, `media_path` fields added when the audio
-  bridge landed. Independent of presence work; tracked here
-  so the next refactor pass knows.
-  How to apply: add `media: None, media_kind: None,
-  media_path: None` to the `sample_event` fixture and verify
-  `cargo test -p nexo-plugin-whatsapp --test bridge_test` is
+- **`whatsapp-bridge-test-pre-existing-break`** — RESOLVED
+  during the Phase 81.19.a extraction wave (whatsapp plugin
+  moved out-of-tree to `../nexo-rs-plugin-whatsapp/`). Verified
+  2026-05-10: `cargo nextest run` from
+  `/home/familia/chat/nexo-rs-plugin-whatsapp/` passes 54/54
+  tests including `bridge_test::*`. The extract refactor
+  picked up the missing struct fields. Audited 2026-05-10.
   green.
 
-- **`whatsapp-rs-live-wa-test-duplicate-fields`** — Pre-existing
-  break in `crates/plugins/whatsapp/tests/live_wa_test.rs`:
-  duplicate `public_tunnel`/`instance`/`allow_agents` fields
-  in the struct literal (lines 53-55 and 60-62). Test almost
-  certainly never built green.
-  How to apply: drop the duplicate trio + verify the file
-  compiles.
+- **`whatsapp-rs-live-wa-test-duplicate-fields`** — RESOLVED
+  during the Phase 81.19.a extraction wave (whatsapp plugin
+  moved out-of-tree to `../nexo-rs-plugin-whatsapp/`).
+  Verified 2026-05-10: `cargo nextest run` from
+  `/home/familia/chat/nexo-rs-plugin-whatsapp/` builds and
+  passes 54/54 tests including `live_wa_test::*`. The extract
+  refactor dropped the duplicate fields. Audited 2026-05-10.
 
 ### Phase 82.10.u — schema-driven LLM provider wizard 🟢 shipped, follow-ups open
 
