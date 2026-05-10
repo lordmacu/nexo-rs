@@ -166,49 +166,59 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
-### Phase 27.2 follow-up.b — Termux release re-enable (rustls aws-lc-sys → ring)
+### ~~Phase 27.2 follow-up.b — Termux release re-enable (rustls aws-lc-sys → ring)~~ ✅ shipped 2026-05-10
 
-**Disabled**: `build-termux` job in `.github/workflows/release.yml`
-guarded by `if: false` since the v0.1.6-rc1 validation. Cause:
-`aws-lc-sys` (the C-FFI crypto backend `rustls 0.23` ships as
-default) doesn't cross-compile cleanly for `aarch64-linux-android`
-through `cargo-zigbuild`:
+**Resolved** in commit `1247fdf` (proyecto) + `9364347`
+(`lordmacu/nexo-plugin-email` published as `0.1.3` to crates.io).
 
-```
-fatal error: 'sys/types.h' file not found
-```
+**Actual root cause** (refined from original suspicion): not
+`reqwest` but `tokio-rustls 0.26`. Its default feature set
+includes `aws_lc_rs`, which forwards to `rustls/aws_lc_rs` and
+pulls the `aws-lc-sys` C build chain. Cargo feature unification
+poisons the whole graph if ANY consumer pulls `tokio-rustls`
+without `default-features = false`. The workspace dep
+`tokio-rustls = "0.26"` was the silent culprit + a matching
+unguarded `rustls = "0.23"` in published `nexo-plugin-email
+0.1.2`.
 
-The header lives at `<NDK>/sysroot/usr/include/sys/types.h` but
-cargo-zigbuild's wrapper script doesn't pass the NDK sysroot to
-the C compiler when aws-lc-sys's `cc-rs` build script invokes it.
+**Fix shipped:**
 
-**Why a local fix doesn't work**: Cargo unifies features
-cross-graph. Even if proyecto's `[workspace.dependencies]` reqwest
-switches from `["rustls-tls"]` to `["rustls-tls-no-provider"]`, the
-3 sibling plugin repos (`nexo-rs-plugin-browser`,
-`nexo-rs-plugin-whatsapp`, `nexo-rs-plugin-telegram`) consumed via
-crates.io still enable `rustls-tls` themselves — feature
-unification re-pulls aws-lc-rs at the binary level.
+1. `proyecto/Cargo.toml [workspace.dependencies] tokio-rustls`
+   pinned to `{ version = "0.26", default-features = false,
+   features = ["ring", "tls12", "logging"] }`.
+2. `nexo-plugin-email 0.1.3` published with matching `rustls` +
+   `tokio-rustls` pins.
+3. `proyecto/Cargo.toml` bumped `nexo-plugin-email` dep to
+   `0.1.3`; the temporary `[patch.crates-io]` override used
+   during the investigation was dropped.
 
-**Fix path** (~half-day, multi-repo coordination):
+**Verification:**
 
-1. In each plugin repo: change reqwest features
-   `["rustls-tls"]` → `["rustls-tls-no-provider"]`.
-2. Each plugin repo: bump version, push, release-plz publishes.
-   (Plugin binaries don't need a runtime crypto provider —
-   they go through the daemon's broker, not their own TLS.)
-3. In proyecto/Cargo.toml: same change to
-   `[workspace.dependencies] reqwest`.
-4. Bump proyecto's plugin deps to the new versions.
-5. Verify `cargo tree -i aws-lc-rs` returns "package not in tree".
-6. Drop the `if: false` guard on `build-termux` + restore it to
-   `publish.needs:`.
-7. Tag a `nexo-rs-v0.1.7-rc.X` to validate.
+- `cargo metadata --filter-platform=aarch64-linux-android` shows
+  `rustls@0.23.38` features = `['log', 'logging', 'ring', 'std',
+  'tls12']` — `aws-lc-rs` no longer present.
+- `cargo ndk --target arm64-v8a --platform 21 build --release
+  --bin nexo` produces a working `aarch64-linux-android` ELF PIE
+  binary (88 MB, 6m 08s) with NDK r27c.
+
+**Outstanding work for the build pipeline (separate from the
+project-side fix):** `.github/workflows/release.yml`'s
+`build-termux` job (currently guarded by `if: false`) still
+needs to switch from `cargo-zigbuild` to `cargo-ndk` +
+`ANDROID_NDK_HOME`. Local validation showed `cargo-zigbuild
+0.22.3`'s bundled Android sysroot is incomplete for `ring` +
+`libsqlite3-sys` C source (`'assert.h' file not found`,
+`'stdio.h' file not found`); switching to a real NDK install
+on the runner side resolves it. This is a CI-only follow-up:
+file as Phase 27.2 follow-up.b.ci to remove the `if: false`
+guard once the workflow swaps the toolchain.
+
+Memory: [`feedback_rustls_default_features_off.md`](../../.claude/projects/-home-familia-chat-proyecto/memory/feedback_rustls_default_features_off.md)
+captures the pattern so future workspace + plugin Cargo.toml
+audits catch the same mistake.
 
 The `nexo` daemon binary itself runs fine on Android via Termux
-when built locally (`pkg install rust && cargo install --git ...`)
-because Android's NDK sysroot is present in that environment;
-this only blocks the CI cross-compile shipping the `.deb`.
+when built locally (`pkg install rust && cargo install --git ...`).
 
 ### Phase 27.2 follow-up — re-enable Apple / Windows / Homebrew / npm release channels
 
