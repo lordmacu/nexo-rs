@@ -41,18 +41,88 @@ dependencies; this is what changes per OS.
 
 | Feature | What it enables | Linux | macOS | Windows | Termux |
 |---|---|---|---|---|---|
-| `stt` | Inbound voice-note transcription via vendored whisper.cpp | ✅ | ✅ | ⚠️ needs VS Build Tools 2022 + CMake | ⚠️ needs `cmake` + `clang` packages |
+| `stt-candle` | **Default-track** — inbound voice-note transcription via HuggingFace Candle (pure Rust) | ✅ | ✅ | ✅ | ✅ |
+| `stt` | **Legacy** — same surface via whisper.cpp C++ binding (`whisper-rs`) | ✅ | ✅ | ⚠️ needs VS Build Tools 2022 + CMake | ⚠️ needs `cmake` + `clang` packages |
 | `voice` | Outbound voice replies via Microsoft Edge TTS + pure-Rust opus encoder | ✅ | ✅ | ✅ | ✅ |
 | `wizard` | First-run LLM key probe via `reqwest` (rustls-tls only) | ✅ | ✅ | ✅ | ✅ |
 | `enrichment` | Disposable-domain classifier + tenant-keyed cache | ✅ | ✅ | ✅ | ✅ |
 | `tracking` | HMAC-signed message + link tokens | ✅ | ✅ | ✅ | ✅ |
 | `email-template` | Block-based email composer + render + asset store | ✅ | ✅ | ✅ | ✅ |
 
-### Why STT is the only feature with platform caveats
+### STT backend choice (`stt-candle` vs `stt`)
 
-`whisper-rs` builds whisper.cpp from a vendored C++ source on each
-target. That C++ build needs a C++ compiler + CMake on the build
-machine:
+Phase 91 introduced the pure-Rust **Candle** backend
+(`stt-candle`) as the default track. The legacy whisper-rs path
+(`stt`) is retained for one stability window — Phase 91.12 drops
+it once telemetry confirms the migration.
+
+Pick the right one:
+
+- **`stt-candle` (recommended for every target)** — HuggingFace
+  Candle ML framework, no C++ build chain. Works out of the box
+  on Linux, macOS, Windows, Termux / Android NDK. Model format
+  is HuggingFace SafeTensors (`openai/whisper-tiny` and friends);
+  the SDK auto-fetches the weights + tokenizer + config from HF
+  Hub on first call when `TranscribeConfig::model_id` is set, or
+  loads from a local directory pinned via
+  `TranscribeConfig::model_path` (air-gapped deployments).
+- **`stt` (legacy)** — `whisper-rs` binding to whisper.cpp.
+  Slightly faster on CPU, but the C++ build chain requires a
+  per-target toolchain and breaks Android NDK / WASM
+  cross-compile entirely. Keep it only if you've already shipped
+  GGML `.bin` models you can't easily migrate yet.
+
+Both backends share the audio-decode pipeline (ogg-opus → s16
+PCM → f32) and the public `TranscribeConfig` / `transcribe_file`
+signature, so swapping is a Cargo feature change with no code
+edits at consumer sites.
+
+#### GPU acceleration (opt-in, `stt-candle-*` sub-features)
+
+The default `stt-candle` build is CPU-only pure-Rust so it
+cross-compiles to every target the workspace ships. Hardware
+acceleration is opt-in per build target:
+
+| Cargo feature | Backend | Platform |
+|---|---|---|
+| `stt-candle-metal` | Apple Metal | macOS / iOS |
+| `stt-candle-cuda` | NVIDIA CUDA | Linux + Windows |
+| `stt-candle-accelerate` | Apple Accelerate (BLAS) | macOS |
+
+Mix at most one per build. The audio decode + tokenizer
+pipeline stays identical — only the Tensor backend swaps.
+
+#### Migration from a `stt` (whisper-rs) deployment
+
+If you already ship a GGML `.bin` file and want to switch to
+`stt-candle`:
+
+```bash
+# 1. Download the equivalent SafeTensors model from HF Hub.
+huggingface-cli download openai/whisper-tiny \
+  --local-dir ./data/whisper-tiny
+
+# 2. Point your microapp config at the new directory.
+#    Either:
+#      TranscribeConfig.model_path = "./data/whisper-tiny"
+#    or, to auto-fetch on first call (HF Hub cache):
+#      TranscribeConfig.model_id   = Some("openai/whisper-tiny")
+
+# 3. Flip the Cargo feature.
+#    Before: nexo-microapp-sdk = { features = ["stt"] }
+#    After:  nexo-microapp-sdk = { features = ["stt-candle"] }
+```
+
+The whisper-rs path keeps working unchanged during the
+transition. Do not enable both features at once in a production
+build — `stt-candle` wins the public re-export when both are on,
+so the legacy path becomes effectively unreachable through the
+default API.
+
+### `stt` (legacy) — when you still need the C++ toolchain
+
+If you stay on the `stt` feature, the original platform caveats
+still apply:
 
 - **Linux**: `apt install clang cmake` (or your distro's
   equivalent). Most dev machines already have it.
@@ -67,8 +137,8 @@ machine:
 - **Termux**: `pkg install cmake clang` from inside the Termux
   shell. Note that whisper.cpp performance on Android / Termux is
   noticeably lower than desktop CPUs; for production STT in
-  Termux, consider routing transcription to an upstream daemon
-  rather than running whisper-cpp on-device.
+  Termux, consider `stt-candle` (which compiles trivially in
+  Termux) or routing transcription to an upstream daemon.
 
 Once the C++ build succeeds the first time, subsequent rebuilds
 are cached — operators usually pay this cost once during initial
