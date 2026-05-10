@@ -90,13 +90,11 @@ NOT shipping blockers.
   it interactively (matches the `cargo install` flow some
   competitors offer).
 
-- ⬜ **GitHub remote for nexo-rs-plugin-admin** — the sibling
-  repo at `/home/familia/chat/nexo-rs-plugin-admin/` is
-  local-only; published crate is on crates.io. Add the
-  GitHub remote when ready to accept PRs. CHANGELOG.md
-  shipped 2026-05-10 with compare-links pointing at the
-  expected GitHub tag URLs (will resolve once the remote
-  exists).
+- ✅ ~~**GitHub remote for nexo-rs-plugin-admin**~~ shipped
+  2026-05-10. Repo created at
+  https://github.com/lordmacu/nexo-rs-plugin-admin (public).
+  All 9 commits + 8 release tags (v0.1.0 → v0.1.8) pushed.
+  CHANGELOG.md compare-links now resolve. PR-ready.
 
 - ⬜ **Plugin admin e2e test** — integration test against a
   running daemon that spawns the plugin via discovery, hits
