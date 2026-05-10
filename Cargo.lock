@@ -531,28 +531,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "aws-lc-rs"
-version = "1.16.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ec6fb3fe69024a75fa7e1bfb48aa6cf59706a101658ea01bfd33b2b248a038f"
-dependencies = [
- "aws-lc-sys",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.40.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f50037ee5e1e41e7b8f9d161680a725bd1626cb6f8c7e901f91f942850852fe7"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
-]
-
-[[package]]
 name = "axum"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1641,12 +1619,6 @@ checksum = "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87"
 dependencies = [
  "dtoa",
 ]
-
-[[package]]
-name = "dunce"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dyn-clone"
@@ -3879,7 +3851,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-core"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4368,7 +4340,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-memory-snapshot"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "age",
  "async-trait",
@@ -4461,6 +4433,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-mock-subprocess-plugin"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "serial_test",
+]
+
+[[package]]
 name = "nexo-pairing"
 version = "0.1.4"
 dependencies = [
@@ -4488,9 +4468,9 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-email"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31a3e80fcd9df9679eb9d423e6fa8664c25b176daa9bcc66ece595f621f5a38d"
+checksum = "7e83b4cf9962aa0375aa0f463a1e66fe7e2a584b4c26375ef5ff5a1092d8150b"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -6425,7 +6405,6 @@ version = "0.23.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
 dependencies = [
- "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
@@ -6484,7 +6463,6 @@ version = "0.103.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
 dependencies = [
- "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -7737,16 +7715,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
-]
-
-[[package]]
 name = "tokio-rustls"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7813,10 +7781,12 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "native-tls",
+ "rustls 0.23.38",
+ "rustls-pki-types",
  "tokio",
- "tokio-native-tls",
+ "tokio-rustls 0.26.4",
  "tungstenite 0.24.0",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -8106,8 +8076,9 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "native-tls",
  "rand 0.8.6",
+ "rustls 0.23.38",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

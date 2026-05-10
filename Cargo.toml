@@ -118,6 +118,11 @@ members = [
     # capabilities for end-to-end testing of the channels
     # surface. Operator-facing fixture, not a template.
     "extensions/sample-channel-server",
+    # Phase 27.2 — synthetic subprocess plugin used by the
+    # daemon-side spawn-shape e2e test. Lives in its own crate so
+    # cargo-dist's manifest planner can opt it out of release
+    # tarballs via `[package.metadata.dist] dist = false`.
+    "crates/test-fixtures/mock-subprocess-plugin",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -163,12 +168,6 @@ workspace = true
 
 [features]
 default = []
-# Gates dev/test-only binaries (e.g. `mock_subprocess_plugin`,
-# `browser-test`, `integration-browser-check`) so `cargo dist
-# build` doesn't try to ship them. Local devs run with
-# `cargo test --features dev-bins` or `cargo run --bin
-# mock_subprocess_plugin --features dev-bins` when needed.
-dev-bins = []
 # Phase 79.10 — gated self-config tool. Off until security review.
 # Forwards to both nexo-core (the tool body) and nexo-setup
 # (the YamlPatchApplier + DenylistChecker bridge structs main.rs
@@ -187,36 +186,19 @@ snapshot-encryption = ["nexo-memory-snapshot/snapshot-encryption"]
 [build-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
-# Phase 27.1 — opt the root crate into cargo-dist. The dev/smoke bins
-# (`browser-test`, `integration-browser-check`, `llm_smoke`) carry
-# `required-features = ["dev-bins"]` so `cargo build` (default
-# features) skips them, and cargo-dist's per-crate `cargo build` runs
-# without that feature so they don't end up in release tarballs.
+# Phase 27.1 — opt the root crate into cargo-dist. Dev/smoke
+# programs (`integration-browser-check`, `llm_smoke`) live as
+# `[[example]]` entries below so cargo-dist never tries to ship
+# them. The historic `mock_subprocess_plugin` `[[bin]]` was lifted
+# in Phase 27.2 into `crates/test-fixtures/mock-subprocess-plugin`
+# (its own crate, `dist = false`) so the manifest planner stops
+# walking it.
 [package.metadata.dist]
 dist = true
 
 [[bin]]
 name = "nexo"
 path = "src/main.rs"
-
-# Phase 81.18.b.e2e-mock-binary — tiny JSON-RPC mock subprocess
-# used by `tests/subprocess_flip_e2e.rs` to validate the
-# daemon-side spawn wire shape (env passthrough, initialize
-# handshake, shutdown reply) without dragging real plugin
-# binaries + network deps into CI.
-#
-# `required-features = ["dev-bins"]` keeps cargo-dist from
-# building this for release tarballs (the dist build doesn't
-# enable that feature, so the bin's compilation is skipped
-# entirely — fixes the "failed to find bin
-# mock_subprocess_plugin.exe" error on Windows).
-[[bin]]
-name = "mock_subprocess_plugin"
-path = "tests/fixtures/mock_subprocess_plugin.rs"
-test = false
-doc = false
-bench = false
-required-features = ["dev-bins"]
 
 # Phase 27.1 — dev/smoke programs live as examples so cargo-dist
 # doesn't pick them up. Run with
@@ -283,7 +265,16 @@ encoding_rs        = "0.8"
 hickory-resolver   = "0.24"
 lsp-types          = "0.97"
 globset            = "0.4"
-tokio-rustls       = "0.26"
+# Phase 27.2-follow-up.b — tokio-rustls 0.26 ships `aws_lc_rs`
+# in its default feature set, which forwards to `rustls/aws_lc_rs`
+# and pulls the aws-lc-sys C build chain. On `aarch64-linux-android`
+# (Termux + the Flutter Android FFI target) the bundled
+# jitterentropy C source fails with `'sys/types.h' file not found`
+# because Bionic libc differs from POSIX in subtle ways the
+# upstream code assumes. Pinning `default-features = false` +
+# enabling `ring` keeps every downstream `nexo-setup` /
+# in-workspace consumer on the pure-Rust crypto provider.
+tokio-rustls       = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls             = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
 rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
@@ -317,8 +308,14 @@ nexo-media         = { version = "0.1.6", path = "crates/media" }
 # `[patch.crates-io]` block in `.cargo/config.toml` (gitignored)
 # rather than path-deps in this file — release-plz would otherwise
 # try to resolve the path inside its tmp clone and fail again.
-nexo-plugin-whatsapp = { version = "0.1.3" }
-nexo-plugin-email    = { version = "0.1.2" }
+# Phase 27.2 — pin to rustls-tls TLS backend so cross-compile to
+# musl + future Android NDK targets stays on a single Rust-only
+# TLS stack (rest of the workspace already runs rustls via sqlx /
+# reqwest / lettre / async-nats). Default `native-tls` would drag
+# `openssl-sys` through `tokio-tungstenite` and break musl
+# cross-build.
+nexo-plugin-whatsapp = { version = "0.1.3", default-features = false, features = ["rustls-tls"] }
+nexo-plugin-email    = { version = "0.1.3" }
 
 [dependencies]
 tokio               = { workspace = true }
