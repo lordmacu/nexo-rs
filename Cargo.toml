@@ -194,6 +194,15 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # without that feature so they don't end up in release tarballs.
 [package.metadata.dist]
 dist = true
+# Explicit binary allowlist for cargo dist. Without this, dist
+# tries to package every `[[bin]]` entry — including
+# `mock_subprocess_plugin` (a JSON-RPC test fixture under
+# `tests/fixtures/`) — and fails on every platform with
+# "failed to find bin mock_subprocess_plugin". The bin's own
+# `required-features = ["dev-bins"]` skips its compilation but
+# cargo-dist 0.31 doesn't honour required-features when
+# planning the manifest, so we list shipping bins explicitly.
+binaries = ["nexo"]
 
 [[bin]]
 name = "nexo"
