@@ -1934,6 +1934,16 @@ async fn main() -> Result<()> {
     // population can reach it.
     let snapshotter_cell = nexo_setup::admin_adapters::shared_snapshotter_cell();
 
+    // Phase 81.21.b.b spin-off — shared plugin-handles cell.
+    // admin bootstrap consumes a clone of this empty cell when
+    // constructing `LivePluginRestarter`; the post-`wire_plugin_registry`
+    // population (below, after wire returns) writes the real map
+    // into it. Operators that hit `nexo/admin/plugins/restart`
+    // during the brief boot window see a clean
+    // "plugin handles not yet populated; daemon still booting"
+    // error.
+    let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2081,17 +2091,44 @@ async fn main() -> Result<()> {
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
                 // Phase 81.21.b.b follow-up — manual restart
-                // adapter. Set to None: LivePluginRestarter needs
-                // the post-init `wire.plugin_handles` snapshot
-                // which isn't available yet at this admin
-                // bootstrap site (admin bootstrap runs BEFORE
-                // wire_plugin_registry). RPC returns
-                // `plugin restart domain not configured` until a
-                // SharedPluginHandles cell pattern is wired
-                // (deferred follow-up). Backend trait + handler
-                // + capability + adapter are LIVE so external
-                // integrations can drive the adapter directly.
-                plugin_restarter: None,
+                // adapter, wired against `plugin_handles_cell`
+                // declared above. The cell is empty at this
+                // point in boot; main.rs writes the real
+                // plugin handle map into it AFTER
+                // `wire_plugin_registry` returns. Operators that
+                // hit `nexo/admin/plugins/restart` during the
+                // brief boot window see a clean
+                // "plugin handles not yet populated; daemon
+                // still booting" error.
+                //
+                // The `LlmRegistry::with_builtins()` here is a
+                // fresh registry of builtin factories — same as
+                // the daemon's main one constructed later at
+                // boot. Builtin factories carry no shared
+                // mutable state, so the duplication is cheap.
+                plugin_restarter: Some(
+                    nexo_setup::admin_adapters::LivePluginRestarter::new(
+                        plugin_handles_cell.clone(),
+                        // Same pragmatic compromise as the
+                        // `subprocess_shutdown` token at the
+                        // wire_plugin_registry call site
+                        // (main.rs:3161): the daemon's main
+                        // shutdown CancellationToken isn't yet
+                        // a shared resource at this scope. A
+                        // fresh local token is fine because the
+                        // subprocess adapter spawns children
+                        // with `kill_on_drop(true)`; daemon exit
+                        // tears the children down regardless of
+                        // whether this token cancelled. Phase
+                        // 81.21 graceful supervisor work is the
+                        // proper fix; defer.
+                        tokio_util::sync::CancellationToken::new(),
+                        broker.clone(),
+                        None,
+                        std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                        std::sync::Arc::new(cfg.llm.clone()),
+                    ),
+                ),
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
@@ -3179,6 +3216,18 @@ async fn main() -> Result<()> {
     // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
     // reload registration + 81.12 per-agent threading without
     // changing the boot wire shape.
+
+    // Phase 81.21.b.b spin-off — populate the shared plugin
+    // handles cell now that `wire_plugin_registry` has produced
+    // the BTreeMap. `LivePluginRestarter` constructed at admin
+    // bootstrap time (see line ~2080) reads this cell on each
+    // restart call; before this write fires, operator restart
+    // requests see "plugin handles not yet populated; daemon
+    // still booting".
+    {
+        let mut guard = plugin_handles_cell.write().await;
+        *guard = Some(std::sync::Arc::new(wire.plugin_handles.clone()));
+    }
 
     // Email tool context — built post-start so the dispatcher handle
     // is primed. Each agent loop below picks it up when its `plugins`
