@@ -3055,11 +3055,15 @@ coordinación de archivos cross-cutting.
   capability `plugin_restart` (or reuse `plugin_doctor` if
   operator UX collapses them).
 
-- **81.21.b.b: real `respawned.total_uptime_ms` telemetry ⬜** —
-  currently always 0. Track per-Inner uptime in respawn_loop
-  (Instant::now() - inner.spawned_at at exit detection) and
-  populate the field. Operators wanting per-cycle uptime
-  meanwhile diff `crashed`/`respawned` event timestamps.
+- ✅ ~~**81.21.b.b: real `respawned.total_uptime_ms` telemetry**~~
+  shipped 2026-05-10 in nexo-core 0.1.16. Captures
+  `inner.spawned_at.elapsed()` of the dying Inner BEFORE the
+  drain (still inside `self.inner.lock()`), then forwards the
+  millis count into the subsequent `respawned` event payload.
+  Operators graph per-cycle duration to spot plugins whose
+  stable lifetime is degrading. Test
+  `respawned_event_carries_previous_inner_uptime` asserts
+  uptime > 0 + < 5s for the fast-crash mock script setup.
 
 - **81.21.b.b: Prometheus counter ⬜**
   `nexo_plugin_respawn_total{plugin_id, outcome}`. Pending the
