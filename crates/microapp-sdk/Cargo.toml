@@ -266,8 +266,8 @@ handlebars = { version = "5", default-features = false, optional = true }
 # sanitisers, asset_store re-encodes uploads via the image
 # pipeline. Both crates already exist in the framework as
 # focused mini-crates; opting in is cheap.
-nexo-sanitize = { path = "../sanitize", optional = true }
-nexo-media    = { path = "../media",    optional = true }
+nexo-sanitize = { workspace = true, optional = true }
+nexo-media    = { workspace = true, optional = true }
 
 [dev-dependencies]
 nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "compose-draft", "db-migrate", "dedup", "dedup-sled"] }
