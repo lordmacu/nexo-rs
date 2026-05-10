@@ -87,16 +87,23 @@
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75"></span>
             <span class="relative inline-flex rounded-full h-2 w-2 bg-accent-500"></span>
           </span>
-          v0.1.5 · 4 SDK languages shipped
+          v0.1.6 · OpenClaw shape, Rust runtime
         </div>
         <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] mb-6">
-          Multi-agent framework
+          The Rust alternative
           <span class="block bg-gradient-to-r from-accent-400 via-accent-300 to-emerald-200 bg-clip-text text-transparent">
-            for Rust.
+            to OpenClaw.
           </span>
         </h1>
-        <p class="text-xl md:text-2xl text-ink-300 leading-relaxed mb-10 max-w-3xl">
-          Ship agents that talk to <strong class="text-white">WhatsApp, Telegram, browsers and email</strong> — with memory, LLMs, and fault tolerance. <span class="text-ink-400">One static binary. No Node. No Docker required.</span>
+        <p class="text-xl md:text-2xl text-ink-300 leading-relaxed mb-6 max-w-3xl">
+          The same multi-agent shape you came for — <strong class="text-white">WhatsApp, Telegram, browser and email</strong> channels, multi-agent routing, memory, LLM tool-use — rebuilt as a single static Rust binary on a NATS event bus. <span class="text-ink-400">Production-grade by construction.</span>
+        </p>
+        <p class="text-base md:text-lg text-ink-400 leading-relaxed mb-10 max-w-3xl">
+          Coming from <a href="https://github.com/openclaw/openclaw" class="text-accent-400 hover:text-accent-300 underline-offset-4 hover:underline">OpenClaw</a>?
+          You'll find the channel surface, the agent loop, and the
+          plugin philosophy familiar — see the
+          <a href="#vs-openclaw" class="text-accent-400 hover:text-accent-300 underline-offset-4 hover:underline">side-by-side</a>
+          for what changes (everything that runs at 3 AM in production).
         </p>
         <div class="flex flex-wrap gap-4 items-center">
           <a href="docs/getting-started/quickstart.html" class="inline-flex items-center gap-2 bg-accent-500 hover:bg-accent-400 text-ink-950 font-semibold px-6 py-3 rounded-lg transition shadow-lg shadow-accent-500/20">
@@ -139,14 +146,113 @@
     </div>
   </section>
 
+  <!-- vs OpenClaw — moved up so OpenClaw users land here first -->
+  <section id="vs-openclaw" class="border-t border-ink-800 py-24 bg-ink-900/30">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Coming from OpenClaw</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Same shape. Different runtime.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed mb-4">
+          <a href="https://github.com/openclaw/openclaw" class="text-accent-400 hover:text-accent-300">OpenClaw</a>
+          got the agent shape right — multi-channel, multi-agent,
+          plugin-extensible. We mined it for patterns, then built
+          the operational layer it doesn't try to be: durable
+          message bus, per-agent crash isolation, multi-language
+          plugins, signed plugin distribution, multi-tenant
+          configuration, mobile-first deploys.
+        </p>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          If you tried OpenClaw and hit the wall on production
+          ops, this is the next stop.
+        </p>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-ink-700">
+              <th class="py-4 px-4 font-semibold text-ink-400 text-sm uppercase tracking-wider"></th>
+              <th class="py-4 px-4 font-semibold text-accent-400">nexo-rs</th>
+              <th class="py-4 px-4 font-semibold text-ink-400">OpenClaw</th>
+            </tr>
+          </thead>
+          <tbody class="text-ink-300">
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Runtime</td>
+              <td class="py-4 px-4">Single static Rust binary, ~34 MB</td>
+              <td class="py-4 px-4">Node + npm + transitive deps</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Process model</td>
+              <td class="py-4 px-4">Multi-agent over NATS bus, per-agent crash isolation</td>
+              <td class="py-4 px-4">Single Node event loop, one crash = all agents down</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Fault tolerance</td>
+              <td class="py-4 px-4">NATS broker + disk fallback queue, circuit breakers per external call</td>
+              <td class="py-4 px-4">In-memory only, no retry guarantees</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Channels</td>
+              <td class="py-4 px-4">WhatsApp · Telegram · Browser (CDP) · Email — same surface</td>
+              <td class="py-4 px-4">WhatsApp · Telegram · Browser (canvas) · Email</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Plugin languages</td>
+              <td class="py-4 px-4">Rust, Python, TypeScript, PHP (stdio JSON-RPC contract)</td>
+              <td class="py-4 px-4">TypeScript only (in-process)</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Plugin trust</td>
+              <td class="py-4 px-4">Cosign keyless verification, SBOM per release, signed tarballs</td>
+              <td class="py-4 px-4">npm registry trust</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Termux / mobile</td>
+              <td class="py-4 px-4">First-class — `pkg install` on Android, runs the full daemon</td>
+              <td class="py-4 px-4">Not supported</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Multi-tenant SaaS</td>
+              <td class="py-4 px-4">Built-in (Phase 82) — per-tenant SQLite + agent isolation</td>
+              <td class="py-4 px-4">Single-tenant by design</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">LLM providers</td>
+              <td class="py-4 px-4">MiniMax M2.5 default · Anthropic · OpenAI-compatible · OAuth-PKCE for Claude Code subscriptions</td>
+              <td class="py-4 px-4">Anthropic + OpenAI</td>
+            </tr>
+            <tr>
+              <td class="py-4 px-4 font-medium text-ink-200">Memory</td>
+              <td class="py-4 px-4">SQLite + sqlite-vec (zero infra) per-tenant short / long / vector tiers</td>
+              <td class="py-4 px-4">Pluggable — host SDK pattern</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-8 flex flex-wrap gap-4 items-center">
+        <a href="docs/architecture/vs-openclaw.html" class="inline-flex items-center gap-2 text-accent-400 hover:text-accent-300 font-medium">
+          See the full architecture side-by-side
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+        </a>
+        <span class="text-ink-600">·</span>
+        <a href="docs/getting-started/quickstart.html" class="inline-flex items-center gap-2 text-accent-400 hover:text-accent-300 font-medium">
+          Quickstart (5 min)
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
   <!-- Why nexo-rs -->
   <section class="border-t border-ink-800 py-24">
     <div class="max-w-6xl mx-auto px-6">
       <div class="max-w-3xl mb-16">
-        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Why nexo-rs</div>
-        <h2 class="text-4xl md:text-5xl font-bold mb-6">Built for the shape of real agent deployments.</h2>
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Why we're better</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Production-grade by construction.</h2>
         <p class="text-xl text-ink-300 leading-relaxed">
-          Most "agent frameworks" assume <em>one</em> LLM talking to <em>one</em> user through <em>one</em> UI. Real deployments are not shaped that way — multiple agents, multiple channels, business logic that isn't LLM-driven, private prompts alongside an open core. nexo-rs is opinionated toward that shape.
+          The shape (multi-agent + multi-channel + plugin-extensible) is OpenClaw's contribution. The runtime (durable bus, crash isolation, plugin signing, multi-tenant) is what we add — every operational surface a Node single-process can't reach. Below: the three opinionated trade-offs we made vs the JS reference.
         </p>
       </div>
 
@@ -556,75 +662,6 @@ admin.reload(<span class="text-orange-300">"acme-corp"</span>).await?;</pre>
                                                 <span class="text-accent-400">│</span>  Memory + LLMs +    <span class="text-accent-400">│</span>
                                                 <span class="text-accent-400">│</span>  Tools + Skills     <span class="text-accent-400">│</span>
                                                 <span class="text-accent-400">└─────────────────────┘</span></pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- vs OpenClaw comparison -->
-  <section class="border-t border-ink-800 py-24 bg-ink-900/30">
-    <div class="max-w-6xl mx-auto px-6">
-      <div class="max-w-3xl mb-12">
-        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">vs OpenClaw</div>
-        <h2 class="text-4xl md:text-5xl font-bold mb-6">A Rust alternative to OpenClaw.</h2>
-        <p class="text-xl text-ink-300 leading-relaxed">
-          The closest reference point is <a href="https://github.com/openclaw/openclaw" class="text-accent-400 hover:text-accent-300">OpenClaw</a> (TypeScript, single Node process). nexo-rs trades JS familiarity for portability + fault tolerance + per-agent sandboxes.
-        </p>
-      </div>
-
-      <div class="overflow-x-auto">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="border-b border-ink-700">
-              <th class="py-4 px-4 font-semibold text-ink-400 text-sm uppercase tracking-wider"></th>
-              <th class="py-4 px-4 font-semibold text-accent-400">nexo-rs</th>
-              <th class="py-4 px-4 font-semibold text-ink-400">OpenClaw</th>
-            </tr>
-          </thead>
-          <tbody class="text-ink-300">
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Runtime</td>
-              <td class="py-4 px-4">Single static Rust binary, ~34 MB</td>
-              <td class="py-4 px-4">Node + npm + transitive deps</td>
-            </tr>
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Process model</td>
-              <td class="py-4 px-4">Multi-agent over NATS</td>
-              <td class="py-4 px-4">Single Node process</td>
-            </tr>
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Fault tolerance</td>
-              <td class="py-4 px-4">NATS broker + disk fallback queue</td>
-              <td class="py-4 px-4">In-memory only</td>
-            </tr>
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Plugin languages</td>
-              <td class="py-4 px-4">Rust, Python, TypeScript, PHP</td>
-              <td class="py-4 px-4">TypeScript only</td>
-            </tr>
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Plugin trust</td>
-              <td class="py-4 px-4">Cosign keyless verification</td>
-              <td class="py-4 px-4">npm registry</td>
-            </tr>
-            <tr class="border-b border-ink-800/50">
-              <td class="py-4 px-4 font-medium text-ink-200">Termux / mobile</td>
-              <td class="py-4 px-4">First-class support</td>
-              <td class="py-4 px-4">Not supported</td>
-            </tr>
-            <tr>
-              <td class="py-4 px-4 font-medium text-ink-200">Multi-tenant SaaS</td>
-              <td class="py-4 px-4">Built-in (Phase 82)</td>
-              <td class="py-4 px-4">Not designed for</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="mt-8">
-        <a href="docs/architecture/vs-openclaw.html" class="inline-flex items-center gap-2 text-accent-400 hover:text-accent-300 font-medium">
-          See the full side-by-side
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
-        </a>
       </div>
     </div>
   </section>
