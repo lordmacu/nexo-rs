@@ -31,18 +31,43 @@ for the detailed close-out.
   on wasm32 so browser `crypto.getRandomValues` powers v4/v5
   generation.
 
-- ⬜ **91.x.wasm.phase-2 — workspace-wide tokio "full" → minimal
-  features** — the residual WASM blocker is the workspace-level
-  `tokio = { features = ["full"] }` pin in
-  `proyecto/Cargo.toml`. `full` includes the `net` feature
-  which forces `mio` into every dep tree. mio doesn't compile
-  on wasm32. Fix: split the workspace pin into per-consumer
-  feature lists so STT / inference paths can ask for just
-  `["sync", "macros", "rt", "io-util", "time"]` (no `net`),
-  while the daemon's HTTP / NATS layers keep `net`. Touches
-  every workspace crate's Cargo.toml + needs a careful audit
-  to avoid breaking the rest of the workspace. Out of Phase 91
-  STT scope; file as cross-cutting tech debt.
+- 🟡 **91.x.wasm.phase-2 — microapp-sdk tokio scope-narrowed**
+  (commit 6f94393). Targeted fix: `microapp-sdk`'s tokio dep
+  switched from `workspace = true` to a direct `version = "1"`
+  pin so the workspace-level `tokio = { features = ["full"] }`
+  doesn't unionise `net` into this crate's tokio. WASM baseline
+  features: `["macros", "rt", "sync", "io-util", "time"]`.
+  Native targets get `io-std`, `rt-multi-thread`, `fs`,
+  `process` via `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`.
+  Result on wasm32-unknown-unknown: `mio` blocker ✅ gone,
+  `tokio` ✅ accepts the feature set. Native compile ✅ across
+  all three stt feature configs; stt:: tests 25/25 green.
+
+- ⬜ **91.x.wasm.phase-3 — downstream WASM compat audit** — the
+  remaining wasm32 blockers are independent crates that don't
+  target-exclude themselves cleanly on wasm32:
+  `opus-wave 3.0`, `ogg 0.9`, `candle-core 0.8`, `candle-nn`,
+  `candle-transformers`, `tokenizers 0.22`. Each is its own
+  upstream-support audit. Three pragmatic paths (any one):
+  (a) cfg-target-exclude the audio / inference modules on
+  wasm32 — WASM consumers only use the SDK for non-STT paths.
+  (b) Upstream PRs adding `wasm32-unknown-unknown` support to
+  the audio decoders + candle GEMM kernels.
+  (c) Drop wasm32 from the matrix entirely; defer until a
+  microapp actually demands browser-side STT.
+  Recommended path: (a) — sub-feature `stt-candle-native` that
+  pulls the heavy crates only on non-wasm32, leaving
+  `stt-candle` itself usable as a "type definitions + audio
+  decode contract" layer on WASM.
+
+- ⬜ **91.x.wasm.phase-4 — workspace-wide tokio "full" split** —
+  the original phase-2 framing (touch every workspace crate's
+  Cargo.toml). Still useful for the broader workspace WASM
+  goal (e.g. compiling the daemon binary as a WASM artifact for
+  edge deployment). High blast radius; do it as a dedicated
+  cross-cutting refactor when the demand materialises. Today
+  the daemon binary itself isn't a WASM target — only the SDK
+  is.
 
 - ⬜ **91.x.long-form — audio clips > 30 seconds** — Phase 91 v1
   rejects clips exceeding `m::N_SAMPLES` (30 s @ 16 kHz) with
