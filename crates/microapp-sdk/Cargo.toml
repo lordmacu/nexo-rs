@@ -39,13 +39,36 @@ events = ["notifications", "dep:sqlx", "dep:chrono", "dep:tokio-util"]
 # Local speech-to-text for inbound voice notes — `TranscribeConfig`
 # + `transcribe_file` + an `InboundTransformHandler` that
 # implements `ToolHandler` so a microapp registers the
-# `*_inbound_transform` tool with one line. Whisper.cpp ships as a
-# vendored C build via `whisper-rs` (~30 s on first compile);
-# guarded by this feature so non-voice microapps skip it. Decoding
-# of arbitrary audio formats (ogg-opus, mp3, aac, flac, wav, …)
-# uses `symphonia` — pure Rust, no external `ffmpeg` binary
-# dependency at runtime.
+# `*_inbound_transform` tool with one line.
+#
+# **Legacy backend** — Whisper.cpp ships as a vendored C build via
+# `whisper-rs` (~30 s on first compile). Requires Visual Studio
+# Build Tools 2022 + CMake on Windows. New builds targeting
+# Windows / Android / WASM should prefer `stt-candle` (pure
+# Rust); `stt` is retained for backwards compatibility with
+# existing microapps that ship `whisper-rs` + GGML `.bin` model
+# files until Phase 91.12 deprecates this path.
+#
+# Audio decode (ogg-opus from WhatsApp / Telegram voice notes)
+# uses `opus-wave` + `ogg` — pure Rust, no `ffmpeg` subprocess.
 stt = ["dep:whisper-rs", "dep:opus-wave", "dep:ogg"]
+# Phase 91 — pure-Rust Whisper inference via HuggingFace Candle.
+# Eliminates the whisper.cpp C++ build chain (no VS Build Tools
+# 2022 / CMake on Windows; trivial Android NDK + WASM
+# cross-compile). Model format flips from GGML `.bin` to
+# SafeTensors directory; HF Hub auto-fetch handles first-run
+# download. Mutually exclusive with `stt` — `stt/mod.rs`
+# enforces via `compile_error!` when both are enabled
+# simultaneously.
+stt-candle = [
+    "dep:opus-wave",
+    "dep:ogg",
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:hf-hub",
+]
 # First-run wizard scaffolding: a generic `CachedSnapshot<T>` with
 # TTL invalidation and an `LlmProber` that validates an OpenAI-
 # compatible API key server-side (`GET {base_url}/models`) so the
@@ -223,6 +246,34 @@ tokio-util = { workspace = true, optional = true }
 # skip the OpenBLAS auto-link (each microapp surfaces its own BLAS
 # preference via system libs if needed).
 whisper-rs = { version = "0.13", default-features = false, optional = true }
+# `stt-candle` feature — pure-Rust Whisper via HuggingFace Candle.
+# Defaults left ON for `candle-core` so the CPU backend stays
+# wired (turning defaults off would strip the CPU path; that's
+# how Candle ships); GPU backends (Metal / CUDA / accelerate)
+# stack on top via Phase 91.10 opt-in features.
+candle-core         = { version = "0.8", optional = true }
+candle-nn           = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+# `tokenizers` reads the `tokenizer.json` HuggingFace ships
+# alongside the Whisper SafeTensors. `default-features = false`
+# strips the upstream http client (we fetch via `hf-hub`
+# ourselves), the indicatif progress bar, and the `onig` regex
+# backend. `onig` would drag the C `oniguruma` library —
+# incompatible with our pure-Rust Android NDK + WASM cross-compile
+# goal. The `unstable_wasm` feature selector swaps `onig` for
+# the pure-Rust `fancy-regex` crate; the name is historical
+# (the path was added for WASM first) but the selector works on
+# every target. tokenizers 0.22 is the version Candle workspace
+# pins as of 2026-05.
+tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"], optional = true }
+# `hf-hub` downloads the SafeTensors + tokenizer.json on first
+# run when `TranscribeConfig::model_id` is set + `model_path`
+# is empty. `rustls-tls` mirrors the workspace TLS posture set
+# by Phase 27.2-follow-up.b (no openssl-sys on Android NDK).
+# `hf-hub 0.4+` is the first release that exposes the
+# `rustls-tls` feature; 0.3 only ships `default-tls` which is
+# native-tls / openssl.
+hf-hub = { version = "0.4", default-features = false, features = ["tokio", "rustls-tls"], optional = true }
 # Pure-Rust audio codec stack shared by `stt` (decoding inbound
 # WhatsApp/Telegram ogg-opus voice notes) and `voice` (encoding
 # the mp3 Edge returns into the ogg-opus PTT format WhatsApp
