@@ -5,6 +5,13 @@ target/
 # ecosystem convention). Reproducible builds in CI + `--locked` in
 # the release workflow depend on it.
 
+# ts-rs codegen — `cargo test --features=ts-export` writes per-type
+# .ts files into `crates/tool-meta/bindings/`; the regen script
+# (scripts/regen-ts-types.sh) concatenates them into the consumer's
+# types.gen.ts. Keeping the intermediate files out of git avoids
+# regen churn polluting commits.
+crates/tool-meta/bindings/
+
 # Secrets — never commit
 secrets/*
 !secrets/.gitkeep
