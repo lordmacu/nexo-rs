@@ -2,6 +2,80 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 91 — STT pure-Rust migration via Candle — shipped 11/12, follow-ups open
+
+Phase 91 shipped 2026-05-10 across the 11 substantive sub-phases
+(91.1 API research → 91.11 docs). The Candle backend
+(`feature = "stt-candle"`) is now the default-track STT
+implementation; legacy `whisper-rs` (`feature = "stt"`) is
+retained for one stability window. See
+[`PHASE-91-STT-CANDLE-MIGRATION-PLAN.md`](PHASE-91-STT-CANDLE-MIGRATION-PLAN.md)
++ [`PHASE-91-CANDLE-API-RESEARCH.md`](PHASE-91-CANDLE-API-RESEARCH.md)
++ [`PHASE-91-CROSS-COMPILE-MATRIX.md`](PHASE-91-CROSS-COMPILE-MATRIX.md)
+for the detailed close-out.
+
+- ⏭️ **91.12 DEFER — drop legacy `stt` feature** — scheduled
+  for ≥ 2 release cycles after 91.11 ships (target 2026-07
+  earliest). Trigger condition: zero `stt-whisper-cpp` consumers
+  in microapp telemetry + parity tests green across two
+  consecutive RCs.
+
+- ⬜ **91.x.wasm — unblock `wasm32-unknown-unknown`** — the
+  current build fails inside `mio` because `hf-hub 0.4` requires
+  `tokio` with the `net` feature for its async HTTP client; WASM
+  has no kernel networking primitives. Fix paths (any one):
+  1. Gate `hf-hub` behind a `stt-candle-hub` sub-feature so WASM
+     consumers can build `stt-candle` minus `hf-hub`. They ship
+     the SafeTensors bundled in the WASM artifact and pin
+     `model_path` explicitly.
+  2. Upstream PR to `hf-hub` swapping `reqwest` to a
+     wasm-bindgen-aware transport.
+  3. Drop WASM from the matrix entirely (current de facto state).
+  Files as 91.x.wasm.
+
+- ⬜ **91.x.long-form — audio clips > 30 seconds** — Phase 91 v1
+  rejects clips exceeding `m::N_SAMPLES` (30 s @ 16 kHz) with
+  `SttError::Decode`. Whisper itself supports arbitrary-length
+  audio via internal 30-second chunking; we punted v1 because
+  WhatsApp / Telegram voice notes rarely exceed 30 s. Add a
+  chunker once a microapp surfaces longer audio (Zoom-style
+  meetings, podcast clips, dictation).
+
+- ⬜ **91.x.beam-search — BeamSearch sampling parity** —
+  `whisper-rs::SamplingStrategy` exposes both `Greedy` and
+  `BeamSearch { beam_size, patience }`. Phase 91 v1 implements
+  Greedy only (matches the default we use today). Add the beam
+  loop when a parity test surfaces a real WER regression
+  attributable to the strategy difference; Candle's
+  temperature-fallback chain is the analogous mechanism.
+
+- ⬜ **91.x.cloud — cloud STT backend (Groq / OpenAI / Deepgram)** —
+  high-volume SaaS where latency / cost favour cloud over local
+  inference may want a `stt-cloud` feature in addition to
+  `stt-candle`. Wire shape: HTTP POST to the provider's
+  multipart endpoint, parse the JSON transcript reply. Mining
+  reference: `claude-code-leak/src/services/voiceStreamSTT.ts`
+  uses a WebSocket streaming shape for real-time STT — relevant
+  if we ever add live transcription.
+
+- ⬜ **91.x.large-model — 128-bin mel filterbank** — Phase 91 v1
+  ships only the 80-bin `melfilters.bytes` vendored asset, used
+  by `tiny` / `base` / `small` Whisper variants. The 128-bin
+  variant powers `large-v3`; add the matching
+  `melfilters128.bytes` (also vendored from
+  `huggingface/candle/candle-examples/examples/whisper/melfilters128.bytes`)
+  + lift the explicit `num_mel_bins != 80` rejection in
+  `crates/microapp-sdk/src/stt/mel.rs`.
+
+- ⬜ **91.x.parity-fixtures — vendor a tiny audio fixture corpus** —
+  the parity test in `crates/microapp-sdk/tests/stt_candle_parity.rs`
+  reads from `NEXO_STT_PARITY_FIXTURES_DIR`. Operators running
+  the test need to bring their own audio. Vendor a tiny
+  (≤ 5 voice notes × ≤ 100 KB each) ogg-opus corpus checked
+  into the repo so CI runs the parity check end-to-end
+  automatically. Licence-clean speech from
+  `commonvoice.mozilla.org` is the obvious source.
+
 ### Phase 90 — nexo-plugin-admin — shipped, follow-ups open
 
 Phase 90 (admin plugin out-of-tree) shipped 2026-05-10. The
