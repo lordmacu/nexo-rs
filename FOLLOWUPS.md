@@ -6273,33 +6273,16 @@ MVP shipped 2026-05-10. Sibling repo
 (3 chat + 2 primitives). agent-creator-microapp consumes via
 `file:` dep + vite alias. Three follow-ups capture the gaps:
 
-- **`83.13.publish-npm`** — first `npm publish --access public`
-  to `@lordmacu/nexo-microapp-ui-react` v0.0.1. Today the lib
-  is GitHub-only. Initial publish attempt 2026-05-10 hit a
-  `403 Forbidden` from `https://registry.npmjs.org/`. The
-  `NPM_TOKEN` env var was set (read from `~/.bashrc`) and
-  `npm whoami` confirmed the user as `lordmacu`, but the
-  publish call was rejected with "You may not perform that
-  action with these credentials." Likely causes: granular
-  access token without publish permission for the `@lordmacu`
-  scope, OR npm account has 2FA-required-for-publish active
-  (Classic tokens cannot bypass).
-  Manual fix path:
-  1. Verify token at https://www.npmjs.com/settings/lordmacu/tokens
-     has 'Read and write' permission.
-  2. If 2FA enabled on the account, switch to an 'Automation'
-     token type (bypasses 2FA for CI/scripts).
-  3. From `/home/familia/chat/nexo-rs-microapp-ui-react/`:
-     ```bash
-     echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-     npm publish --access public
-     rm -f .npmrc
-     ```
-     Or: `npm login` interactively then `npm publish --access public`.
-  4. After publish: update `agent-creator-microapp/frontend/package.json`
-     swapping `"file:../../nexo-rs-microapp-ui-react"` for
-     `"^0.0.1"` (npm-published version).
-  Owner: ops. Status: pending manual fix.
+- **`83.13.publish-npm`** — RESOLVED 2026-05-10. First publish
+  attempted same day hit `403 Forbidden` (token lacked publish
+  permission for `@lordmacu` scope OR 2FA-required-for-publish
+  active on the account). User flipped 2FA bypass + retried;
+  `@lordmacu/nexo-microapp-ui-react@0.0.1` published to
+  https://www.npmjs.com/package/@lordmacu/nexo-microapp-ui-react.
+  agent-creator-microapp/frontend/package.json swapped the
+  `file:../../nexo-rs-microapp-ui-react` dep for `^0.0.1`
+  (vite alias in vite.config.ts stays in place so a local
+  checkout still overrides during cross-package dev).
 
 - **`83.13.stateful-extraction`** — port 11 stateful chat
   components (`Chat`, `ChatHeader`, `ChatListItem`,
