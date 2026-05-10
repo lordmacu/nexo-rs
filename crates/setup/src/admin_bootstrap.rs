@@ -419,12 +419,19 @@ impl AdminRpcBootstrap {
         }
 
         // Audit writer — single instance shared across every
-        // dispatcher.
-        let audit: Arc<dyn AdminAuditWriter> = match inputs.audit_db {
+        // dispatcher. Phase 83.12.audit-page: keep the concrete
+        // `SqliteAdminAuditWriter` Arc when available so the
+        // same instance can satisfy both `AdminAuditWriter` (for
+        // the dispatcher's audit append) AND `AdminAuditReader`
+        // (for the new `nexo/admin/microapp_audit/tail` RPC).
+        // The `InMemoryAuditWriter` fallback (no audit DB
+        // configured) doesn't implement reader, so the
+        // microapp_audit domain stays unconfigured in that case.
+        let audit_sqlite: Option<Arc<SqliteAdminAuditWriter>> = match inputs.audit_db {
             Some(path) => match SqliteAdminAuditWriter::open(path).await {
                 Ok(w) => {
                     tracing::info!(path=%path.display(), "admin audit DB opened");
-                    Arc::new(w)
+                    Some(Arc::new(w))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -432,11 +439,17 @@ impl AdminRpcBootstrap {
                         error=%e,
                         "admin audit DB open failed; falling back to InMemoryAuditWriter",
                     );
-                    Arc::new(InMemoryAuditWriter::new())
+                    None
                 }
             },
+            None => None,
+        };
+        let audit: Arc<dyn AdminAuditWriter> = match &audit_sqlite {
+            Some(arc) => arc.clone(),
             None => Arc::new(InMemoryAuditWriter::new()),
         };
+        let audit_reader: Option<Arc<dyn nexo_core::agent::admin_rpc::AdminAuditReader>> =
+            audit_sqlite.as_ref().map(|arc| arc.clone() as _);
 
         // Filesystem-side adapters — singletons.
         let agents_yaml = Arc::new(AgentsYamlPatcher::new(
@@ -539,7 +552,17 @@ impl AdminRpcBootstrap {
 
             let mut dispatcher = AdminRpcDispatcher::new()
                 .with_capabilities(capability_set.clone())
-                .with_audit_writer(audit.clone())
+                .with_audit_writer(audit.clone());
+            // Phase 83.12.audit-page — install the audit-tail
+            // read surface only when the SQLite writer is
+            // available. InMemoryAuditWriter fallback omits
+            // the reader → `nexo/admin/microapp_audit/tail`
+            // returns "domain not configured" until operator
+            // sets `audit_db` in config.
+            if let Some(reader) = audit_reader.clone() {
+                dispatcher = dispatcher.with_audit_reader(reader);
+            }
+            dispatcher = dispatcher
                 .with_agents_domain(agents_yaml.clone(), inputs.reload_signal.clone())
                 .with_credentials_domain(credential_store.clone())
                 .with_pairing_domain(pairing_store.clone(), Some(pairing_notifier.clone()))

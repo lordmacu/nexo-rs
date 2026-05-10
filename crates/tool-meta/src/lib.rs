@@ -61,6 +61,7 @@ pub mod reply_kind;
 pub mod template;
 pub mod webhook;
 
+pub use admin::audit::{AdminAuditResult, AdminAuditRow, AuditTailFilter, AuditTailPage};
 pub use binding::{binding_id_render, BindingContext};
 pub use locale::{LangCode, Locale, LocaleParseError, RegionCode};
 pub use event_source::{

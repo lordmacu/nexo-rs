@@ -13619,11 +13619,17 @@ async fn run_microapp_admin_audit_tail(
         since_ms: resolved_since_ms,
         limit: limit.max(1),
         tenant_id,
+        // Phase 83.12.audit-page — `tail` now returns
+        // `AuditTailPage` for pagination. CLI consumes the
+        // `entries` slice; offset stays 0 (CLI is one-shot,
+        // not paginated; honours `--limit` only).
+        offset: 0,
     };
-    let rows = writer
+    let page = writer
         .tail(&filter)
         .await
         .context("query admin_audit table")?;
+    let rows = page.entries;
 
     match format.as_str() {
         "json" => println!("{}", format_rows_as_json(&rows)),
