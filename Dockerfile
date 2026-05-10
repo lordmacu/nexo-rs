@@ -1,15 +1,8 @@
-FROM node:20-bookworm-slim AS admin-ui-builder
-
-# Phase 27.x — admin-ui SPA pre-built so RustEmbed bundles the
-# `admin-ui/dist/` directory at compile time. Without this stage the
-# Rust build fails with `RustEmbed folder admin-ui/dist/ does not
-# exist`. Stays minimal: only the admin-ui sources land in this
-# layer; the daemon stage copies just the built artifact.
-WORKDIR /admin-ui
-COPY admin-ui/package.json admin-ui/package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
-COPY admin-ui ./
-RUN npm run build
+# Phase 90.7 — admin-ui SPA archived (commit 575cb78). The
+# in-tree `admin-ui/` directory + its RustEmbed bundling were
+# dropped; operator UIs now ship as standalone microapps that
+# consume `nexo-microapp-sdk-react-shell` over the daemon's
+# admin RPC. No node build stage needed.
 
 FROM rust:1-bookworm AS builder
 
@@ -20,7 +13,6 @@ COPY extensions ./extensions
 COPY src ./src
 COPY examples ./examples
 COPY config ./config
-COPY --from=admin-ui-builder /admin-ui/dist ./admin-ui/dist
 
 # Build the renamed `nexo` bin. The legacy `agent` binary name was
 # retired in commit 4bccdc3 (rename: agent_* crates → nexo_*, agent
