@@ -43,6 +43,8 @@ pub mod transcribe;
 // doesn't surface unrelated errors when toggling features.
 #[cfg(feature = "stt-candle")]
 pub(crate) mod mel;
+#[cfg(feature = "stt-candle")]
+pub mod transcribe_candle;
 
 use std::path::PathBuf;
 
