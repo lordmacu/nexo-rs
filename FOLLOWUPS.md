@@ -6297,15 +6297,36 @@ MVP shipped 2026-05-10. Sibling repo
   framework. Trigger: 83.10 second microapp landing.
   Status: pending.
 
-- **`83.13.theme-system`** — CSS variables + dark mode +
-  default theme palette so the lib stops requiring the
-  consumer's `bg-accent` / `text-text-primary` / etc.
-  Tailwind tokens. v0.0.1 ships utility classes inline
-  that ONLY render correctly when the consumer's
-  Tailwind config defines those tokens. Once a default
-  theme + override system lands, third-party consumers
-  drop the requirement. Owner: framework. Trigger: any
-  external consumer. Status: pending.
+- **`83.13.theme-system`** — RESOLVED 2026-05-10. Shipped
+  in `@lordmacu/nexo-microapp-ui-react@0.1.0`:
+    * `src/styles.css` — 22 design tokens as
+      `--nexo-microapp-*` CSS custom properties with a
+      `[data-theme="dark"]` override block. Default values
+      mirror agent-creator's previous Tailwind hex palette
+      1:1 so visual parity is preserved.
+    * `tailwind.preset.js` — opt-in Tailwind preset mapping
+      utility-class tokens (`bg-accent`, `text-text-primary`,
+      `bg-panel-alt`, …) onto the CSS vars. Consumer adds via
+      `presets: [require('@lordmacu/nexo-microapp-ui-react/tailwind.preset')]`.
+    * `package.json` `exports` map exposes `./styles.css` and
+      `./tailwind.preset` so consumers `import` them by
+      package-name path.
+  agent-creator-microapp consumed in commit `5637bd7`:
+  imported `styles.css` in `src/styles/index.css`, swapped
+  local `theme.extend.colors` block for the lib's preset,
+  build verde with all 22 CSS vars present in
+  `dist/assets/index-*.css`.
+
+  Three out-of-scope items deferred to their own follow-ups:
+  - `83.13.theme-daltonized` — color-blind accessibility
+    variants (mirrors `claude-code-leak/src/utils/theme.ts`
+    `lightDaltonized` / `darkDaltonized` themes).
+  - `83.13.theme-auto-detect` — `prefers-color-scheme`
+    media-query helper (operators wire their own opt-in
+    today).
+  - `83.13.theme-multi-palette` — additional named themes
+    beyond `default` + `dark` (e.g. `data-theme="ocean"`).
+  Status: ✅ closed.
 
 ### Phase 83.12 — Meta-microapp React UI reference scaffold
 
