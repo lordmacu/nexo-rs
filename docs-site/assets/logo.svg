@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="nexo-rs">
+  <!-- Placeholder logo. Replace this file with your real branding;
+       the landing + favicon both pull from /assets/logo.svg so a
+       single drop-in swap propagates across every reference. -->
+  <rect width="64" height="64" rx="14" fill="#0F172A"/>
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="none" stroke="#22C55E" stroke-width="2" stroke-opacity="0.6"/>
+  <!-- Simple "n" mark — bold cap, balanced for both 24px nav use
+       and 96px hero use. Single colour so it inverts cleanly on
+       light backgrounds when needed. -->
+  <path d="M18 46 V22 a4 4 0 0 1 4 -4 h2 a8 8 0 0 1 8 8 v20 h-6 V28 a2 2 0 0 0 -2 -2 a2 2 0 0 0 -2 2 v18 z M38 46 V26 a8 8 0 0 1 8 -8 h2 v6 h-2 a2 2 0 0 0 -2 2 v20 z" fill="#22C55E"/>
+</svg>
