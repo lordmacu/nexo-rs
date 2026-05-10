@@ -2,6 +2,91 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Audit 2026-05-10 — admin wave P0 fixes — shipped
+
+Comprehensive audit of all admin work shipped in the
+2026-05-10 wave (Phase 90.x.memory-snapshot.create-restore
++ Phase 81.21.b.b auto-respawn + manual restart RPC + cell
+wiring + uptime telemetry + Phase 27.2 capability inventory).
+Four parallel agents reviewed adapters, frontend, lifecycle
+events + capability gating, and test coverage. P0 = data
+corruption / silent multi-tenant / build-impacting bugs.
+
+P0 (6/6 shipped):
+- ✅ ~~**P0.1 HttpError surfaces daemon body**~~ —
+  `nexo-rs-plugin-admin/frontend/src/api/client.ts` — error
+  body now reaches stores via `.message` instead of
+  collapsing to literal `HTTP <status>`. Boot-window
+  ("plugin handles not yet populated"), restart timeout,
+  snapshot tenant-mismatch, encryption errors all visible
+  in UI. 8 unit tests in `tests/api/http-error.test.ts`.
+- ✅ ~~**P0.2 memory store reads activeTenantId**~~ —
+  `frontend/src/store/memory.ts` — list / create / delete
+  no longer hardcode `tenant:"default"`. New `currentTenant()`
+  helper reads `useTenantStore.getState().activeTenantId`
+  at call time so rail switches take effect immediately.
+  `runRestore` keeps caller-supplied tenant precedence so
+  `RestoreSnapshotModal` can defend against mid-flight
+  switches by passing `snapshot.tenant`. 6 unit tests in
+  `tests/store/memory-tenant.test.ts`.
+- ✅ ~~**P0.3 + P0.4 delete idempotency + cross-tenant guard**~~ —
+  `crates/setup/src/admin_adapters.rs::LiveMemorySnapshotReader::delete`
+  — typed match on `SnapshotError::NotFound` → `Ok(())`
+  satisfies the trait's idempotency contract (concurrent
+  delete + stale UI list no longer surface as `Internal -32603`).
+  Added defense-in-depth tenant guard mirroring `restore()`:
+  `list+find+meta.tenant assert` before reaching disk. Mock
+  `delete()` enriched to track `delete_calls` + return
+  `NotFound` when id missing. 3 new tests
+  (`live_delete_happy_path_removes_bundle`,
+  `live_delete_is_idempotent_on_missing_id`,
+  `live_delete_rejects_tenant_mismatch`).
+- ✅ ~~**P0.5 concurrent restart race mutex**~~ —
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`
+  — added `restart_lock: Arc<tokio::sync::Mutex<()>>` field
+  on `SubprocessNexoPlugin`. `force_restart()` acquires it
+  via `lock_owned().await` before the 11-step cascade so
+  two simultaneous operator restarts serialize cleanly
+  instead of orphaning one's child. New
+  `concurrent_force_restart_serializes_via_restart_lock`
+  test asserts both calls succeed, spawn distinct PIDs,
+  and publish exactly two `restarted_manually` events.
+  Existing 4 force_restart tests remain green.
+- ✅ ~~**P0.6 lifecycle subject_prefix configurable**~~ —
+  `crates/memory-snapshot/src/events.rs` — added
+  `subject_with_prefix(&str)` helpers on `LifecycleEvent`
+  + `MutationEvent` (back-compat: `subject()` calls them
+  with the const default). `BrokerEventPublisher` in
+  `proyecto/src/main.rs` now holds `lifecycle_prefix` +
+  `mutation_prefix` from `EventsSection` and uses them on
+  every publish, fixing the silently-dead YAML knob
+  (`memory.snapshot.events.lifecycle_subject_prefix` /
+  `mutation_subject_prefix`). 2 unit tests asserting the
+  configured prefix wins over `LIFECYCLE_SUBJECT_PREFIX`.
+
+P1 (7 open — next wave): restore-applied report cleanup
+race, `lastRestartReport` UI surfacing, `not yet populated`
+error class, `LlmRegistry` shared cell, doc drift in
+memory-snapshot.md events table + admin-rpc.md capability
+table + plugin.toml capability declarations (cross-repo).
+
+P2 (14 open — polish): domain kill-switches dead code,
+manifest validation gaps (`max_attempts==0`,
+`backoff_ms==0`), dispatcher slot-not-wired tests for
+memory/* + plugins/* arms, capability-gate denial tests,
+frontend vitest coverage gaps, i18n drift test,
+`new_pid` golden assertion, lifecycle golden test
+expansion, supervisor.md doc drift cleanup, confirm-prefix
+inconsistency, modal Escape/backdrop-close, snapshot list
+expand, plugin doctor 5/9 fields, etc.
+
+P3 (6 open — observability + nits): `tracing::info!` on
+destructive paths, metrics counters, `gave_up.last_exit_code = -1`
+sentinel docs, plugin.id NATS-subject-safety validation,
+`_all` magic segment, fixture state leakage RAII guards.
+
+24 new tests (10 backend + 14 frontend), 0 regressions.
+
 ### Phase 91 — STT pure-Rust migration via Candle — shipped 11/12, follow-ups open
 
 Phase 91 shipped 2026-05-10 across the 11 substantive sub-phases

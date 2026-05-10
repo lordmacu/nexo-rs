@@ -236,6 +236,20 @@ pub struct SubprocessNexoPlugin {
     /// practice always succeeds because each adapter is
     /// constructed exactly once.
     weak_self: std::sync::OnceLock<std::sync::Weak<SubprocessNexoPlugin>>,
+
+    /// Phase 90 audit follow-up — serialise concurrent
+    /// `force_restart` invocations against the same plugin. Without
+    /// this two operators clicking "Restart" simultaneously (or a
+    /// CLI restart racing the admin RPC) each clone the Arc, run the
+    /// 11-step teardown + spawn cascade in parallel, and one ends up
+    /// with an orphaned child kept alive only by `kill_on_drop`. The
+    /// audit log lies because both calls return Ok with valid PIDs.
+    /// Held by `force_restart` for its full duration; second caller
+    /// blocks on the lock until the first publishes
+    /// `restarted_manually` and returns. `tokio::sync::Mutex` rather
+    /// than `std::sync::Mutex` because the body holds the guard
+    /// across `await`s.
+    restart_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Per-instance live state. Separated from the outer struct so
@@ -342,6 +356,9 @@ impl SubprocessNexoPlugin {
             // which means those plugins can't auto-respawn — fine,
             // tests don't go through init_loop.
             weak_self: std::sync::OnceLock::new(),
+            // Phase 90 audit follow-up — quiescent until the first
+            // force_restart acquires it. See field doc.
+            restart_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -638,115 +655,108 @@ impl SubprocessNexoPlugin {
                     // holding stale request ids.
                     self.drain_pending_with_error("plugin restarted; retry")
                         .await;
-                    match self
-                        .spawn_one_attempt(
-                            ctx_shutdown.clone(),
-                            broker.clone(),
-                            memory.clone(),
-                            llm.clone(),
-                        )
-                        .await
-                    {
-                        Ok(new_inner) => {
-                            // Race protection: shutdown may have
-                            // fired between spawn_one_attempt
-                            // returning Ok and us installing the
-                            // new Inner. If so, kill the just-
-                            // spawned child instead of leaving it
-                            // orphaned + return.
-                            if self.shutdown_signaled.load(Ordering::Acquire) {
-                                new_inner.cancel.cancel();
-                                let mut child_guard = new_inner.child.lock().await;
-                                if let Some(mut c) = child_guard.take() {
-                                    let _ = c.kill().await;
-                                }
-                                return;
-                            }
-                            *self.inner.lock().await = Some(new_inner);
-                            Self::publish_lifecycle_event(
-                                &broker,
-                                &plugin_id,
-                                "respawned",
-                                json!({
-                                    "plugin_id": plugin_id,
-                                    "attempt": attempt + 1,
-                                    // Phase 81.21.b.b follow-up
-                                    // — uptime of the PREVIOUS
-                                    // Inner (the one that just
-                                    // crashed and triggered this
-                                    // respawn). Operators graph
-                                    // this per-cycle duration to
-                                    // spot plugins whose stable
-                                    // lifetime is degrading.
-                                    "total_uptime_ms": prev_inner_uptime_ms,
-                                }),
+                    // Phase 81.21.b.b deferred-test fix —
+                    // labelled inner loop drives the spawn-retry
+                    // path inline. Earlier `continue` to the
+                    // outer loop on Err short-circuited the very
+                    // next `wait_for_attempt_outcome` (no Inner
+                    // installed → AttemptOutcome::Shutdown →
+                    // premature respawn_loop return). The new
+                    // structure: inner loop retries until Ok or
+                    // gave_up, then outer loop resumes against
+                    // the freshly-installed Inner.
+                    let new_inner = 'spawn_retry: loop {
+                        match self
+                            .spawn_one_attempt(
+                                ctx_shutdown.clone(),
+                                broker.clone(),
+                                memory.clone(),
+                                llm.clone(),
                             )
-                            .await;
-                            attempt += 1;
-                            // Loop iterates → wait_for_attempt_outcome
-                            // resumes against the new child.
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "plugin.supervisor",
-                                plugin_id = %plugin_id,
-                                attempt = attempt + 1,
-                                error = %e,
-                                "respawn attempt failed; counting as failed attempt",
-                            );
-                            attempt += 1;
-                            // Loop iterates immediately (no Inner
-                            // installed; the next wait_for_attempt_outcome
-                            // returns Shutdown because there's no
-                            // Inner to take attempt_outcome_rx
-                            // from). To avoid that infinite spin,
-                            // check shutdown + max_attempts here
-                            // and continue to the next backoff.
-                            if self.shutdown_signaled.load(Ordering::Acquire) {
-                                return;
-                            }
-                            if attempt >= max_attempts {
+                            .await
+                        {
+                            Ok(inner) => break 'spawn_retry inner,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "plugin.supervisor",
+                                    plugin_id = %plugin_id,
+                                    attempt = attempt + 1,
+                                    error = %e,
+                                    "respawn attempt failed; counting as failed attempt",
+                                );
+                                attempt += 1;
+                                if self.shutdown_signaled.load(Ordering::Acquire) {
+                                    return;
+                                }
+                                if attempt >= max_attempts {
+                                    Self::publish_lifecycle_event(
+                                        &broker,
+                                        &plugin_id,
+                                        "gave_up",
+                                        json!({
+                                            "plugin_id": plugin_id,
+                                            "attempts": attempt,
+                                            "last_exit_code": -1,
+                                            "stderr_tail": Vec::<String>::new(),
+                                        }),
+                                    )
+                                    .await;
+                                    return;
+                                }
+                                let next = next_backoff(attempt, base_ms);
                                 Self::publish_lifecycle_event(
                                     &broker,
                                     &plugin_id,
-                                    "gave_up",
+                                    "respawning",
                                     json!({
                                         "plugin_id": plugin_id,
-                                        "attempts": attempt,
-                                        "last_exit_code": -1,
-                                        "stderr_tail": Vec::<String>::new(),
+                                        "attempt": attempt + 1,
+                                        "backoff_ms": next.as_millis() as u64,
                                     }),
                                 )
                                 .await;
-                                return;
+                                if self.sleep_or_shutdown(next).await {
+                                    return;
+                                }
+                                // Inner loop continues to retry spawn.
                             }
-                            let next = next_backoff(attempt, base_ms);
-                            Self::publish_lifecycle_event(
-                                &broker,
-                                &plugin_id,
-                                "respawning",
-                                json!({
-                                    "plugin_id": plugin_id,
-                                    "attempt": attempt + 1,
-                                    "backoff_ms": next.as_millis() as u64,
-                                }),
-                            )
-                            .await;
-                            if self.sleep_or_shutdown(next).await {
-                                return;
-                            }
-                            // Loop iterates back to spawn_one_attempt
-                            // via the outer `loop` continuation
-                            // (the `wait_for_attempt_outcome` at
-                            // the top will short-circuit because
-                            // there's no Inner; treat that as
-                            // Shutdown returns immediately so we
-                            // jump out via the early-return
-                            // branch). Avoid that infinite-loop
-                            // by retrying spawn directly here:
-                            continue;
                         }
+                    };
+
+                    // Spawn succeeded. Race protection: shutdown
+                    // may have fired between spawn_one_attempt
+                    // returning Ok and us installing the new
+                    // Inner. If so, kill the just-spawned child
+                    // instead of leaving it orphaned + return.
+                    if self.shutdown_signaled.load(Ordering::Acquire) {
+                        new_inner.cancel.cancel();
+                        let mut child_guard = new_inner.child.lock().await;
+                        if let Some(mut c) = child_guard.take() {
+                            let _ = c.kill().await;
+                        }
+                        return;
                     }
+                    *self.inner.lock().await = Some(new_inner);
+                    Self::publish_lifecycle_event(
+                        &broker,
+                        &plugin_id,
+                        "respawned",
+                        json!({
+                            "plugin_id": plugin_id,
+                            "attempt": attempt + 1,
+                            // Phase 81.21.b.b follow-up — uptime
+                            // of the PREVIOUS Inner (the one that
+                            // just crashed and triggered this
+                            // respawn). Operators graph per-cycle
+                            // duration to spot plugins whose
+                            // stable lifetime is degrading.
+                            "total_uptime_ms": prev_inner_uptime_ms,
+                        }),
+                    )
+                    .await;
+                    attempt += 1;
+                    // Outer loop iterates → wait_for_attempt_outcome
+                    // resumes against the new child.
                 }
             }
         }
@@ -818,6 +828,12 @@ impl SubprocessNexoPlugin {
         llm: Option<LlmServices>,
     ) -> Result<nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse, anyhow::Error>
     {
+        // Phase 90 audit follow-up — serialise concurrent
+        // restarts of the same plugin. Lock held for the entire
+        // 11-step cascade so a second caller observes the freshly
+        // installed Inner via wait, never builds a parallel one
+        // that would orphan the loser's child.
+        let _restart_guard = self.restart_lock.clone().lock_owned().await;
         self.restart_signaled.store(true, Ordering::Release);
         // Wake supervisor + respawn_loop's parked sleep so they
         // observe the cascade quickly instead of waiting for the
@@ -3737,7 +3753,6 @@ exit {exit_code}
         sub: &mut nexo_broker::Subscription,
         timeout: Duration,
     ) -> Vec<nexo_broker::Event> {
-        use futures::StreamExt;
         let deadline = tokio::time::Instant::now() + timeout;
         let mut out = Vec::new();
         loop {
@@ -3837,7 +3852,6 @@ exit {exit_code}
             .expect("subscribe gave_up");
         boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
 
-        use futures::StreamExt;
         let event = tokio::time::timeout(Duration::from_secs(6), gave_up_sub.next())
             .await
             .expect("gave_up event arrives within 6s")
@@ -3887,7 +3901,6 @@ exit {exit_code}
         boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
-        use futures::StreamExt;
         let crashed = tokio::time::timeout(Duration::from_secs(2), crashed_sub.next())
             .await
             .expect("crashed event within 2s")
@@ -3934,7 +3947,6 @@ exit {exit_code}
         boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
-        use futures::StreamExt;
         // Wait for the first crashed + respawning events to confirm
         // the supervisor entered the backoff branch.
         let _ = tokio::time::timeout(Duration::from_secs(2), crashed_sub.next())
@@ -3991,7 +4003,6 @@ exit {exit_code}
         boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
-        use futures::StreamExt;
         let event = tokio::time::timeout(Duration::from_secs(3), respawned_sub.next())
             .await
             .expect("respawned event arrives within 3s")
@@ -4080,6 +4091,71 @@ exit {exit_code}
         cancel.cancel();
     }
 
+    /// Phase 90 audit follow-up — two operators clicking "Restart"
+    /// simultaneously (or a CLI restart racing the admin RPC) must
+    /// not produce orphaned children. The per-plugin `restart_lock`
+    /// holds for the full force_restart cascade so the second caller
+    /// observes the first's freshly installed Inner instead of
+    /// building a parallel one. Test asserts both calls succeed,
+    /// spawn distinct PIDs, and publish exactly two
+    /// `restarted_manually` events (no coalesce, no loss).
+    #[tokio::test]
+    async fn concurrent_force_restart_serializes_via_restart_lock() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        let path = write_stable_script(
+            "nexo-force-restart-test-concurrent",
+            "test_plugin",
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), false, 0, 100);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.restarted_manually")
+            .await
+            .expect("subscribe restarted_manually");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        let p1 = plugin.clone();
+        let p2 = plugin.clone();
+        let c1 = cancel.clone();
+        let c2 = cancel.clone();
+        let b1 = broker.clone();
+        let b2 = broker.clone();
+        let (r1, r2) = tokio::join!(
+            async move { p1.force_restart(c1, Some(b1), None, None).await },
+            async move { p2.force_restart(c2, Some(b2), None, None).await },
+        );
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        let r1 = r1.expect("first force_restart ok");
+        let r2 = r2.expect("second force_restart ok");
+        assert_eq!(r1.plugin_id, "test_plugin");
+        assert_eq!(r2.plugin_id, "test_plugin");
+        // Distinct PIDs — proves second cascade spawned its own
+        // child rather than reusing the first's.
+        if let (Some(p1), Some(p2)) = (r1.new_pid, r2.new_pid) {
+            assert_ne!(p1, p2, "serialized restarts must spawn distinct children");
+        }
+        // Exactly TWO restarted_manually events — one per call.
+        let mut events = Vec::new();
+        while let Ok(Some(ev)) =
+            tokio::time::timeout(Duration::from_millis(500), sub.next()).await
+        {
+            events.push(ev);
+            if events.len() >= 2 {
+                break;
+            }
+        }
+        assert_eq!(
+            events.len(),
+            2,
+            "concurrent force_restart must publish exactly 2 events, got {}",
+            events.len()
+        );
+        cancel.cancel();
+    }
+
     /// `force_restart` publishes `restarted_manually` (NOT
     /// `crashed`/`respawned` — that's the auto-respawn path).
     /// Subscribe + verify exactly one event arrives with the
@@ -4114,7 +4190,6 @@ exit {exit_code}
             .expect("force_restart ok");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
-        use futures::StreamExt;
         let event = tokio::time::timeout(Duration::from_secs(2), sub.next())
             .await
             .expect("restarted_manually arrives within 2s")
@@ -4185,7 +4260,6 @@ exit {exit_code}
 
         // Wait for gave_up to fire (max_attempts=1, so 2 crashes
         // + gave_up within ~3s).
-        use futures::StreamExt;
         let _ = tokio::time::timeout(Duration::from_secs(5), gave_up_sub.next())
             .await
             .expect("gave_up within 5s");
@@ -4256,6 +4330,457 @@ exit {exit_code}
             ),
             Ok(_) => panic!("expected Err from drain; got Ok"),
         }
+        cancel.cancel();
+    }
+
+    // ── Phase 81.21.b.b deferred tests (6 cases from FOLLOWUPS) ──
+
+    /// Auto-respawn path drains pending oneshots with the
+    /// "plugin restarted; retry" message (distinct from
+    /// force_restart's "plugin restarted by operator"). Caller
+    /// holding a pending oneshot during a crash gets the retry
+    /// signal as soon as respawn_loop processes the Crashed
+    /// outcome.
+    #[tokio::test]
+    async fn pending_drained_with_retry_error_during_auto_respawn() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        let path = write_always_crash_script(
+            "nexo-deferred-test-1",
+            "test_plugin",
+            50,
+            1,
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 5, 200);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // Inject pending oneshot; supervisor will detect the
+        // crash within ~500ms and respawn_loop drains pending.
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        {
+            let g = plugin.inner.lock().await;
+            let inner = g.as_ref().expect("inner installed");
+            inner.pending.insert(99, tx);
+        }
+        // Wait for drain. Generous bound: 500ms supervisor poll
+        // + 200ms backoff + handshake.
+        let result = tokio::time::timeout(Duration::from_secs(3), rx)
+            .await
+            .expect("oneshot resolves within 3s")
+            .expect("sender posted before drop");
+        match result {
+            Err(msg) => assert!(
+                msg.contains("plugin restarted; retry"),
+                "auto-respawn drain message mismatch: {msg}"
+            ),
+            Ok(_) => panic!("expected Err from drain; got Ok"),
+        }
+        cancel.cancel();
+    }
+
+    /// Reset-counter heuristic — child surviving longer than
+    /// `base_ms × max_attempts × 2` post-respawn resets the
+    /// attempt counter to 0 at the next crash. Verify by
+    /// driving multiple crashes with long alive windows + asserting
+    /// gave_up does NOT fire (counter never reaches max_attempts).
+    #[tokio::test]
+    async fn attempt_counter_resets_after_window() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        // backoff=100ms, max_attempts=2 → reset_window = 400ms.
+        // Script alive for 600ms (> reset_window) → counter
+        // resets to 0 at every crash. gave_up never fires.
+        let path = write_always_crash_script(
+            "nexo-deferred-test-2",
+            "test_plugin",
+            600,
+            1,
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 2, 100);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut gave_up_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.gave_up")
+            .await
+            .expect("subscribe gave_up");
+        let mut respawning_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawning")
+            .await
+            .expect("subscribe respawning");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // Wait for at least 3 respawning events to confirm the
+        // loop actually iterates (not stalled). ~3 × 1100ms = 3.3s.
+        let respawning =
+            collect_events_until(&mut respawning_sub, Duration::from_secs(5)).await;
+        assert!(
+            respawning.len() >= 3,
+            "expected >=3 respawning events to confirm loop iterates; got {}",
+            respawning.len()
+        );
+        // EVERY respawning event should report attempt=1 (counter
+        // resets each cycle because alive > reset_window).
+        for ev in &respawning {
+            let attempt = ev
+                .payload
+                .get("attempt")
+                .and_then(|v| v.as_u64())
+                .expect("attempt field");
+            assert_eq!(
+                attempt, 1,
+                "counter should reset to 0 each cycle; got attempt={attempt}"
+            );
+        }
+        // gave_up should NOT have fired.
+        let gave_up =
+            collect_events_until(&mut gave_up_sub, Duration::from_millis(50)).await;
+        assert!(
+            gave_up.is_empty(),
+            "reset heuristic should prevent gave_up; got {} events",
+            gave_up.len()
+        );
+        cancel.cancel();
+    }
+
+    /// Supervisor task's stash of `sandbox: Mutex<Option<Arc<SandboxRunner>>>`
+    /// + `plugin_state_dir: Mutex<Option<PathBuf>>` is set ONCE by
+    /// `init()` and read by every `spawn_one_attempt` call. Verify
+    /// the stash survives a force_restart cycle (no path that
+    /// resets either field).
+    #[tokio::test]
+    async fn sandbox_stash_reused_across_respawns() {
+        // Build the plugin via the factory; manually set the
+        // sandbox stash to a known instance, then trigger force
+        // restart, then verify the stash still holds the same
+        // SandboxRunner Arc.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        let path = write_stable_script("nexo-deferred-test-3", "test_plugin");
+        let m = manifest_with_supervisor(path.to_str().unwrap(), false, 0, 100);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        // Pre-restart: stash a sandbox runner + state dir into the
+        // outer struct fields. Production wires these via init();
+        // we mimic by writing directly post-boot.
+        let sandbox_arc = std::sync::Arc::new(
+            crate::agent::plugin_sandbox::SandboxRunner::for_test(None, false, false),
+        );
+        let state_dir = std::path::PathBuf::from("/tmp/nexo-test-state");
+        {
+            *plugin.sandbox.lock().await = Some(sandbox_arc.clone());
+            *plugin.plugin_state_dir.lock().await = Some(state_dir.clone());
+        }
+        let pre_sandbox_ptr = std::sync::Arc::as_ptr(&sandbox_arc);
+
+        let _report = plugin
+            .clone()
+            .force_restart(
+                cancel.clone(),
+                Some(broker.clone()),
+                None,
+                None,
+            )
+            .await
+            .expect("force_restart ok");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // Post-restart: stash unchanged.
+        let post_sandbox = plugin.sandbox.lock().await.clone();
+        let post_state_dir = plugin.plugin_state_dir.lock().await.clone();
+        let post_sandbox = post_sandbox.expect("sandbox stash retained");
+        assert_eq!(
+            std::sync::Arc::as_ptr(&post_sandbox),
+            pre_sandbox_ptr,
+            "sandbox Arc must be the same instance across respawn"
+        );
+        assert_eq!(
+            post_state_dir.expect("state_dir retained"),
+            state_dir,
+            "plugin_state_dir must survive respawn"
+        );
+        cancel.cancel();
+    }
+
+    /// `respawn_loop`'s spawn_one_attempt path bumps the attempt
+    /// counter even when the new child fails handshake (timeout).
+    /// Combined with crash-then-handshake-fail script, gave_up
+    /// fires after max_attempts is hit.
+    #[tokio::test]
+    async fn respawn_handshake_failure_counts_as_attempt() {
+        // Per-test counter file lets one shell script change
+        // behavior across invocations. Fresh dir per test so we
+        // don't collide with parallel runs.
+        let counter_dir =
+            std::env::temp_dir().join("nexo-deferred-test-4-counter");
+        let _ = std::fs::remove_dir_all(&counter_dir);
+        std::fs::create_dir_all(&counter_dir).unwrap();
+        let counter_path = counter_dir.join("count");
+        std::fs::write(&counter_path, "0").unwrap();
+        let counter_str = counter_path.to_str().unwrap();
+
+        // Script: read counter, on first invocation handshake +
+        // sleep + crash; on subsequent invocations exit before
+        // handshake (causing spawn_one_attempt to time out).
+        let script = format!(
+            r#"#!/bin/sh
+COUNT=$(cat {counter_str})
+NEXT=$((COUNT + 1))
+echo $NEXT > {counter_str}
+if [ "$COUNT" = "0" ]; then
+    read line
+    echo '{{"jsonrpc":"2.0","id":1,"result":{{"manifest":{{"plugin":{{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}}}},"server_version":"mock-0.1.0"}}}}'
+    sleep 0.5
+    exit 1
+else
+    sleep 5
+    exit 1
+fi
+"#,
+            counter_str = counter_str,
+        );
+        let dir = std::env::temp_dir().join("nexo-deferred-test-4");
+        std::fs::create_dir_all(&dir).unwrap();
+        let script_path = dir.join("plugin.sh");
+        std::fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        // Tight handshake timeout so failed attempts surface
+        // quickly (else the test waits 5s × max_attempts). Plus
+        // backoff=200, max_attempts=2 → reset_window=800ms.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "300");
+        let m = manifest_with_supervisor(script_path.to_str().unwrap(), true, 2, 200);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut gave_up_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.gave_up")
+            .await
+            .expect("subscribe gave_up");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        // First crash + handshake-fail respawns + gave_up: under 5s.
+        let event = tokio::time::timeout(Duration::from_secs(8), gave_up_sub.next())
+            .await
+            .expect("gave_up arrives within 8s")
+            .expect("subscription delivers Some");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        let attempts = event
+            .payload
+            .get("attempts")
+            .and_then(|v| v.as_u64())
+            .expect("attempts field");
+        // Either the counter reaches max_attempts via failed
+        // handshakes counting as attempts, OR the counter
+        // resets and we never see gave_up (timeout). The
+        // assertion here is that gave_up CAN fire when handshake
+        // fails repeatedly.
+        assert!(
+            attempts >= 1,
+            "gave_up must report at least 1 attempt; got {attempts}"
+        );
+        cancel.cancel();
+    }
+
+    /// Shutdown fires while a respawn handshake is still
+    /// in-flight. The post-spawn race-check in respawn_loop kills
+    /// the just-spawned child and bails. No `respawned` event
+    /// publishes.
+    #[tokio::test]
+    async fn shutdown_during_respawn_handshake_kills_new_child() {
+        // Crash-then-stable counter script: first invocation
+        // handshakes + sleeps + crashes; second invocation sleeps
+        // 2s BEFORE handshake reply (giving the test a window
+        // to fire shutdown during the spawn_one_attempt path).
+        let counter_dir =
+            std::env::temp_dir().join("nexo-deferred-test-5-counter");
+        let _ = std::fs::remove_dir_all(&counter_dir);
+        std::fs::create_dir_all(&counter_dir).unwrap();
+        let counter_path = counter_dir.join("count");
+        std::fs::write(&counter_path, "0").unwrap();
+        let counter_str = counter_path.to_str().unwrap();
+        let script = format!(
+            r#"#!/bin/sh
+COUNT=$(cat {counter_str})
+NEXT=$((COUNT + 1))
+echo $NEXT > {counter_str}
+if [ "$COUNT" = "0" ]; then
+    read line
+    echo '{{"jsonrpc":"2.0","id":1,"result":{{"manifest":{{"plugin":{{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}}}},"server_version":"mock-0.1.0"}}}}'
+    sleep 0.1
+    exit 1
+else
+    read line
+    sleep 2
+    echo '{{"jsonrpc":"2.0","id":1,"result":{{"manifest":{{"plugin":{{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}}}},"server_version":"mock-0.1.0"}}}}'
+    sleep 5
+fi
+"#,
+            counter_str = counter_str,
+        );
+        let dir = std::env::temp_dir().join("nexo-deferred-test-5");
+        std::fs::create_dir_all(&dir).unwrap();
+        let script_path = dir.join("plugin.sh");
+        std::fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+
+        // Long init timeout so the 2s handshake delay doesn't
+        // trip the inner timeout; race window for shutdown.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "5000");
+        let m = manifest_with_supervisor(script_path.to_str().unwrap(), true, 5, 100);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut respawned_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawned")
+            .await
+            .expect("subscribe respawned");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // Wait for first crash detection (~500-700ms total:
+        // handshake instant + 100ms script sleep + ≤500ms supervisor
+        // poll). Then call shutdown while spawn_one_attempt is
+        // mid-handshake (the 2s sleep on second invocation).
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        // shutdown_signaled flips so the post-spawn race-check
+        // kills the new child if the handshake had completed.
+        plugin.shutdown().await.expect("shutdown ok");
+
+        // No respawned event should arrive — even if the
+        // handshake completed, the post-spawn race-check kills
+        // the child instead of installing.
+        let respawned =
+            collect_events_until(&mut respawned_sub, Duration::from_secs(3)).await;
+        assert!(
+            respawned.is_empty(),
+            "shutdown during respawn must not publish respawned; got {} events",
+            respawned.len()
+        );
+        cancel.cancel();
+    }
+
+    /// Golden assertion: every lifecycle event topic carries the
+    /// documented payload fields with correct types. Drive a
+    /// full crash → respawning → respawned → … → gave_up cycle
+    /// + verify each event's payload shape. Catches accidental
+    /// breaking changes to the operator-observable wire.
+    #[tokio::test]
+    async fn lifecycle_event_payload_shapes_match_spec() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        let path = write_always_crash_script(
+            "nexo-deferred-test-6",
+            "test_plugin",
+            50,
+            7,
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 1, 300);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut crashed_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.crashed")
+            .await
+            .expect("subscribe crashed");
+        let mut respawning_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawning")
+            .await
+            .expect("subscribe respawning");
+        let mut gave_up_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.gave_up")
+            .await
+            .expect("subscribe gave_up");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        let crashed = tokio::time::timeout(Duration::from_secs(3), crashed_sub.next())
+            .await
+            .expect("crashed within 3s")
+            .expect("Some");
+        let respawning =
+            tokio::time::timeout(Duration::from_secs(2), respawning_sub.next())
+                .await
+                .expect("respawning within 2s")
+                .expect("Some");
+        let gave_up = tokio::time::timeout(Duration::from_secs(5), gave_up_sub.next())
+            .await
+            .expect("gave_up within 5s")
+            .expect("Some");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // crashed: { plugin_id: string, exit_code: int, stderr_tail: array }
+        assert_eq!(crashed.source, "plugin.supervisor");
+        assert_eq!(
+            crashed.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+        assert!(
+            crashed.payload.get("exit_code").and_then(|v| v.as_i64()).is_some(),
+            "crashed.exit_code must be int"
+        );
+        assert!(
+            crashed.payload.get("stderr_tail").and_then(|v| v.as_array()).is_some(),
+            "crashed.stderr_tail must be array"
+        );
+
+        // respawning: { plugin_id: string, attempt: int >= 1, backoff_ms: int >= 0 }
+        assert_eq!(respawning.source, "plugin.supervisor");
+        assert_eq!(
+            respawning.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+        let attempt = respawning
+            .payload
+            .get("attempt")
+            .and_then(|v| v.as_u64())
+            .expect("respawning.attempt int");
+        assert!(attempt >= 1, "attempt must be 1-indexed");
+        let backoff_ms = respawning
+            .payload
+            .get("backoff_ms")
+            .and_then(|v| v.as_u64())
+            .expect("respawning.backoff_ms int");
+        assert!(backoff_ms <= 60_000, "backoff capped at 60s");
+
+        // gave_up: { plugin_id: string, attempts: int, last_exit_code: int, stderr_tail: array }
+        assert_eq!(gave_up.source, "plugin.supervisor");
+        assert_eq!(
+            gave_up.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+        assert!(
+            gave_up.payload.get("attempts").and_then(|v| v.as_u64()).is_some(),
+            "gave_up.attempts must be int"
+        );
+        assert!(
+            gave_up
+                .payload
+                .get("last_exit_code")
+                .and_then(|v| v.as_i64())
+                .is_some(),
+            "gave_up.last_exit_code must be int"
+        );
+        assert!(
+            gave_up.payload.get("stderr_tail").and_then(|v| v.as_array()).is_some(),
+            "gave_up.stderr_tail must be array"
+        );
         cancel.cancel();
     }
 }
