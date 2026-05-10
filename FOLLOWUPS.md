@@ -3191,11 +3191,26 @@ coordinación de archivos cross-cutting.
   LivePluginRestarter directly + wire via
   `dispatcher.with_plugin_restarter()`.
 
-- **81.21.b.b: SharedPluginHandles cell + main.rs wiring ⬜**
-  spin-off of above. AdminBootstrap runs before plugin handles
-  are produced by wire_plugin_registry. Solution mirrors
-  SharedMemorySnapshotter: empty cell at admin bootstrap, write
-  after wire. LivePluginRestarter reads cell on each call. ~30min.
+- ✅ ~~**81.21.b.b: SharedPluginHandles cell + main.rs wiring**~~
+  shipped 2026-05-10. New `SharedPluginHandles =
+  Arc<RwLock<Option<Arc<BTreeMap<String, Arc<dyn NexoPlugin>>>>>`
+  type alias + `shared_plugin_handles_cell()` helper in
+  `crates/setup/src/admin_adapters.rs` (mirror of existing
+  `SharedMemorySnapshotter` pattern). `LivePluginRestarter::new`
+  signature breaking-changed to take cell instead of direct map;
+  `restart()` clones Arc<BTreeMap> early (drops RwLock guard
+  before slow force_restart path). Empty-cell branch returns
+  `"plugin handles not yet populated; daemon still booting"` error
+  for the brief boot window. `proyecto/src/main.rs`: cell created
+  pre-bootstrap, LivePluginRestarter constructed with cell +
+  `Some(...)` in AdminBootstrapInputs (was None), late-init write
+  AFTER `wire_plugin_registry_with_runtime` returns. Tests: 3
+  refactored + 1 new (`live_plugin_restarter_returns_clear_error_on_empty_cell`)
+  via `build_restarter()` helper that wraps cell internally; 4/4
+  pass. Docs: supervisor.md § Manual restart Errors table gains
+  the boot-window row. NO crates.io publish (nexo-setup +
+  proyecto path-dep only). The official daemon's
+  `nexo/admin/plugins/restart` is now FULLY OPERATIONAL.
 
 - ✅ ~~**81.21.b.b: real `respawned.total_uptime_ms` telemetry**~~
   shipped 2026-05-10 in nexo-core 0.1.16. Captures

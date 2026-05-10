@@ -5284,19 +5284,57 @@ mod live_memory_snapshot_tests {
 
 // ─── Phase 81.21.b.b follow-up — LivePluginRestarter ──
 
+/// Phase 81.21.b.b spin-off — shared cell holding the daemon's
+/// plugin handle map. Built empty at admin bootstrap time, written
+/// once by main.rs after `wire_plugin_registry` produces the map.
+/// `LivePluginRestarter` reads the cell on each `restart()` call;
+/// if the cell is None (operator beat the late-init), returns a
+/// "plugin handles not yet populated; daemon still booting" error.
+///
+/// Mirror of `SharedMemorySnapshotter` shape: same RwLock<Option<Arc<...>>>
+/// envelope, distinct generic. Cloning the cell is one Arc bump
+/// per call site so multiple consumers can share the same write
+/// target.
+pub type SharedPluginHandles = std::sync::Arc<
+    tokio::sync::RwLock<
+        Option<
+            std::sync::Arc<
+                std::collections::BTreeMap<
+                    String,
+                    std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>,
+                >,
+            >,
+        >,
+    >,
+>;
+
+/// Build a fresh empty cell. Boot wiring:
+///   1. main.rs creates the cell via this helper before admin bootstrap.
+///   2. `LivePluginRestarter::new(cell, ...)` consumes a clone.
+///   3. main.rs writes the late-init handles into the cell after
+///      `wire_plugin_registry` returns.
+pub fn shared_plugin_handles_cell() -> SharedPluginHandles {
+    std::sync::Arc::new(tokio::sync::RwLock::new(None))
+}
+
+
 /// Operator-driven `nexo/admin/plugins/restart` adapter. Looks up
 /// the plugin handle in the snapshot of the daemon's plugin
 /// registry (taken at admin bootstrap), downcasts to
 /// `SubprocessNexoPlugin`, and drives `force_restart()` with the
 /// daemon's shared lifecycle context (broker / memory / llm).
 ///
-/// Plugin handles are stable post-init: the daemon doesn't add
-/// or remove plugins at runtime today (manifest changes require
-/// daemon restart). Snapshotting at bootstrap is therefore safe;
-/// no need for a live registry RwLock.
+/// Phase 81.21.b.b spin-off — handles read from a shared
+/// [`SharedPluginHandles`] cell rather than a direct map, so
+/// admin bootstrap can construct this adapter BEFORE
+/// `wire_plugin_registry` produces the handle map. Operators
+/// hitting the restart RPC during the brief boot window between
+/// bootstrap completion and late-init see a clean
+/// "plugin handles not yet populated; daemon still booting"
+/// error and can retry.
 #[derive(Clone)]
 pub struct LivePluginRestarter {
-    handles: std::sync::Arc<std::collections::BTreeMap<String, std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>>>,
+    handles_cell: SharedPluginHandles,
     ctx_shutdown: tokio_util::sync::CancellationToken,
     broker: nexo_broker::AnyBroker,
     memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
@@ -5306,20 +5344,18 @@ pub struct LivePluginRestarter {
 
 impl std::fmt::Debug for LivePluginRestarter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Avoid a blocking lock here: just note whether the cell
+        // exists; the populated/empty distinction shows up in
+        // operator-facing error messages instead.
         f.debug_struct("LivePluginRestarter")
-            .field("handles_count", &self.handles.len())
+            .field("handles_cell", &"<shared-plugin-handles>")
             .finish()
     }
 }
 
 impl LivePluginRestarter {
     pub fn new(
-        handles: std::sync::Arc<
-            std::collections::BTreeMap<
-                String,
-                std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>,
-            >,
-        >,
+        handles_cell: SharedPluginHandles,
         ctx_shutdown: tokio_util::sync::CancellationToken,
         broker: nexo_broker::AnyBroker,
         memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
@@ -5327,7 +5363,7 @@ impl LivePluginRestarter {
         llm_config: std::sync::Arc<nexo_config::LlmConfig>,
     ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
-            handles,
+            handles_cell,
             ctx_shutdown,
             broker,
             memory,
@@ -5345,7 +5381,18 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter
         &self,
         plugin_id: &str,
     ) -> anyhow::Result<nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse> {
-        let handle = self.handles.get(plugin_id).ok_or_else(|| {
+        // Clone the Arc<BTreeMap> early so the RwLock guard
+        // drops before the slow force_restart() path runs. Any
+        // concurrent late-init writer still gets the lock back
+        // quickly.
+        let handles = {
+            let guard = self.handles_cell.read().await;
+            guard.as_ref().cloned()
+        };
+        let handles = handles.ok_or_else(|| {
+            anyhow::anyhow!("plugin handles not yet populated; daemon still booting")
+        })?;
+        let handle = handles.get(plugin_id).ok_or_else(|| {
             anyhow::anyhow!("plugin {plugin_id} not found")
         })?;
         let any = handle.as_any();
@@ -5457,13 +5504,37 @@ nexo_capabilities = ["broker"]
         }
     }
 
-    fn build_restarter(
+    async fn build_restarter(
         handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
     ) -> Arc<LivePluginRestarter> {
+        // Phase 81.21.b.b spin-off — wrap the test handles in a
+        // `SharedPluginHandles` cell + populate via `cell.write()`,
+        // mirroring the production main.rs late-init pattern.
+        let cell = shared_plugin_handles_cell();
+        {
+            let mut g = cell.write().await;
+            *g = Some(Arc::new(handles));
+        }
         let llm_registry = Arc::new(nexo_llm::LlmRegistry::new());
         let llm_config = Arc::new(fake_llm_config());
         LivePluginRestarter::new(
-            Arc::new(handles),
+            cell,
+            CancellationToken::new(),
+            nexo_broker::AnyBroker::Local(LocalBroker::new()),
+            None,
+            llm_registry,
+            llm_config,
+        )
+    }
+
+    /// Phase 81.21.b.b spin-off — build a restarter against an
+    /// EMPTY cell (no `cell.write()` populate) so tests can exercise
+    /// the boot-window error branch.
+    fn build_restarter_with_empty_cell() -> Arc<LivePluginRestarter> {
+        let llm_registry = Arc::new(nexo_llm::LlmRegistry::new());
+        let llm_config = Arc::new(fake_llm_config());
+        LivePluginRestarter::new(
+            shared_plugin_handles_cell(),
             CancellationToken::new(),
             nexo_broker::AnyBroker::Local(LocalBroker::new()),
             None,
@@ -5474,7 +5545,7 @@ nexo_capabilities = ["broker"]
 
     #[tokio::test]
     async fn live_plugin_restarter_rejects_unknown_plugin_id() {
-        let r = build_restarter(BTreeMap::new());
+        let r = build_restarter(BTreeMap::new()).await;
         let err = r.restart("ghost").await.expect_err("unknown id must error");
         assert!(
             err.to_string().contains("not found"),
@@ -5491,7 +5562,7 @@ nexo_capabilities = ["broker"]
                 manifest: fake_manifest("in_tree"),
             }),
         );
-        let r = build_restarter(handles);
+        let r = build_restarter(handles).await;
         let err = r
             .restart("in_tree")
             .await
@@ -5518,7 +5589,7 @@ nexo_capabilities = ["broker"]
         let plugin = Arc::new(SubprocessNexoPlugin::new(m)) as Arc<dyn NexoPlugin>;
         let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
         handles.insert("subproc_no_weak".into(), plugin);
-        let r = build_restarter(handles);
+        let r = build_restarter(handles).await;
         let err = r
             .restart("subproc_no_weak")
             .await
@@ -5526,6 +5597,28 @@ nexo_capabilities = ["broker"]
         assert!(
             err.to_string().contains("weak_self not populated"),
             "got: {err}"
+        );
+    }
+
+    /// Phase 81.21.b.b spin-off — operator hits the restart RPC
+    /// during the brief boot window between admin bootstrap and
+    /// the late-init `cell.write()` in main.rs. Adapter must
+    /// surface the typed "not yet populated" message so the SPA
+    /// can render a retry hint.
+    #[tokio::test]
+    async fn live_plugin_restarter_returns_clear_error_on_empty_cell() {
+        let r = build_restarter_with_empty_cell();
+        let err = r
+            .restart("anything")
+            .await
+            .expect_err("empty cell must error");
+        assert!(
+            err.to_string().contains("not yet populated"),
+            "got: {err}"
+        );
+        assert!(
+            err.to_string().contains("daemon still booting"),
+            "message must hint at the boot-window cause: {err}"
         );
     }
 }

@@ -192,6 +192,7 @@ SubprocessNexoPlugin::force_restart()
 | `plugin {id} not found` | `InvalidParams` | Refresh admin UI; plugin removed from manifest |
 | `plugin {id} is in-tree` | `InvalidParams` | Use daemon restart for in-tree plugins |
 | `restart timed out` (60s) | `Internal` | Plugin in degraded state; inspect logs + fix manifest |
+| `plugin handles not yet populated; daemon still booting` | `Internal` | Retry after 1-2s; daemon finishing `wire_plugin_registry` |
 
 ### Limitations
 
