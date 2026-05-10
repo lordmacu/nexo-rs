@@ -19,11 +19,19 @@ NOT shipping blockers.
   page is LIVE in nexo-plugin-admin@0.1.4 — agent_id +
   free-text query inputs, recall-style result cards with
   tags + concept_tags + memory_type badge.
-- ⬜ **memory snapshot admin RPC** (`memory/create_snapshot`,
-  `memory/list_snapshots`, `memory/restore_snapshot`) still
-  CLI-only. Snapshot creation is heavy (sqlite backup +
-  optional encryption + retention). Wire when an operator
-  demands UI snapshot management.
+- 🟡 **memory snapshot admin RPC** — partial. `list_snapshots`
+  shipped 2026-05-10 in nexo-plugin-admin@0.1.7 (panel on
+  `/m/memory` shows id + label + encrypted flag + size +
+  created_at). `create_snapshot` and `restore_snapshot` still
+  CLI-only — those flows are heavy (tar.zst + optional age
+  encryption + retention sweep + lock dance).
+  - Limitation in v1: `LiveMemorySnapshotReader` builds a
+    fresh `LocalFsSnapshotter` from `memory.yaml` with the
+    `DefaultPathResolver`. Operators using a custom path
+    resolver (per-agent memdir map) see an empty list. Future
+    refactor of main.rs constructs the snapshotter once
+    upstream of admin bootstrap and threads the same
+    `Arc<dyn MemorySnapshotter>` through both consumers.
 
 - ✅ ~~**plugins admin RPCs**~~ shipped 2026-05-10 — added
   `nexo/admin/plugins/doctor` (capability `plugin_doctor`).
