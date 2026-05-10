@@ -2699,7 +2699,7 @@ Done criteria:
 - `crates/setup/src/capabilities.rs::INVENTORY` updated
   for any new env toggles introduced by 82.x or 83.x.
 
-#### 83.12 — Meta-microapp React UI reference scaffold   ⬜
+#### 83.12 — Meta-microapp React UI reference scaffold   ✅ (shipped 2026-05-10 — 4 gaps deferred)
 
 Reusable pattern for any microapp that ships its own
 graphical interface. Backend hosting is covered by 82.12
@@ -2805,6 +2805,48 @@ Out of scope:
   opt-in via 82.12's `allow_external_bind`).
 - Marketplace-style microapp UI launcher that aggregates
   multiple microapp UIs in one tab.
+
+**Shipped status (2026-05-10 audit):** the
+`agent-creator-microapp/frontend/` checkout already
+implements the bulk of the 83.12 spec:
+  - React + TypeScript + Vite scaffold (`v0.0.108`).
+  - HttpOnly cookie auth via `pages/Login.tsx` +
+    `store/auth.ts`.
+  - Multi-tenant `TenantSwitcher` (Phase 82.x).
+  - 3-column WhatsApp Web layout (`shell/Rail.tsx`,
+    `SecondarySidebar.tsx`, `ContextPanel.tsx`).
+  - Module-discovery via `import.meta.glob` over
+    `modules/*/manifest.tsx` (4 modules: agents, chats,
+    marketing, __demo__).
+  - 20-module API client layer
+    (`api/{admin,agents,bots,chat_meta,client,compose,
+    composeAttachments,composeDrafts,emailTemplates,
+    firehose,...}.ts`).
+  - Pairing modal + QR flow
+    (`modules/agents/PairingModal.tsx`).
+  - Firehose WebSocket integration
+    (`api/firehose.ts`).
+  - `pages/Wizard.tsx` for first-run onboarding.
+
+Four deferred items, each tracked as its own follow-up
+in `FOLLOWUPS.md` (see entries
+`83.12.audit-page`, `83.12.llm-keys-page`,
+`83.12.ts-types-codegen`, `83.12.e2e-tests`):
+
+  - **`83.12.audit-page`** — `pages/audit.tsx` rendering
+    `microapp_admin_audit` table tail. Today the rows
+    are reachable only via direct DB query.
+  - **`83.12.llm-keys-page`** — full `pages/llm_keys.tsx`.
+    The `LlmInstanceCreateModal` exists but the list +
+    delete + rotate page does not.
+  - **`83.12.ts-types-codegen`** — auto-generate the
+    TypeScript admin RPC types from the Rust admin
+    payload structs via `serde_typescript` /
+    `typeshare`. Today the TS types are hand-curated
+    (drift risk vs the Rust source-of-truth).
+  - **`83.12.e2e-tests`** — playwright/cypress harness
+    covering login, agents-CRUD, pairings, conversations.
+    Today only unit tests exist (`vitest run`).
 
 #### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired) — OPT-IN chat helper, NOT core   ⬜
 
