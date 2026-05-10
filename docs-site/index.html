@@ -60,6 +60,7 @@
         <a href="docs/what-you-can-build.html" class="text-ink-300 hover:text-white transition hidden md:inline">What to build</a>
         <a href="docs/getting-started/quickstart.html" class="text-ink-300 hover:text-white transition hidden md:inline">Quickstart</a>
         <a href="#official-plugins" class="text-ink-300 hover:text-white transition hidden md:inline">Plugins</a>
+        <a href="#platform-support" class="text-ink-300 hover:text-white transition hidden lg:inline">Platforms</a>
         <a href="#plugins" class="text-ink-300 hover:text-white transition hidden md:inline">SDKs</a>
         <a href="#extensions" class="text-ink-300 hover:text-white transition hidden md:inline">Extensions</a>
         <a href="#microapps" class="text-ink-300 hover:text-white transition hidden md:inline">Microapps</a>
@@ -473,6 +474,224 @@
         </a>
 
       </div>
+    </div>
+  </section>
+
+  <!-- Platform support matrix -->
+  <section id="platform-support" class="border-t border-ink-800 py-24 bg-ink-900/30 scroll-mt-20">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Platform support</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Runs everywhere your operators do.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          Single pure-Rust + rustls dep graph cross-compiles to Linux musl × 2, macOS Apple Silicon + Intel, Windows MSVC, and Android NDK / Termux. The table below is what each feature actually does on each desktop OS. Mobile (Termux on Android) shares the Linux row except where noted.
+        </p>
+      </div>
+
+      <div class="overflow-x-auto bg-ink-950 border border-ink-800 rounded-xl">
+        <table class="w-full text-sm">
+          <thead class="bg-ink-900 border-b border-ink-800">
+            <tr class="text-left text-ink-300 uppercase tracking-wider text-xs">
+              <th class="py-4 px-6 font-semibold w-1/2">Feature</th>
+              <th class="py-4 px-4 font-semibold text-center"><span class="hidden sm:inline">🐧 </span>Linux</th>
+              <th class="py-4 px-4 font-semibold text-center"><span class="hidden sm:inline">🍎 </span>macOS</th>
+              <th class="py-4 px-4 font-semibold text-center"><span class="hidden sm:inline">🪟 </span>Windows</th>
+            </tr>
+          </thead>
+          <tbody class="text-ink-300">
+
+            <!-- Section: Daemon core -->
+            <tr class="bg-ink-900/40">
+              <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">Daemon core</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Agent loop</strong> — multi-turn, NATS event bus, scheduler, heartbeat</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>LLM clients</strong> — MiniMax, Claude, OpenAI, Anthropic, DeepSeek… (rustls)</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Memory</strong> — short-term + long-term SQLite + vector sqlite-vec</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Skills + MCP</strong> — markdown skill loader + MCP client/server</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Subprocess plugins</strong> — JSON-RPC over stdio, multi-instance routing</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+
+            <!-- Section: Channels -->
+            <tr class="bg-ink-900/40">
+              <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">Channels</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>WhatsApp</strong> — wa-agent Signal Protocol + QR pairing</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Telegram</strong> — Bot API long-poll, multi-bot</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Email</strong> — IMAP poll + lettre SMTP, Google OAuth</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Browser</strong> — Chrome DevTools Protocol, 12 tools, profile isolation</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<sup class="text-ink-500"><a href="#fn-chrome" class="hover:text-orange-400">1</a></sup></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Google</strong> — OAuth tokens encrypted at rest</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+
+            <!-- Section: SDK features -->
+            <tr class="bg-ink-900/40">
+              <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">SDK features</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>voice</strong> — Edge TTS + pure-Rust opus encoder</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>stt</strong> — voice-note transcription (whisper.cpp)</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-yellow-400 font-semibold">⚠️<sup class="text-ink-500"><a href="#fn-stt" class="hover:text-orange-400">2</a></sup></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>wizard</strong> — first-run LLM key probe</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>enrichment</strong> — disposable-domain classifier, tenant cache</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>tracking</strong> — HMAC-signed message + link tokens</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>email-template</strong> — block composer + asset store</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+            </tr>
+
+            <!-- Section: Operator hardening -->
+            <tr class="bg-ink-900/40">
+              <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">Operator hardening</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>POSIX file modes 0600/0700</strong> on <code>secrets/</code> + token files</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-yellow-400 font-semibold">⚠️<sup class="text-ink-500"><a href="#fn-acl" class="hover:text-orange-400">3</a></sup></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Symlink-attack defense</strong> in plugin config + memory snapshot</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-yellow-400 font-semibold">⚠️<sup class="text-ink-500"><a href="#fn-symlink" class="hover:text-orange-400">4</a></sup></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Auth gauntlet pre-boot perm check</strong> — refuses to start on world-readable secrets</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-red-400 font-semibold">❌<sup class="text-ink-500"><a href="#fn-gauntlet" class="hover:text-orange-400">5</a></sup></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Permission-prompt forwarder</strong> — daemon ↔ permission-bin over Unix socket</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-red-400 font-semibold">❌<sup class="text-ink-500"><a href="#fn-prompt" class="hover:text-orange-400">6</a></sup></td>
+            </tr>
+
+            <!-- Section: Distribution -->
+            <tr class="bg-ink-900/40">
+              <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">Distribution</td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Single static binary</strong> via <code>cargo install</code> + Homebrew tap + GH Releases</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">musl × 2</span></td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">x86_64 + arm64</span></td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">x86_64 MSVC</span></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Docker image</strong> — ghcr.io multi-arch</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅</td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">via WSL2</span></td>
+            </tr>
+            <tr class="border-t border-ink-800">
+              <td class="py-3 px-6"><strong>Termux (Android)</strong> — aarch64-linux-android <code>.deb</code></td>
+              <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">cross-compile host</span></td>
+              <td class="py-3 px-4 text-center text-ink-500">—</td>
+              <td class="py-3 px-4 text-center text-ink-500">—</td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Footnotes -->
+      <div class="mt-8 max-w-4xl text-sm text-ink-400 space-y-3">
+        <p id="fn-chrome">
+          <strong class="text-ink-300">1. Browser channel on Windows</strong> — auto-detects Chrome / Chromium / Edge at <code>%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe</code>, <code>%ProgramFiles%</code>, <code>%ProgramFiles(x86)%</code>. Set <code>NEXO_PLUGIN_BROWSER_EXECUTABLE</code> for custom install paths.
+        </p>
+        <p id="fn-stt">
+          <strong class="text-ink-300">2. STT on Windows</strong> — current <code>whisper-rs</code> binding requires <strong>Visual Studio Build Tools 2022</strong> + <strong>CMake</strong> on the first build (whisper.cpp is vendored C++). Pure-Rust Candle replacement planned (Phase 91) to drop the C++ chain entirely; eliminates the install caveat and unblocks Android NDK / WASM.
+        </p>
+        <p id="fn-acl">
+          <strong class="text-ink-300">3. POSIX file modes on Windows</strong> — Windows doesn't honour <code>chmod 0600</code>. Secrets land at the configured path but ACL enforcement is the operator's responsibility (run as a non-admin user; restrict the <code>secrets/</code> ACL to that user only).
+        </p>
+        <p id="fn-symlink">
+          <strong class="text-ink-300">4. Symlink defense on Windows</strong> — Windows symlinks require admin or developer mode to create. We skip the symlink-escape probe on Windows because the attack surface is much narrower; the canonicalize-and-starts-with checks still run for non-symlink path traversal.
+        </p>
+        <p id="fn-gauntlet">
+          <strong class="text-ink-300">5. Auth gauntlet on Windows</strong> — the pre-boot permission check that refuses to start when token files are world-readable returns an empty diagnostics list on Windows (no POSIX modes to read). Restrict <code>secrets/</code> ACL manually before exposing the daemon publicly.
+        </p>
+        <p id="fn-prompt">
+          <strong class="text-ink-300">6. Permission-prompt forwarder on Windows</strong> — the daemon ↔ permission-bin IPC channel uses Unix domain sockets. The Windows orchestrator wires a no-op handle so the daemon boots; decisions fall back to whichever <code>AllowAll</code> / <code>DenyAll</code> / <code>Scripted</code> in-process decider you configured. Named-pipe + TCP-loopback alternative tracked under Phase 27.x in FOLLOWUPS.md.
+        </p>
+      </div>
+
+      <p class="mt-8 text-ink-400 text-sm leading-relaxed max-w-4xl">
+        <strong class="text-ink-300">~95% feature parity across Linux + macOS + Windows.</strong> The two real Windows gaps are the permission-prompt forwarder (Unix-socket-only) and the auth gauntlet's pre-boot file-mode check. Everything an operator building a WhatsApp / Telegram / Email / Browser SaaS needs lands on every desktop OS without caveats.
+      </p>
     </div>
   </section>
 
