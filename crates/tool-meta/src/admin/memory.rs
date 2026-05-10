@@ -56,3 +56,51 @@ pub struct MemoryQueryResponse {
     /// Matching entries newest-first within the relevance band.
     pub entries: Vec<MemoryEntryWire>,
 }
+
+/// Params for `nexo/admin/memory/list_snapshots`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemorySnapshotsListParams {
+    /// Agent whose snapshots to list.
+    pub agent_id: String,
+    /// Tenant scope. Empty string = "default".
+    #[serde(default)]
+    pub tenant: String,
+}
+
+/// Wire-side projection of `nexo_memory_snapshot::SnapshotMeta`.
+/// Internal fields (bundle_path, schema_versions, git_oid)
+/// surfaced as opaque strings for forward-compat.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotMetaWire {
+    /// Snapshot id (UUID-shaped string).
+    pub id: String,
+    /// Owning agent.
+    pub agent_id: String,
+    /// Tenant scope.
+    pub tenant: String,
+    /// Optional human-readable label set at create time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Wall-clock millis since epoch when the bundle was written.
+    pub created_at_ms: i64,
+    /// Absolute filesystem path of the bundle archive.
+    pub bundle_path: String,
+    /// Bundle size in bytes (after compression / encryption).
+    pub bundle_size_bytes: u64,
+    /// Hex-encoded SHA-256 of the bundle.
+    pub bundle_sha256: String,
+    /// `Some(oid)` when git-mode snapshots captured a commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_oid: Option<String>,
+    /// True when the bundle is age-encrypted (`*.tar.zst.age`).
+    pub encrypted: bool,
+    /// True when redaction policies stripped fields at capture time.
+    pub redactions_applied: bool,
+}
+
+/// Response for `nexo/admin/memory/list_snapshots`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemorySnapshotsListResponse {
+    /// Snapshots ordered by `created_at_ms` descending (newest first).
+    pub snapshots: Vec<SnapshotMetaWire>,
+}

@@ -34,7 +34,7 @@ use super::domains::credentials::{ChannelCredentialPersister, CredentialStore, P
 use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::mcp::McpServerStore;
-use super::domains::memory::MemoryReader;
+use super::domains::memory::{MemoryReader, MemorySnapshotReader};
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::plugin_doctor::PluginDoctorReader;
 use super::domains::processing::ProcessingControlStore;
@@ -270,6 +270,10 @@ pub struct AdminRpcDispatcher {
     /// `None` keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603.
     memory_reader: Option<Arc<dyn MemoryReader>>,
+    /// Phase 90.x.memory-snapshot — snapshot list reader. `None`
+    /// keeps `nexo/admin/memory/list_snapshots` returning the
+    /// typed `memory snapshot domain not configured` -32603.
+    memory_snapshot_reader: Option<Arc<dyn MemorySnapshotReader>>,
     /// Phase 82.13.b.1 — transcript appender used by
     /// `processing/intervention` (and later `processing/resume`)
     /// to stamp operator replies / summary / replayed inbounds
@@ -370,6 +374,7 @@ impl AdminRpcDispatcher {
             mcp_store: None,
             plugin_doctor: None,
             memory_reader: None,
+            memory_snapshot_reader: None,
             transcript_appender: None,
             event_emitter: None,
             secrets_store: None,
@@ -677,6 +682,20 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 90.x.memory-snapshot — install the snapshot list
+    /// reader. Production wires
+    /// `nexo_setup::admin_adapters::LiveMemorySnapshotReader`
+    /// around the daemon's `MemorySnapshotter`. `None` disables
+    /// `nexo/admin/memory/list_snapshots` (operator falls back
+    /// to `agent memory snapshot list` CLI).
+    pub fn with_memory_snapshot_reader(
+        mut self,
+        reader: Arc<dyn MemorySnapshotReader>,
+    ) -> Self {
+        self.memory_snapshot_reader = Some(reader);
+        self
+    }
+
     /// Phase 83.8.4.a — install the channel-outbound dispatcher
     /// used by `processing/intervention` when the action is
     /// `Reply`. Without one wired the handler returns
@@ -803,6 +822,8 @@ impl AdminRpcDispatcher {
             // read-only memory inspection independently of broader
             // capabilities.
             "nexo/admin/memory/query" => Some("memory_query"),
+            // Phase 90.x.memory-snapshot — list snapshots.
+            "nexo/admin/memory/list_snapshots" => Some("memory_snapshot"),
             // Phase 82.10.k — secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
@@ -1390,6 +1411,14 @@ impl AdminRpcDispatcher {
                 Some(reader) => super::domains::memory::query(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "memory domain not configured".into(),
+                )),
+            },
+            "nexo/admin/memory/list_snapshots" => match &self.memory_snapshot_reader {
+                Some(reader) => {
+                    super::domains::memory::list_snapshots(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "memory snapshot domain not configured".into(),
                 )),
             },
             "nexo/admin/secrets/write" => match &self.secrets_store {

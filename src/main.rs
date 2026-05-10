@@ -2061,6 +2061,20 @@ async fn main() -> Result<()> {
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
                 memory_reader: memory_reader.clone(),
+                // Phase 90.x.memory-snapshot — lazy-builds the
+                // LocalFsSnapshotter from `<config_dir>/memory.yaml`
+                // on first list() call, sidestepping the
+                // boot-order constraint that the daemon's main
+                // snapshotter is constructed AFTER admin
+                // bootstrap. Limitation: uses DefaultPathResolver
+                // — operators with custom path_resolver maps see
+                // an empty list. Future refactor threads the
+                // shared `Arc<dyn MemorySnapshotter>` through.
+                memory_snapshot_reader: Some(
+                    nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
+                        config_dir.clone(),
+                    ),
+                ),
                 // Phase 82.10.k — file-backed secrets store at
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new

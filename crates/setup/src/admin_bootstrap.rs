@@ -235,6 +235,13 @@ pub struct AdminBootstrapInputs<'a> {
     pub memory_reader: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemoryReader>,
     >,
+    /// Phase 90.x.memory-snapshot — snapshot list reader. `None`
+    /// keeps `nexo/admin/memory/list_snapshots` returning the
+    /// typed `memory snapshot domain not configured` -32603.
+    /// Production wires `crate::admin_adapters::LiveMemorySnapshotReader`.
+    pub memory_snapshot_reader: Option<
+        Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader>,
+    >,
     /// Phase 82.10.k — secrets store. `None` keeps
     /// `nexo/admin/secrets/write` returning the typed
     /// `secrets domain not configured` -32603. Production wires
@@ -691,6 +698,11 @@ impl AdminRpcBootstrap {
             if let Some(reader) = inputs.memory_reader.clone() {
                 dispatcher = dispatcher.with_memory_reader(reader);
             }
+            // Phase 90.x.memory-snapshot — install the snapshot
+            // list reader.
+            if let Some(reader) = inputs.memory_snapshot_reader.clone() {
+                dispatcher = dispatcher.with_memory_snapshot_reader(reader);
+            }
             // Phase 82.10.k — install the secrets domain when
             // boot has the production `FsSecretsStore` adapter.
             // Without it, `nexo/admin/secrets/write` returns the
@@ -978,6 +990,7 @@ mod tests {
             mcp_store: None,
             plugin_doctor: None,
             memory_reader: None,
+            memory_snapshot_reader: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1018,6 +1031,7 @@ mod tests {
             mcp_store: None,
             plugin_doctor: None,
             memory_reader: None,
+            memory_snapshot_reader: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1059,6 +1073,7 @@ mod tests {
             mcp_store: None,
             plugin_doctor: None,
             memory_reader: None,
+            memory_snapshot_reader: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1115,6 +1130,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1163,6 +1179,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1211,6 +1228,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1267,6 +1285,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1329,6 +1348,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1386,6 +1406,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1442,6 +1463,7 @@ mod tests {
             mcp_store: None,
             plugin_doctor: None,
             memory_reader: None,
+            memory_snapshot_reader: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1519,6 +1541,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1578,6 +1601,7 @@ mod tests {
                 mcp_store: None,
                 plugin_doctor: None,
                 memory_reader: None,
+                memory_snapshot_reader: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,

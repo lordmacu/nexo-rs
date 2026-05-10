@@ -31,6 +31,7 @@ nexo-auth = { version = "0.1.1", path = "../auth" }
 nexo-llm = { version = "0.1.1", path = "../llm" }
 nexo-llm-auth = { version = "0.1.0", path = "../llm-auth" }
 nexo-memory = { workspace = true }
+nexo-memory-snapshot = { workspace = true }
 anyhow       = { workspace = true }
 semver       = { workspace = true }
 serde        = { workspace = true }
