@@ -76,41 +76,57 @@ for the detailed close-out.
   (c) `transformers.js` bridge remain deferred — see
   `91.x.wasm.phase-4c` / `phase-4e` below.
 
-- ⬜ **91.x.wasm.phase-4c — WASM transport for the cloud STT
-  legs** — full WASM cloud STT remains gated out. A spike
-  during phase-4d.b finalisation removed the `not(wasm32)`
-  gate on `stt/mod.rs::cloud` and found two concrete blockers:
-  1. **reqwest multipart is native-only** — wasm32 reqwest
-     exposes a stripped builder surface; `OpenAI` + `Groq`
-     legs use `form.part(...).file_name(...).mime_str(...)`
-     which fails type inference on wasm32 (`cannot infer
-     type` on `.send().await` / `.text().await` /
-     `.json().await`).
-  2. **tokio-tungstenite drags TCP types** — mio cfg-gates
-     itself empty on wasm32 but `connect_async` still needs
-     a `TcpStream`-shaped type that doesn't exist there.
-  Unblock needs separate transport impls per cloud leg:
-  (a) REST legs (`OpenAi` + `Groq`) → swap multipart for
-      raw `gloo-net::http::Request` POST with audio body +
-      JSON form data, OR `web-sys::fetch` direct.
-  (b) WebSocket leg (`AnthropicVoiceStream`) → swap
-      tokio-tungstenite for `gloo-net::websocket::futures::
-      WebSocket` (Sink + Stream wrapper around `web-sys::
-      WebSocket`), wrap KeepAlive heartbeat in
-      `wasm_bindgen_futures::spawn_local` instead of
-      `tokio::spawn`.
-  Estimated cost: ~6-8 h. Mining reference:
-  `gloo-net::websocket::futures` exposes the same `Sink<
-  Message>` + `Stream<Item = Result<Message>>` API as
-  `tokio_tungstenite::WebSocketStream`, so the protocol
-  state-machine logic (KeepAlive heartbeat, 4-trigger
-  finalize, event parser) stays identical — only the
-  `connect_async` + `Message` enum differ. Splitting the
-  `AnthropicVoiceStream::transcribe` body into a private
-  `transcribe_protocol<Sink, Stream>` generic over the two
-  trait bounds + two cfg-gated thin opener fns
-  (`open_ws_native` / `open_ws_wasm`) is the cleanest design
-  path. Defer until a browser microapp demands cloud STT.
+- 🔄 **91.x.wasm.phase-4c — WASM transport for the cloud STT
+  legs** — phase-4c.2 shipped 2026-05-10; phase-4c.3 deferred.
+  - ✅ ~~**phase-4c.2 — hand-assembled multipart body**~~
+    shipped — REST legs (OpenAI + Groq) no longer use
+    `reqwest::multipart::Form` (native-only). Replaced with
+    `build_openai_multipart_body` (RFC 7578 body built into
+    `Vec<u8>`, submitted via cross-platform `.body(Vec<u8>)`).
+    6 new unit tests verify byte-exact framing including
+    binary-audio passthrough + BCP-47 region subtag strip +
+    language auto-detect omission. The `anthropic` module
+    carries its own `cfg(not(wasm32))` gate so wasm builds
+    enabling `stt-cloud-anthropic` get a no-op feature
+    instead of a compile error (defense in depth — the parent
+    `cloud` gate still blocks wasm but the module is
+    independently safe).
+  - ⬜ **phase-4c.3 — reqwest `rustls-tls` feature split** —
+    the remaining wasm32 blocker. reqwest 0.12's `rustls-tls`
+    feature pulls `rustls` which doesn't compile for wasm32
+    (the browser fetch API handles TLS without a TLS feature).
+    The microapp-sdk's optional reqwest declaration carries
+    `["json", "rustls-tls"]` in `[dependencies]`; Cargo
+    rejects splitting features per-target on a single optional
+    dep (`duplicate key` error). Three unblock options:
+    (a) sub-feature `stt-cloud-native-tls = ["stt-cloud",
+        "reqwest?/rustls-tls"]` so base `stt-cloud` is
+        wasm-compatible and consumers explicitly enable
+        rustls on native;
+    (b) split into two optional crates with different
+        package names (e.g. `reqwest-native` / `reqwest-wasm`)
+        — Cargo's separate-package workaround for per-target
+        features;
+    (c) drop the optional flag and use feature-gated `dep:`
+        references instead — more invasive but clean.
+    Estimated cost: ~1-2 h once a microapp demands wasm cloud
+    STT. The internal refactors (phase-4c.2 multipart, the
+    anthropic cfg) make the eventual ungate trivial — only
+    the Cargo feature split blocks today.
+  - ⬜ **phase-4c.4 — Anthropic voice_stream WASM transport** —
+    after phase-4c.3 unblocks the parent gate, the
+    `AnthropicVoiceStream` impl still needs a `gloo-net::
+    websocket::futures::WebSocket` swap-in (tokio-tungstenite
+    is native-only). Design path: split
+    `AnthropicVoiceStream::transcribe` into a generic
+    `transcribe_protocol<Sink, Stream>` method + two cfg-gated
+    thin opener fns (`open_ws_native` / `open_ws_wasm`); the
+    protocol state machine (KeepAlive heartbeat, 4-trigger
+    finalize, event parser) stays identical across both
+    targets. Wrap the KeepAlive heartbeat in
+    `wasm_bindgen_futures::spawn_local` on wasm
+    (`tokio::spawn` requires multi-threaded runtime that wasm
+    doesn't have). Estimated cost: ~4-6 h.
 
 - ⬜ **91.x.wasm.phase-4b.streaming — full push-to-talk live
   transcription** — phase-4b ships the one-shot path (buffer →

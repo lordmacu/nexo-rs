@@ -414,14 +414,19 @@ symphonia = { version = "0.5", default-features = false, features = [
 ], optional = true }
 # `wizard` feature — server-side LLM key probe. rustls-only to
 # match the agent-creator-microapp baseline (no system OpenSSL).
-# Phase 91.x.wasm.phase-4 — `multipart` lets the cloud STT
-# providers (OpenAI / Groq) upload the audio buffer; `json`
-# parses the response. `rustls-tls` is native-only (Cargo
-# doesn't accept per-target features on a single optional
-# dep without a duplicate-key error). WASM consumers wanting
-# cloud STT: filed as Phase 91.x.wasm.phase-4c — a separate
-# `gloo-net`-based path that swaps the transport on wasm32.
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"], optional = true }
+#
+# Phase 91.x.wasm.phase-4c — `multipart` dropped from the
+# feature set because the REST legs now build the multipart
+# body by hand via `build_openai_multipart_body`. That removes
+# one of the two wasm32 blockers (reqwest's `multipart::Form`
+# was native-only). The other blocker — `rustls-tls` not
+# compiling for wasm32 — still keeps the cloud module gated
+# on `not(wasm32)` at the parent. Filed as Phase
+# 91.x.wasm.phase-4c.3: split reqwest features per target via
+# a sub-feature (e.g. `stt-cloud-native-tls`) so wasm builds
+# can opt out of `rustls-tls` and use the browser fetch API
+# instead.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 # Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
 # transport. `rustls-tls-webpki-roots` skips the system trust
 # store probe (we ship the public Mozilla roots inside the

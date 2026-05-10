@@ -39,6 +39,11 @@ use serde::Deserialize;
 
 use super::SttError;
 
+// Phase 91.x.wasm.phase-4c — `anthropic` carries its own
+// `not(target_arch = "wasm32")` cfg gate at the module level
+// because tokio-tungstenite (its WebSocket transport) needs
+// TCP types absent on wasm32. The REST legs (`openai`, `groq`)
+// are wasm-portable after the multipart-body refactor.
 pub mod anthropic;
 pub mod groq;
 pub mod openai;
@@ -85,11 +90,18 @@ struct OpenAiCompatibleTranscription {
     text: String,
 }
 
-/// Shared HTTP POST + multipart helper for the OpenAI / Groq
-/// REST shape. The two providers differ only in endpoint URL
-/// + model id + (optionally) the Bearer token; the wire is
-/// otherwise identical, so the actual HTTP work lives here
-/// once.
+/// Shared HTTP POST helper for the OpenAI / Groq REST shape.
+/// The two providers differ only in endpoint URL + model id +
+/// the Bearer token; the wire is otherwise identical, so the
+/// actual HTTP work lives here once.
+///
+/// Phase 91.x.wasm.phase-4c — multipart body is assembled by
+/// hand (raw bytes) instead of via `reqwest::multipart::Form`
+/// because the latter is native-only on reqwest; wasm32 exposes
+/// only a subset of the builder. Hand-assembled body lets the
+/// same code path run on both targets — once the parent module
+/// drops the `not(wasm32)` cfg gate, the REST legs work in
+/// browser microapps too.
 async fn post_openai_compatible(
     endpoint: &str,
     api_key: &str,
@@ -98,29 +110,25 @@ async fn post_openai_compatible(
     audio_mime: &str,
     lang_hint: Option<&str>,
 ) -> Result<String, SttError> {
-    let part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name("audio")
-        .mime_str(audio_mime)
-        .map_err(|e| SttError::Decode(format!("invalid audio MIME {audio_mime:?}: {e}")))?;
-
-    let mut form = reqwest::multipart::Form::new()
-        .text("model", model.to_string())
-        .text("response_format", "json".to_string())
-        .part("file", part);
-
-    if let Some(lang) = lang_hint.filter(|l| !l.is_empty() && *l != "auto") {
-        // Whisper REST accepts BCP-47 language hints; split off
-        // any region subtag because the provider only honours
-        // the language-level code (`es-AR` → `es`).
-        let base = lang.split(|c| c == '-' || c == '_').next().unwrap_or(lang);
-        form = form.text("language", base.to_lowercase());
-    }
+    // RFC 7578 multipart/form-data. Boundary is a string the
+    // body never legitimately contains; using a UUID makes
+    // collision impossible for any realistic audio buffer.
+    let boundary = format!("nexo-stt-{}", uuid::Uuid::new_v4().simple());
+    let body = build_openai_multipart_body(
+        &boundary,
+        model,
+        audio_bytes,
+        audio_mime,
+        lang_hint,
+    );
+    let content_type = format!("multipart/form-data; boundary={boundary}");
 
     let client = reqwest::Client::new();
     let resp = client
         .post(endpoint)
         .bearer_auth(api_key)
-        .multipart(form)
+        .header("content-type", content_type)
+        .body(body)
         .send()
         .await
         .map_err(|e| SttError::Whisper(format!("cloud HTTP send: {e}")))?;
@@ -142,6 +150,72 @@ async fn post_openai_compatible(
         return Err(SttError::EmptyTranscript);
     }
     Ok(text)
+}
+
+/// Phase 91.x.wasm.phase-4c — assemble an RFC 7578
+/// `multipart/form-data` body for the OpenAI-compatible
+/// `/v1/audio/transcriptions` endpoint. Three fields:
+///   - `model` (string)
+///   - `response_format` (always `"json"`)
+///   - `language` (optional, BCP-47 base — `es-AR` → `es`)
+///   - `file` (the raw audio bytes, with `Content-Type` =
+///     `audio_mime`, `filename="audio"` per the Whisper-1 +
+///     Groq Whisper-large-v3 conventions)
+///
+/// `boundary` is a caller-chosen string the body never
+/// legitimately contains; we use a UUIDv4 simple form upstream
+/// for collision-resistance.
+///
+/// Built into a `Vec<u8>` (not a streaming body) so reqwest's
+/// `.body(Vec<u8>)` accepts it on both native and wasm32 —
+/// `reqwest::multipart::Form` is native-only, which is what
+/// blocked WASM cloud STT pre-phase-4c.
+fn build_openai_multipart_body(
+    boundary: &str,
+    model: &str,
+    audio_bytes: Vec<u8>,
+    audio_mime: &str,
+    lang_hint: Option<&str>,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(audio_bytes.len() + 512);
+
+    // Text field helper. Each field is its own --boundary
+    // section terminated by a CRLF before the next boundary.
+    let mut push_text = |name: &str, value: &str| {
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(value.as_bytes());
+        body.extend_from_slice(b"\r\n");
+    };
+
+    push_text("model", model);
+    push_text("response_format", "json");
+
+    if let Some(lang) = lang_hint.filter(|l| !l.is_empty() && *l != "auto") {
+        let base = lang.split(|c| c == '-' || c == '_').next().unwrap_or(lang);
+        push_text("language", &base.to_lowercase());
+    }
+
+    // File field — distinct because it carries a filename +
+    // Content-Type header before the binary payload.
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"file\"; filename=\"audio\"\r\n",
+    );
+    body.extend_from_slice(format!("Content-Type: {audio_mime}\r\n\r\n").as_bytes());
+    body.extend_from_slice(&audio_bytes);
+    body.extend_from_slice(b"\r\n");
+
+    // Closing boundary — note the trailing `--` (RFC 7578 §4.1)
+    // marks end-of-form, not just end-of-part.
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+    body
 }
 
 /// Chain two or more providers and try them in order. Fallback
@@ -565,5 +639,110 @@ mod tests {
             .await
             .expect_err("missing file should error");
         assert!(matches!(err, SttError::Io(_)));
+    }
+
+    // Phase 91.x.wasm.phase-4c.2 tests — hand-assembled
+    // multipart body. We don't have a live STT server to call;
+    // these verify byte-exact framing so the
+    // build_openai_multipart_body output matches what
+    // reqwest::multipart::Form would have produced.
+
+    #[test]
+    fn multipart_body_minimum_shape() {
+        let body = build_openai_multipart_body(
+            "TEST-BOUNDARY",
+            "whisper-1",
+            b"audio-payload".to_vec(),
+            "audio/ogg",
+            None,
+        );
+        let s = String::from_utf8(body).unwrap();
+        // Three sections: model, response_format, file +
+        // closing boundary.
+        assert_eq!(s.matches("--TEST-BOUNDARY\r\n").count(), 3);
+        assert!(s.ends_with("--TEST-BOUNDARY--\r\n"));
+        assert!(s.contains("name=\"model\"\r\n\r\nwhisper-1\r\n"));
+        assert!(s.contains("name=\"response_format\"\r\n\r\njson\r\n"));
+        assert!(s.contains(
+            "name=\"file\"; filename=\"audio\"\r\n\
+             Content-Type: audio/ogg\r\n\r\n\
+             audio-payload\r\n"
+        ));
+        // No language field when lang_hint=None.
+        assert!(!s.contains("name=\"language\""));
+    }
+
+    #[test]
+    fn multipart_body_includes_language_when_hint_given() {
+        let body = build_openai_multipart_body(
+            "X",
+            "m",
+            b"a".to_vec(),
+            "audio/ogg",
+            Some("es"),
+        );
+        let s = String::from_utf8(body).unwrap();
+        assert!(s.contains("name=\"language\"\r\n\r\nes\r\n"));
+    }
+
+    #[test]
+    fn multipart_body_strips_bcp47_region_subtag() {
+        let body = build_openai_multipart_body(
+            "X",
+            "m",
+            b"a".to_vec(),
+            "audio/ogg",
+            Some("es-AR"),
+        );
+        let s = String::from_utf8(body).unwrap();
+        // Whisper REST accepts language-level codes only;
+        // region subtag must be dropped.
+        assert!(s.contains("name=\"language\"\r\n\r\nes\r\n"));
+        assert!(!s.contains("es-AR"));
+        assert!(!s.contains("AR"));
+    }
+
+    #[test]
+    fn multipart_body_omits_language_for_auto() {
+        let body = build_openai_multipart_body(
+            "X", "m", b"a".to_vec(), "audio/ogg", Some("auto"),
+        );
+        let s = String::from_utf8(body).unwrap();
+        assert!(!s.contains("name=\"language\""));
+    }
+
+    #[test]
+    fn multipart_body_omits_language_for_empty_hint() {
+        let body = build_openai_multipart_body(
+            "X", "m", b"a".to_vec(), "audio/ogg", Some(""),
+        );
+        let s = String::from_utf8(body).unwrap();
+        assert!(!s.contains("name=\"language\""));
+    }
+
+    #[test]
+    fn multipart_body_preserves_binary_audio_verbatim() {
+        // Embed every byte 0x00..=0xFF — any naive string
+        // handling would corrupt this.
+        let audio: Vec<u8> = (0u8..=255).collect();
+        let body = build_openai_multipart_body(
+            "X",
+            "m",
+            audio.clone(),
+            "audio/L16",
+            None,
+        );
+        // Find the start of the audio payload — after the
+        // "\r\n\r\n" that ends the file field header.
+        let needle = b"Content-Type: audio/L16\r\n\r\n";
+        let idx = body
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("file field header must be present");
+        let audio_start = idx + needle.len();
+        let audio_end = audio_start + audio.len();
+        assert_eq!(&body[audio_start..audio_end], audio.as_slice());
+        // CRLF after the audio payload, then closing boundary.
+        assert_eq!(&body[audio_end..audio_end + 2], b"\r\n");
     }
 }
