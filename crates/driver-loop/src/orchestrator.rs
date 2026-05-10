@@ -30,6 +30,10 @@ use crate::proactive::{build_tick_prompt, wait_for_wake, ScheduledWake, WakeResu
 use crate::replay::{
     DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
 };
+// Unix-only — orchestrator's socket-server bind path is also
+// gated below. Windows builds skip the permission-prompt
+// forwarder entirely (see lib.rs comment on socket module).
+#[cfg(unix)]
 use crate::socket::DriverSocketServer;
 use crate::workspace::WorkspaceManager;
 use dashmap::DashMap;
@@ -250,10 +254,26 @@ impl DriverOrchestratorBuilder {
         let progress_every_turns = self.progress_every_turns;
         let cancel_root = self.cancel_root.unwrap_or_default();
 
-        // Bind the socket server.
+        // Bind the socket server. Unix-only — Windows builds
+        // get a no-op handle so the orchestrator's shutdown
+        // path (`socket_cancel.cancel()` + `_socket_handle.await`)
+        // works without changes. The permission-prompt
+        // forwarder feature is unavailable on Windows until
+        // we add a named-pipe / TCP-loopback alternative
+        // (Phase 27.x follow-up).
         let socket_cancel = TokioCancel::new();
-        let server = DriverSocketServer::bind(&socket_path, decider, socket_cancel.clone()).await?;
-        let socket_handle = tokio::spawn(server.run());
+        #[cfg(unix)]
+        let socket_handle = {
+            let _ = &socket_path; // suppress unused warning on cfg branch
+            let server =
+                DriverSocketServer::bind(&socket_path, decider, socket_cancel.clone()).await?;
+            tokio::spawn(server.run())
+        };
+        #[cfg(not(unix))]
+        let socket_handle = {
+            let _ = (&socket_path, decider);
+            tokio::spawn(async { Ok::<(), DriverError>(()) })
+        };
 
         Ok(DriverOrchestrator {
             claude_cfg,

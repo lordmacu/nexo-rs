@@ -19,6 +19,13 @@ pub mod post_compact_cleanup;
 pub mod proactive;
 pub mod prompt;
 pub mod replay;
+// Socket server uses tokio's Unix-domain primitives — guard
+// the module so Windows builds (which don't ship UnixListener
+// / UnixStream) compile clean. Operators on Windows targeting
+// the daemon's permission-prompt forwarder can either run via
+// WSL or wait for the Phase 27.x follow-up that swaps Unix
+// sockets for a named-pipe / TCP-loopback fallback.
+#[cfg(unix)]
 pub mod socket;
 pub mod workspace;
 
@@ -45,5 +52,6 @@ pub use prompt::compose_turn_prompt;
 pub use replay::{
     DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
 };
+#[cfg(unix)]
 pub use socket::{DriverSocketServer, SocketMessage};
 pub use workspace::{GitWorktreeMode, WorkspaceManager};
