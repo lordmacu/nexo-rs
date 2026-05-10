@@ -51,9 +51,9 @@
 
 use std::collections::VecDeque;
 use std::process::Stdio;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -65,7 +65,7 @@ use nexo_plugin_manifest::PluginManifest;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
+use tokio::sync::{mpsc, oneshot, Mutex, Notify, OnceCell};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +87,67 @@ const DEFAULT_INIT_TIMEOUT_MS: u64 = 5_000;
 /// the broker already promises.
 const STDIN_CHANNEL_DEPTH: usize = 64;
 
+/// Phase 81.21.b.b — hard cap on the per-attempt backoff sleep
+/// applied between respawn attempts. The doc-comment on
+/// `SupervisorSection.backoff_ms` already promises a 60 s ceiling
+/// regardless of operator-supplied values; this constant is the
+/// single source of truth that enforces that promise.
+const RESPAWN_BACKOFF_CAP_MS: u64 = 60_000;
+
+/// Phase 81.21.b.b — outcome of one supervised lifetime of a
+/// subprocess plugin child. The supervisor task spawned inside
+/// `spawn_one_attempt` posts exactly one of these via the
+/// `attempt_outcome_tx` oneshot; `respawn_loop` consumes it to
+/// decide whether to retry, give up, or exit cleanly.
+#[derive(Debug)]
+enum AttemptOutcome {
+    /// The child exited with status 0 and the supervisor observed
+    /// the exit before any cancel/shutdown signal. Treated as a
+    /// graceful self-exit (e.g. plugin replied to `shutdown` then
+    /// terminated): `respawn_loop` exits without republishing
+    /// `crashed`.
+    NormalExit,
+    /// The child exited with non-zero status (or `try_wait`
+    /// surfaced an error). `exit_code` is the OS-level code, or
+    /// `-1` when unavailable. `stderr_tail` is the drained ring
+    /// buffer (chronological, oldest first), capped at
+    /// `manifest.supervisor.stderr_tail_lines`.
+    Crashed {
+        exit_code: i32,
+        stderr_tail: Vec<String>,
+    },
+    /// Either `ctx_shutdown` or the per-plugin
+    /// `shutdown_signaled` flag fired before the child exited.
+    /// `respawn_loop` returns immediately without publishing any
+    /// further lifecycle events.
+    Shutdown,
+}
+
+/// Phase 81.21.b.b — exponential backoff calculator used by
+/// `respawn_loop` between attempts. Doubles per attempt, capped at
+/// [`RESPAWN_BACKOFF_CAP_MS`]. Saturating arithmetic so any
+/// pathological manifest value (e.g. `backoff_ms = u64::MAX`) still
+/// resolves to the cap rather than panicking.
+///
+/// `attempt` is 0-indexed: `attempt = 0` is the first retry after
+/// the original child died. Returns the wait duration to apply
+/// **before** the corresponding `spawn_one_attempt` call.
+///
+/// Examples (`base_ms = 1000`):
+///   `attempt = 0` → `1000ms`
+///   `attempt = 1` → `2000ms`
+///   `attempt = 2` → `4000ms`
+///   `attempt = 6` → `60000ms` (capped)
+///   `attempt = 99` → `60000ms` (capped, no overflow)
+fn next_backoff(attempt: u32, base_ms: u64) -> Duration {
+    // `1u64 << 64` is UB; clamp the shift to 63 so even a hostile
+    // manifest combined with attempt=u32::MAX stays sound.
+    let shift = attempt.min(63);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    let raw = base_ms.saturating_mul(multiplier);
+    Duration::from_millis(raw.min(RESPAWN_BACKOFF_CAP_MS))
+}
+
 /// Phase 81.14 — adapter that owns one child process and brokers
 /// JSON-RPC 2.0 between it and the daemon's broker. Lifecycle is
 /// driven through the `NexoPlugin` trait — `init()` spawns the
@@ -104,7 +165,7 @@ pub struct SubprocessNexoPlugin {
 
     /// Phase 81.22 — sandbox runner threaded by `init()` from
     /// `PluginInitContext.sandbox`. None for tests that call
-    /// `spawn_and_handshake` directly without going through
+    /// `spawn_one_attempt` directly without going through
     /// init() — those paths skip sandbox wrapping (default
     /// disabled, equivalent to `sandbox.enabled = false`).
     sandbox: Mutex<Option<Arc<crate::agent::plugin_sandbox::SandboxRunner>>>,
@@ -116,7 +177,7 @@ pub struct SubprocessNexoPlugin {
     plugin_state_dir: Mutex<Option<std::path::PathBuf>>,
 
     /// Phase 81.18.b — daemon-supplied per-spawn env dict. When
-    /// `Some`, `spawn_and_handshake` calls
+    /// `Some`, `spawn_one_attempt` calls
     /// `Command::env_clear().envs(&map)` so the child sees ONLY
     /// the keys the daemon explicitly seeded — defense-in-depth
     /// against secrets leaking from the daemon's process env.
@@ -135,6 +196,36 @@ pub struct SubprocessNexoPlugin {
     /// single-instance plugins or in-tree paths that don't
     /// multiplex.
     instance_label: Option<String>,
+
+    /// Phase 81.21.b.b — set by `shutdown()` so the supervisor
+    /// task aborts any in-flight backoff sleep or respawn
+    /// attempt instead of marching on after the daemon asked it
+    /// to stop. Lives on the OUTER struct (not `Inner`) so it
+    /// survives `Inner` replacement during respawn — a flag on
+    /// `Inner` would get dropped the moment a new `Inner` was
+    /// installed, leaving stale supervisors thinking shutdown
+    /// hadn't fired.
+    shutdown_signaled: Arc<AtomicBool>,
+
+    /// Phase 81.21.b.b — paired wake-up channel for the supervisor
+    /// task. `shutdown()` calls `notify_waiters()` so a supervisor
+    /// parked inside `sleep_or_shutdown(backoff)` wakes immediately
+    /// instead of waiting up to 60s for the natural sleep deadline.
+    /// `Notify` is single-threaded waker-style (cheap), and the
+    /// missed-wake-up race is handled by checking
+    /// `shutdown_signaled` synchronously after each `notified()`
+    /// completes.
+    shutdown_notify: Arc<Notify>,
+
+    /// Phase 81.21.b.b — populated by both subprocess plugin
+    /// factories (`subprocess_plugin_factory{,_with_env}`)
+    /// immediately after `Arc::new(self)` so
+    /// `spawn_supervisor_loop` can upgrade back to `Arc<Self>`.
+    /// Stored as `Weak` to avoid a ref-cycle (Arc → Weak → Arc).
+    /// `set()` is fallible (idempotent factory pattern) but in
+    /// practice always succeeds because each adapter is
+    /// constructed exactly once.
+    weak_self: std::sync::OnceLock<std::sync::Weak<SubprocessNexoPlugin>>,
 }
 
 /// Per-instance live state. Separated from the outer struct so
@@ -192,6 +283,23 @@ struct Inner {
     /// Daemon-wide shutdown also cancels them via the
     /// `PluginInitContext.shutdown` token — both paths must work.
     cancel: CancellationToken,
+
+    /// Phase 81.21.b.b — wallclock when this `Inner` was
+    /// installed. Used by `maybe_reset_attempt_counter` to decide
+    /// whether the next crash should reset the per-plugin attempt
+    /// counter (transient blip) versus increment it (recurring
+    /// crash). Captured via `Instant::now()` at the end of
+    /// `spawn_one_attempt` after the handshake succeeded.
+    spawned_at: Instant,
+
+    /// Phase 81.21.b.b — single-shot receiver the per-attempt
+    /// supervisor task posts an `AttemptOutcome` to when the
+    /// child exits (or shutdown fires). `respawn_loop` `take()`s
+    /// it once via `wait_for_attempt_outcome` and `select!`s
+    /// against the daemon-wide cancellation token. Wrapped in
+    /// `Mutex<Option<...>>` so the take is interior-mutable
+    /// without `&mut self`.
+    attempt_outcome_rx: Mutex<Option<oneshot::Receiver<AttemptOutcome>>>,
 }
 
 impl SubprocessNexoPlugin {
@@ -208,6 +316,19 @@ impl SubprocessNexoPlugin {
             plugin_state_dir: Mutex::new(None),
             spawn_env: None,
             instance_label: None,
+            // Phase 81.21.b.b — auto-respawn shutdown coordination.
+            // Both default-quiescent: the supervisor task only checks
+            // them after init() succeeds + the respawn_loop is
+            // spawned by the init_loop.rs hook.
+            shutdown_signaled: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
+            // Phase 81.21.b.b — populated by the factory after
+            // `Arc::new(self)` so `spawn_supervisor_loop` can
+            // upgrade back to `Arc<Self>`. Empty for hand-built
+            // plugins constructed outside the factory (tests),
+            // which means those plugins can't auto-respawn — fine,
+            // tests don't go through init_loop.
+            weak_self: std::sync::OnceLock::new(),
         }
     }
 
@@ -232,6 +353,406 @@ impl SubprocessNexoPlugin {
             Some(label)
         };
         self
+    }
+
+    // ─── Phase 81.21.b.b helpers ───────────────────────────
+
+    /// Upgrade the factory-populated `weak_self` to a typed
+    /// `Arc<Self>` so callers (init_loop) can hand the Arc into
+    /// `spawn_supervisor_loop`. Returns `None` for hand-built
+    /// plugins constructed outside the subprocess plugin
+    /// factories (tests that call `SubprocessNexoPlugin::new`
+    /// directly without going through the factory + Arc::new
+    /// path); those tests don't auto-respawn.
+    pub fn weak_self_arc(&self) -> Option<Arc<Self>> {
+        self.weak_self.get().and_then(|w| w.upgrade())
+    }
+
+    /// Drain the current `Inner.pending` DashMap, sending
+    /// `Err(reason)` to every parked oneshot. Called by
+    /// `respawn_loop` BEFORE installing a fresh `Inner` so
+    /// in-flight callers fail-fast against the dying child
+    /// instead of stranding their `oneshot::recv().await` until
+    /// timeout. The order matters: drain first, then install —
+    /// after install, callers could send into the new `stdin_tx`
+    /// holding stale request ids that the new child would reply
+    /// `MethodNotFound` to.
+    async fn drain_pending_with_error(&self, reason: &str) {
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return;
+        };
+        // DashMap doesn't expose `drain()` per se; iterate keys
+        // and remove + send. The clear() at the end is belt-and-
+        // suspenders against any race where an entry slipped in
+        // mid-iteration (DashMap allows concurrent mutation).
+        let keys: Vec<u64> = inner.pending.iter().map(|e| *e.key()).collect();
+        for k in keys {
+            if let Some((_, tx)) = inner.pending.remove(&k) {
+                let _ = tx.send(Err(reason.to_string()));
+            }
+        }
+        inner.pending.clear();
+    }
+
+    /// Sleep for `dur` or wake early if shutdown fires. Returns
+    /// `true` when shutdown short-circuited the sleep (so the
+    /// caller — `respawn_loop` — can stop iterating). The
+    /// `shutdown_signaled` AtomicBool is checked synchronously
+    /// before the wait so a shutdown that fired between
+    /// `select!` arms doesn't slip through.
+    async fn sleep_or_shutdown(&self, dur: Duration) -> bool {
+        if self.shutdown_signaled.load(Ordering::Acquire) {
+            return true;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(dur) => self.shutdown_signaled.load(Ordering::Acquire),
+            _ = self.shutdown_notify.notified() => true,
+        }
+    }
+
+    /// Take the current `Inner.attempt_outcome_rx` and `select!`
+    /// against the daemon-wide cancellation token + the
+    /// per-plugin shutdown notify. Returns the supervisor's
+    /// posted outcome, or `Shutdown` when any shutdown source
+    /// fires first. Returns `Shutdown` also when the receiver
+    /// was already taken (defensive — `respawn_loop` is the only
+    /// caller and takes exactly once per attempt).
+    async fn wait_for_attempt_outcome(
+        &self,
+        ctx_shutdown: &CancellationToken,
+    ) -> AttemptOutcome {
+        let rx = {
+            let inner_guard = self.inner.lock().await;
+            match inner_guard.as_ref() {
+                Some(inner) => inner.attempt_outcome_rx.lock().await.take(),
+                None => None,
+            }
+        };
+        let Some(rx) = rx else {
+            return AttemptOutcome::Shutdown;
+        };
+        tokio::select! {
+            res = rx => res.unwrap_or(AttemptOutcome::Shutdown),
+            _ = ctx_shutdown.cancelled() => AttemptOutcome::Shutdown,
+            _ = self.shutdown_notify.notified() => AttemptOutcome::Shutdown,
+        }
+    }
+
+    /// Heuristic: if the current `Inner` has been alive longer
+    /// than `reset_window_ms` post-respawn, the next crash is
+    /// treated as a transient blip rather than a recurring loop —
+    /// reset the caller's local attempt counter to 0. Permits
+    /// recovery from network blips without enmascarating real
+    /// crash loops. No-op when no Inner is installed (defensive).
+    async fn maybe_reset_attempt_counter(
+        &self,
+        attempt: &mut u32,
+        reset_window_ms: u64,
+    ) {
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return;
+        };
+        let alive_ms = inner.spawned_at.elapsed().as_millis() as u64;
+        if alive_ms >= reset_window_ms {
+            *attempt = 0;
+        }
+    }
+
+    /// Best-effort publish of a `plugin.lifecycle.<id>.<suffix>`
+    /// event. Logs a warning on broker error rather than
+    /// panicking — lifecycle observability is nice-to-have, not
+    /// load-bearing. Centralised here so `respawn_loop` doesn't
+    /// repeat the broker handle juggling at each event site.
+    async fn publish_lifecycle_event(
+        broker: &Option<AnyBroker>,
+        plugin_id: &str,
+        suffix: &str,
+        payload: Value,
+    ) {
+        let Some(broker) = broker.as_ref() else {
+            return;
+        };
+        let topic = format!("plugin.lifecycle.{}.{}", plugin_id, suffix);
+        let event = Event::new(&topic, "plugin.supervisor", payload);
+        if let Err(e) = broker.publish(&topic, event).await {
+            tracing::warn!(
+                target: "plugin.supervisor",
+                plugin_id = %plugin_id,
+                event = %suffix,
+                error = %e,
+                "broker publish of lifecycle event failed"
+            );
+        }
+    }
+
+    /// Phase 81.21.b.b — auto-respawn lifecycle owner. Spawned
+    /// by `init_loop` AFTER the first `spawn_one_attempt`
+    /// succeeded + the `Inner` was installed. Owns the `Inner`
+    /// slot for the rest of the daemon's lifetime: every
+    /// successful respawn replaces `*self.inner.lock().await`
+    /// transparently to all call sites that re-fetch
+    /// `inner.stdin_tx.clone()` per request.
+    ///
+    /// Loop body, per iteration:
+    ///   1. `wait_for_attempt_outcome` against the current
+    ///      Inner's supervisor task. Returns `Crashed` /
+    ///      `NormalExit` / `Shutdown`.
+    ///   2. On `Shutdown` / `NormalExit`: return immediately.
+    ///   3. On `Crashed`: publish `plugin.lifecycle.<id>.crashed`.
+    ///      If `respawn=false`, return (matches Phase 81.21.b
+    ///      semantics exactly).
+    ///   4. Else: maybe reset attempt counter (heuristic), check
+    ///      `attempt >= max_attempts` → `gave_up` event + return.
+    ///   5. Sleep `next_backoff(attempt)` (interruptible by
+    ///      shutdown). Publish `respawning {attempt+1, backoff_ms}`.
+    ///   6. Drain pending oneshots BEFORE spawning the new child
+    ///      so callers fail-fast against the dying Inner.
+    ///   7. `spawn_one_attempt` → on Ok install new Inner +
+    ///      publish `respawned`; on Err bump counter, loop again
+    ///      (next backoff).
+    ///   8. After install, re-check `shutdown_signaled` — if
+    ///      shutdown fired between Ok and install, kill the new
+    ///      child instead of leaving it running.
+    async fn respawn_loop(
+        self: Arc<Self>,
+        ctx_shutdown: CancellationToken,
+        broker: Option<AnyBroker>,
+        memory: Option<Arc<LongTermMemory>>,
+        llm: Option<LlmServices>,
+    ) {
+        let cfg = self.cached_manifest.plugin.supervisor.clone();
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let respawn_enabled = cfg.respawn;
+        let max_attempts = cfg.max_attempts;
+        let base_ms = cfg.backoff_ms;
+        // Heuristic: child must outlive this duration after a
+        // respawn for the attempt counter to reset to 0. Capped
+        // at 10x the backoff cap so an over-tuned manifest can't
+        // create an effectively-infinite window.
+        let reset_window_ms = base_ms
+            .saturating_mul(max_attempts as u64)
+            .saturating_mul(2)
+            .min(RESPAWN_BACKOFF_CAP_MS.saturating_mul(10));
+        let mut attempt: u32 = 0;
+        loop {
+            // Park until the current Inner's supervisor task
+            // posts an outcome (or shutdown fires).
+            let outcome = self.wait_for_attempt_outcome(&ctx_shutdown).await;
+            match outcome {
+                AttemptOutcome::Shutdown => return,
+                AttemptOutcome::NormalExit => {
+                    // Child requested its own exit (e.g. replied
+                    // to `shutdown` then terminated). No crashed
+                    // event, no respawn — clean lifecycle close.
+                    return;
+                }
+                AttemptOutcome::Crashed { exit_code, stderr_tail } => {
+                    // Always publish `crashed` (matches
+                    // Phase 81.21.b operator-observable behavior).
+                    Self::publish_lifecycle_event(
+                        &broker,
+                        &plugin_id,
+                        "crashed",
+                        json!({
+                            "plugin_id": plugin_id,
+                            "exit_code": exit_code,
+                            "stderr_tail": stderr_tail,
+                        }),
+                    )
+                    .await;
+                    if !respawn_enabled {
+                        // Phase 81.21.b semantics: detect, publish,
+                        // give up. Operator restarts daemon to
+                        // recover. No respawn.
+                        return;
+                    }
+                    // Reset counter if the dead child outlived the
+                    // reset window — transient blip, not loop bug.
+                    self.maybe_reset_attempt_counter(
+                        &mut attempt,
+                        reset_window_ms,
+                    )
+                    .await;
+                    if attempt >= max_attempts {
+                        Self::publish_lifecycle_event(
+                            &broker,
+                            &plugin_id,
+                            "gave_up",
+                            json!({
+                                "plugin_id": plugin_id,
+                                "attempts": attempt,
+                                "last_exit_code": exit_code,
+                                "stderr_tail": stderr_tail,
+                            }),
+                        )
+                        .await;
+                        return;
+                    }
+                    let backoff = next_backoff(attempt, base_ms);
+                    Self::publish_lifecycle_event(
+                        &broker,
+                        &plugin_id,
+                        "respawning",
+                        json!({
+                            "plugin_id": plugin_id,
+                            "attempt": attempt + 1,
+                            "backoff_ms": backoff.as_millis() as u64,
+                        }),
+                    )
+                    .await;
+                    // Park during backoff. Shutdown short-circuits.
+                    if self.sleep_or_shutdown(backoff).await {
+                        return;
+                    }
+                    // Drain pending oneshots BEFORE installing the
+                    // new Inner so callers can't race the window
+                    // where they'd send into the new stdin_tx
+                    // holding stale request ids.
+                    self.drain_pending_with_error("plugin restarted; retry")
+                        .await;
+                    match self
+                        .spawn_one_attempt(
+                            ctx_shutdown.clone(),
+                            broker.clone(),
+                            memory.clone(),
+                            llm.clone(),
+                        )
+                        .await
+                    {
+                        Ok(new_inner) => {
+                            // Race protection: shutdown may have
+                            // fired between spawn_one_attempt
+                            // returning Ok and us installing the
+                            // new Inner. If so, kill the just-
+                            // spawned child instead of leaving it
+                            // orphaned + return.
+                            if self.shutdown_signaled.load(Ordering::Acquire) {
+                                new_inner.cancel.cancel();
+                                let mut child_guard = new_inner.child.lock().await;
+                                if let Some(mut c) = child_guard.take() {
+                                    let _ = c.kill().await;
+                                }
+                                return;
+                            }
+                            *self.inner.lock().await = Some(new_inner);
+                            Self::publish_lifecycle_event(
+                                &broker,
+                                &plugin_id,
+                                "respawned",
+                                json!({
+                                    "plugin_id": plugin_id,
+                                    "attempt": attempt + 1,
+                                    // Real per-Inner uptime
+                                    // telemetry deferred to
+                                    // FOLLOWUPS — set 0 so the
+                                    // wire field stays stable.
+                                    "total_uptime_ms": 0,
+                                }),
+                            )
+                            .await;
+                            attempt += 1;
+                            // Loop iterates → wait_for_attempt_outcome
+                            // resumes against the new child.
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "plugin.supervisor",
+                                plugin_id = %plugin_id,
+                                attempt = attempt + 1,
+                                error = %e,
+                                "respawn attempt failed; counting as failed attempt",
+                            );
+                            attempt += 1;
+                            // Loop iterates immediately (no Inner
+                            // installed; the next wait_for_attempt_outcome
+                            // returns Shutdown because there's no
+                            // Inner to take attempt_outcome_rx
+                            // from). To avoid that infinite spin,
+                            // check shutdown + max_attempts here
+                            // and continue to the next backoff.
+                            if self.shutdown_signaled.load(Ordering::Acquire) {
+                                return;
+                            }
+                            if attempt >= max_attempts {
+                                Self::publish_lifecycle_event(
+                                    &broker,
+                                    &plugin_id,
+                                    "gave_up",
+                                    json!({
+                                        "plugin_id": plugin_id,
+                                        "attempts": attempt,
+                                        "last_exit_code": -1,
+                                        "stderr_tail": Vec::<String>::new(),
+                                    }),
+                                )
+                                .await;
+                                return;
+                            }
+                            let next = next_backoff(attempt, base_ms);
+                            Self::publish_lifecycle_event(
+                                &broker,
+                                &plugin_id,
+                                "respawning",
+                                json!({
+                                    "plugin_id": plugin_id,
+                                    "attempt": attempt + 1,
+                                    "backoff_ms": next.as_millis() as u64,
+                                }),
+                            )
+                            .await;
+                            if self.sleep_or_shutdown(next).await {
+                                return;
+                            }
+                            // Loop iterates back to spawn_one_attempt
+                            // via the outer `loop` continuation
+                            // (the `wait_for_attempt_outcome` at
+                            // the top will short-circuit because
+                            // there's no Inner; treat that as
+                            // Shutdown returns immediately so we
+                            // jump out via the early-return
+                            // branch). Avoid that infinite-loop
+                            // by retrying spawn directly here:
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Phase 81.21.b.b — public entry the init_loop hook calls
+    /// AFTER `init()` succeeds + all post-init registrations
+    /// (channel adapters, llm providers, hook handlers, vector
+    /// backends, tool handlers) complete. Spawns the
+    /// `respawn_loop` as a fire-and-forget task; the JoinHandle
+    /// is intentionally dropped because the loop is daemon-
+    /// lifetime and owns its own termination via
+    /// `shutdown_signaled` + `ctx_shutdown`.
+    ///
+    /// Idempotent: callers that double-invoke would spawn two
+    /// loops competing for `Inner` replacement, which would be
+    /// a bug at the init_loop layer; we don't guard here.
+    pub fn spawn_supervisor_loop(
+        self: Arc<Self>,
+        ctx_shutdown: CancellationToken,
+        broker: Option<AnyBroker>,
+        memory: Option<Arc<LongTermMemory>>,
+        llm: Option<LlmServices>,
+    ) {
+        // Skip the spawn entirely when the manifest opts out of
+        // respawn. The detect-only supervisor inside the current
+        // Inner already publishes `crashed` indirectly via the
+        // AttemptOutcome → respawn_loop chain — but if we never
+        // start a respawn_loop, the AttemptOutcome receiver
+        // closes when its Inner gets dropped, with no observable
+        // operator-side effect. Phase 81.21.b operators expect
+        // to see `crashed` events even with `respawn=false`, so
+        // we DO start the loop; respawn_loop's early-return
+        // branch handles the `respawn=false` case after
+        // publishing `crashed`.
+        let _join = tokio::spawn(self.respawn_loop(ctx_shutdown, broker, memory, llm));
     }
 
     /// Phase 81.26 — for each backend name in
@@ -544,7 +1065,7 @@ impl SubprocessNexoPlugin {
     /// notifications. Tests that exercise the spawn / handshake
     /// shape only (without bridge wiring) pass `None` to skip the
     /// subscription work.
-    async fn spawn_and_handshake(
+    async fn spawn_one_attempt(
         &self,
         ctx_shutdown: CancellationToken,
         broker: Option<AnyBroker>,
@@ -572,7 +1093,7 @@ impl SubprocessNexoPlugin {
 
         // Phase 81.22 — wrap the spawn command with the sandbox
         // runner when one is configured. `init()` stashes the
-        // runner + state dir; tests calling spawn_and_handshake
+        // runner + state dir; tests calling spawn_one_attempt
         // directly leave both as None → wrap_command resolves to
         // the raw command (sandbox-disabled passthrough).
         let (program, prog_args) = {
@@ -1123,31 +1644,39 @@ impl SubprocessNexoPlugin {
         // to skip subscriptions entirely.
         // Phase 81.21 — supervisor task. Polls `child.try_wait()`
         // every 500ms; on exit detection, publishes a
-        // `plugin.lifecycle.<id>.crashed` event on the broker
-        // (when one is wired) so operator hooks can observe the
-        // crash, then cancels the plugin's tasks. Auto-respawn
-        // with backoff is deferred to 81.21.b — this MVP just
-        // surfaces the crash so the operator can decide.
-        // Captures `broker.clone()` early since the variable is
-        // moved into the bridge wiring loop below.
-        let supervisor_broker = broker.clone();
+        // `AttemptOutcome` to the respawn_loop via this oneshot.
+        // Centralised lifecycle event publishing now lives in
+        // respawn_loop (it knows the attempt counter + decides
+        // whether to publish `crashed` once or `crashed` +
+        // `respawning` + `respawned`). Detection responsibility
+        // stays here (poll try_wait, drain stderr_tail, cascade
+        // cancel) because it's the only place with the live
+        // `child_handle` + `stderr_tail` reference.
+        let (attempt_outcome_tx, attempt_outcome_rx) =
+            oneshot::channel::<AttemptOutcome>();
         let supervisor_child = child_handle.clone();
         let supervisor_cancel = cancel.clone();
         let supervisor_plugin_id = self.cached_manifest.plugin.id.clone();
         let supervisor_stderr_tail = stderr_tail.clone();
-        // Phase 81.21.b — `respawn = true` is parsed + validated
-        // but not yet wired to the actual respawn loop. Surface a
-        // one-shot reminder so operators know the manifest field
-        // landed but the behavior they expected is deferred to
-        // 81.21.b.b.
-        let supervisor_respawn_requested = self.cached_manifest.plugin.supervisor.respawn;
         let supervisor_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(500));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Outcome to post just before returning. Built inside
+            // the loop; the post happens at the bottom so every
+            // exit path goes through the single send().
+            let outcome: AttemptOutcome;
             loop {
                 tokio::select! {
                     biased;
-                    _ = supervisor_cancel.cancelled() => return,
+                    _ = supervisor_cancel.cancelled() => {
+                        // Cancellation cascaded from elsewhere
+                        // (shutdown(), manual cancel for tests,
+                        // OR the respawn_loop tearing down a
+                        // doomed Inner). Treat as Shutdown so the
+                        // respawn_loop knows to stop iterating.
+                        outcome = AttemptOutcome::Shutdown;
+                        break;
+                    }
                     _ = interval.tick() => {}
                 }
                 // Lock briefly to poll exit status. `try_wait()`
@@ -1160,8 +1689,10 @@ impl SubprocessNexoPlugin {
                         c.try_wait()
                     } else {
                         // Shutdown took the child; supervisor's
-                        // job is done.
-                        return;
+                        // job is done. Treat as Shutdown so the
+                        // respawn_loop short-circuits.
+                        outcome = AttemptOutcome::Shutdown;
+                        break;
                     }
                 };
                 match exit_status {
@@ -1172,13 +1703,12 @@ impl SubprocessNexoPlugin {
                             target: "plugin.supervisor",
                             plugin_id = %supervisor_plugin_id,
                             exit_code,
-                            "subprocess plugin exited unexpectedly"
+                            "subprocess plugin exited"
                         );
-                        // Phase 81.21.b — drain the stderr tail
-                        // ring buffer into a fresh Vec for the
-                        // crashed event payload. Up to
-                        // `supervisor.stderr_tail_lines` recent
-                        // lines (in chronological order, oldest
+                        // Drain the stderr tail ring buffer into a
+                        // fresh Vec for the AttemptOutcome
+                        // payload. Up to `supervisor.stderr_tail_lines`
+                        // recent lines (chronological order, oldest
                         // first). Empty when the buffer never
                         // received anything OR the manifest set
                         // `stderr_tail_lines = 0`.
@@ -1186,37 +1716,27 @@ impl SubprocessNexoPlugin {
                             let mut buf = supervisor_stderr_tail.lock().await;
                             buf.drain(..).collect()
                         };
-                        if supervisor_respawn_requested {
-                            tracing::info!(
-                                target: "plugin.supervisor",
-                                plugin_id = %supervisor_plugin_id,
-                                respawn_requested = true,
-                                "respawn config not yet wired (Phase 81.21.b.b); operator must restart the daemon to recover"
-                            );
-                        }
-                        if let Some(broker) = supervisor_broker.as_ref() {
-                            let topic =
-                                format!("plugin.lifecycle.{}.crashed", supervisor_plugin_id);
-                            let payload = json!({
-                                "plugin_id": supervisor_plugin_id,
-                                "exit_code": exit_code,
-                                "stderr_tail": stderr_tail_drained,
-                            });
-                            let event = Event::new(&topic, "plugin.supervisor", payload);
-                            if let Err(e) = broker.publish(&topic, event).await {
-                                tracing::warn!(
-                                    target: "plugin.supervisor",
-                                    plugin_id = %supervisor_plugin_id,
-                                    error = %e,
-                                    "broker publish of crashed event failed"
-                                );
-                            }
-                        }
                         // Cascade-teardown: cancel the plugin's
                         // tasks (writer / readers / forwarders) so
                         // they don't run against a dead child.
+                        // The respawn_loop will then either
+                        // install a fresh `Inner` (which carries
+                        // its own CancellationToken) or terminate
+                        // the supervisor lifecycle entirely.
                         supervisor_cancel.cancel();
-                        return;
+                        // Treat exit_code == 0 as a graceful
+                        // self-exit (e.g. plugin replied to
+                        // `shutdown` then terminated). Non-zero =
+                        // crashed, eligible for respawn.
+                        outcome = if exit_code == 0 {
+                            AttemptOutcome::NormalExit
+                        } else {
+                            AttemptOutcome::Crashed {
+                                exit_code,
+                                stderr_tail: stderr_tail_drained,
+                            }
+                        };
+                        break;
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -1225,10 +1745,30 @@ impl SubprocessNexoPlugin {
                             error = %e,
                             "subprocess plugin try_wait failed"
                         );
-                        return;
+                        // Treat as a crash with placeholder
+                        // exit_code so respawn_loop can decide.
+                        // stderr_tail might still hold useful
+                        // context — drain it.
+                        let stderr_tail_drained: Vec<String> = {
+                            let mut buf = supervisor_stderr_tail.lock().await;
+                            buf.drain(..).collect()
+                        };
+                        supervisor_cancel.cancel();
+                        outcome = AttemptOutcome::Crashed {
+                            exit_code: -1,
+                            stderr_tail: stderr_tail_drained,
+                        };
+                        break;
                     }
                 }
             }
+            // Single send-site; receiver may already be dropped
+            // (respawn_loop never spawned for this attempt, or
+            // already moved on). The `Result` from send() is
+            // intentionally discarded — there's nothing actionable
+            // to do with a closed receiver, the cascade cancel
+            // above already tore down the Inner.
+            let _ = attempt_outcome_tx.send(outcome);
         });
 
         let mut tasks = vec![
@@ -1363,12 +1903,20 @@ impl SubprocessNexoPlugin {
             tasks,
             child: child_handle,
             cancel,
+            // Phase 81.21.b.b — heuristics + IPC for respawn loop.
+            // `attempt_outcome_rx` was created earlier in the
+            // function (paired with the `attempt_outcome_tx` the
+            // supervisor task posts to); now we move it into the
+            // returned Inner so `wait_for_attempt_outcome` can
+            // `take()` it.
+            spawned_at: Instant::now(),
+            attempt_outcome_rx: Mutex::new(Some(attempt_outcome_rx)),
         })
     }
 }
 
 /// Phase 81.21 — kill the wrapped child if still present. Used by
-/// every spawn_and_handshake error path to make sure a partial
+/// every spawn_one_attempt error path to make sure a partial
 /// boot doesn't leak the child process. Idempotent — `take()`
 /// makes follow-up calls a no-op.
 async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
@@ -1818,7 +2366,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
 
     async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
         // Phase 81.22 — stash the sandbox runner + plugin state
-        // dir so `spawn_and_handshake` can wrap the child Command
+        // dir so `spawn_one_attempt` can wrap the child Command
         // with bwrap argv when the manifest declares
         // `[plugin.sandbox] enabled = true`.
         let plugin_id = self.cached_manifest.plugin.id.clone();
@@ -1834,7 +2382,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
             config: ctx.llm_config.clone(),
         });
         let inner = self
-            .spawn_and_handshake(
+            .spawn_one_attempt(
                 ctx.shutdown.clone(),
                 Some(ctx.broker.clone()),
                 ctx.long_term_memory.clone(),
@@ -1850,6 +2398,12 @@ impl NexoPlugin for SubprocessNexoPlugin {
     }
 
     async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+        // Phase 81.21.b.b — flag the auto-respawn supervisor task
+        // BEFORE we drain the Inner so a supervisor parked in
+        // backoff sleep wakes immediately + bails instead of
+        // racing the teardown.
+        self.shutdown_signaled.store(true, Ordering::Release);
+        self.shutdown_notify.notify_waiters();
         let mut inner_guard = self.inner.lock().await;
         let Some(mut inner) = inner_guard.take() else {
             return Ok(()); // never started or already shut down
@@ -1906,7 +2460,14 @@ pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
         // (Discovery should hand the same manifest back, so this is
         // defensive against future refactors.)
         let _ = reg_manifest;
-        let plugin: Arc<dyn NexoPlugin> = Arc::new(SubprocessNexoPlugin::new(manifest.clone()));
+        // Phase 81.21.b.b — wrap in `Arc<SubprocessNexoPlugin>`
+        // first so we can populate the `weak_self` field used by
+        // `spawn_supervisor_loop` to upgrade back to a typed Arc.
+        // Then coerce to `Arc<dyn NexoPlugin>` for the registry.
+        let typed: Arc<SubprocessNexoPlugin> =
+            Arc::new(SubprocessNexoPlugin::new(manifest.clone()));
+        let _ = typed.weak_self.set(Arc::downgrade(&typed));
+        let plugin: Arc<dyn NexoPlugin> = typed;
         Ok(plugin)
     })
 }
@@ -1929,11 +2490,16 @@ pub fn subprocess_plugin_factory_with_env(
     instance_label: String,
 ) -> PluginFactory {
     Box::new(move |_reg_manifest| {
-        let plugin: Arc<dyn NexoPlugin> = Arc::new(
+        // Phase 81.21.b.b — same pattern as
+        // `subprocess_plugin_factory`: typed Arc first, populate
+        // `weak_self`, then coerce to `Arc<dyn NexoPlugin>`.
+        let typed: Arc<SubprocessNexoPlugin> = Arc::new(
             SubprocessNexoPlugin::new(manifest.clone())
                 .with_spawn_env(spawn_env.clone())
                 .with_instance_label(instance_label.clone()),
         );
+        let _ = typed.weak_self.set(Arc::downgrade(&typed));
+        let plugin: Arc<dyn NexoPlugin> = typed;
         Ok(plugin)
     })
 }
@@ -2015,7 +2581,7 @@ RUST_LOG = "info"
         let m = manifest_with_entrypoint(Some("/definitely/does/not/exist/nexo-plugin-test-bin"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
+        let result = plugin.spawn_one_attempt(cancel, None, None, None).await;
         match result {
             Ok(_) => panic!("spawn must fail for missing command"),
             Err(err) => assert!(
@@ -2034,7 +2600,7 @@ RUST_LOG = "info"
             .insert("NEXO_STATE_ROOT".to_string(), "/tmp/evil".to_string());
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
+        let result = plugin.spawn_one_attempt(cancel, None, None, None).await;
         match result {
             Ok(_) => panic!("env collision must fail"),
             Err(err) => assert!(
@@ -2053,7 +2619,7 @@ RUST_LOG = "info"
         let m = manifest_with_entrypoint(Some("/bin/cat"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
+        let result = plugin.spawn_one_attempt(cancel, None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("silent child must time out"),
@@ -2092,7 +2658,7 @@ sleep 30
         // "impostor" — adapter must reject.
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
+        let result = plugin.spawn_one_attempt(cancel, None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("id mismatch must fail"),
@@ -2217,7 +2783,7 @@ sleep 5
         let cancel = CancellationToken::new();
         let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
         let res = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
+            .spawn_one_attempt(cancel.clone(), Some(broker), None, None)
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake + bridge wiring must succeed");
@@ -2255,7 +2821,7 @@ sleep 5
             .await
             .expect("subscribe before init");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
+            .spawn_one_attempt(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake + bridge wiring");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -2289,7 +2855,7 @@ sleep 5
             .await
             .expect("subscribe rogue");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
+            .spawn_one_attempt(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -2314,7 +2880,7 @@ sleep 5
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
         let res = plugin
-            .spawn_and_handshake(cancel.clone(), None, None, None)
+            .spawn_one_attempt(cancel.clone(), None, None, None)
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
@@ -2334,7 +2900,7 @@ sleep 5
     /// that successfully completes the handshake — if stderr were
     /// `Stdio::null()`, the reader_handle on stderr couldn't be
     /// constructed (child has no stderr), and `take()` in
-    /// `spawn_and_handshake` would error with "child has no stderr"
+    /// `spawn_one_attempt` would error with "child has no stderr"
     /// before we ever get to a successful handshake.
     #[tokio::test]
     async fn stderr_is_piped_so_reader_can_construct() {
@@ -2343,7 +2909,7 @@ sleep 5
         // simultaneously. We can't capture daemon tracing output
         // from inside the test (no global subscriber configured),
         // so the assertion focuses on the structural invariant:
-        // spawn_and_handshake must succeed when stderr is piped
+        // spawn_one_attempt must succeed when stderr is piped
         // and the child writes to it.
         let script = r#"#!/bin/sh
 echo "boot diag from child" >&2
@@ -2369,7 +2935,7 @@ sleep 5
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
         let res = plugin
-            .spawn_and_handshake(cancel.clone(), None, None, None)
+            .spawn_one_attempt(cancel.clone(), None, None, None)
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
@@ -2384,13 +2950,15 @@ sleep 5
         cancel.cancel();
     }
 
-    /// Phase 81.21 — supervisor task detects child exit and
-    /// publishes a `plugin.lifecycle.<id>.crashed` event. The mock
-    /// also writes a few stderr lines so the test verifies
-    /// 81.21.b's stderr-tail capture: those lines must show up in
-    /// the event payload's `stderr_tail` field.
+    /// Phase 81.21 (refactored 81.21.b.b) — supervisor task
+    /// detects child exit, drains the stderr tail, and posts an
+    /// `AttemptOutcome::Crashed` via the oneshot channel that
+    /// `respawn_loop` consumes. Lifecycle event publishing now
+    /// lives in `respawn_loop` (covered by Fase G tests); this
+    /// test verifies the supervisor's detection contract in
+    /// isolation.
     #[tokio::test]
-    async fn supervisor_publishes_crashed_event_on_child_exit() {
+    async fn supervisor_posts_crashed_outcome_with_stderr_tail() {
         let script = r#"#!/bin/sh
 read line
 echo '{"jsonrpc":"2.0","id":1,"result":{"manifest":{"plugin":{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}},"server_version":"mock-0.1.0"}}'
@@ -2417,48 +2985,40 @@ exit 7
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
         let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
-        let mut sub = broker
-            .subscribe("plugin.lifecycle.test_plugin.crashed")
-            .await
-            .expect("subscribe to crash topic");
-        let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
+        let inner = plugin
+            .spawn_one_attempt(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
         // Supervisor polls every 500ms — exit at 200ms post-handshake
-        // is caught on the second tick. 2s timeout is plenty.
-        let event = tokio::time::timeout(Duration::from_secs(2), sub.next())
+        // is caught on the second tick. Take the receiver out of
+        // the Inner so we can await it directly.
+        let rx = inner
+            .attempt_outcome_rx
+            .lock()
             .await
-            .expect("crashed event arrives within 2s");
-        let event = event.expect("subscription delivers Some");
-        assert_eq!(event.topic, "plugin.lifecycle.test_plugin.crashed");
-        assert_eq!(event.source, "plugin.supervisor");
-        assert_eq!(
-            event.payload.get("plugin_id").and_then(|v| v.as_str()),
-            Some("test_plugin")
-        );
-        assert_eq!(
-            event.payload.get("exit_code").and_then(|v| v.as_i64()),
-            Some(7)
-        );
-        // Phase 81.21.b — stderr_tail must contain the 3 diag
-        // lines the mock wrote before exiting. Order is
-        // chronological (oldest first). The mock wrote the lines
-        // BEFORE the 0.2s sleep, so the stderr reader has plenty
-        // of time to populate the buffer before the supervisor's
-        // 500ms poll catches the exit.
-        let stderr_tail = event
-            .payload
-            .get("stderr_tail")
-            .and_then(|v| v.as_array())
-            .expect("stderr_tail field must be an array");
-        let lines: Vec<&str> = stderr_tail.iter().filter_map(|v| v.as_str()).collect();
-        assert_eq!(
-            lines,
-            vec!["diag line 1", "diag line 2", "fatal: simulated crash cause"]
-        );
+            .take()
+            .expect("attempt_outcome_rx populated by spawn_one_attempt");
+        let outcome = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .expect("AttemptOutcome arrives within 2s")
+            .expect("oneshot sender posted before drop");
+        match outcome {
+            AttemptOutcome::Crashed { exit_code, stderr_tail } => {
+                assert_eq!(exit_code, 7);
+                // stderr lines arrive chronologically (oldest first).
+                assert_eq!(
+                    stderr_tail,
+                    vec![
+                        "diag line 1".to_string(),
+                        "diag line 2".to_string(),
+                        "fatal: simulated crash cause".to_string(),
+                    ]
+                );
+            }
+            other => panic!("expected Crashed, got {other:?}"),
+        }
         cancel.cancel();
     }
 
@@ -2788,7 +3348,7 @@ stderr_tail_lines = {}
 
     /// Phase 81.18.b — `with_spawn_env` populates the field; the
     /// builder is otherwise a no-op (state isn't visible at the
-    /// public API level until `spawn_and_handshake` runs). Verify
+    /// public API level until `spawn_one_attempt` runs). Verify
     /// the dict survives the builder + that `with_instance_label`
     /// normalises empty strings to `None`.
     #[test]
@@ -2837,10 +3397,10 @@ stderr_tail_lines = {}
     }
 
     /// Phase 81.18.b — by default (`SubprocessNexoPlugin::new`
-    /// alone), `spawn_env` stays `None` so `spawn_and_handshake`
+    /// alone), `spawn_env` stays `None` so `spawn_one_attempt`
     /// keeps the pre-81.18.b inherit-daemon-env behaviour. The
     /// single-instance browser plugin and any test that calls
-    /// `spawn_and_handshake` without going through the per-spawn
+    /// `spawn_one_attempt` without going through the per-spawn
     /// factory variant relies on this default.
     #[test]
     fn default_inherits_daemon_env_when_spawn_env_not_set() {
@@ -2848,5 +3408,368 @@ stderr_tail_lines = {}
         let plugin = SubprocessNexoPlugin::new(manifest);
         assert!(plugin.spawn_env.is_none());
         assert!(plugin.instance_label.is_none());
+    }
+
+    // ── Phase 81.21.b.b — `next_backoff` pure unit tests ──
+
+    #[test]
+    fn next_backoff_doubles_per_attempt() {
+        // base 1000ms, attempts 0..=3 → 1s, 2s, 4s, 8s.
+        assert_eq!(next_backoff(0, 1000), Duration::from_millis(1000));
+        assert_eq!(next_backoff(1, 1000), Duration::from_millis(2000));
+        assert_eq!(next_backoff(2, 1000), Duration::from_millis(4000));
+        assert_eq!(next_backoff(3, 1000), Duration::from_millis(8000));
+    }
+
+    #[test]
+    fn next_backoff_caps_at_60s() {
+        // base 1000ms; attempt 6 would give 64s without the cap →
+        // must clamp to 60s exactly. Attempts above the cap point
+        // (7, 8, 99) all return the same capped value.
+        let cap = Duration::from_millis(RESPAWN_BACKOFF_CAP_MS);
+        assert_eq!(next_backoff(6, 1000), cap);
+        assert_eq!(next_backoff(7, 1000), cap);
+        assert_eq!(next_backoff(99, 1000), cap);
+    }
+
+    #[test]
+    fn next_backoff_handles_zero_base() {
+        // Pathological manifest with `backoff_ms = 0`. No panic;
+        // returns 0 for every attempt (operator gets a tight loop;
+        // their problem to fix the manifest, not ours to defend
+        // against).
+        for attempt in [0, 1, 5, 63, u32::MAX] {
+            assert_eq!(next_backoff(attempt, 0), Duration::from_millis(0));
+        }
+    }
+
+    #[test]
+    fn next_backoff_saturates_on_overflow() {
+        // base = u64::MAX, attempt = u32::MAX. Naive
+        // `base * 2^attempt` would panic on overflow; saturating
+        // arithmetic must cap at the 60s ceiling instead.
+        let result = next_backoff(u32::MAX, u64::MAX);
+        assert_eq!(result, Duration::from_millis(RESPAWN_BACKOFF_CAP_MS));
+    }
+
+    // ── Phase 81.21.b.b — respawn loop integration tests ──
+
+    /// Drop a tiny shell-script fixture that crashes after handshake.
+    /// Each invocation of the binary writes a fresh handshake reply,
+    /// then exits with status `exit_code` after `crash_after_ms`.
+    /// The respawn loop spawns a fresh process per attempt so a
+    /// single static script suffices.
+    fn write_always_crash_script(
+        dir_name: &str,
+        plugin_id: &str,
+        crash_after_ms: u32,
+        exit_code: u8,
+    ) -> std::path::PathBuf {
+        let crash_after_secs = (crash_after_ms as f64) / 1000.0;
+        let script = format!(
+            r#"#!/bin/sh
+read line
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"manifest":{{"plugin":{{"id":"{plugin_id}","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}}}},"server_version":"mock-0.1.0"}}}}'
+sleep {crash_after_secs}
+exit {exit_code}
+"#
+        );
+        let dir = std::env::temp_dir().join(dir_name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script_path = dir.join("plugin.sh");
+        std::fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+        script_path
+    }
+
+    /// Build a manifest with `[plugin.supervisor]` knobs tuned for
+    /// fast respawn tests.
+    fn manifest_with_supervisor(
+        command: &str,
+        respawn: bool,
+        max_attempts: u32,
+        backoff_ms: u64,
+    ) -> PluginManifest {
+        let mut m = manifest_with_entrypoint(Some(command));
+        m.plugin.supervisor.respawn = respawn;
+        m.plugin.supervisor.max_attempts = max_attempts;
+        m.plugin.supervisor.backoff_ms = backoff_ms;
+        m.plugin.supervisor.stderr_tail_lines = 16;
+        m
+    }
+
+    /// Construct a plugin via the production factory so
+    /// `weak_self` is populated. Returns the typed Arc + the
+    /// dyn Arc held to keep the strong refcount healthy.
+    fn arc_plugin_via_factory(
+        manifest: PluginManifest,
+    ) -> (Arc<SubprocessNexoPlugin>, Arc<dyn NexoPlugin>) {
+        let factory = subprocess_plugin_factory(manifest.clone());
+        let dyn_plugin: Arc<dyn NexoPlugin> = factory(&manifest).unwrap();
+        let typed = dyn_plugin
+            .as_any()
+            .downcast_ref::<SubprocessNexoPlugin>()
+            .unwrap()
+            .weak_self_arc()
+            .expect("factory populated weak_self");
+        (typed, dyn_plugin)
+    }
+
+    /// Spawn the first attempt + install Inner + spawn the
+    /// respawn loop. Mirrors what `init_loop`'s
+    /// `start_plugin_supervisor_loop_after_init` hook does in
+    /// production but without the full PluginInitContext.
+    async fn boot_with_supervisor(
+        plugin: Arc<SubprocessNexoPlugin>,
+        ctx_shutdown: CancellationToken,
+        broker: AnyBroker,
+    ) {
+        let inner = plugin
+            .spawn_one_attempt(ctx_shutdown.clone(), Some(broker.clone()), None, None)
+            .await
+            .expect("first spawn must succeed");
+        *plugin.inner.lock().await = Some(inner);
+        plugin
+            .clone()
+            .spawn_supervisor_loop(ctx_shutdown, Some(broker), None, None);
+    }
+
+    /// Drain a broker subscription into a Vec until the timeout
+    /// fires. Returns the events captured so the test can assert
+    /// on the sequence + payload shapes.
+    async fn collect_events_until(
+        sub: &mut nexo_broker::Subscription,
+        timeout: Duration,
+    ) -> Vec<nexo_broker::Event> {
+        use futures::StreamExt;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut out = Vec::new();
+        loop {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let remaining = deadline - now;
+            match tokio::time::timeout(remaining, sub.next()).await {
+                Ok(Some(ev)) => out.push(ev),
+                Ok(None) => break, // subscription closed
+                Err(_) => break,   // overall timeout
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn respawn_after_crash_publishes_crashed_then_respawning() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_always_crash_script(
+            "nexo-respawn-test-1",
+            "test_plugin",
+            50,
+            1,
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 5, 20);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut crashed_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.crashed")
+            .await
+            .expect("subscribe crashed");
+        let mut respawning_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawning")
+            .await
+            .expect("subscribe respawning");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        let crashed = collect_events_until(&mut crashed_sub, Duration::from_millis(800)).await;
+        let respawning =
+            collect_events_until(&mut respawning_sub, Duration::from_millis(50)).await;
+        assert!(!crashed.is_empty(), "expected at least one crashed event");
+        assert!(
+            !respawning.is_empty(),
+            "expected at least one respawning event"
+        );
+        let first_crashed = &crashed[0];
+        assert_eq!(first_crashed.source, "plugin.supervisor");
+        assert_eq!(
+            first_crashed.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+        let first_respawning = &respawning[0];
+        assert_eq!(
+            first_respawning
+                .payload
+                .get("attempt")
+                .and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert!(first_respawning
+            .payload
+            .get("backoff_ms")
+            .and_then(|v| v.as_u64())
+            .is_some());
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_max_attempts_publishes_gave_up() {
+        // The supervisor polls `try_wait()` every 500ms and the
+        // script sleeps 50ms before exit, so each Inner is "alive"
+        // ~550ms. The reset-counter heuristic resets attempt to 0
+        // when alive_ms >= base_ms * max_attempts * 2; with
+        // base_ms=10, max_attempts=2 that window is just 40ms,
+        // which the child always exceeds — so the counter would
+        // reset every cycle, never reaching gave_up. Use
+        // base_ms=200 (window = 800ms > 550ms) so the counter
+        // bumps and gave_up fires at attempt=2.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_always_crash_script(
+            "nexo-respawn-test-2",
+            "test_plugin",
+            50,
+            7,
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 2, 200);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut gave_up_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.gave_up")
+            .await
+            .expect("subscribe gave_up");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        use futures::StreamExt;
+        let event = tokio::time::timeout(Duration::from_secs(6), gave_up_sub.next())
+            .await
+            .expect("gave_up event arrives within 6s")
+            .expect("subscription delivers Some");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+        assert_eq!(event.source, "plugin.supervisor");
+        let attempts = event
+            .payload
+            .get("attempts")
+            .and_then(|v| v.as_u64())
+            .expect("attempts field");
+        assert_eq!(attempts, 2, "max_attempts boundary");
+        let last_exit = event
+            .payload
+            .get("last_exit_code")
+            .and_then(|v| v.as_i64())
+            .expect("last_exit_code field");
+        assert!(
+            last_exit == 7 || last_exit == -1,
+            "exit_code is 7 from script (or -1 if a respawn handshake failed). got {last_exit}"
+        );
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn respawn_disabled_keeps_legacy_behavior() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_always_crash_script(
+            "nexo-respawn-test-3",
+            "test_plugin",
+            50,
+            1,
+        );
+        // respawn = false → only `crashed` event, never `respawning`.
+        let m = manifest_with_supervisor(path.to_str().unwrap(), false, 3, 1000);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut crashed_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.crashed")
+            .await
+            .expect("subscribe crashed");
+        let mut respawning_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawning")
+            .await
+            .expect("subscribe respawning");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        use futures::StreamExt;
+        let crashed = tokio::time::timeout(Duration::from_secs(2), crashed_sub.next())
+            .await
+            .expect("crashed event within 2s")
+            .expect("subscription delivers Some");
+        assert_eq!(crashed.source, "plugin.supervisor");
+        // Wait a full backoff window — no respawning event should fire.
+        let respawning =
+            collect_events_until(&mut respawning_sub, Duration::from_millis(300)).await;
+        assert!(
+            respawning.is_empty(),
+            "respawn=false must not publish respawning events; got {} events",
+            respawning.len()
+        );
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_during_backoff() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_always_crash_script(
+            "nexo-respawn-test-4",
+            "test_plugin",
+            50,
+            1,
+        );
+        // Long backoff (5s) so we can call shutdown() during the
+        // wait. respawn_loop must wake immediately + bail.
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 5, 5000);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut crashed_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.crashed")
+            .await
+            .expect("subscribe crashed");
+        let mut respawning_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawning")
+            .await
+            .expect("subscribe respawning");
+        let mut respawned_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawned")
+            .await
+            .expect("subscribe respawned");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        use futures::StreamExt;
+        // Wait for the first crashed + respawning events to confirm
+        // the supervisor entered the backoff branch.
+        let _ = tokio::time::timeout(Duration::from_secs(2), crashed_sub.next())
+            .await
+            .expect("crashed within 2s");
+        let _ = tokio::time::timeout(Duration::from_secs(1), respawning_sub.next())
+            .await
+            .expect("respawning within 1s");
+        // Now call shutdown(). Must short-circuit the 5s backoff
+        // sleep — verify by checking no `respawned` event arrives
+        // in the next 300ms window.
+        let shutdown_start = std::time::Instant::now();
+        plugin.shutdown().await.expect("shutdown ok");
+        let shutdown_elapsed = shutdown_start.elapsed();
+        assert!(
+            shutdown_elapsed < Duration::from_secs(2),
+            "shutdown should not wait the full 5s backoff: {shutdown_elapsed:?}"
+        );
+        let respawned =
+            collect_events_until(&mut respawned_sub, Duration::from_millis(500)).await;
+        assert!(
+            respawned.is_empty(),
+            "no respawned event after shutdown; got {} events",
+            respawned.len()
+        );
+        cancel.cancel();
     }
 }

@@ -35,6 +35,7 @@
 - [PHP SDK](./plugins/php-sdk.md)
 - [Publishing a plugin](./plugins/publishing.md)
 - [Signing & publishing](./plugins/signing-and-publishing.md)
+- [Plugin supervisor (auto-respawn)](./plugins/supervisor.md)
 
 # Extensions
 

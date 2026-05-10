@@ -77,7 +77,7 @@ fn rpc_round_trip(
 }
 
 /// Spawn the mock binary with a fully-cleared env (mirrors
-/// `SubprocessNexoPlugin::spawn_and_handshake`'s
+/// `SubprocessNexoPlugin::spawn_one_attempt`'s
 /// `Command::env_clear().envs(&map)` path) and return the child
 /// + stdin/stdout handles for direct JSON-RPC poking.
 fn spawn_with_env_clear(env: &[(&str, &str)]) -> std::process::Child {
