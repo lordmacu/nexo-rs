@@ -46,7 +46,13 @@ pub mod notifications;
 #[cfg(feature = "events")]
 pub mod events;
 
-#[cfg(feature = "stt")]
+// Phase 91 — the STT module ships two mutually-exclusive
+// backends (whisper-rs legacy via `stt`, Candle pure-Rust via
+// `stt-candle`). The parent gate accepts either feature; the
+// sub-modules inside `stt/` carry their own per-backend cfg
+// guards + a `compile_error!` enforces the mutual exclusion when
+// both are enabled simultaneously.
+#[cfg(any(feature = "stt", feature = "stt-candle"))]
 pub mod stt;
 
 #[cfg(feature = "wizard")]

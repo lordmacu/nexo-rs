@@ -216,14 +216,14 @@ fn find_safetensors(model_dir: &Path) -> Option<PathBuf> {
 pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<String> {
     let started = std::time::Instant::now();
 
-    // Reuse the legacy audio-decode chain so we share the
+    // Reuse the shared audio-decode chain so we share the
     // ogg-opus parser + the resample step. Only the inference
     // layer is backend-specific.
-    let pcm = super::transcribe::decode_to_pcm_mono(path, cfg).await?;
+    let pcm = super::audio::decode_to_pcm_mono(path, cfg).await?;
     if pcm.is_empty() {
         return Err(SttError::EmptyAudio);
     }
-    let samples = super::transcribe::pcm_s16_to_f32(&pcm);
+    let samples = super::audio::pcm_s16_to_f32(&pcm);
 
     let lang_hint = cfg.lang_hint.clone();
     let model_path = cfg.model_path.clone();
