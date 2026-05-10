@@ -19,6 +19,7 @@ tracker**.
 | 87 | LLM-as-judge verifier (+ container runtime DEFER) | 1/1 | ✅ shipped 2026-05-01 (87.2 DEFER until Phase 32/82 hardening; backend wire-up in FOLLOWUPS) |
 | 88 | WhatsApp recording-presence indicator (`media="audio"`) | 4/4 | ✅ shipped 2026-05-07 (88.1 wire shape + 88.2 wa-agent runtime + 88.3 plugin wiring + 88.4 docs/follow-ups; 6 deferreds in FOLLOWUPS.md) |
 | 89 | Locale-aware agent language (BCP-47) + per-locale addendum + voice picker | 5/5 | ✅ shipped 2026-05-07 (89.1 SDK Locale + addenda + voice picker + BUG FIX (legacy `es` → voseo) + 89.2 admin RPC validation + 89.3 microapp consumes SDK + 89.4 UI grouped dropdown + 89.5 docs/follow-ups; 6 deferreds in FOLLOWUPS.md) |
+| 90 | nexo-plugin-admin — official admin plugin out-of-tree | 7/7 | ✅ shipped 2026-05-10 (90.1 scaffold + handshake + http_server boot, 90.2 frontend clone from agent-creator + drop marketing + bake via rust-embed, 90.3 9 modules dashboard/agents/audit/chats/wizard/skills/llm_keys/channels/memory/plugins/mcp_servers/settings/tenants — 5 live + 4 placeholders, 90.4 HMAC cookie auth + login routes + 3 tunnel adapters + URL filter fix, 90.5 daemon main.rs run_admin_via_plugin shim, 90.6 cargo publish nexo-plugin-admin@0.1.0, 90.7 admin-ui/ archived −5342 LOC + dead run_admin_web flagged for cleanup) |
 
 **Curation 2026-05-01** (single source of truth for active scope):
 [`PHASES-curated.md`](PHASES-curated.md) — what is active, what was

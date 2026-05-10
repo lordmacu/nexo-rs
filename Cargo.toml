@@ -311,6 +311,11 @@ async-nats          = { workspace = true }
 futures             = { workspace = true }
 uuid                = { workspace = true }
 rand                = "0.8"
+# Phase 90.7 — admin-ui/ archived; the dep stays only because
+# the dead `AdminUiAssets` derive in main.rs (~line 11728) still
+# compiles into the binary. Followup-cleanup commit will remove
+# the derive + this dep together (large mechanical edit deferred
+# to keep 90.7 reviewable).
 rust-embed          = { version = "8", features = ["include-exclude"] }
 sha2                = { workspace = true }
 arc-swap            = { workspace = true }
