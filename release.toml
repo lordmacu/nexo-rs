@@ -25,8 +25,16 @@ push = true
 
 # Single git commit per release that bumps the version + sync's
 # every internal `path` dep version pin.
+#
+# NOTE: with `consolidate-commits = true`, cargo-release does NOT
+# render `{{crate_name}}` in the commit message (the consolidated
+# commit can cover multiple crates, so the var is empty/unrendered
+# and you get literal `{{crate_name}}` in the log). Even when we
+# only release one crate at a time the warning fires. Keep the
+# message crate-agnostic; the per-crate identity is captured by
+# the tag (`<crate>-v<version>`) and is unambiguous.
 consolidate-commits = true
-pre-release-commit-message = "chore(release): {{crate_name}} v{{version}}"
+pre-release-commit-message = "chore(release): publish wave"
 
 # Per-crate independent versioning (don't sync workspace.package.version).
 shared-version = false
