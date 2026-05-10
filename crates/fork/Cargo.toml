@@ -15,7 +15,7 @@ readme      = "README.md"
 workspace = true
 
 [dependencies]
-nexo-core             = { version = "0.1.10", path = "../core" }
+nexo-core             = { version = "0.1.11", path = "../core" }
 nexo-llm              = { version = "0.1.4", path = "../llm" }
 nexo-driver-types     = { version = "0.1.6", path = "../driver-types" }
 nexo-driver-permission = { version = "0.1.6", path = "../driver-permission" }
