@@ -177,6 +177,14 @@ compose-attachment = ["dep:sqlx", "dep:chrono", "dep:sha2"]
 # fallback for locale flexibility. Lifted from the marketing
 # extension; useful for any microapp with operator compose.
 compose-draft = ["dep:sqlx", "dep:chrono"]
+# `run_idempotent_alter[s]` — small helper that swallows the
+# "duplicate column name" / "already exists" SQLite error
+# pattern shared by every idempotent ALTER TABLE in tree.
+# Replaces the substring-match boilerplate hand-rolled across
+# module_state, compose_attachment, compose_draft, and
+# email_template stores. Pulls only sqlx — already optional
+# behind the consumer features above.
+db-migrate = ["dep:sqlx"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -262,7 +270,7 @@ nexo-sanitize = { path = "../sanitize", optional = true }
 nexo-media    = { path = "../media",    optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "compose-draft", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "compose-draft", "db-migrate", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 

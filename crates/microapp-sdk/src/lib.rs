@@ -94,6 +94,9 @@ pub mod compose_attachment;
 #[cfg(feature = "compose-draft")]
 pub mod compose_draft;
 
+#[cfg(feature = "db-migrate")]
+pub mod db_migrate;
+
 #[cfg(feature = "dedup")]
 pub mod dedup;
 
