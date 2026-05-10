@@ -36,6 +36,13 @@
 
 pub mod tool;
 pub mod transcribe;
+// Phase 91 — Candle backend module tree. Cfg-gated to avoid
+// pulling Candle deps into builds that only enable `stt`
+// (whisper-rs legacy). The submodules themselves carry the same
+// `#[cfg(feature = "stt-candle")]` guard so a stale build cache
+// doesn't surface unrelated errors when toggling features.
+#[cfg(feature = "stt-candle")]
+pub(crate) mod mel;
 
 use std::path::PathBuf;
 
