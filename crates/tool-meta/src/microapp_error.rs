@@ -28,6 +28,7 @@ pub const MICROAPP_ERROR_NOTIFY_METHOD: &str = "nexo/notify/microapp_error";
 /// (e.g. `RateLimitTripped` once 83.16's respawn-throttle
 /// follow-up ships) can land non-major.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MicroappErrorKind {
@@ -61,6 +62,7 @@ impl MicroappErrorKind {
 }
 
 /// Notification payload.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MicroappError {
     /// Operator-facing extension id (`extensions.yaml.entries.<id>`).

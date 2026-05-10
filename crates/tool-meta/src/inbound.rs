@@ -27,6 +27,7 @@ use uuid::Uuid;
 /// can branch handlers on the message origin without re-deriving
 /// it from sender_id presence alone.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboundKind {
@@ -74,6 +75,7 @@ pub enum InboundKind {
 /// assert!(meta.msg_id.is_none());
 /// ```
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboundMessageMeta {
     /// Origin discriminator. Always present when the bucket is.

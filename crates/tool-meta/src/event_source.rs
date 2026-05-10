@@ -18,6 +18,7 @@ use uuid::Uuid;
 /// Field additions are deliberate semver-major (the JSON wire
 /// shape changes regardless), so this type is intentionally
 /// **not** `#[non_exhaustive]`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventSourceMeta {
     /// NATS subject that triggered the turn (e.g.

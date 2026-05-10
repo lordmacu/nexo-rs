@@ -144,6 +144,18 @@ email-threading = ["dep:sha2"]
 # needs to suppress at-least-once redelivery duplicates.
 dedup = []
 dedup-sled = ["dedup", "dep:sled"]
+# Email-template authoring + render — block schema (heading,
+# paragraph, button, image, divider, spacer, list, row,
+# column with per-cell background colour + image), table-
+# based renderer that survives Outlook + Gmail mobile, an
+# email-safe HTML sanitizer for rich-text fields, a per-tenant
+# SQLite store for templates, and a SHA-256 content-addressed
+# blob store for inline images. Lifted from the marketing
+# extension; useful for any microapp that builds outbound
+# emails (notifications, recibos, onboarding, transactional
+# templates). Pulls sqlx + chrono + sha2 + nexo-sanitize +
+# nexo-media.
+email-template = ["dep:sqlx", "dep:chrono", "dep:sha2", "dep:nexo-sanitize", "dep:nexo-media"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -221,9 +233,15 @@ sled   = { version = "0.34", optional = true }
 # feature. Default features keep the dep tree narrow (no
 # heavy deps).
 handlebars = { version = "5", default-features = false, optional = true }
+# `email-template` feature — block render uses the css/url
+# sanitisers, asset_store re-encodes uploads via the image
+# pipeline. Both crates already exist in the framework as
+# focused mini-crates; opting in is cheap.
+nexo-sanitize = { path = "../sanitize", optional = true }
+nexo-media    = { path = "../media",    optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 

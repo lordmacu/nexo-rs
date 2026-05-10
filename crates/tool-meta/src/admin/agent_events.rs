@@ -30,6 +30,7 @@ pub const AGENT_EVENT_NOTIFY_METHOD: &str = "nexo/notify/agent_event";
 // leak `Box<...>` access patterns into every subscriber. Accept the
 // largest-variant-cost so the public schema stays flat.
 #[allow(clippy::large_enum_variant)]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEventKind {
@@ -240,6 +241,7 @@ pub enum AgentEventKind {
 /// every variant alongside transcript / escalation events for
 /// a unified audit log.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "security_kind", rename_all = "snake_case")]
 pub enum SecurityEventKind {
@@ -266,6 +268,7 @@ pub enum SecurityEventKind {
 /// Speaker role mirror — kept on the wire side so SDK types
 /// don't pull in the core crate. Matches
 /// `nexo_core::agent::transcripts::TranscriptRole`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptRole {

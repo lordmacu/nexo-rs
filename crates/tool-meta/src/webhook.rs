@@ -55,6 +55,7 @@ pub const ENVELOPE_SCHEMA_VERSION: u8 = 1;
 /// assert_eq!(env.schema, 1);
 /// assert_eq!(env.source_id, "github_main");
 /// ```
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WebhookEnvelope {
     /// Wire-shape version. Always [`ENVELOPE_SCHEMA_VERSION`].

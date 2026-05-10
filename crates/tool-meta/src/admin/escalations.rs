@@ -23,6 +23,7 @@ use super::processing::ProcessingScope;
 /// Operator-facing escalation reason. Closed enum (no
 /// `Other` slot — agents that can't classify use `Other`,
 /// which is itself a value).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EscalationReason {
@@ -52,6 +53,7 @@ pub enum EscalationReason {
 }
 
 /// Operator-facing urgency hint. Default `Normal`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EscalationUrgency {
@@ -66,6 +68,7 @@ pub enum EscalationUrgency {
 
 /// How a previously-pending escalation was settled.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResolvedBy {
