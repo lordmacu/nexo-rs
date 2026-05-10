@@ -30,16 +30,16 @@ jobs:
       MDBOOK_MERMAID_VERSION: 0.14.0
       # RUSTDOCFLAGS: -D warnings   # re-enable once public surface is clean
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: proyecto
       # Phase 81.18 + 81.19.a — sibling repos required for the
       # `cargo doc --workspace` step to resolve path-deps.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp

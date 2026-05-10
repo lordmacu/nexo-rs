@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: Checkout at tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.tag.outputs.tag }}
           path: nexo-rs
@@ -52,11 +52,11 @@ jobs:
       # workspace metadata and follows the path-deps to the
       # sibling repos. Without these checkouts the SBOM run
       # dies before producing any output.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
