@@ -1215,6 +1215,43 @@ allowed_tools:
         assert_eq!(eff.allowed_tools, a.allowed_tools);
     }
 
+    /// Phase 81.19.b locale follow-up item 5 — `InboundBinding.language`
+    /// override must surface in `EffectiveBindingPolicy.language` so
+    /// `OutboundReplyContext.language` (built from the policy) honours
+    /// the per-channel override instead of always inheriting the
+    /// agent-level value.
+    #[test]
+    fn binding_language_overrides_agent_in_effective_policy() {
+        let mut a = sample_agent();
+        a.language = Some("en".into());
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            language: Some("es-AR".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(
+            eff.language.as_deref(),
+            Some("es-AR"),
+            "binding override must replace agent-level language"
+        );
+    }
+
+    /// Same fixture but binding leaves `language = None` — the agent-level
+    /// `en` survives the resolve as the fallback.
+    #[test]
+    fn binding_language_unset_falls_back_to_agent() {
+        let mut a = sample_agent();
+        a.language = Some("en".into());
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            language: None,
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.language.as_deref(), Some("en"));
+    }
+
     #[test]
     fn dispatch_policy_default_is_none_mode() {
         let a = sample_agent();
