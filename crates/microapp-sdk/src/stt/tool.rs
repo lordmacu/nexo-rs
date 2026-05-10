@@ -75,7 +75,7 @@ impl InboundTransformHandler {
 
 #[async_trait]
 impl ToolHandler for InboundTransformHandler {
-    async fn call(&self, args: Value, _ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+    async fn call(&self, args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
         let parsed: InboundTransformArgs = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidArguments(format!("inbound transform args: {e}")))?;
 
@@ -129,13 +129,28 @@ impl ToolHandler for InboundTransformHandler {
                 "error": msg,
             })));
         }
+        // Phase 81.19.b locale follow-up item 6 — read the agent's
+        // resolved BCP-47 locale from `ctx.binding.language` (set by
+        // `nexo-core` from `EffectiveBindingPolicy.language`) and
+        // pass the language-only ISO-639-1 prefix to whisper as a
+        // hint. Whisper's `set_language` expects 2-letter codes
+        // (`"es"`, not `"es-AR"`) — `Locale::language().as_str()`
+        // returns exactly that. `None` keeps whisper's auto-detect.
+        let mut effective_cfg = (*self.cfg).clone();
+        if let Some(lang_str) = ctx.binding.as_ref().and_then(|b| b.language.clone()) {
+            use std::str::FromStr;
+            if let Ok(parsed_locale) = nexo_tool_meta::locale::Locale::from_str(&lang_str) {
+                effective_cfg.lang_hint = Some(parsed_locale.language().as_str().to_string());
+            }
+        }
         tracing::info!(
             path = %path.display(),
             mime = ?media.mime_type,
             original_text_len = parsed.text.len(),
+            lang_hint = ?effective_cfg.lang_hint,
             "stt: transcribing voice note",
         );
-        match super::transcribe_file(&path, &self.cfg).await {
+        match super::transcribe_file(&path, &effective_cfg).await {
             Ok(transcript) => {
                 // Surface the full transcript at INFO so operators
                 // can verify the STT pipeline against what the LLM

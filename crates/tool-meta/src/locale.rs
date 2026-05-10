@@ -460,6 +460,59 @@ mod tests {
             other => panic!("expected UnknownRegion, got {other:?}"),
         }
     }
+
+    /// Phase 81.19.b locale follow-up item 6 — STT lang_hint trim.
+    /// `Locale::language().as_str()` is the documented path the SDK's
+    /// `InboundTransformHandler` uses to convert a binding's BCP-47
+    /// (`es-AR`) into the ISO-639-1 prefix (`es`) that whisper's
+    /// `set_language` accepts. The trim must be lossless on every
+    /// supported lang+region pair.
+    #[test]
+    fn lang_only_trim_drops_region_for_whisper_hint() {
+        for (input, expected_iso639_1) in [
+            ("es-AR", "es"),
+            ("es-MX", "es"),
+            ("en-GB", "en"),
+            ("en-US", "en"),
+            ("pt-BR", "pt"),
+            ("pt-PT", "pt"),
+            ("zh-CN", "zh"),
+            ("ja-JP", "ja"),
+            // Lang-only inputs already at the trim target.
+            ("es", "es"),
+            ("en", "en"),
+        ] {
+            let l = Locale::from_str(input).unwrap();
+            assert_eq!(
+                l.language().as_str(),
+                expected_iso639_1,
+                "BCP-47 {input} must trim to ISO-639-1 {expected_iso639_1}"
+            );
+        }
+    }
+
+    /// Phase 81.19.b locale follow-up item 2 — `iter_supported()` is
+    /// the source of truth for `cargo run -p nexo-microapp-sdk
+    /// --bin locale_dump`. Verify it yields the documented count
+    /// (8 lang × (1 + 17 region) = 144) and no duplicates.
+    #[test]
+    fn iter_supported_yields_full_cross_product() {
+        let all: Vec<String> = Locale::iter_supported()
+            .map(|l| l.as_bcp47().to_string())
+            .collect();
+        assert_eq!(
+            all.len(),
+            8 * (1 + 17),
+            "expected 8 langs × (lang-only + 17 regions) = 144"
+        );
+        let unique: std::collections::HashSet<_> = all.iter().collect();
+        assert_eq!(unique.len(), all.len(), "no duplicates in iter_supported");
+        // Spot-check first/last by sorted order.
+        let mut sorted = all.clone();
+        sorted.sort();
+        assert_eq!(sorted.first().map(String::as_str), Some("de"));
+        assert_eq!(sorted.last().map(String::as_str), Some("zh-US"));
+    }
 }
 
 /// Parser-side errors. Wrapped in [`thiserror::Error`] so they
