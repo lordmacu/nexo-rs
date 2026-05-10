@@ -24,6 +24,7 @@ pub mod memory;
 pub mod operator_stamping;
 pub mod pairing;
 pub mod plugin_doctor;
+pub mod plugin_restart;
 pub mod pollers;
 pub mod processing;
 pub mod secrets;

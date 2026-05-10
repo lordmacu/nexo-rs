@@ -91,6 +91,11 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             persisters: Vec::new(),
             llm_provider_catalog: Vec::new(),
             pairing_triggers: Default::default(),
+            mcp_store: None,
+            memory_reader: None,
+            memory_snapshot_reader: None,
+            plugin_doctor: None,
+            plugin_restarter: None,
         },
         true,
     )
@@ -199,6 +204,11 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             persisters: Vec::new(),
             llm_provider_catalog: Vec::new(),
             pairing_triggers: Default::default(),
+            mcp_store: None,
+            memory_reader: None,
+            memory_snapshot_reader: None,
+            plugin_doctor: None,
+            plugin_restarter: None,
         },
         true,
     )

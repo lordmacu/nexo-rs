@@ -227,6 +227,14 @@ pub struct AdminBootstrapInputs<'a> {
     pub plugin_doctor: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader>,
     >,
+    /// Phase 81.21.b.b follow-up — manual plugin restart adapter.
+    /// `None` keeps `nexo/admin/plugins/restart` returning the
+    /// typed `plugin restart domain not configured` -32603.
+    /// Production wires `crate::admin_adapters::LivePluginRestarter`
+    /// around the daemon's plugin handles snapshot.
+    pub plugin_restarter: Option<
+        Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter>,
+    >,
     /// Phase 90.x.memory — long-term memory query reader. `None`
     /// keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603. Production wires
@@ -692,6 +700,13 @@ impl AdminRpcBootstrap {
             if let Some(reader) = inputs.plugin_doctor.clone() {
                 dispatcher = dispatcher.with_plugin_doctor(reader);
             }
+            // Phase 81.21.b.b follow-up — install the manual
+            // plugin restart adapter. Without it,
+            // `nexo/admin/plugins/restart` returns the typed
+            // `plugin restart domain not configured` -32603.
+            if let Some(restarter) = inputs.plugin_restarter.clone() {
+                dispatcher = dispatcher.with_plugin_restarter(restarter);
+            }
             // Phase 90.x.memory — install the memory query reader.
             // Without it, `nexo/admin/memory/query` returns the
             // typed `memory domain not configured` -32603.
@@ -989,6 +1004,7 @@ mod tests {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1030,6 +1046,7 @@ mod tests {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1072,6 +1089,7 @@ mod tests {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1129,6 +1147,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1178,6 +1197,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1227,6 +1247,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1284,6 +1305,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1347,6 +1369,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1405,6 +1428,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1462,6 +1486,7 @@ mod tests {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1540,6 +1565,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1600,6 +1626,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
+            plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,

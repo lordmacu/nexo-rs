@@ -217,6 +217,16 @@ pub struct SubprocessNexoPlugin {
     /// completes.
     shutdown_notify: Arc<Notify>,
 
+    /// Phase 81.21.b.b follow-up — set by `force_restart` to
+    /// distinguish operator-initiated teardown from `shutdown()`.
+    /// The supervisor task / respawn_loop don't need to inspect
+    /// this directly (they observe the cancel cascade); the flag
+    /// exists as a documented marker for future coalesce-vs-stale
+    /// detection. Cleared on every successful return path of
+    /// `force_restart` so a subsequent invocation sees a fresh
+    /// state.
+    restart_signaled: Arc<AtomicBool>,
+
     /// Phase 81.21.b.b — populated by both subprocess plugin
     /// factories (`subprocess_plugin_factory{,_with_env}`)
     /// immediately after `Arc::new(self)` so
@@ -322,6 +332,9 @@ impl SubprocessNexoPlugin {
             // spawned by the init_loop.rs hook.
             shutdown_signaled: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
+            // Phase 81.21.b.b follow-up — quiescent until
+            // `force_restart` flips it; cleared on return.
+            restart_signaled: Arc::new(AtomicBool::new(false)),
             // Phase 81.21.b.b — populated by the factory after
             // `Arc::new(self)` so `spawn_supervisor_loop` can
             // upgrade back to `Arc<Self>`. Empty for hand-built
@@ -770,6 +783,166 @@ impl SubprocessNexoPlugin {
         // branch handles the `respawn=false` case after
         // publishing `crashed`.
         let _join = tokio::spawn(self.respawn_loop(ctx_shutdown, broker, memory, llm));
+    }
+
+    /// Phase 81.21.b.b follow-up — operator-driven plugin
+    /// restart. Bypasses the auto-respawn loop's natural
+    /// Crashed flow so no spurious `crashed` event fires for an
+    /// intentional kill. Reuses the existing cancel cascade +
+    /// new `restart_signaled` flag to coordinate teardown.
+    ///
+    /// Steps:
+    ///   1. Capture the dying Inner's uptime BEFORE drain.
+    ///   2. Drain pending oneshots with "plugin restarted by operator".
+    ///   3. Cancel current Inner's cascade (writer/reader/forwarders/
+    ///      supervisor task all observe; supervisor posts AttemptOutcome::
+    ///      Shutdown via oneshot; respawn_loop sees Shutdown + returns).
+    ///   4. Wait up to 2s for the supervisor task to drain.
+    ///   5. Force-kill the child if still alive (idempotent).
+    ///   6. `tokio::time::timeout(60s, spawn_one_attempt(...))` for fresh
+    ///      attempt. Elapsed → "restart timed out, plugin may be in
+    ///      degraded state" Internal error.
+    ///   7. Capture `new_pid` from `child.id()` BEFORE install (Tokio's
+    ///      `Child::id()` returns None after wait/kill).
+    ///   8. Install new Inner.
+    ///   9. Spawn fresh respawn_loop via `weak_self_arc().spawn_supervisor_loop`
+    ///      so the plugin is once again under auto-respawn supervision.
+    ///   10. Publish `plugin.lifecycle.<id>.restarted_manually` event.
+    ///   11. Reset `restart_signaled = false`.
+    ///   12. Return `PluginsRestartResponse`.
+    pub async fn force_restart(
+        self: Arc<Self>,
+        ctx_shutdown: CancellationToken,
+        broker: Option<AnyBroker>,
+        memory: Option<Arc<LongTermMemory>>,
+        llm: Option<LlmServices>,
+    ) -> Result<nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse, anyhow::Error>
+    {
+        self.restart_signaled.store(true, Ordering::Release);
+        // Wake supervisor + respawn_loop's parked sleep so they
+        // observe the cascade quickly instead of waiting for the
+        // natural 500ms supervisor poll.
+        self.shutdown_notify.notify_waiters();
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+
+        // Step 1: capture previous uptime BEFORE drain.
+        let previous_uptime_ms: u64 = {
+            let guard = self.inner.lock().await;
+            guard
+                .as_ref()
+                .map(|i| i.spawned_at.elapsed().as_millis() as u64)
+                .unwrap_or(0)
+        };
+
+        // Step 2: drain pending oneshots so callers fail-fast
+        // before we tear down the stdin pipe.
+        self.drain_pending_with_error("plugin restarted by operator")
+            .await;
+
+        // Step 3: cancel current Inner's cascade. Take the inner
+        // out so the next install path is clean. The supervisor
+        // task posts AttemptOutcome::Shutdown via the oneshot;
+        // respawn_loop sees Shutdown via wait_for_attempt_outcome
+        // and returns. The new respawn_loop in step 9 takes over.
+        let prev_inner = self.inner.lock().await.take();
+        if let Some(inner) = prev_inner {
+            inner.cancel.cancel();
+            // Step 4: brief grace for supervisor task drain.
+            // Force-kill in step 5 covers the case where the child
+            // ignores the cancel cascade.
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                async {
+                    for task in inner.tasks.into_iter() {
+                        let _ = task.await;
+                    }
+                },
+            )
+            .await;
+            // Step 5: force-kill child if still alive. `take()`
+            // makes follow-up calls a no-op.
+            let mut child_guard = inner.child.lock().await;
+            if let Some(mut c) = child_guard.take() {
+                let _ = c.kill().await;
+                let _ = c.wait().await;
+            }
+        }
+
+        // Step 6: spawn fresh attempt with 60s outer timeout (the
+        // inner handshake timeout is governed by
+        // NEXO_PLUGIN_INIT_TIMEOUT_MS). Elapsed = degraded state.
+        let new_inner = match tokio::time::timeout(
+            Duration::from_secs(60),
+            self.spawn_one_attempt(
+                ctx_shutdown.clone(),
+                broker.clone(),
+                memory.clone(),
+                llm.clone(),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(inner)) => inner,
+            Ok(Err(e)) => {
+                self.restart_signaled.store(false, Ordering::Release);
+                return Err(anyhow::anyhow!("spawn_one_attempt: {e}"));
+            }
+            Err(_elapsed) => {
+                self.restart_signaled.store(false, Ordering::Release);
+                return Err(anyhow::anyhow!(
+                    "restart timed out, plugin may be in degraded state"
+                ));
+            }
+        };
+
+        // Step 7: capture new_pid BEFORE install (Tokio's
+        // `Child::id()` returns None after wait/kill, but here
+        // the child is freshly spawned + still owned).
+        let new_pid: Option<u32> = {
+            let guard = new_inner.child.lock().await;
+            guard.as_ref().and_then(|c| c.id())
+        };
+
+        // Step 8: install new Inner.
+        *self.inner.lock().await = Some(new_inner);
+
+        // Step 9: spawn fresh respawn_loop. The previous
+        // respawn_loop returned via Shutdown when its Inner's
+        // cancel cascade fired in step 3. Without spawning a new
+        // one, the plugin would lose auto-respawn supervision.
+        if let Some(arc_self) = self.weak_self_arc() {
+            arc_self.spawn_supervisor_loop(ctx_shutdown, broker.clone(), memory, llm);
+        } else {
+            tracing::warn!(
+                target: "plugin.supervisor",
+                plugin_id = %plugin_id,
+                "force_restart: weak_self not populated, auto-respawn loop NOT re-armed"
+            );
+        }
+
+        // Step 10: publish `restarted_manually` event.
+        let restarted_at_ms = chrono::Utc::now().timestamp_millis();
+        Self::publish_lifecycle_event(
+            &broker,
+            &plugin_id,
+            "restarted_manually",
+            json!({
+                "plugin_id": plugin_id,
+                "previous_uptime_ms": previous_uptime_ms,
+                "restarted_at_ms": restarted_at_ms,
+            }),
+        )
+        .await;
+
+        // Step 11: clear flag.
+        self.restart_signaled.store(false, Ordering::Release);
+
+        Ok(nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse {
+            plugin_id,
+            previous_uptime_ms,
+            restarted_at_ms,
+            new_pid,
+        })
     }
 
     /// Phase 81.26 — for each backend name in
