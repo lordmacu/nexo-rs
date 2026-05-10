@@ -56,7 +56,7 @@ Genuine pending:
 
 1. **P1** — Phase 83.10 second microapp validation (agent-creator production validation — out-of-tree work at `/home/familia/chat/agent-creator-microapp/`)
 2. **P1** — Phase 83.12 → 83.13 React UI scaffold + WhatsApp-Web component library (agent-creator UI shell — out-of-tree)
-3. **P1** — Phase 83.14.b actual `cargo publish` + `npm publish` (decouples agent-creator from in-tree path; readiness work ✅, execution pending)
+3. ~~**P1** — Phase 83.14.b actual `cargo publish` + `npm publish`~~ ✅ shipped 2026-05-10 — tool-meta@0.1.6 + core@0.1.6 + microapp-sdk@0.1.14 + sanitize@0.1.6 + media@0.1.6 published; agent-creator-microapp Cargo.toml flipped from path-deps to versioned crates.io refs; npm `@lordmacu/nexo-microapp-ui-react@0.1.0+` already live since 83.13.
 4. **P3** — Phase 81.17.c pilot extract `plugin-browser` to standalone repo (~3 d)
 5. **P3** — Phase 81.18 extract `plugin-telegram` to standalone repo (~2 d)
 6. **P3** — Phase 81.19 extract `plugin-whatsapp` + `plugin-email` to standalone repos (~3 d)
@@ -152,7 +152,7 @@ drives this phase. Critical-path rows flagged `P1`.
 | 83.11 — Docs + admin-ui sync | **P3** | ✅ shipped 2026-05-01 (getting-started + templates + compliance-primitives) |
 | 83.12 — Meta-microapp React UI scaffold | **P1** | ⬜ | agent-creator UI shell — out-of-tree React work |
 | 83.13 — `microapp-ui-react` component library | **P1** | ⬜ | WhatsApp-inspired chat helper for microapps — out-of-tree |
-| 83.14 — Publish SDKs (crates.io + npm) | **P1** | 🔄 | Publish-readiness ✅ (CHANGELOGs + READMEs + dry-run pass); actual `cargo publish` + `npm publish` execution pending (83.14.b) |
+| 83.14 — Publish SDKs (crates.io + npm) | **P1** | ✅ shipped 2026-05-10 (publish-readiness ✅ + 83.14.b cargo publish wave: tool-meta 0.1.6 + core 0.1.6 + microapp-sdk 0.1.14 + sanitize/media 0.1.6 NEW; agent-creator-microapp decoupled from path-deps; npm @lordmacu/nexo-microapp-ui-react@0.1.x live) |
 | **83.15 — Microapp testing harness (mock daemon)** | **P1** | ✅ shipped 2026-05-01 (83.15.b MockAdminRpc + MicroappTestHarness::with_admin_mock + reference test + docs) |
 | **83.16 — Microapp error → operator path** | **P1** | ✅ shipped 2026-05-01 (MicroappError notification wire shape + 6 tests) |
 | **83.17 — Microapp config schema validation** | **P1** | ✅ shipped 2026-05-01 (config schema validator + 11 tests) |
