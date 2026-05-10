@@ -10,6 +10,27 @@
 //! Compose flow picks a template, renders with the recipient's
 //! variables substituted, and uses the result as the outbound
 //! body — same OutboundPublisher path as a manual compose.
+//!
+//! Module hierarchy:
+//! - [`blocks`] — `EmailBlock` enum + table-based renderer
+//! - [`sanitize`] — email-safe HTML sanitiser for rich-text
+//!   fields (Heading/Paragraph)
+//! - [`store`] — per-tenant SQLite store of saved templates
+//! - [`asset_store`] — SHA-256 content-addressed blob store
+//!   for inline images (de-dups + caches forever)
+//!
+//! Lifted from the agent-creator-microapp's marketing
+//! extension; nothing in here is marketing-specific. Any
+//! microapp that builds outbound emails (notifications,
+//! recibos, onboarding, transactional templates) consumes
+//! this module via the `email-template` feature.
+
+// The lifted modules predate the SDK's missing-docs lint;
+// every field is self-evident from the block-schema names
+// (`Heading.text`, `Image.url`, …). Allow at the module level
+// rather than scattering doc comments on enum variants —
+// keeps the schema readable.
+#![allow(missing_docs)]
 
 pub mod asset_store;
 pub mod blocks;

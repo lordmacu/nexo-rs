@@ -6351,19 +6351,37 @@ spec; four follow-ups capture the gaps:
   Trigger: operator demand for end-to-end key
   management. Effort: ~1-2h. Status: pending.
 
-- **`83.12.ts-types-codegen`** — auto-generate the
-  TypeScript admin RPC types from the Rust admin payload
-  structs (e.g. `BindingContext`, `InboundMsgRef`,
-  `HookDecision`, `microapp_admin_audit` row shape).
-  Pipeline options: `serde_typescript`, `typeshare`,
-  custom build script. Today TS types are hand-curated
-  in `frontend/src/api/types.ts` with implicit drift
-  risk vs the Rust source-of-truth in
-  `crates/setup/src/admin_*.rs`. Mirrors the locale-list
-  drift-lint pattern shipped in
-  `locale-list-codegen-or-lint`. Owner: framework.
-  Trigger: a real drift incident, OR proactive
-  hardening. Effort: ~2-3h. Status: pending.
+- **`83.12.ts-types-codegen`** — RESOLVED 2026-05-10. Adopted
+  `ts-rs` v12 in `nexo-tool-meta` with a feature-gated
+  `ts-export` build flag (zero runtime cost when off). 16
+  wire types now carry
+  `#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]`:
+    - 11 wire wrappers: `AgentEventKind`, `TranscriptRole`,
+      `SecurityEventKind`, `BindingContext`, `InboundKind`,
+      `InboundMessageMeta`, `EventSourceMeta`,
+      `OutboundReplyContext`, `WebhookEnvelope`,
+      `MicroappError`, `MicroappErrorKind`.
+    - 5 dependent enums: `ProcessingScope`,
+      `ProcessingControlState`, `EscalationReason`,
+      `EscalationUrgency`, `ResolvedBy`.
+  Wrapper script `proyecto/scripts/regen-ts-types.sh` runs
+  `cargo test --features=ts-export -p nexo-tool-meta`
+  (with `TS_RS_LARGE_INT=number` so u64 fields render as
+  JS `number` to match agent-creator's existing convention)
+  and concatenates per-type ts-rs output into a single
+  `agent-creator-microapp/frontend/src/api/types.gen.ts`
+  with a banner header + inline `JsonValue` alias.
+  CI lint `proyecto/scripts/lint-ts-types-sync.sh` (mirror of
+  the locale-list pattern) snapshot-and-diffs to catch drift;
+  restores the snapshot on failure to keep the checkout clean.
+  13 of the 16 generated types selectively re-exported from
+  `agent-creator-microapp/frontend/src/api/types.ts`. Three
+  types stay hand-written because the frontend extends
+  (`AgentEventKind` adds CSR-only `WhatsappBotMessageEvent`)
+  or narrows (`ProcessingScope` is wire-`conversation`-only
+  on the firehose; `ProcessingControlState` + `ResolvedBy`
+  follow). `nexo-tool-meta` bumped 0.1.3 → 0.1.4 (additive
+  minor; feature is opt-in). Status: ✅ closed.
 
 - **`83.12.e2e-tests`** — playwright / cypress harness
   covering login → agents CRUD → pairings → conversations.
