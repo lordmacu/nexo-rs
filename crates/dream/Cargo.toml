@@ -15,7 +15,7 @@ readme        = "README.md"
 workspace = true
 
 [dependencies]
-nexo-core             = { version = "0.1.8", path = "../core" }
+nexo-core             = { version = "0.1.9", path = "../core" }
 nexo-config           = { version = "0.1.7", path = "../config" }
 nexo-llm              = { version = "0.1.4", path = "../llm" }
 nexo-fork             = { version = "0.1.6", path = "../fork" }
