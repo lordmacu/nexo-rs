@@ -163,6 +163,13 @@ email-template = ["dep:sqlx", "dep:chrono", "dep:sha2", "dep:nexo-sanitize", "de
 # effects (cron sweeps, AI calls, notifications) consumes
 # this module. Pulls sqlx + chrono.
 module-state = ["dep:sqlx", "dep:chrono"]
+# Per-tenant attachment blob store for outbound compose
+# flows. SHA-256 content-addressed, MIME allowlist (PDF/
+# Office/zip/text/images), 20 MB cap. Configurable table
+# name so each microapp owns its own table. Lifted from
+# the marketing extension; useful for any microapp with an
+# operator compose surface (helpdesk, transactional sends).
+compose-attachment = ["dep:sqlx", "dep:chrono", "dep:sha2"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -248,7 +255,7 @@ nexo-sanitize = { path = "../sanitize", optional = true }
 nexo-media    = { path = "../media",    optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 

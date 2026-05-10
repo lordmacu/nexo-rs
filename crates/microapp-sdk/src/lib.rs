@@ -88,6 +88,9 @@ pub mod email_template;
 #[cfg(feature = "module-state")]
 pub mod module_state;
 
+#[cfg(feature = "compose-attachment")]
+pub mod compose_attachment;
+
 #[cfg(feature = "dedup")]
 pub mod dedup;
 
