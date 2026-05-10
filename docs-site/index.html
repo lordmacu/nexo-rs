@@ -8,7 +8,11 @@
   <meta property="og:title" content="nexo-rs · Multi-agent framework for Rust" />
   <meta property="og:description" content="Ship agents that talk to real channels. Memory, LLMs, fault tolerance. 34 MB single binary." />
   <meta property="og:type" content="website" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤖%3C/text%3E%3C/svg%3E" />
+  <!-- Favicon points at the same SVG the nav + hero use, so a
+       single replace of `assets/logo.svg` updates every brand
+       surface (browser tab, social previews, header). -->
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <meta property="og:image" content="https://lordmacu.github.io/nexo-rs/assets/logo.svg" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -47,7 +51,9 @@
   <nav class="border-b border-ink-800 bg-ink-950/80 backdrop-blur sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
       <a href="/" class="flex items-center gap-2 font-bold text-lg">
-        <span class="text-2xl">🤖</span>
+        <!-- Logo. Drop your real branding at `docs-site/assets/logo.svg`
+             — keeps the size + spacing intact, no HTML edit needed. -->
+        <img src="assets/logo.svg" alt="nexo-rs" class="h-8 w-8" />
         <span>nexo-rs</span>
       </a>
       <div class="flex items-center gap-6 text-sm">
@@ -69,6 +75,13 @@
   <section class="gradient-mesh">
     <div class="max-w-6xl mx-auto px-6 py-24 md:py-32">
       <div class="max-w-4xl">
+        <!-- Hero logo slot. 96 × 96 by default; the same
+             `assets/logo.svg` powers nav + favicon + this spot.
+             Replace the file to update every surface at once.
+             Remove this block if you prefer a text-only hero. -->
+        <div class="mb-8 flex items-center gap-4">
+          <img src="assets/logo.svg" alt="" class="h-24 w-24 drop-shadow-lg" />
+        </div>
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-500/10 text-accent-300 text-sm font-medium border border-accent-500/30 mb-6">
           <span class="relative flex h-2 w-2">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75"></span>
