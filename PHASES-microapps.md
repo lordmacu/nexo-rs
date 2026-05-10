@@ -2848,7 +2848,7 @@ in `FOLLOWUPS.md` (see entries
     covering login, agents-CRUD, pairings, conversations.
     Today only unit tests exist (`vitest run`).
 
-#### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired) — OPT-IN chat helper, NOT core   ⬜
+#### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired) — OPT-IN chat helper, NOT core   🔄 (MVP shipped 2026-05-10 — stateful extraction deferred)
 
 **Explicitly opt-in chat-specific helper.** Per Cross-cutting
 guarantee #6 (use-case agnostic by construction), 83.13 is NOT
@@ -2977,6 +2977,58 @@ Out of scope for v0:
 - Visual read receipts (blue ticks per WhatsApp).
 - i18n / RTL languages (CSS prep ready, content
   translation operator-side).
+
+**MVP shipped status (2026-05-10):** sibling repo
+`nexo-rs-microapp-ui-react/` created + pushed to GitHub
+(`lordmacu/nexo-microapp-ui-react`). Five components extracted
+(3 chat-flavoured + 2 UI primitives):
+
+- `<EmptyState>` — `MessageSquare`-haloed hero for empty
+  conversation panels.
+- `<CmdKHint>` — Cmd+K palette discoverability toast,
+  localStorage-gated. Refactored to require `translations`
+  prop (consumer wires its own i18n) — lib stays
+  locale-agnostic.
+- `<ChatsSidebar>` — composition wrapper for the WhatsApp
+  Web layout's secondary sidebar. Refactored to accept
+  `banner` + `sidebar` `ReactNode` slots.
+- `<Button>` (5 variants × 3 sizes) + `<EmptyStatePrimitive>`
+  underlying primitives — re-exported from
+  agent-creator's `components/ui` barrel for
+  back-compat with existing import paths.
+
+agent-creator-microapp/frontend/ wired via `file:` dep +
+vite alias for HMR cross-package + tailwind content path.
+4 import sites updated (Chat.tsx, ChatsMain.tsx, Sidebar.tsx,
+ConfirmDialog.tsx). 4 i18n catalog keys added
+(`chat.cmdk_hint.{tip_title,instruction_prefix,instruction_suffix,close_label}`)
+in both `es.ts` + `en.ts`.
+
+Three deferred items, each tracked as its own follow-up
+in `FOLLOWUPS.md`:
+
+- **`83.13.stateful-extraction`** — port the 11 stateful
+  chat components (`Chat`, `ChatHeader`, `ChatListItem`,
+  `Conversation`, `ChatsMain`, `BotChatBubble`,
+  `ConnectionBanner`, `InputBar`, `LabelManagerModal`,
+  `EscalationBadge`, `PauseIndicator`) plus `MessageBubble`.
+  Requires either:
+  (a) Refactor each to accept state via props with the
+  consumer wrapping; or
+  (b) Move associated stores + types to the lib (heavy).
+  Defer until a second microapp consumer materialises (83.10).
+- **`83.13.theme-system`** — CSS variables + dark mode +
+  default theme palette so the lib stops requiring the
+  consumer's `bg-accent` / `text-text-primary` / etc. tokens.
+- **`83.13.publish-npm`** — first `npm publish --access public`
+  to `@lordmacu/nexo-microapp-ui-react` v0.0.1. Today the
+  lib is GitHub-only; agent-creator uses `file:` dep. The
+  initial publish attempt 2026-05-10 hit a 403 — the
+  `NPM_TOKEN` env var is set but the token apparently
+  lacks publish permission for the `@lordmacu` scope (or
+  npm account has 2FA-required-for-publish active).
+  Manual fix path documented in
+  `~/chat/proyecto/FOLLOWUPS.md::83.13.publish-npm`.
 
 #### 83.14 — Publish SDK crates + npm package   ✅  (shipped 2026-05-02 — actual crates.io upload + release-plz CI + npm package deferred to 83.14.b)
 
