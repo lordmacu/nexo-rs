@@ -1989,6 +1989,15 @@ async fn main() -> Result<()> {
         > = Some(std::sync::Arc::new(
             nexo_setup::admin_adapters::InMemoryEscalationStore::default(),
         ));
+        // Phase 90.x.mcp — wire the MCP servers domain against
+        // `<config_dir>/mcp.yaml`. Without this, plugin admin's
+        // `/m/mcp_servers` page surfaces `mcp domain not
+        // configured` -32603 errors and stays as a placeholder.
+        let mcp_store: Option<
+            std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>,
+        > = Some(nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore::new(
+            config_dir.clone(),
+        ));
         // Phase 82.10.p — build the per-channel pairing trigger
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
@@ -2026,6 +2035,7 @@ async fn main() -> Result<()> {
                 transcript_writer: None,
                 processing_store: Some(std::sync::Arc::clone(&processing_store)),
                 tenant_store: tenant_store.clone(),
+                mcp_store: mcp_store.clone(),
                 // Phase 82.10.k — file-backed secrets store at
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new

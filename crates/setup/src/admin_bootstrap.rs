@@ -212,6 +212,14 @@ pub struct AdminBootstrapInputs<'a> {
     /// `crate::admin_adapters::TenantsYamlPatcher` against
     /// `config/tenants.yaml`.
     pub tenant_store: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
+    /// Phase 90.x.mcp — MCP server registry CRUD. `None` keeps
+    /// `nexo/admin/mcp/*` returning the typed `mcp domain not
+    /// configured` error (operator manages mcp.yaml via CLI).
+    /// Production wires
+    /// `nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore`
+    /// against `<config_dir>/mcp.yaml`.
+    pub mcp_store:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>>,
     /// Phase 82.10.k — secrets store. `None` keeps
     /// `nexo/admin/secrets/write` returning the typed
     /// `secrets domain not configured` -32603. Production wires
@@ -646,6 +654,15 @@ impl AdminRpcBootstrap {
             if let Some(store) = inputs.tenant_store.clone() {
                 dispatcher = dispatcher.with_tenants_domain(store);
             }
+            // Phase 90.x.mcp — install the MCP servers domain
+            // when boot has the production yaml adapter wired.
+            // Without it, `nexo/admin/mcp/*` returns the typed
+            // `mcp domain not configured` -32603 so the plugin
+            // admin surfaces a clear wire-up gap (the placeholder
+            // page never goes live).
+            if let Some(store) = inputs.mcp_store.clone() {
+                dispatcher = dispatcher.with_mcp_domain(store);
+            }
             // Phase 82.10.k — install the secrets domain when
             // boot has the production `FsSecretsStore` adapter.
             // Without it, `nexo/admin/secrets/write` returns the
@@ -930,6 +947,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            mcp_store: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -967,6 +985,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            mcp_store: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1005,6 +1024,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            mcp_store: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1058,6 +1078,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1103,6 +1124,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1148,6 +1170,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1201,6 +1224,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1260,6 +1284,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1314,6 +1339,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1367,6 +1393,7 @@ mod tests {
             transcript_writer: None,
             processing_store: Some(shared.clone()),
             tenant_store: None,
+            mcp_store: None,
             secrets_store: None,
             llm_provider_probe: None,
             llm_completer: None,
@@ -1441,6 +1468,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,
@@ -1497,6 +1525,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+                mcp_store: None,
                 secrets_store: None,
                 llm_provider_probe: None,
                 llm_completer: None,

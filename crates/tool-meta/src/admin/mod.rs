@@ -19,6 +19,7 @@ pub mod credentials;
 pub mod escalations;
 pub mod llm;
 pub mod llm_providers;
+pub mod mcp;
 pub mod operator_stamping;
 pub mod pairing;
 pub mod pollers;
