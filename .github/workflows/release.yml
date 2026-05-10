@@ -206,9 +206,22 @@ jobs:
           path: target/distrib/nexo-rs-x86_64-pc-windows-msvc.*
           if-no-files-found: error
 
+  # Termux build temporarily disabled — `aws-lc-sys` (transitive
+  # via rustls 0.23 → hyper-rustls → reqwest) fails to cross-
+  # compile for `aarch64-linux-android` through cargo-zigbuild
+  # ("'sys/types.h' file not found"). The fix requires
+  # workspace-wide migration off `rustls-tls` to
+  # `rustls-tls-no-provider` across the daemon AND the 3 sibling
+  # plugin repos (nexo-rs-plugin-browser/whatsapp/telegram), since
+  # cargo unifies features cross-graph. Tracked under the
+  # Phase 27.2 follow-up in FOLLOWUPS.md.
+  #
+  # Re-enable: drop the `if: false` guard once the upstream rustls
+  # crypto-provider migration lands.
   build-termux:
+    if: false
     needs: validate-tag
-    name: build (aarch64-linux-android, termux)
+    name: build (aarch64-linux-android, termux) — DISABLED
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -347,7 +360,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [validate-tag, build-musl, build-apple, build-windows, build-termux, build-debian, build-rpm]
+    # build-termux temporarily removed from needs — see the
+    # `if: false` guard on the job + FOLLOWUPS.md for context.
+    needs: [validate-tag, build-musl, build-apple, build-windows, build-debian, build-rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
