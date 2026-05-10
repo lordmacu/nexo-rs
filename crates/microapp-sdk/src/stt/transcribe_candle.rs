@@ -255,6 +255,15 @@ async fn resolve_model_dir(cfg: &TranscribeConfig) -> Result<PathBuf> {
 /// Fetch the three required Whisper assets from HuggingFace Hub
 /// into the user's cache (typically `~/.cache/huggingface/hub/`)
 /// and return the directory holding them.
+///
+/// Cfg-gated on `stt-candle-hub` because `hf-hub` transitively
+/// requires `tokio` with the `net` feature, which doesn't
+/// compile on `wasm32-unknown-unknown`. WASM consumers build
+/// `stt-candle` minus `stt-candle-hub` and pin
+/// `TranscribeConfig::model_path` to a bundled SafeTensors
+/// directory; the function signature below stays identical so
+/// the caller doesn't branch on the feature flag.
+#[cfg(feature = "stt-candle-hub")]
 async fn fetch_from_hf_hub(model_id: &str) -> Result<PathBuf> {
     use hf_hub::api::tokio::Api;
 
@@ -296,6 +305,27 @@ async fn fetch_from_hf_hub(model_id: &str) -> Result<PathBuf> {
         })?
         .to_path_buf();
     Ok(dir)
+}
+
+/// Fallback when the `stt-candle-hub` sub-feature is disabled
+/// (e.g. WASM builds). Surfaces a clear actionable error so the
+/// operator knows they need to either:
+/// - set `TranscribeConfig::model_path` to a local SafeTensors
+///   directory (the WASM-correct path), OR
+/// - rebuild on a native target with
+///   `--features stt-candle,stt-candle-hub` so the auto-fetch
+///   compiles.
+#[cfg(not(feature = "stt-candle-hub"))]
+async fn fetch_from_hf_hub(model_id: &str) -> Result<PathBuf> {
+    Err(SttError::ModelMissing(format!(
+        "TranscribeConfig.model_id is set to {model_id:?} but the \
+         `stt-candle-hub` Cargo feature is disabled — auto-fetch from \
+         HuggingFace Hub is unavailable on this build (typical when \
+         targeting WASM, where `hf-hub` doesn't compile). Either set \
+         `TranscribeConfig.model_path` to a local directory holding \
+         model.safetensors + tokenizer.json + config.json, or rebuild \
+         with `--features stt-candle,stt-candle-hub` on a native target."
+    )))
 }
 
 /// Transcribe the audio at `path` using `cfg`. Returns the
