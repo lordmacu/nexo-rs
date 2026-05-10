@@ -20,6 +20,7 @@ pub mod escalations;
 pub mod llm;
 pub mod llm_providers;
 pub mod mcp;
+pub mod memory;
 pub mod microapp_audit;
 pub mod pairing;
 pub mod plugin_doctor;

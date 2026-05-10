@@ -2012,6 +2012,15 @@ async fn main() -> Result<()> {
             config_dir.clone(),
             doctor_version,
         ));
+        // Phase 90.x.memory — `/m/memory` recall reader. Lazy-
+        // opens `LongTermMemory` from `<config_dir>/memory.yaml`
+        // on first query so the dispatcher wire doesn't depend
+        // on the late-built per-agent memory instance.
+        let memory_reader: Option<
+            std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemoryReader>,
+        > = Some(nexo_setup::admin_adapters::LiveMemoryReader::new(
+            config_dir.clone(),
+        ));
         // Phase 82.10.p — build the per-channel pairing trigger
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
@@ -2051,6 +2060,7 @@ async fn main() -> Result<()> {
                 tenant_store: tenant_store.clone(),
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
+                memory_reader: memory_reader.clone(),
                 // Phase 82.10.k — file-backed secrets store at
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new
