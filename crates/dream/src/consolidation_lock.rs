@@ -24,7 +24,12 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// `nix` is Unix-only. Windows builds use a `process::Command`
+// fallback in `is_pid_running` that exec's `tasklist.exe` —
+// slower than signal::kill but works without nix.
+#[cfg(unix)]
 use nix::sys::signal;
+#[cfg(unix)]
 use nix::unistd::Pid;
 use tokio::fs;
 
@@ -203,15 +208,40 @@ impl ConsolidationLock {
     }
 }
 
-/// True if a process with `pid` is currently running. Uses `kill(0)`
-/// on Unix — sends no signal but returns Ok if process exists. Mirror
-/// leak `nix::sys::signal::kill(pid, None)` semantics (TS uses
-/// `process.kill(pid, 0)`).
+/// True if a process with `pid` is currently running.
+///
+/// **Unix**: `kill(0)` semantics — send no signal but return Ok
+/// if the process exists. Same shape as TS leak's
+/// `process.kill(pid, 0)`.
+///
+/// **Windows**: shells out to `tasklist /FI "PID eq <pid>"` and
+/// matches the captured output for the pid. Slower (~10-30 ms
+/// per call vs Unix's ~µs) but the consolidation lock check
+/// runs once per turn at most, so the overhead is invisible.
 pub fn is_pid_running(pid: i32) -> bool {
     if pid <= 0 {
         return false;
     }
-    signal::kill(Pid::from_raw(pid), None).is_ok()
+    #[cfg(unix)]
+    {
+        signal::kill(Pid::from_raw(pid), None).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+        {
+            Ok(out) => {
+                let s = String::from_utf8_lossy(&out.stdout);
+                // tasklist with no match prints a header-only or
+                // an `INFO:` line; a real match contains the pid
+                // wrapped in quotes (CSV format).
+                s.contains(&format!("\"{pid}\""))
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 /// Phase 80.1.e — sync probe for the scoring sweep coordination.
