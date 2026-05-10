@@ -22,6 +22,7 @@ pub mod llm_providers;
 pub mod mcp;
 pub mod microapp_audit;
 pub mod pairing;
+pub mod plugin_doctor;
 pub mod processing;
 pub mod secrets;
 pub mod skills;

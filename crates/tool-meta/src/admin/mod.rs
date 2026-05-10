@@ -22,6 +22,7 @@ pub mod llm_providers;
 pub mod mcp;
 pub mod operator_stamping;
 pub mod pairing;
+pub mod plugin_doctor;
 pub mod pollers;
 pub mod processing;
 pub mod secrets;
