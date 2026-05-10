@@ -102,15 +102,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      # `sqlite-vec`'s C source uses BSD-style typedefs (`u_int8_t`,
-      # `u_int16_t`, `u_int64_t`) that musl libc doesn't expose by
-      # default. Define `_DEFAULT_SOURCE` so they resolve to their
-      # `uint*_t` cousins. Affects every musl matrix entry — both
-      # x86_64 and aarch64 hit the same upstream `sqlite-vec.c`.
+      # `sqlite-vec`'s `sqlite-vec.c` (lines 64-74) emits
+      # `typedef u_int8_t uint8_t;` for non-Windows / non-WASI
+      # platforms. Those `u_int*_t` BSD legacy typedefs aren't part
+      # of POSIX so musl libc deliberately omits them — neither
+      # `_DEFAULT_SOURCE` nor `_GNU_SOURCE` brings them in. The
+      # working fix is preprocessor substitution: rewrite the BSD
+      # name to the matching `<stdint.h>` typedef (which
+      # `sqlite-vec.c` includes on line 10), so the offending line
+      # becomes `typedef uint8_t uint8_t;` — a redundant typedef
+      # that GCC/Clang accept under C11 §6.7.
+      #
+      # Drop this once sqlite-vec ships an upstream fix wrapping
+      # the block in `#ifdef __GLIBC__`.
       - name: Set CFLAGS for sqlite-vec on musl
         run: |
-          echo 'CFLAGS_x86_64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE' >> "$GITHUB_ENV"
-          echo 'CFLAGS_aarch64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE' >> "$GITHUB_ENV"
+          MUSL_CFLAGS='-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t'
+          echo "CFLAGS_x86_64_unknown_linux_musl=${MUSL_CFLAGS}" >> "$GITHUB_ENV"
+          echo "CFLAGS_aarch64_unknown_linux_musl=${MUSL_CFLAGS}" >> "$GITHUB_ENV"
 
       - name: Install zig (pinned)
         uses: goto-bus-stop/setup-zig@v2
@@ -226,22 +235,20 @@ jobs:
           path: target/distrib/nexo-rs-x86_64-pc-windows-msvc.*
           if-no-files-found: error
 
-  # Termux build temporarily disabled — `aws-lc-sys` (transitive
-  # via rustls 0.23 → hyper-rustls → reqwest) fails to cross-
-  # compile for `aarch64-linux-android` through cargo-zigbuild
-  # ("'sys/types.h' file not found"). The fix requires
-  # workspace-wide migration off `rustls-tls` to
-  # `rustls-tls-no-provider` across the daemon AND the 3 sibling
-  # plugin repos (nexo-rs-plugin-browser/whatsapp/telegram), since
-  # cargo unifies features cross-graph. Tracked under the
-  # Phase 27.2 follow-up in FOLLOWUPS.md.
+  # Termux build — re-enabled by Phase 27.2-follow-up.b
+  # (workspace `tokio-rustls` + published nexo-plugin-email 0.1.3
+  # pinned to `ring`, eliminating the aws-lc-sys C build chain
+  # that previously failed at `'sys/types.h'`).
   #
-  # Re-enable: drop the `if: false` guard once the upstream rustls
-  # crypto-provider migration lands.
+  # Swapped from `cargo-zigbuild` to `cargo-ndk` + Android NDK
+  # r27c because zig 0.13's bundled Android sysroot is incomplete
+  # for the C-source crates that survive even after the rustls
+  # fix (`ring` needs `<assert.h>`, `libsqlite3-sys` needs
+  # `<stdio.h>`). cargo-ndk delegates to the real NDK toolchain,
+  # which has full Bionic libc headers.
   build-termux:
-    if: false
     needs: validate-tag
-    name: build (aarch64-linux-android, termux) — DISABLED
+    name: build (aarch64-linux-android, termux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -256,18 +263,28 @@ jobs:
         with:
           key: release-termux-${{ hashFiles('Cargo.lock') }}
 
-      - name: Install zig (pinned)
-        uses: goto-bus-stop/setup-zig@v2
+      # Android NDK r27c — current LTS at time of writing. Older
+      # NDKs (r25, r26) also work; bumping requires the same
+      # `cargo-ndk` rebuild.
+      - name: Install Android NDK r27c
+        uses: nttld/setup-ndk@v1
+        id: ndk
         with:
-          version: "0.13.0"
+          ndk-version: r27c
+          add-to-path: true
+          link-to-sdk: false
 
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked --version 0.22.3
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked --version 4.1.2
 
       - name: Set build channel for provenance
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: echo "NEXO_BUILD_CHANNEL=termux-aarch64" >> "$GITHUB_ENV"
 
-      - name: Build Termux .deb (cross-compile via cargo-zigbuild)
+      - name: Build Termux .deb (cross-compile via cargo-ndk)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: bash packaging/termux/build.sh
 
       - uses: actions/upload-artifact@v4
@@ -380,9 +397,11 @@ jobs:
           if-no-files-found: error
 
   publish:
-    # build-termux temporarily removed from needs — see the
-    # `if: false` guard on the job + FOLLOWUPS.md for context.
-    needs: [validate-tag, build-musl, build-apple, build-windows, build-debian, build-rpm]
+    # build-termux re-added 2026-05-10 after Phase 27.2-follow-up.b
+    # landed (workspace tokio-rustls + nexo-plugin-email 0.1.3
+    # pinned to ring) and the job's toolchain swapped from
+    # cargo-zigbuild → cargo-ndk + Android NDK r27c.
+    needs: [validate-tag, build-musl, build-apple, build-windows, build-termux, build-debian, build-rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

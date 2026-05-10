@@ -4711,7 +4711,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-rs"
-version = "0.1.6-rc2"
+version = "0.1.6-rc3"
 dependencies = [
  "anyhow",
  "arc-swap",
