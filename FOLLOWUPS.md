@@ -47,9 +47,15 @@ NOT shipping blockers.
   unit tests cover yaml round-trip + idempotent upsert +
   cascade-delete + transport validation.
 
-- ⬜ **Channel approve UX** — `/m/channels` ships list + revoke;
-  the approve flow needs a server-name picker + binding-allowlist
-  editor. Operator approves new channels via yaml today.
+- ✅ ~~**Channel approve UX**~~ shipped 2026-05-10 in
+  nexo-plugin-admin@0.1.5 — `ChannelApproveModal` with agent
+  picker (dropdown from `listAgents`, falls back to free-text)
+  + server picker (free-text + `<datalist>` autocomplete from
+  `listMcpServers`, also accepts plugin-shipped names like
+  `plugin:telegram:tg`) + allowlist editor (comma-separated
+  binding indices; empty = all). Backed by existing
+  `nexo/admin/channels/approve` (Phase 82.10.f, no backend
+  changes needed).
 
 - ✅ ~~**Tenants CRUD wrappers**~~ shipped 2026-05-10 (commit 007a3d3
   in nexo-rs-plugin-admin) — `api/tenants.ts` now exposes
