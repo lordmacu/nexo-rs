@@ -33,6 +33,7 @@ use super::domains::agents::YamlPatcher;
 use super::domains::credentials::{ChannelCredentialPersister, CredentialStore, PersisterRegistry};
 use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
+use super::domains::mcp::McpServerStore;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
 use super::domains::skills::SkillsStore;
@@ -254,6 +255,11 @@ pub struct AdminRpcDispatcher {
     /// management). Production wires
     /// `nexo_setup::admin_adapters::TenantsYamlPatcher`.
     tenant_store: Option<Arc<dyn TenantStore>>,
+    /// Phase 90.x.mcp — MCP server registry CRUD. `None`
+    /// disables `nexo/admin/mcp/*` (mcp.yaml management via
+    /// CLI / direct edit only). Production wires
+    /// `nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore`.
+    mcp_store: Option<Arc<dyn McpServerStore>>,
     /// Phase 82.13.b.1 — transcript appender used by
     /// `processing/intervention` (and later `processing/resume`)
     /// to stamp operator replies / summary / replayed inbounds
@@ -351,6 +357,7 @@ impl AdminRpcDispatcher {
             skills_store: None,
             channel_outbound: None,
             tenant_store: None,
+            mcp_store: None,
             transcript_appender: None,
             event_emitter: None,
             secrets_store: None,
@@ -627,6 +634,16 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 90.x.mcp — install the MCP servers domain.
+    /// Production passes [`super::domains::mcp::McpYamlStore`]
+    /// pointed at `<config_dir>/mcp.yaml`. `None` disables
+    /// `nexo/admin/mcp/*` (operator manages mcp.yaml via CLI /
+    /// direct edit).
+    pub fn with_mcp_domain(mut self, store: Arc<dyn McpServerStore>) -> Self {
+        self.mcp_store = Some(store);
+        self
+    }
+
     /// Phase 83.8.4.a — install the channel-outbound dispatcher
     /// used by `processing/intervention` when the action is
     /// `Reply`. Without one wired the handler returns
@@ -734,6 +751,15 @@ impl AdminRpcDispatcher {
             | "nexo/admin/tenants/get"
             | "nexo/admin/tenants/upsert"
             | "nexo/admin/tenants/delete" => Some("tenants_crud"),
+            // Phase 90.x.mcp — admin/mcp/* CRUD over
+            // `<config_dir>/mcp.yaml.mcp.servers`. Gated on
+            // `mcp_crud`; nexo-plugin-admin declares it as
+            // required so the daemon refuses to spawn the
+            // plugin until the operator grants it.
+            "nexo/admin/mcp/list"
+            | "nexo/admin/mcp/get"
+            | "nexo/admin/mcp/upsert"
+            | "nexo/admin/mcp/delete" => Some("mcp_crud"),
             // Phase 82.10.k — secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
@@ -1285,6 +1311,30 @@ impl AdminRpcDispatcher {
                 Some(store) => super::domains::tenants::delete(store.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "tenants domain not configured".into(),
+                )),
+            },
+            "nexo/admin/mcp/list" => match &self.mcp_store {
+                Some(store) => super::domains::mcp::list(store.as_ref()).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "mcp domain not configured".into(),
+                )),
+            },
+            "nexo/admin/mcp/get" => match &self.mcp_store {
+                Some(store) => super::domains::mcp::get(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "mcp domain not configured".into(),
+                )),
+            },
+            "nexo/admin/mcp/upsert" => match &self.mcp_store {
+                Some(store) => super::domains::mcp::upsert(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "mcp domain not configured".into(),
+                )),
+            },
+            "nexo/admin/mcp/delete" => match &self.mcp_store {
+                Some(store) => super::domains::mcp::delete(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "mcp domain not configured".into(),
                 )),
             },
             "nexo/admin/secrets/write" => match &self.secrets_store {

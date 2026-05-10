@@ -142,7 +142,11 @@ categories   = ["asynchronous", "api-bindings"]
 [package]
 name        = "nexo-rs"
 description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LLM providers, channels (WhatsApp, Telegram, Email, Browser), memory, MCP, skills, and TaskFlow."
-version      = "0.1.6"
+# Phase 27.2 RC validation — pre-release marker so the
+# `nexo-rs-v0.1.6-rc1` tag's version matches what cargo-dist
+# verifies. After the multi-platform RC is green, `release-plz`
+# bumps this to `"0.1.6"` for the GA cut.
+version      = "0.1.6-rc1"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
