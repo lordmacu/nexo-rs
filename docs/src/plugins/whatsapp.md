@@ -7,7 +7,7 @@ voice transcription.
 Source: standalone repo at
 [`nexo-rs-plugin-whatsapp`](https://github.com/lordmacu/nexo-plugin-whatsapp)
 (extracted from `crates/plugins/whatsapp/` per Phase 81.19.a;
-see [`PHASES.md`](../../../PHASES.md#phase-8119a-plugin-whatsapp-standalone-repo-extraction-shape-b-)
+see [`PHASES.md`](https://github.com/lordmacu/nexo-rs/blob/main/PHASES.md#phase-8119a-plugin-whatsapp-standalone-repo-extraction-shape-b-)
 for the migration notes). The crate ships as a `lib + bin`
 Shape B package: the lib re-exports `WhatsappPlugin` for an
 Android embedded host tomorrow, the bin is the subprocess

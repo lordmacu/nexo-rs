@@ -7,7 +7,7 @@ voice auto-transcription.
 Source: standalone repo at
 [`nexo-rs-plugin-telegram`](https://github.com/lordmacu/nexo-plugin-telegram)
 (extracted from `crates/plugins/telegram/` per Phase 81.18; see
-[`PHASES.md`](../../../PHASES.md#phase-8118-plugin-telegram-standalone-repo-extraction-shape-b-)
+[`PHASES.md`](https://github.com/lordmacu/nexo-rs/blob/main/PHASES.md#phase-8118-plugin-telegram-standalone-repo-extraction-shape-b-)
 for the migration notes). The crate ships as a `lib + bin` Shape B
 package: the lib re-exports `TelegramPlugin` for in-process
 consumers (an Android embedded host tomorrow), and the bin is

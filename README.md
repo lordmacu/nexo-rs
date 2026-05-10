@@ -173,23 +173,40 @@ reconnect. No events lost.
 
 ## Quick start
 
-Requires Rust (2021 edition) and a running NATS instance
-(`docker run -p 4222:4222 nats:2.10-alpine` is enough to start).
-
 ```bash
-git clone git@github.com:lordmacu/nexo-rs.git
-cd nexo-rs
-cargo build --release
+# 1. Install the binary (Linux x86_64 / aarch64, no Rust toolchain needed)
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs-installer.sh | sh
 
-# Pair channels, pick a provider, consent to Google, etc.
-./target/release/agent setup
+# 2. Pair channels, pick an LLM provider
+nexo setup
 
-# Run
-./target/release/agent --config ./config
+# 3. Run
+nexo --config ./config
 ```
 
-First run will tell you exactly what's missing (API keys, paired
-WhatsApp, etc.) instead of failing silently.
+`nexo setup` is interactive — pairs WhatsApp via QR, asks for your
+LLM API key, walks the Google OAuth consent if you want Gmail. It
+tells you exactly what's missing instead of failing silently.
+
+> **Apple Silicon, Windows, Homebrew, npm**: scoped for the next
+> release window. Today the shell installer covers Linux musl
+> x86_64 + aarch64 (works on every modern distro + Termux). For
+> other platforms: `cargo install --git https://github.com/lordmacu/nexo-rs nexo`.
+
+### From source
+
+```bash
+git clone https://github.com/lordmacu/nexo-rs.git
+cd nexo-rs
+cargo build --release
+./target/release/nexo setup
+./target/release/nexo --config ./config
+```
+
+NATS bus runs out-of-the-box on the embedded local fallback; opt
+into a real NATS instance via `config/broker.yaml` for multi-host
+deployments (`docker run -p 4222:4222 nats:2.10-alpine` to start).
 
 ## Configuration
 
