@@ -4514,3 +4514,109 @@ impl
         Ok(parsed)
     }
 }
+
+// ─── Phase 90.x.memory — LiveMemoryReader ──────────────────────
+
+/// Live memory query reader. Constructed at boot from the
+/// daemon's `<config_dir>/memory.yaml`; the underlying
+/// `LongTermMemory` is opened lazily on the first `query()`
+/// call so the dispatcher wire-up doesn't have to plumb
+/// the late-built memory instance through.
+///
+/// `LongTermMemory` does not implement `Debug` (its `pool` +
+/// `embedding` fields are not Debug-safe), so we hand-roll a
+/// redacted impl.
+#[derive(Clone)]
+pub struct LiveMemoryReader {
+    config_dir: PathBuf,
+    /// Cached on first successful `recall`. `Mutex<Option<...>>`
+    /// rather than `OnceCell` so a transient open failure doesn't
+    /// permanently lock out the page (next call retries).
+    cached: std::sync::Arc<tokio::sync::Mutex<Option<std::sync::Arc<nexo_memory::LongTermMemory>>>>,
+}
+
+impl std::fmt::Debug for LiveMemoryReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveMemoryReader")
+            .field("config_dir", &self.config_dir)
+            .field("cached", &"<long-term-memory>")
+            .finish()
+    }
+}
+
+impl LiveMemoryReader {
+    /// Build a reader pointed at `<config_dir>/memory.yaml`.
+    /// Lazy open: the first `query()` call opens the DB; the
+    /// underlying `LongTermMemory` is then reused for all
+    /// subsequent calls.
+    pub fn new(config_dir: PathBuf) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            config_dir,
+            cached: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        })
+    }
+
+    async fn open_or_cached(&self) -> anyhow::Result<std::sync::Arc<nexo_memory::LongTermMemory>> {
+        let mut slot = self.cached.lock().await;
+        if let Some(mem) = slot.as_ref() {
+            return Ok(mem.clone());
+        }
+        let mem_cfg: Option<nexo_config::types::MemoryConfig> =
+            nexo_config::load_optional(&self.config_dir, "memory.yaml")
+                .map_err(|e| anyhow::anyhow!("memory.yaml load failed: {e}"))?;
+        let cfg = mem_cfg.ok_or_else(|| {
+            anyhow::anyhow!("memory.yaml missing — long-term memory not configured")
+        })?;
+        if cfg.long_term.backend != "sqlite" {
+            anyhow::bail!(
+                "long_term backend `{}` not supported by /m/memory v1 (sqlite only)",
+                cfg.long_term.backend
+            );
+        }
+        let path = cfg
+            .long_term
+            .sqlite
+            .as_ref()
+            .map(|s| s.path.as_str())
+            .unwrap_or("./data/memory.db");
+        let mem = nexo_memory::LongTermMemory::open(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("LongTermMemory::open({path}): {e}"))?;
+        let mem_arc = std::sync::Arc::new(mem);
+        *slot = Some(mem_arc.clone());
+        Ok(mem_arc)
+    }
+}
+
+#[async_trait]
+impl
+    nexo_core::agent::admin_rpc::domains::memory::MemoryReader
+    for LiveMemoryReader
+{
+    async fn query(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<nexo_tool_meta::admin::memory::MemoryEntryWire>> {
+        let mem = self.open_or_cached().await?;
+        let entries = mem.recall(agent_id, query, limit).await?;
+        Ok(entries
+            .into_iter()
+            .map(|e| nexo_tool_meta::admin::memory::MemoryEntryWire {
+                id: e.id.to_string(),
+                agent_id: e.agent_id,
+                content: e.content,
+                tags: e.tags,
+                concept_tags: e.concept_tags,
+                created_at: e.created_at.to_rfc3339(),
+                memory_type: e.memory_type.map(|m| match m {
+                    nexo_memory::relevance::MemoryType::User => "user".into(),
+                    nexo_memory::relevance::MemoryType::Feedback => "feedback".into(),
+                    nexo_memory::relevance::MemoryType::Project => "project".into(),
+                    nexo_memory::relevance::MemoryType::Reference => "reference".into(),
+                }),
+            })
+            .collect())
+    }
+}

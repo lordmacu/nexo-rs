@@ -4826,6 +4826,7 @@ dependencies = [
  "nexo-extensions",
  "nexo-llm",
  "nexo-llm-auth",
+ "nexo-memory",
  "nexo-pairing",
  "nexo-plugin-email",
  "nexo-plugin-google",
