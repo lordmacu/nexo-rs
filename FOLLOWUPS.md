@@ -3049,11 +3049,43 @@ coordinación de archivos cross-cutting.
      assertion exercising all 4 events with exact payload field
      verification.
 
-- **81.21.b.b: `nexo/admin/plugins/restart` admin RPC ⬜** —
-  manual operator restart from UI. Today operators restart the
-  daemon to recover from `gave_up`. Wire as nexo/admin RPC under
-  capability `plugin_restart` (or reuse `plugin_doctor` if
-  operator UX collapses them).
+- ✅ ~~**81.21.b.b: `nexo/admin/plugins/restart` admin RPC**~~
+  shipped 2026-05-10 in nexo-tool-meta 0.1.13 + nexo-core 0.1.17 +
+  nexo-plugin-admin 0.1.11. Backend: new
+  `EncryptionKey`-style additive variant pattern — but for
+  lifecycle, not data. New `force_restart(self: Arc<Self>, ...)`
+  method on SubprocessNexoPlugin bypasses the auto-respawn
+  loop's natural Crashed flow so no spurious crashed event
+  fires for an intentional kill. Coordinated via existing cancel
+  cascade + new `restart_signaled` flag (sibling of
+  shutdown_signaled). Spawns a fresh respawn_loop after install
+  via `weak_self_arc().spawn_supervisor_loop()`. New trait
+  `PluginRestarter` + dispatcher arms + capability
+  `plugin_restart` (distinct from read-only `plugin_doctor`).
+  `LivePluginRestarter` adapter looks up plugin handles
+  snapshot, downcasts to SubprocessNexoPlugin, calls
+  force_restart. New `plugin.lifecycle.<id>.restarted_manually`
+  event with `{plugin_id, previous_uptime_ms, restarted_at_ms,
+  new_pid?}` payload. Frontend: RestartPluginModal with
+  confirm-by-typing-prefix + per-row Restart button in
+  PluginsMain. 60s server-side timeout for spawn handshake.
+  Tests: 3 unit (handler) + 3 adapter + 4 mock-script
+  integration (replaces inner / publishes restarted_manually /
+  after gave_up recovers / drains pending with retry error).
+  Docs: `docs/src/plugins/supervisor.md` § Manual restart.
+  **Open**: SharedPluginHandles cell pattern needed in main.rs
+  to actually wire LivePluginRestarter (admin bootstrap runs
+  BEFORE wire_plugin_registry); today the dispatcher slot is
+  None and the RPC returns "plugin restart domain not
+  configured". External integrations can construct
+  LivePluginRestarter directly + wire via
+  `dispatcher.with_plugin_restarter()`.
+
+- **81.21.b.b: SharedPluginHandles cell + main.rs wiring ⬜**
+  spin-off of above. AdminBootstrap runs before plugin handles
+  are produced by wire_plugin_registry. Solution mirrors
+  SharedMemorySnapshotter: empty cell at admin bootstrap, write
+  after wire. LivePluginRestarter reads cell on each call. ~30min.
 
 - ✅ ~~**81.21.b.b: real `respawned.total_uptime_ms` telemetry**~~
   shipped 2026-05-10 in nexo-core 0.1.16. Captures

@@ -137,6 +137,78 @@ emerges.
 - The daemon-wide `ctx_shutdown` cancellation token is also
   observed. Either source returns the supervisor cleanly.
 
+## Manual restart
+
+Operators can force-restart any subprocess plugin from the admin
+UI without restarting the daemon. Useful after a `gave_up` event
+(auto-respawn loop exhausted) or to apply config changes that
+only take effect at boot.
+
+| Topic | Capability | Behaviour |
+|---|---|---|
+| `nexo/admin/plugins/restart { plugin_id }` | `plugin_restart` | Force-kill + fresh spawn + new respawn_loop |
+
+The restart is **distinct** from auto-respawn:
+
+- Publishes `plugin.lifecycle.<id>.restarted_manually` (NOT
+  `crashed`+`respawned`) — operator dashboards can distinguish
+  intentional restarts from crash recovery.
+- Capability `plugin_restart` is separate from `plugin_doctor`
+  (read-only). Security review can grant write+destructive
+  separately from read access.
+- Bypasses `respawn=false` — even with auto-respawn disabled, the
+  manual restart spawns a fresh child + respawn_loop. After
+  manual restart, the new respawn_loop respects the manifest's
+  `respawn` setting again.
+
+### Flow
+
+```
+operator clicks "Restart" in plugin admin UI
+  ↓
+RPC nexo/admin/plugins/restart { plugin_id }
+  ↓
+LivePluginRestarter.restart() — lookup + downcast + force_restart()
+  ↓
+SubprocessNexoPlugin::force_restart()
+  ├─ capture previous_uptime_ms (Inner.spawned_at.elapsed())
+  ├─ drain pending oneshots with "plugin restarted by operator"
+  ├─ cancel.cancel() (cascade tears down writer/reader/forwarders/supervisor)
+  ├─ wait up to 2s for supervisor task to drain
+  ├─ force-kill child if still alive
+  ├─ tokio::time::timeout(60s, spawn_one_attempt(...))
+  ├─ capture new_pid from child.id()
+  ├─ install new Inner
+  ├─ spawn fresh respawn_loop
+  ├─ publish "restarted_manually" event
+  └─ return PluginsRestartResponse { plugin_id, previous_uptime_ms,
+                                     restarted_at_ms, new_pid }
+```
+
+### Errors
+
+| Error | Maps to | Operator action |
+|---|---|---|
+| `plugin {id} not found` | `InvalidParams` | Refresh admin UI; plugin removed from manifest |
+| `plugin {id} is in-tree` | `InvalidParams` | Use daemon restart for in-tree plugins |
+| `restart timed out` (60s) | `Internal` | Plugin in degraded state; inspect logs + fix manifest |
+
+### Limitations
+
+- **Subprocess plugins only** — in-tree plugins (`assistant`,
+  `dispatch-tools`) cannot be hot-restarted. Operator restarts
+  the daemon.
+- **Manifest unchanged** — force_restart uses the cached manifest;
+  operator-edited `manifest.entrypoint.command` won't take effect
+  until daemon restart. Manifest hot-reload is a deferred
+  follow-up.
+- **No coalesce** — concurrent restart calls (two operators clicking
+  simultaneously) execute sequentially via `self.inner.lock()`.
+  Functional but with funny intermediate state for ~1s. Add
+  explicit coalesce only if abuse seen.
+- **No restart cooldown / rate-limiting** — capability gate is
+  the gate. Add cooldown only if abuse seen.
+
 ## Limitations + open follow-ups
 
 - **No manual restart RPC** — `nexo/admin/plugins/restart {id}`
