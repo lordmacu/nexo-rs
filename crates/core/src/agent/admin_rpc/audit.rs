@@ -15,75 +15,18 @@
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// One audit row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AdminAuditRow {
-    /// Microapp identity (extension id from `extensions.yaml`).
-    pub microapp_id: String,
-    /// Full JSON-RPC method (`nexo/admin/<domain>/<method>`).
-    pub method: String,
-    /// Required capability (e.g. `agents_crud`). When the call
-    /// was denied, this is the capability that was missing.
-    pub capability: String,
-    /// SHA-256 of canonicalized params (sorted keys). Lets
-    /// operators detect repeated identical calls without storing
-    /// PII payloads.
-    pub args_hash: String,
-    /// Epoch milliseconds when dispatch started.
-    pub started_at_ms: u64,
-    /// `"ok"` | `"error"` | `"denied"`.
-    pub result: AdminAuditResult,
-    /// Wall-clock duration of the dispatch.
-    pub duration_ms: u64,
-    /// Phase 83.8.12.7 — tenant scope for the call. Sniffed from
-    /// `params.tenant_id` (string) when present; legacy rows / non
-    /// tenant-scoped calls (echo, pairing, credentials) leave
-    /// this `None`. Lets operators filter audit tails per tenant
-    /// for SaaS billing or compliance reviews.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tenant_id: Option<String>,
-}
-
-/// Outcome of a single admin call.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AdminAuditResult {
-    /// Handler returned a `result` payload.
-    Ok,
-    /// Handler returned an error other than capability denial
-    /// (validation failure, internal error, method-not-found).
-    Error,
-    /// Capability gate refused the call before dispatch.
-    Denied,
-}
-
-impl AdminAuditResult {
-    /// Stable wire string used by the SQLite writer (82.10.g) and
-    /// the CLI tail formatter.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            AdminAuditResult::Ok => "ok",
-            AdminAuditResult::Error => "error",
-            AdminAuditResult::Denied => "denied",
-        }
-    }
-
-    /// Inverse of `as_str`. Unknown strings (e.g. forward-compat
-    /// from a future writer variant) map to `Error` so the audit
-    /// row is never silently misclassified as `Ok`.
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ok" => AdminAuditResult::Ok,
-            "denied" => AdminAuditResult::Denied,
-            _ => AdminAuditResult::Error,
-        }
-    }
-}
+// Phase 83.12.audit-page — `AdminAuditRow`, `AdminAuditResult`,
+// `AuditTailFilter`, and `AuditTailPage` moved to `nexo-tool-meta`
+// so the ts-types-codegen pipeline (Phase 83.12.ts-types-codegen)
+// generates their TypeScript declarations. Re-exported here so
+// existing consumers (`use nexo_core::agent::admin_rpc::audit::AdminAuditRow`)
+// keep resolving without per-file edits.
+pub use nexo_tool_meta::admin::audit::{
+    AdminAuditResult, AdminAuditRow, AuditTailFilter, AuditTailPage,
+};
 
 /// Audit writer abstraction. Async to keep the SQLite future
 /// (82.10.g) plug-compatible without changing this trait.
@@ -92,6 +35,18 @@ pub trait AdminAuditWriter: Send + Sync + std::fmt::Debug {
     /// Append one row. Errors are logged but not propagated —
     /// audit failures must never block admin dispatch.
     async fn append(&self, row: AdminAuditRow);
+}
+
+/// Phase 83.12.audit-page — read-side trait for the
+/// `nexo/admin/microapp_audit/tail` admin RPC. Separated from
+/// [`AdminAuditWriter`] so the dispatcher can wire write + read
+/// independently (matches the `transcript_reader` pattern).
+/// `SqliteAuditWriter` implements both.
+#[async_trait::async_trait]
+pub trait AdminAuditReader: Send + Sync + std::fmt::Debug {
+    /// Return one paginated page of audit rows matching `filter`.
+    /// Newest-first order.
+    async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<AuditTailPage>;
 }
 
 /// In-memory writer used in tests + as the default production

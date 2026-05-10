@@ -19,45 +19,17 @@ use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-use serde::{Deserialize, Serialize};
+use super::audit::{
+    AdminAuditReader, AdminAuditResult, AdminAuditRow, AdminAuditWriter, AuditTailFilter,
+    AuditTailPage,
+};
 
-use super::audit::{AdminAuditResult, AdminAuditRow, AdminAuditWriter};
-
-/// Phase 82.10.h.2 — filter shape for `SqliteAdminAuditWriter::tail`.
-/// The `nexo microapp admin audit tail` CLI subcommand maps its
-/// flags to this struct (CLI wire-up itself is deferred to
-/// 82.10.h.b alongside the broader main.rs production wiring).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AuditTailFilter {
-    /// Restrict to a single microapp.
-    pub microapp_id: Option<String>,
-    /// Restrict to one JSON-RPC method.
-    pub method: Option<String>,
-    /// Restrict to one outcome (`ok` / `error` / `denied`).
-    pub result: Option<AdminAuditResult>,
-    /// Lower-bound timestamp (epoch ms). Use
-    /// `chrono::Utc::now().timestamp_millis() - duration_ms` for
-    /// human-friendly windows.
-    pub since_ms: Option<u64>,
-    /// Max rows to return. Default `50` if 0.
-    pub limit: usize,
-    /// Phase 83.8.12.7 — restrict to a single tenant scope. Rows
-    /// stamped from non tenant-scoped calls (`tenant_id IS NULL`)
-    /// are excluded when this filter is `Some`. Use `None` (the
-    /// default) to leave the tail un-scoped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tenant_id: Option<String>,
-}
-
-impl AuditTailFilter {
-    /// Convenience constructor mirroring CLI defaults.
-    pub fn new() -> Self {
-        Self {
-            limit: 50,
-            ..Default::default()
-        }
-    }
-}
+// Phase 83.12.audit-page — `AuditTailFilter` moved to
+// `nexo-tool-meta::admin::audit`. The orphan rule prevents adding
+// `impl AuditTailFilter { fn new() }` here. Callers that previously
+// used `AuditTailFilter::new()` should construct via
+// `AuditTailFilter::default()` and override `limit` explicitly
+// (or leave 0 → the SqliteAuditWriter clamps to 50 server-side).
 
 /// SQLite-backed `AdminAuditWriter`. Production daemons construct
 /// one at boot and feed it to
@@ -198,43 +170,77 @@ impl SqliteAdminAuditWriter {
         Ok(deleted)
     }
 
-    /// Phase 82.10.h.2 — tail recent audit rows with filter
-    /// support. Library-level query the `nexo microapp admin
-    /// audit tail` CLI subcommand will call once main.rs becomes
-    /// buildable (deferred to 82.10.h.b — main.rs has unrelated
-    /// in-progress refactors blocking the binary build today).
-    pub async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<Vec<AdminAuditRow>> {
-        let mut sql = String::from(
-            "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
-             result, error_code, duration_ms, tenant_id \
-             FROM microapp_admin_audit WHERE 1=1",
-        );
-        let mut binds: Vec<String> = Vec::new();
+    /// Phase 82.10.h.2 / 83.12.audit-page — tail recent audit rows
+    /// with filter + pagination support. Returns an
+    /// [`AuditTailPage`] with `entries`, `total`, `has_more`, and
+    /// `next_offset` so callers (CLI tail formatter + the
+    /// `nexo/admin/microapp_audit/tail` admin RPC) can render
+    /// "showing N of M" UI labels and offer "load more" controls.
+    ///
+    /// Filter combinator → SQL: every Some-field appends an `AND`
+    /// clause. Result is ordered newest-first by `started_at_ms`.
+    /// `limit = 0` defaults to 50; clamped to `[1, 500]`.
+    pub async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<AuditTailPage> {
+        // Build the WHERE clause once + reuse for both the
+        // SELECT (paginated rows) and the COUNT (total matching).
+        let mut where_sql = String::from("WHERE 1=1");
+        let mut str_binds: Vec<String> = Vec::new();
         if let Some(id) = &filter.microapp_id {
-            sql.push_str(" AND microapp_id = ?");
-            binds.push(id.clone());
+            where_sql.push_str(" AND microapp_id = ?");
+            str_binds.push(id.clone());
         }
         if let Some(method) = &filter.method {
-            sql.push_str(" AND method = ?");
-            binds.push(method.clone());
+            where_sql.push_str(" AND method = ?");
+            str_binds.push(method.clone());
         }
         if let Some(result) = &filter.result {
-            sql.push_str(" AND result = ?");
-            binds.push(result.as_str().to_string());
+            where_sql.push_str(" AND result = ?");
+            str_binds.push(result.as_str().to_string());
         }
         if let Some(tenant) = &filter.tenant_id {
-            sql.push_str(" AND tenant_id = ?");
-            binds.push(tenant.clone());
+            where_sql.push_str(" AND tenant_id = ?");
+            str_binds.push(tenant.clone());
         }
         let mut int_binds: Vec<i64> = Vec::new();
         if let Some(since_ms) = filter.since_ms {
-            sql.push_str(" AND started_at_ms >= ?");
+            where_sql.push_str(" AND started_at_ms >= ?");
             int_binds.push(since_ms as i64);
         }
-        sql.push_str(" ORDER BY started_at_ms DESC LIMIT ?");
-        int_binds.push(filter.limit.max(1) as i64);
 
-        let mut q = sqlx::query_as::<
+        // Server-side clamp: empty filter → 50, max 500.
+        let effective_limit = if filter.limit == 0 {
+            50
+        } else {
+            filter.limit.min(500)
+        };
+
+        // Phase 83.12.audit-page — total count for "showing N of M"
+        // UI label. Same WHERE clause as the SELECT below; kept
+        // as a separate query so the LIMIT/OFFSET don't taint the
+        // count.
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM microapp_admin_audit {}",
+            where_sql
+        );
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+        for b in &str_binds {
+            count_q = count_q.bind(b);
+        }
+        for b in &int_binds {
+            count_q = count_q.bind(*b);
+        }
+        let total: i64 = count_q.fetch_one(&self.pool).await?;
+        let total = total.max(0) as u64;
+
+        // Page of rows.
+        let select_sql = format!(
+            "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
+             result, error_code, duration_ms, tenant_id \
+             FROM microapp_admin_audit {} \
+             ORDER BY started_at_ms DESC LIMIT ? OFFSET ?",
+            where_sql
+        );
+        let mut select_q = sqlx::query_as::<
             _,
             (
                 String,
@@ -247,15 +253,18 @@ impl SqliteAdminAuditWriter {
                 i64,
                 Option<String>,
             ),
-        >(&sql);
-        for b in &binds {
-            q = q.bind(b);
+        >(&select_sql);
+        for b in &str_binds {
+            select_q = select_q.bind(b);
         }
         for b in &int_binds {
-            q = q.bind(*b);
+            select_q = select_q.bind(*b);
         }
-        let rows = q.fetch_all(&self.pool).await?;
-        Ok(rows
+        select_q = select_q.bind(effective_limit as i64);
+        select_q = select_q.bind(filter.offset as i64);
+
+        let rows = select_q.fetch_all(&self.pool).await?;
+        let entries: Vec<AdminAuditRow> = rows
             .into_iter()
             .map(
                 |(
@@ -279,7 +288,22 @@ impl SqliteAdminAuditWriter {
                     tenant_id,
                 },
             )
-            .collect())
+            .collect();
+
+        let next_offset_value = filter.offset.saturating_add(entries.len());
+        let has_more = (next_offset_value as u64) < total;
+        let next_offset = if has_more {
+            Some(next_offset_value)
+        } else {
+            None
+        };
+
+        Ok(AuditTailPage {
+            entries,
+            total,
+            has_more,
+            next_offset,
+        })
     }
 
     /// Phase 83.8.12.7 — convenience tail bound to a single tenant.
@@ -293,13 +317,15 @@ impl SqliteAdminAuditWriter {
         since_ms: Option<u64>,
         limit: usize,
     ) -> anyhow::Result<Vec<AdminAuditRow>> {
-        self.tail(&AuditTailFilter {
-            tenant_id: Some(tenant_id.to_string()),
-            since_ms,
-            limit: limit.max(1),
-            ..Default::default()
-        })
-        .await
+        let page = self
+            .tail(&AuditTailFilter {
+                tenant_id: Some(tenant_id.to_string()),
+                since_ms,
+                limit: limit.max(1),
+                ..Default::default()
+            })
+            .await?;
+        Ok(page.entries)
     }
 
     /// Test-only — read all rows.
@@ -434,6 +460,17 @@ impl AdminAuditWriter for SqliteAdminAuditWriter {
     }
 }
 
+// Phase 83.12.audit-page — read-side trait so the dispatcher can
+// wire the same SQLite-backed writer for both writes (audit
+// append) and reads (admin RPC tail) without two separate
+// connection pools.
+#[async_trait]
+impl AdminAuditReader for SqliteAdminAuditWriter {
+    async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<AuditTailPage> {
+        SqliteAdminAuditWriter::tail(self, filter).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,7 +557,8 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].started_at_ms, 3_000, "newest first");
         assert_eq!(rows[1].started_at_ms, 1_000);
@@ -550,7 +588,8 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].started_at_ms, 2_000);
 
@@ -561,7 +600,8 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].started_at_ms, 3_000);
     }
@@ -578,7 +618,8 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(rows.len(), 3);
     }
 
@@ -653,7 +694,8 @@ mod tests {
                 ..Default::default()
             })
             .await
-            .unwrap();
+            .unwrap()
+            .entries;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].tenant_id.as_deref(), Some("acme"));
         assert_eq!(rows[0].started_at_ms, 1_000);
@@ -746,5 +788,61 @@ mod tests {
         for row in &rows {
             assert!(row.started_at_ms >= now_ms - 3 * 1000);
         }
+    }
+
+    /// Phase 83.12.audit-page — pagination contract: 75 rows
+    /// total, page-size 50, two pages should return 50 + 25 with
+    /// the right `has_more` / `next_offset` markers.
+    #[tokio::test]
+    async fn tail_returns_paged_response_with_total_and_has_more() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        for i in 0..75u64 {
+            // Subtract `i * 1000` so older rows have smaller
+            // `started_at_ms` and the DESC order is
+            // deterministic.
+            writer
+                .append(sample_row("agent-creator", now_ms - i * 1000))
+                .await;
+        }
+
+        // Page 1.
+        let page1 = writer
+            .tail(&AuditTailFilter {
+                limit: 50,
+                offset: 0,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(page1.entries.len(), 50);
+        assert_eq!(page1.total, 75);
+        assert!(page1.has_more);
+        assert_eq!(page1.next_offset, Some(50));
+
+        // Page 2.
+        let page2 = writer
+            .tail(&AuditTailFilter {
+                limit: 50,
+                offset: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(page2.entries.len(), 25);
+        assert_eq!(page2.total, 75);
+        assert!(!page2.has_more);
+        assert_eq!(page2.next_offset, None);
+
+        // Combined entries should reconstruct the full set.
+        let combined: Vec<u64> = page1
+            .entries
+            .iter()
+            .chain(page2.entries.iter())
+            .map(|r| r.started_at_ms)
+            .collect();
+        let mut expected: Vec<u64> = (0..75u64).map(|i| now_ms - i * 1000).collect();
+        expected.sort_by(|a, b| b.cmp(a)); // DESC
+        assert_eq!(combined, expected);
     }
 }

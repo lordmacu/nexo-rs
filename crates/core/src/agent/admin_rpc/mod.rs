@@ -28,15 +28,13 @@ pub mod transcript_appender;
 pub mod wa_bot;
 
 pub use agent_events_sqlite::{AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog};
-pub use audit_sqlite::{
-    format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
-};
+pub use audit_sqlite::{format_rows_as_json, format_rows_as_table, SqliteAdminAuditWriter};
 pub use escalations_sqlite::SqliteEscalationStore;
 pub use processing_sqlite::SqliteProcessingControlStore;
 
 pub use audit::{
-    hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
-    InMemoryAuditWriter,
+    hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow,
+    AdminAuditWriter, AuditTailFilter, AuditTailPage, InMemoryAuditWriter,
 };
 pub use capabilities::{
     validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError, CapabilityBootReport,

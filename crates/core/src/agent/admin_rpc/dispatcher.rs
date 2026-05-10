@@ -23,7 +23,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::audit::{
-    hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
+    hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
     InMemoryAuditWriter,
 };
 use super::capabilities::CapabilitySet;
@@ -221,6 +221,12 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.11 — transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
+    /// Phase 83.12.audit-page — audit-log read surface. `None`
+    /// disables `nexo/admin/microapp_audit/*`. Production wires
+    /// the same `SqliteAdminAuditWriter` that handles writes
+    /// (the type implements both `AdminAuditWriter` and
+    /// `AdminAuditReader`).
+    audit_reader: Option<Arc<dyn AdminAuditReader>>,
     /// Phase 82.13 — processing control store. `None` disables
     /// `nexo/admin/processing/*`.
     processing_store: Option<Arc<dyn ProcessingControlStore>>,
@@ -339,6 +345,7 @@ impl AdminRpcDispatcher {
             llm_factory_schema: None,
             oauth_verifier_store: None,
             transcript_reader: None,
+            audit_reader: None,
             processing_store: None,
             escalation_store: None,
             skills_store: None,
@@ -573,6 +580,16 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 83.12.audit-page — install the microapp_audit
+    /// domain. Production passes the same
+    /// `Arc<SqliteAdminAuditWriter>` already wired as the
+    /// audit writer (the type implements both reader + writer
+    /// traits, sharing one connection pool).
+    pub fn with_audit_reader(mut self, reader: Arc<dyn AdminAuditReader>) -> Self {
+        self.audit_reader = Some(reader);
+        self
+    }
+
     /// Phase 82.13 — install the processing domain. Production
     /// passes a `ProcessingControlStore` adapter (in-memory
     /// DashMap variant in v0). `None` keeps the four
@@ -684,6 +701,12 @@ impl AdminRpcDispatcher {
             "nexo/admin/agent_events/list"
             | "nexo/admin/agent_events/read"
             | "nexo/admin/agent_events/search" => Some("transcripts_read"),
+            // Phase 83.12.audit-page — microapp_admin_audit table
+            // tail. Distinct capability from `transcripts_read`
+            // because audit logs are operator-tier ops history
+            // (when did each admin call happen, by whom), not
+            // user-content transcripts.
+            "nexo/admin/microapp_audit/tail" => Some("audit_read"),
             // Phase 82.13 — processing pause + intervention.
             // Single combined gate; per-scope sub-gates are a
             // 82.13.b follow-up.
@@ -1111,6 +1134,13 @@ impl AdminRpcDispatcher {
                 Some(reader) => super::domains::agent_events::search(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agent_events domain not configured".into(),
+                )),
+            },
+            // Phase 83.12.audit-page — paginated audit-row tail.
+            "nexo/admin/microapp_audit/tail" => match &self.audit_reader {
+                Some(reader) => super::domains::microapp_audit::tail(reader.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "microapp_audit domain not configured".into(),
                 )),
             },
             "nexo/admin/processing/pause" => match &self.processing_store {
