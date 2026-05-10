@@ -46,20 +46,30 @@ pub mod notifications;
 #[cfg(feature = "events")]
 pub mod events;
 
-// Phase 91 — the STT module ships two mutually-exclusive
-// backends (whisper-rs legacy via `stt`, Candle pure-Rust via
-// `stt-candle`). The parent gate accepts either feature.
+// Phase 91 — the STT module ships three mutually-compatible
+// backends: legacy whisper-rs (`stt`), Candle pure-Rust
+// (`stt-candle`), and cloud REST (`stt-cloud`). Each carries
+// its own feature flag; combining them at the call site is
+// `CompositeProvider`'s job.
 //
-// Phase 91.x.wasm.phase-3 — the inference path depends on heavy
+// Phase 91.x.wasm.phase-3 — the local inference paths (`stt`
+// whisper-rs + `stt-candle` Candle ML stack) depend on heavy
 // native crates (`opus-wave`, `ogg`, `candle-{core,nn,
 // transformers}`, `tokenizers`, plus tokio's `fs` + `io-std`
-// surface) that don't compile on `wasm32-unknown-unknown`. Gate
-// the entire `stt` module behind `not(target_arch = "wasm32")`
-// so WASM consumers can still use the rest of the SDK (wire
-// types, ToolHandler scaffold, microapp builder). WASM-side STT
-// is filed as a deeper follow-up — needs upstream WASM support
-// from each of the audio + ML crates before it can compile.
-#[cfg(all(any(feature = "stt", feature = "stt-candle"), not(target_arch = "wasm32")))]
+// surface) that don't compile on `wasm32-unknown-unknown`. The
+// per-submodule cfg gates inside `stt/mod.rs` keep them out of
+// WASM builds.
+//
+// Phase 91.x.wasm.phase-4 — the cloud backend (`stt-cloud`)
+// uses `reqwest`, which swaps to the browser fetch API on
+// wasm32. So `stt-cloud` alone is the path for WASM consumers
+// who want real STT; `stt` / `stt-candle` give them the wire
+// types but the inference modules drop out.
+//
+// Parent gate accepts any one of the three features; inner
+// modules in `stt/mod.rs` apply the correct per-backend +
+// target cfg.
+#[cfg(any(feature = "stt", feature = "stt-candle", feature = "stt-cloud"))]
 pub mod stt;
 
 #[cfg(feature = "wizard")]

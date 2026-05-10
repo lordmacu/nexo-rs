@@ -50,6 +50,12 @@
 // CHANGELOG flags the migration path; Phase 91.12 removes the
 // legacy `stt` feature entirely after a stability window.
 
+// `tool` only wires the `*_inbound_transform` tool that calls
+// `transcribe_file(path, cfg)` — a local-file API. Cloud-only
+// builds (`stt-cloud` without `stt` / `stt-candle`) don't pull
+// it; cloud consumers call the provider trait directly with
+// audio bytes already in memory.
+#[cfg(any(feature = "stt", feature = "stt-candle"))]
 pub mod tool;
 
 // Shared audio decode chain (ogg-opus → s16 PCM → f32) — used by
@@ -69,10 +75,25 @@ pub(crate) mod mel;
 #[cfg(feature = "stt-candle")]
 pub mod transcribe_candle;
 
+// Phase 91.x.wasm.phase-4 — cloud STT backends (OpenAI Whisper,
+// Groq Whisper-large-v3, Anthropic voice_stream placeholder)
+// + `CompositeProvider` fallback chain.
+//
+// Cfg-gated on `not(target_arch = "wasm32")` because the
+// underlying `reqwest` build for wasm32 can't share an optional
+// dep declaration with the native rustls-tls path (Cargo
+// duplicate-key error). WASM-side cloud STT is filed as
+// Phase 91.x.wasm.phase-4c — separate `gloo-net`-based client.
+// Until then, WASM consumers needing real STT must transcribe
+// out-of-band (e.g. through the SaaS backend the SDK talks to).
+#[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
+pub mod cloud;
+
 use std::path::PathBuf;
 
 use thiserror::Error;
 
+#[cfg(any(feature = "stt", feature = "stt-candle"))]
 pub use tool::InboundTransformHandler;
 
 // Backend dispatch — re-export the same `transcribe_file`
