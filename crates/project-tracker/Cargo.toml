@@ -17,7 +17,7 @@ arc-swap        = { workspace = true }
 async-trait     = { workspace = true }
 humantime-serde = { workspace = true }
 notify          = { workspace = true }
-nexo-resilience = { version = "0.1.1", path = "../resilience" }
+nexo-resilience = { version = "0.1.2", path = "../resilience" }
 parking_lot     = "0.12"
 regex           = { workspace = true }
 serde           = { workspace = true }
