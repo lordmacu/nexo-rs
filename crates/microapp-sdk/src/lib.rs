@@ -48,11 +48,18 @@ pub mod events;
 
 // Phase 91 — the STT module ships two mutually-exclusive
 // backends (whisper-rs legacy via `stt`, Candle pure-Rust via
-// `stt-candle`). The parent gate accepts either feature; the
-// sub-modules inside `stt/` carry their own per-backend cfg
-// guards + a `compile_error!` enforces the mutual exclusion when
-// both are enabled simultaneously.
-#[cfg(any(feature = "stt", feature = "stt-candle"))]
+// `stt-candle`). The parent gate accepts either feature.
+//
+// Phase 91.x.wasm.phase-3 — the inference path depends on heavy
+// native crates (`opus-wave`, `ogg`, `candle-{core,nn,
+// transformers}`, `tokenizers`, plus tokio's `fs` + `io-std`
+// surface) that don't compile on `wasm32-unknown-unknown`. Gate
+// the entire `stt` module behind `not(target_arch = "wasm32")`
+// so WASM consumers can still use the rest of the SDK (wire
+// types, ToolHandler scaffold, microapp builder). WASM-side STT
+// is filed as a deeper follow-up — needs upstream WASM support
+// from each of the audio + ML crates before it can compile.
+#[cfg(all(any(feature = "stt", feature = "stt-candle"), not(target_arch = "wasm32")))]
 pub mod stt;
 
 #[cfg(feature = "wizard")]
