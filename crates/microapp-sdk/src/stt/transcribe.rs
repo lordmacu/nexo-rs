@@ -129,7 +129,11 @@ pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<Stri
 /// arrive as ogg-opus, which is the only family this pipeline
 /// understands; non-ogg payloads (mp3 attachments, etc.) surface
 /// as [`SttError::UnsupportedFormat`].
-async fn decode_to_pcm_mono(path: &Path, cfg: &TranscribeConfig) -> Result<Vec<u8>> {
+///
+/// Exposed as `pub(crate)` so the Candle backend in Phase 91.4
+/// (`transcribe_candle.rs`) reuses the same audio chain — only
+/// the inference layer is backend-specific.
+pub(crate) async fn decode_to_pcm_mono(path: &Path, cfg: &TranscribeConfig) -> Result<Vec<u8>> {
     let bytes = tokio::fs::read(path).await?;
     let target_rate = cfg.target_sample_rate;
     tokio::task::spawn_blocking(move || -> Result<Vec<u8>> { decode_ogg_opus(&bytes, target_rate) })
@@ -280,8 +284,10 @@ fn f32_mono_to_s16le_bytes(samples: &[f32]) -> Result<Vec<u8>> {
 }
 
 /// Convert little-endian s16 PCM to f32 in `[-1.0, 1.0]` — the
-/// format whisper.cpp's API expects.
-fn pcm_s16_to_f32(pcm: &[u8]) -> Vec<f32> {
+/// format whisper.cpp's API expects. Same shape Candle's mel
+/// pipeline consumes, so the Candle backend in Phase 91.4
+/// reuses this helper directly.
+pub(crate) fn pcm_s16_to_f32(pcm: &[u8]) -> Vec<f32> {
     let mut out = Vec::with_capacity(pcm.len() / 2);
     for chunk in pcm.chunks_exact(2) {
         let s = i16::from_le_bytes([chunk[0], chunk[1]]);
