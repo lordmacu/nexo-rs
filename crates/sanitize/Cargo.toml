@@ -1,0 +1,20 @@
+[package]
+name = "nexo-sanitize"
+description = "CSS/URL sanitisation primitives for nexo microapps — guards against injection in operator-supplied colour + image-URL fields."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = ["nexo", "sanitize", "css", "url", "security"]
+categories    = ["text-processing", "web-programming"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# (none — pure-Rust string validation)
