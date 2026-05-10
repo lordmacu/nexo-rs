@@ -102,6 +102,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
+      # `sqlite-vec`'s C source uses BSD-style typedefs (`u_int8_t`,
+      # `u_int16_t`, `u_int64_t`) that musl libc doesn't expose by
+      # default. Define `_DEFAULT_SOURCE` so they resolve to their
+      # `uint*_t` cousins. Affects every musl matrix entry — both
+      # x86_64 and aarch64 hit the same upstream `sqlite-vec.c`.
+      - name: Set CFLAGS for sqlite-vec on musl
+        run: |
+          echo 'CFLAGS_x86_64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE' >> "$GITHUB_ENV"
+          echo 'CFLAGS_aarch64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE' >> "$GITHUB_ENV"
+
       - name: Install zig (pinned)
         uses: goto-bus-stop/setup-zig@v2
         with:
