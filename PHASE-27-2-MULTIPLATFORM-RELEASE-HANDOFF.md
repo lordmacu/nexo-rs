@@ -1,255 +1,318 @@
 # Phase 27.2 multi-platform release — session handoff
 
-> **Status as of session pause (2026-05-10 16:30 UTC):** RC validation
-> in iteration 5. Apple Silicon proven solid; Linux musl + Windows
-> still blocking. Termux deferred to a separate cross-repo migration.
-> This doc captures every blocker + fix-path so a fresh session
-> picks up without repeating the diagnosis cycle.
+> **Status as of 2026-05-10 17:15 UTC:** Multi-platform RC pivot
+> blocked by deep cross-repo + upstream issues. Apple Silicon
+> alone is durably green. Linux musl + Windows each need
+> half-day-to-day of multi-repo coordination. **This document
+> is the canonical resume point** — everything learned across
+> 6 RC iterations, the local-repro debug path, and concrete
+> next steps. A fresh session reads only this file.
 
-## Goal
+## TL;DR
 
-Ship `nexo-rs-v0.1.6` as the first multi-platform binary release.
-Five build targets driven by `cargo dist`:
+Goal: ship `nexo-rs-v0.1.6` GA across Linux musl + macOS +
+Windows + Termux. After 6 RC validations:
 
-- `x86_64-unknown-linux-musl`
-- `aarch64-unknown-linux-musl`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-- `x86_64-pc-windows-msvc`
+- **Apple Silicon** (`aarch64-apple-darwin`): ✅ green twice,
+  rock solid
+- **Apple Intel** (`x86_64-apple-darwin`): ⏳ runner-pool
+  congestion every take, never reaches build, but pipeline is
+  identical to Silicon (expected to pass when allocated)
+- **Linux musl x2**: ❌ multiple deep blockers (sqlite-vec C
+  source incompatible with musl libc + openssl-sys via
+  wa-agent upstream — both cross-repo)
+- **Windows MSVC**: ❌ similar profile (multiple Unix-only
+  deps, possibly more under what we've cfg-gated)
+- **Termux**: ⏭️ deferred (rustls aws-lc-rs cross-repo
+  migration tracked separately)
 
-Plus the existing Termux `.deb` (out of scope this iteration —
-separate `aws-lc-rs → ring` cross-repo migration).
+**Pragmatic recommendation for next session**: ship `0.1.6`
+GA with Apple-only matrix. Linux musl + Windows + Termux as
+multi-day cross-repo follow-ups.
 
-The `release.yml` workflow fires on `nexo-rs-v*` tag push and
-populates a GH Release with the tarballs. cargo-dist's universal
-shell installer auto-detects platform.
+## Iteration history (6 takes)
 
-## Confirmed working
+| Take | Run ID | Failure | Lesson |
+|---|---|---|---|
+| 1 | `25630912504` | cargo-dist tag mismatch (Cargo.toml said 0.1.6, tag said 0.1.6-rc1) | Bump root crate to `0.1.6-rc1` so versions match |
+| 2 | (same tag, abandoned) | — | — |
+| 3 | `25631196811` | Termux aws-lc-sys cross-compile fail | Disabled build-termux, removed from publish.needs |
+| 4 | `25631524914` (docker) + `25632704164` (release) | Docker: archived `admin-ui/` referenced. Release: ring's musl-gcc lookup; Windows Unix sockets in nexo-driver-loop | Dockerfile cleaned. musl-tools apt-installed. driver-loop/socket cfg(unix). |
+| 5 | `25633713871` | Linux musl: sqlite-vec u_int8_t typedef. Windows: nix crate in nexo-dream. Apple+Windows: cargo-dist failed to find mock_subprocess_plugin.exe | _DEFAULT_SOURCE CFLAGS (didn't help — root cause is sqlite-vec C bug). nix cfg(unix) in dream. required-features="dev-bins" (cargo-dist 0.31 IGNORES required-features) |
+| 6 | `25634671603` (cancelled) | Malformed `binaries = ["nexo"]` (sequence not map per cargo-dist schema) | binaries config field expects map shape, not array — needs different syntax |
 
-| Target | Last result | Notes |
-|---|---|---|
-| `aarch64-apple-darwin` | ✅ green twice (rc1 take 3 + take 4) | Reliably passes; this is the rock |
-| `x86_64-apple-darwin` | ⏳ never reached the runner — queued in every take | `macos-13` runner pool is congested. Pipeline is identical to Apple Silicon, expected to pass once allocated |
-| `validate-tag` | ✅ green every take | Tag-version-vs-Cargo.toml-version match enforced |
-| Termux build | ⏭️ `if: false` since take 4 | Intentional skip; tracked separately in FOLLOWUPS.md |
+## Confirmed blockers (root-cause analysis)
 
-## Validation history — 5 takes, what each surfaced
+### A. Linux musl: sqlite-vec C source incompatible
 
-### Take 1 (release run `25630912504`)
+`sqlite-vec-0.1.9/sqlite-vec.c` lines 64-72:
 
-**Cause:** `cargo dist build` rejected the tag because Cargo.toml
-said `0.1.6` but the tag claimed `0.1.6-rc1`.
-
-**Fix shipped:** Cargo.toml `[package] version = "0.1.6-rc1"` so
-the tag matches.
-
-### Take 2 (recreated tag)
-
-Same root cause as take 1; the version bump propagated
-correctly but the workflow run was cancelled before it
-finished.
-
-### Take 3 (run `25631196811`)
-
-**Cause:** Termux `aarch64-linux-android` build pulled `aws-lc-sys`
-transitively (rustls 0.23 → hyper-rustls → reqwest with default
-features). cargo-zigbuild's Android shim doesn't expose
-`sys/types.h` to the C compiler aws-lc-sys's `cc-rs` invokes:
-
-```
-fatal error: 'sys/types.h' file not found
-```
-
-**Fix shipped:** Disabled the `build-termux` job (`if: false`) +
-removed it from `publish.needs:`. Tracked the multi-repo fix
-under `FOLLOWUPS.md` "Phase 27.2 follow-up.b".
-
-### Take 4 (run `25632704164`)
-
-Two new failures surfaced once Termux stopped masking them:
-
-**a) Linux musl** — both x86_64 and aarch64:
-
-```
-ring v0.17.14: Compiler family detection failed:
-  failed to find tool "x86_64-linux-musl-gcc"
+```c
+#ifndef _WIN32
+#ifndef __EMSCRIPTEN__
+#ifndef __COSMOPOLITAN__
+#ifndef __wasi__
+typedef u_int8_t uint8_t;
+typedef u_int16_t uint16_t;
+typedef u_int64_t uint64_t;
+#endif
+#endif
+#endif
+#endif
 ```
 
-`ring`'s `cc-rs` build script requires the literal target gcc
-binary even when cargo-zigbuild handles linking.
+This block triggers on Linux musl (no `_WIN32`, no
+`__wasi__`, etc.) but musl libc deliberately omits BSD typedefs
+`u_int8_t/16/64_t`. They're not POSIX — they're 4.4BSD legacy.
 
-**Fix shipped:** Added `apt install musl-tools` step to the
-`build-musl` job in `release.yml`.
+**Tried and didn't work:**
+- `CFLAGS_x86_64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE`
+  — these expose more glibc surface but don't add BSD typedefs
+  to musl
 
-**b) Windows MSVC**:
+**Possible fixes (untested in CI):**
+1. `CFLAGS_..._musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"`
+   — preprocessor substitution makes the typedef self-referential
+   (valid in C99 if `uint8_t` already defined via stdint.h)
+2. `[patch.crates-io] sqlite-vec = { git = "https://github.com/<fork>/sqlite-vec", branch = "musl-fix" }`
+   — fork upstream, fix the typedef block to wrap with
+   `#ifdef __GLIBC__`, push, point Cargo.toml at the fork
+3. Bump to `sqlite-vec = "0.1.10-alpha.3"` — alpha may have
+   the fix, untested
 
-```
-unresolved imports tokio::net::UnixListener, tokio::net::UnixStream
-```
+**Recommended path:** option 2 (fork). Long-term: file PR
+upstream at https://github.com/asg017/sqlite-vec.
 
-`crates/driver-loop/src/socket.rs` used Unix-domain sockets
-unconditionally; Windows doesn't ship them.
+### B. Linux musl: openssl-sys via wa-agent (cross-repo)
 
-**Fix shipped:** `#[cfg(unix)]` gated the entire `socket` module
-+ its `pub use` re-export + the orchestrator's bind/spawn
-block. Windows substitutes a no-op `tokio::spawn(async {
-Ok(()) })` for the socket handle so shutdown path works
-without changes. Trade-off documented: the
-`DriverSocketServer` permission-prompt forwarder is unavailable
-on Windows; users go through WSL or wait for a named-pipe
-follow-up.
-
-**c) Docker** workflow (separate run `25631524914`):
-
-```
-"/admin-ui": not found
-```
-
-Dockerfile referenced `admin-ui/` that was archived in commit
-`575cb78` (admin-ui became its own microapp).
-
-**Fix shipped:** Dropped the `admin-ui-builder` Node stage from
-the Dockerfile.
-
-### Take 5 (run `25633713871` — currently in progress at session pause)
-
-Three new failures showed up once the take-4 fixes landed:
-
-**a) Linux musl** — `sqlite-vec.c`:
+`cargo tree -p nexo-rs -i openssl-sys --target x86_64-unknown-linux-musl`:
 
 ```
-sqlite-vec.c:68:9: error: unknown type name 'u_int8_t'
-sqlite-vec.c:69:9: error: unknown type name 'u_int16_t'
-sqlite-vec.c:70:9: error: unknown type name 'u_int64_t'
+openssl-sys
+└─ native-tls
+   └─ tokio-native-tls
+      └─ tokio-tungstenite v0.24.0
+         └─ wa-agent v0.1.6
+            └─ nexo-plugin-whatsapp v0.1.3
+               └─ nexo-rs
 ```
 
-BSD typedefs that musl libc hides without `_DEFAULT_SOURCE`.
+`wa-agent` (upstream WhatsApp client) uses `tokio-tungstenite`
+with default features which enables `native-tls`. That pulls
+`openssl-sys` which doesn't cross-compile to musl without a
+musl-built openssl in the linker path.
 
-**Fix shipped (in take 5 push):** Set
-`CFLAGS_x86_64_unknown_linux_musl=-D_DEFAULT_SOURCE -D_GNU_SOURCE`
-+ same for aarch64 in `release.yml`.
+**Fix path** (multi-repo):
 
-**Status:** Linux musl jobs failed again in take 5 — fix may
-not have been picked up correctly, or there's another C
-typedef issue further in. **NEEDS INVESTIGATION** in the next
-session (see "Open blockers" below).
+1. PR to upstream `wa-agent` (`whatsapp-rs/Cargo.toml`):
+   ```toml
+   tokio-tungstenite = { version = "0.24",
+       default-features = false,
+       features = ["rustls-tls-webpki-roots"] }
+   ```
+2. wa-agent publishes new version
+3. `nexo-rs-plugin-whatsapp` Cargo.toml bumps wa-agent to new
+   version
+4. plugin-whatsapp publishes
+5. proyecto Cargo.toml bumps `nexo-plugin-whatsapp` dep
 
-**b) Windows** — `nix` crate:
+This is the SAME shape as the Termux aws-lc-rs migration
+already tracked under FOLLOWUPS.md as 27.2-follow-up.b. Could
+batch both fixes into one cross-repo wave.
 
+### C. Windows: cargo-dist binaries map (this session's last fix attempt)
+
+Take 6 push (commit `73eabd2`) added:
+```toml
+[package.metadata.dist]
+binaries = ["nexo"]
 ```
-unresolved import nix::sys
-unresolved import nix::unistd
+
+That format is wrong — cargo-dist expects a map, not an array.
+The schema is at <https://axodotdev.github.io/cargo-dist/book/reference/config.html>.
+
+The CORRECT mechanism per cargo-dist docs is **either**:
+
+a) `bin-aliases` at workspace level (map: alias → bin name):
+```toml
+[workspace.metadata.dist]
+bin-aliases = { nexo = ["nexo"] }
 ```
 
-`crates/dream/src/consolidation_lock.rs` used `nix` for `kill(0)`
-PID-alive check. `nix` is Unix-only.
+b) Convert `mock_subprocess_plugin` to a separate test crate
+   under `crates/test-fixtures/mock-subprocess-plugin/` with
+   `[package.metadata.dist] dist = false` so cargo-dist ignores
+   it entirely.
 
-**Fix shipped:** `#[cfg(unix)]` gated the imports; Windows
-`is_pid_running()` shells out to
-`tasklist /FI "PID eq <pid>" /FO CSV` and matches the captured
-pid.
+**Recommended path:** option (b) is more idiomatic and
+avoids fighting cargo-dist's manifest planner. The
+`dev-bins` feature flag introduced in commit `24b8db2` is
+also redundant once the bin moves to its own crate.
 
-**c) Windows** — cargo-dist artifact lookup:
+### D. Windows: more Unix-only deps likely under nix cfg-gate
 
-```
-failed to find bin mock_subprocess_plugin.exe for path+file:///D:/a/...
-```
+The take 4-5 surfaces:
+- `tokio::net::UnixListener` in `nexo-driver-loop/src/socket.rs` (FIXED)
+- `nix::sys::signal` + `nix::unistd::Pid` in `nexo-dream/src/consolidation_lock.rs` (FIXED)
 
-cargo-dist tried to package the test fixture bin even though
-`tests/fixtures/mock_subprocess_plugin.rs` is marked
-`test = false`.
+Once Linux musl unblocks and Windows compiles further, more
+Unix-only deps will probably surface. Likely candidates to
+audit pre-emptively:
 
-**Fix shipped:** Added `required-features = ["dev-bins"]` on the
-`[[bin]]` entry + a new `dev-bins` workspace feature
-(off by default). cargo-dist skips bins whose required features
-aren't enabled.
-
-## Open blockers (priority order)
-
-### 1. Linux musl still failing in take 5 [HIGH PRIORITY]
-
-`run 25633713871` shows both `x86_64-unknown-linux-musl` and
-`aarch64-unknown-linux-musl` failed at 16:29 UTC, ~7 min into
-the run. Need to:
+- `caps` crate (Linux capabilities) — search `grep -rn "use caps" crates/`
+- `signal-hook` — same
+- File mode setting (`PermissionsExt`, `Mode`) — should already be cfg-gated but worth checking
+- POSIX-specific paths (`/run/secrets`, `/etc/`)
 
 ```bash
-gh -R lordmacu/nexo-rs run view --job <ID> --log-failed | tail -50
+# Audit command:
+cd /home/familia/chat/proyecto
+grep -rn "use nix\|use caps\|signal_hook\|use std::os::unix" crates/*/src 2>&1 | grep -v "cfg(unix)"
 ```
 
-… once the run completes (it's still in progress at session
-pause). Likely culprits:
+## Local-repro debug path (the productive iteration loop)
 
-- The `_DEFAULT_SOURCE` CFLAGS env var not being picked up by
-  `cargo-zigbuild` (zigbuild may override CFLAGS instead of
-  augmenting). Try `BINDGEN_EXTRA_CLANG_ARGS=-D_DEFAULT_SOURCE`
-  as a fallback, or add a `.cargo/config.toml` with
-  `[env]` block setting CFLAGS.
-- Another C-FFI dep (whisper-rs's vendored whisper.cpp,
-  perhaps?) hitting the same musl typedef issue.
-- `musl-tools` apt step racing with the cargo step (unlikely
-  but possible — verify the step runs BEFORE `dist build`).
+Instead of waiting 10-25 min per CI run, reproduce locally
+with the same toolchain. Total cycle: ~2 min compile + see
+error.
 
-**Fix path:**
-1. Read the actual error from the take-5 run logs.
-2. If it's still sqlite-vec: try the `.cargo/config.toml`
-   `[env]` approach or patch sqlite-vec via `[patch.crates-io]`
-   to a forked version with the BSD typedefs replaced.
-3. If it's a different C dep: same pattern.
-
-### 2. Windows MSVC — unknown if take 5 fixed it [MEDIUM PRIORITY]
-
-`x86_64-pc-windows-msvc` was still `in_progress` at session
-pause (Windows is the slowest build, ~15-20 min cold). Once
-the run completes:
+### One-time setup
 
 ```bash
-gh -R lordmacu/nexo-rs run view --job <WINDOWS_ID> --log-failed
+# Install zig 0.13.0 (CI uses this version; local has 0.16 which
+# may behave differently — pin to 0.13 for fidelity)
+mkdir -p ~/.local/share/zig-0.13
+curl -L https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz \
+  | tar -xJ -C ~/.local/share/zig-0.13 --strip-components=1
+export PATH="$HOME/.local/share/zig-0.13:$PATH"
+zig version  # should print 0.13.0
+
+# Tools (already installed on dev box per cargo-dist version match)
+cargo install cargo-zigbuild --locked --version 0.22.3
+cargo install cargo-dist     --locked --version 0.31.0
+
+# musl headers/libs (Linux only)
+sudo apt-get install -y musl-tools
+
+# Add Rust target
+rustup target add x86_64-unknown-linux-musl
+rustup target add aarch64-unknown-linux-musl
 ```
 
-If green: **the Windows fixes worked**, take 5 was a Windows
-success.
+### Reproduce CI musl build
 
-If failed: read the new error. Likely candidates if more
-issues remain:
-- Another crate using `nix`, `signal-hook`, `caps`, or any
-  Unix-only dep without `cfg(unix)` guard.
-- A `Path::new("/foo/bar")` or `chmod` somewhere that doesn't
-  compile on Windows.
-- Linker errors from a C dep that needs Windows-specific build
-  flags.
+```bash
+cd /home/familia/chat/proyecto
 
-**Fix pattern:** Same as take 4 — find the offending crate,
-add `#[cfg(unix)]` or a Windows-specific shim.
+# Match the env vars CI sets
+export CFLAGS_x86_64_unknown_linux_musl="-D_DEFAULT_SOURCE -D_GNU_SOURCE"
+export CFLAGS_aarch64_unknown_linux_musl="-D_DEFAULT_SOURCE -D_GNU_SOURCE"
+export NEXO_BUILD_CHANNEL=tarball-x86_64-unknown-linux-musl
+export NEXO_BUILD_GIT_SHA=local-test
 
-### 3. Apple Intel never reaches a runner [LOW PRIORITY]
+# Direct cargo path (skips cargo-dist's bin-discovery layer)
+cargo zigbuild --release --bin nexo --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/musl-build.log
 
-`x86_64-apple-darwin` queued in every take. Macos-13 runner
-pool is congested in `lordmacu/nexo-rs`. Either:
+# Or full cargo-dist path (matches CI exactly)
+dist build \
+  --artifacts=local \
+  --tag nexo-rs-v0.1.6-rc1 \
+  --target x86_64-unknown-linux-musl
+```
 
-- Wait longer (queue eventually drains) — runs cap at 6h, the
-  wait is usually <30 min in off-peak hours.
-- Or accept Apple Silicon as the macOS proof + ship Apple
-  Intel later. The pipeline is identical, so a green Apple
-  Silicon strongly implies Apple Intel will pass.
+### Why local repro caught more than CI
 
-### 4. Termux re-enable [DOCUMENTED — NOT THIS SESSION]
+In ~10 minutes of local iteration we saw:
+1. sqlite-vec u_int8_t typedef (CI take 5 surfaced this same
+   error)
+2. openssl-sys via wa-agent (CI never even reached this
+   because sqlite-vec failed first; local got past sqlite-vec
+   with the macro hack)
+3. cargo-dist's `binaries` field expects a map (CI take 6
+   surfaced this; local saw it as `Malformed metadata.dist`
+   with a clearer error message)
 
-Tracked under "Phase 27.2 follow-up.b" in `FOLLOWUPS.md`.
-Multi-repo: needs `rustls-tls-no-provider` swap in:
+**The local debug loop is mandatory for next session's
+progress** — CI iteration is too slow + opaque to be the
+primary feedback channel.
 
-- `nexo-rs-plugin-browser` Cargo.toml
-- `nexo-rs-plugin-whatsapp` Cargo.toml
-- `nexo-rs-plugin-telegram` Cargo.toml
-- proyecto `[workspace.dependencies]` reqwest
+### Reproduce Apple build (if a Mac is available)
 
-Plus version bumps + crates.io publish for each plugin repo +
-proyecto bumping plugin deps to the new versions. ~half-day of
-multi-repo coordination.
+```bash
+# On a macOS host:
+rustup target add aarch64-apple-darwin
+cargo install cargo-dist --locked --version 0.31.0
+NEXO_BUILD_CHANNEL=tarball-aarch64-apple-darwin \
+  dist build --artifacts=local --tag nexo-rs-v0.1.6-rc1 \
+  --target aarch64-apple-darwin
+```
 
-## Files touched in this session (proyecto/)
+We KNOW this works (CI proved it twice). Local Mac repro is
+useful only if Apple regresses.
+
+### Reproduce Windows build
+
+```bash
+# On a Windows host (or Win11 in a VM, or via WSL with cross):
+rustup target add x86_64-pc-windows-msvc
+cargo build --release --bin nexo --target x86_64-pc-windows-msvc
+```
+
+WSL won't give a true Windows binary (it'll be Linux). Need
+real Windows for this. If you don't have a Win box, the only
+option is iterating via CI.
+
+## Resume checklist for next session
+
+```bash
+# 1. Catch up — read this doc + the tail of the failed runs
+cd /home/familia/chat/proyecto
+gh run list -w release.yml -L 3
+
+# 2. Decide the scope:
+#    A. Mac-only 0.1.6 GA (fastest)
+#    B. Mac + Linux musl after fixing sqlite-vec + wa-agent
+#       (multi-repo)
+#    C. Full matrix (multi-day)
+
+# 3. If option A:
+sed -i 's|"x86_64-unknown-linux-musl",||; s|"aarch64-unknown-linux-musl",||; s|"x86_64-pc-windows-msvc",||' \
+  dist-workspace.toml
+# Edit release.yml — comment out build-musl + build-windows jobs.
+# Tag GA:
+gh release create nexo-rs-v0.1.6 --target main \
+  --title "v0.1.6 — Apple-only first multi-platform release" \
+  --notes "..."
+
+# 4. If option B (the cross-repo path):
+#    a. Fork sqlite-vec, fix u_int8_t block, point [patch.crates-io]
+#       at fork. Test local repro green.
+#    b. PR to wa-agent (whatsapp-rs repo) to swap to rustls-tls.
+#    c. Wait for wa-agent publish.
+#    d. Bump nexo-rs-plugin-whatsapp.
+#    e. Bump proyecto deps to new versions.
+#    f. Local repro musl green.
+#    g. Push + tag rc1 + iterate from there.
+
+# 5. If option C: schedule a multi-day push, NOT in a single
+#    session.
+```
+
+## Repo state at handoff
+
+### Local-only changes (uncommitted at handoff)
 
 ```
-M Cargo.toml                                        — version bump 0.1.6→0.1.6-rc1; dev-bins feature; required-features on mock_subprocess_plugin
+M Cargo.toml — `binaries = ["nexo"]` line REMOVED locally
+              (commit 73eabd2 has the malformed line; needs
+              another commit to revert OR replace with
+              `bin-aliases` map per option (a) above)
+```
+
+### Files committed in this session (proyecto/)
+
+```
+M Cargo.toml                                        — version 0.1.6→0.1.6-rc1; dev-bins feature; required-features on mock_subprocess_plugin; (broken `binaries=[…]` in HEAD)
 M Cargo.lock                                        — auto-regen
 M Dockerfile                                        — drop admin-ui-builder stage
 M FOLLOWUPS.md                                      — Phase 27.2 follow-up.b (Termux aws-lc-rs)
@@ -259,7 +322,7 @@ M docs-site/index.html                              — landing rewrite (OpenCla
 A docs-site/README.md                               — landing edit guide
 A docs-site/assets/logo.svg                         — placeholder logo (replace this file to swap branding)
 M docs/src/SUMMARY.md                               — added platform-support page
-A docs/src/getting-started/platform-support.md      — per-OS prereq matrix + feature support
+A docs/src/getting-started/platform-support.md      — per-OS prereq matrix
 M docs/src/plugins/telegram.md                      — fixed broken PHASES.md link
 M docs/src/plugins/whatsapp.md                      — fixed broken PHASES.md link
 M .github/workflows/docker.yml                      — auto-publish enabled, nexo-rs-v* tag pattern
@@ -267,80 +330,67 @@ M .github/workflows/release.yml                     — apple/windows jobs, musl
 M crates/driver-loop/src/lib.rs                     — #[cfg(unix)] socket module
 M crates/driver-loop/src/orchestrator.rs            — #[cfg(unix)] socket bind, no-op handle on Windows
 M crates/dream/src/consolidation_lock.rs            — #[cfg(unix)] nix imports, tasklist fallback on Windows
+A PHASE-27-2-MULTIPLATFORM-RELEASE-HANDOFF.md       — this doc
 ```
 
-## Resume checklist (for next session)
+### Out-of-tree artifacts created
 
-```bash
-# 1. Catch up on take 5's final state
-cd /home/familia/chat/proyecto
-gh run list -w release.yml -L 1
-gh run view <RUN_ID> --json jobs | python3 -c "import json,sys; ..."
-
-# 2. Read failed logs
-gh run view --job <FAILING_JOB_ID> --log-failed | tail -80
-
-# 3. Apply fix per "Open blockers" section above
-
-# 4. Push fix, recreate rc tag
-git add <files>
-git commit -m "fix(release): ..."
-git push
-gh release delete nexo-rs-v0.1.6-rc1 --yes --cleanup-tag
-gh release create nexo-rs-v0.1.6-rc1 --prerelease --target main \
-  --title "v0.1.6-rc1 — multi-platform RC (take N)" \
-  --notes "..."
-
-# 5. Repeat until all 4 platforms green
-#    (Linux musl x2, Apple x2, Windows)
-
-# 6. Tag GA
-gh release create nexo-rs-v0.1.6 --target main \
-  --title "v0.1.6 — first multi-platform release" \
-  --notes "..."
-```
+- `lordmacu/homebrew-nexo-rs` repo — placeholder Homebrew tap
+- `@nexo-rs/cli` npm package — placeholder reservation
+  (v0.0.1-placeholder.0)
+- npm scope `@nexo-rs` org created
+- `NPM_TOKEN` GH secret set in lordmacu/nexo-rs
 
 ## Distribution channels — current state
 
 | Channel | Status | Where |
 |---|---|---|
-| Curl shell installer | ⏳ Will publish when GA tag fires | Generated by cargo-dist's `installers = ["shell"]` |
+| Curl shell installer | ⏳ Apple Silicon-only would work today | cargo-dist `installers = ["shell"]` |
 | GH Releases tarballs | ⏳ Same | Per-target `.tar.xz` |
-| Homebrew tap | ✅ Repo created (placeholder) | `lordmacu/homebrew-nexo-rs` — formula auto-publishes when GA tag fires + macOS builds work |
-| npm scope | ✅ Reserved | `@nexo-rs/cli` v0.0.1-placeholder published; real CLI shim pending cargo-dist npm installer enable |
-| Docker (ghcr.io) | ✅ Auto-publish enabled | `ghcr.io/lordmacu/nexo-rs:edge` on every main push; `:latest` + `:vX.Y.Z` on GA tag |
-| crates.io | ✅ Already published | release-plz handles per-crate publish |
+| Homebrew tap | ✅ Repo exists, formula auto-publish wired | `lordmacu/homebrew-nexo-rs` |
+| npm scope | ✅ Reserved with placeholder | `@nexo-rs/cli` |
+| Docker (ghcr.io) | ✅ Auto-publish enabled | `:edge` per push to main; `:latest` per GA tag |
+| crates.io | ✅ Already publishing | release-plz handles per-crate |
+| GH Pages landing + docs | ✅ Live | `lordmacu.github.io/nexo-rs/` (landing) + `/docs/` (mdBook) |
 
-## Out-of-scope reminders
+## Out-of-scope reminders for next session
 
-Do NOT in this Phase 27.2 effort:
+DO NOT in this Phase 27.2 effort:
 
-- Re-enable Termux release (separate cross-repo follow-up)
+- Re-enable Termux release without first fixing wa-agent's
+  TLS backend (will surface aws-lc-sys + openssl-sys
+  simultaneously)
 - Add MSI / PowerShell installers (need Windows green first)
 - Add a named-pipe Windows alternative for the
   permission-prompt forwarder (architectural, not a release
   blocker)
 - Touch the lifted SDK modules (sanitize, media,
-  email_template, module_state, compose_*, db_migrate) —
-  those landed earlier today, are working, and should not
-  block the release matrix
+  email_template, module_state, compose_*, db_migrate) — they
+  landed in this session, are independently working, and
+  should not be entangled with the release blockers
 
 ## Session metadata
 
-- **Session length:** ~6h, multiple context windows
-- **Commits to proyecto in this session:** 12 (search log
-  for `447b5ca` through `24b8db2`)
-- **Other artifacts created out-of-tree:**
-  `lordmacu/homebrew-nexo-rs` repo + `@nexo-rs/cli` npm package
-- **Tag iterations:** 5 (`nexo-rs-v0.1.6-rc1` deleted +
-  recreated each time)
-- **Last failed run:** `25633713871` (take 5)
+- **Session length:** ~7h
+- **Commits to proyecto:** 14 (search log for `447b5ca`
+  through `73eabd2`)
+- **Other artifacts:** homebrew tap repo + @nexo-rs/cli npm
+  package
+- **RC tag iterations:** 6 (`nexo-rs-v0.1.6-rc1` deleted +
+  recreated)
+- **Last failed run before handoff:** `25634671603` (take 6,
+  cancelled)
+- **Local repro confirmed working tools:** cargo-zigbuild
+  0.22.3, cargo-dist 0.31.0, musl-tools, x86_64-unknown-linux-musl
+  Rust target
 
 > **Key insight from this session:** the project's binary
-> never actually shipped multi-platform end-to-end before.
-> Sub-crates released via release-plz, but the daemon `nexo`
-> bin's first true multi-platform validation was today. Each
-> rc surfaced previously latent platform-specific bugs in
-> the workspace dep graph. Once these blockers clear, the
-> first GA tag is durable — subsequent releases just need
-> cargo-dist to re-run the same matrix.
+> never shipped multi-platform end-to-end before. Each rc
+> surfaced previously latent platform-specific bugs in the
+> workspace dep graph + sibling repos. The fixes are real
+> engineering work (cross-repo coordination, upstream
+> patches, sqlite-vec fork) — NOT something one focused
+> session can clear. **Local repro is the productive
+> iteration loop**; CI takes 10-25 min per cycle and obscures
+> the actual error. The next session should default to local
+> validation first, only push to CI when local is green.
