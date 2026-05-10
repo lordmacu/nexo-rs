@@ -4793,9 +4793,16 @@ impl
         let snapshotter = self.snapshotter().await?;
         let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
         let encrypt_key = if encrypt {
-            // `encryption_available()` guarantees recipients[0] exists.
-            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKey(
-                self.encryption.recipients[0].clone(),
+            // Phase 90 follow-up — wrap the bundle for ALL
+            // configured recipients, not just `recipients[0]`.
+            // Always uses the `AgePublicKeys` variant for the
+            // admin path; the bundle output is identical to the
+            // legacy single-recipient `AgePublicKey` path when
+            // `recipients.len() == 1` (age format does not
+            // differ on recipient count). `encryption_available()`
+            // guarantees the Vec is non-empty.
+            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKeys(
+                self.encryption.recipients.clone(),
             ))
         } else {
             None
@@ -5203,5 +5210,74 @@ mod live_memory_snapshot_tests {
             r.decrypt.is_some(),
             "encrypted bundle ⇒ DecryptionIdentity must be set"
         );
+    }
+
+    // ── Phase 90 follow-up — multi-recipient encrypt tests ──
+
+    fn encryption_with_multiple_recipients() -> EncryptionSection {
+        EncryptionSection {
+            enabled: true,
+            recipients: vec![
+                "age1aaaa11111111111111".into(),
+                "age1bbbb22222222222222".into(),
+                "age1cccc33333333333333".into(),
+            ],
+            identity_path: Some(PathBuf::from("/tmp/identity.txt")),
+        }
+    }
+
+    #[tokio::test]
+    async fn live_create_with_multi_recipient_passes_all() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_with_multiple_recipients()).await;
+
+        reader
+            .create("ana", "default", Some("multi"), true)
+            .await
+            .expect("create ok");
+
+        let req = mock.snapshot_calls.lock().unwrap()[0].clone();
+        match req.encrypt {
+            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKeys(strings)) => {
+                assert_eq!(
+                    strings.len(),
+                    3,
+                    "all 3 configured recipients must be passed through"
+                );
+                assert_eq!(strings[0], "age1aaaa11111111111111");
+                assert_eq!(strings[1], "age1bbbb22222222222222");
+                assert_eq!(strings[2], "age1cccc33333333333333");
+            }
+            other => panic!("expected AgePublicKeys variant, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn live_create_with_single_recipient_still_uses_keys_variant() {
+        // Even when only 1 recipient is configured, the adapter
+        // uses the new `AgePublicKeys` variant uniformly so the
+        // pipeline always goes through the multi-recipient code
+        // path (which produces an identical bundle for the 1-element
+        // case). Avoids dual code paths for operators reading the code.
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_with_recipient()).await;
+
+        reader
+            .create("ana", "default", None, true)
+            .await
+            .expect("create ok");
+
+        let req = mock.snapshot_calls.lock().unwrap()[0].clone();
+        match req.encrypt {
+            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKeys(strings)) => {
+                assert_eq!(strings.len(), 1, "single recipient still passed as Vec");
+                assert_eq!(strings[0], "age1exampleexampleexample");
+            }
+            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKey(_)) => {
+                panic!("legacy AgePublicKey variant must not be used by admin adapter");
+            }
+            None => panic!("encrypt=true must produce Some encryption key"),
+            other => panic!("unexpected variant: {other:?}"),
+        }
     }
 }

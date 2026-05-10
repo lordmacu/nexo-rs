@@ -129,6 +129,42 @@ The sibling `.sha256` file always covers the bytes that land on disk
 (post-encryption), so transit integrity stays verifiable without the
 identity.
 
+### Multi-recipient encryption (admin UI)
+
+Phase 90 follow-up — when the snapshot is captured via the admin
+UI (`nexo/admin/memory/create_snapshot { encrypt: true }`), the
+daemon wraps the bundle for **every** recipient listed under
+`memory.snapshot.encryption.recipients`, not just the first. Each
+operator with a matching identity file can independently restore
+the bundle.
+
+```yaml
+memory:
+  snapshot:
+    encryption:
+      enabled: true
+      recipients:
+        - "age1backupadmin..."   # backup operator's age public key
+        - "age1dradmin..."       # disaster-recovery operator's key
+      identity_path: ${NEXO_HOME}/secret/snapshot-identity.txt
+```
+
+Both recipients above receive a header section in every
+admin-UI snapshot. Either operator's identity file can decrypt it.
+Duplicate recipient strings (operator paste-twice typo) are
+silently deduplicated.
+
+The CLI's single-recipient `--encrypt age:age1xyz...` flag is
+unchanged — it remains the power-user / scripted path. To capture
+a multi-recipient bundle from the CLI today, use the admin RPC
+via `nexo/admin/memory/create_snapshot`.
+
+**Boot-time validation**: at daemon startup the runtime parses every
+recipient string. A typo (e.g. `age1xyz` truncated by accident)
+fails the daemon boot with a clear `recipients[N] failed to parse`
+error so operators discover the issue before relying on the
+encryption.
+
 ## Threat model
 
 - **Loss of identity** → encrypted bundle is unrecoverable. Mirror

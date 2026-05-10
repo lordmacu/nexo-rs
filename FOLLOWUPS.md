@@ -50,11 +50,31 @@ NOT shipping blockers.
   `nexo-core 0.1.x` consumers that pin `Arc<dyn
   MemorySnapshotReader>`. Slated for next major bump.
 
-- ⬜ **memory snapshot multi-recipient encrypt** — Phase
-  90.x.memory-snapshot.create-restore resolves only
-  `EncryptionSection.recipients[0]` for `create(encrypt=true)`.
-  Operators with multi-recipient setups expect bundles wrapped
-  for every recipient. Trigger: operator request.
+- ✅ ~~**memory snapshot multi-recipient encrypt**~~ — shipped
+  2026-05-10 in `nexo-memory-snapshot 0.1.2` + `nexo-core 0.1.14`.
+  Additive `EncryptionKey::AgePublicKeys(Vec<String>)` variant
+  (preserves backward compat via `#[non_exhaustive]`); shared
+  `resolve_recipients` helper does dedup (silent + debug log) +
+  parse-with-index + non-empty rejection. Both `pack_pipeline`
+  and `build_encryption_meta` match both variants and converge
+  on `Vec<Recipient>` for the underlying `encrypt_writer` (which
+  already accepted Vec). Manifest's `recipients_fingerprint:
+  Vec<String>` populated with all fingerprints. Admin adapter
+  (`LiveMemorySnapshotReader::create`) switches uniformly to
+  `AgePublicKeys` (single-recipient case still uses the new
+  variant — bundle output identical to legacy single-string
+  path; uniform code path). CLI `--encrypt age:` flag unchanged
+  for backward compat. Boot-time validation: `main.rs` parses
+  every recipient string at daemon startup so typos fail-fast.
+  Tests: 3 unit (`pack_pipeline_handles_age_public_keys_variant`,
+  `build_encryption_meta_lists_all_fingerprints`,
+  `pack_pipeline_dedupes_duplicate_recipients`) + 2 integration
+  (`live_create_with_multi_recipient_passes_all`,
+  `live_create_with_single_recipient_still_uses_keys_variant`).
+  150/150 nexo-memory-snapshot tests pass; 6/6
+  live_memory_snapshot_tests pass. Docs: `docs/src/ops/memory-snapshot.md`
+  § Encryption gains "Multi-recipient encryption (admin UI)"
+  subsection.
 
 - ⬜ **memory snapshot streaming progress** —
   `nexo/notify/snapshot_progress` for long-running creates.
