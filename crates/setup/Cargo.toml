@@ -72,6 +72,10 @@ nexo-pairing = { version = "0.1.2", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher
 # adapter (publishes to per-channel `plugin.outbound.*` topics).
 nexo-broker = { version = "0.1.1", path = "../broker" }
+# Phase 81.21.b.b follow-up — `LivePluginRestarter` adapter
+# needs `tokio_util::sync::CancellationToken` for the
+# context-shutdown propagation into `force_restart`.
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 # C3 — drift-prevention test for `INVENTORY` walks the workspace
@@ -82,6 +86,7 @@ regex = "1"
 # cancel token observed by the trigger task gets cancelled by
 # pairing/cancel.
 tokio-util = { workspace = true }
+toml         = "0.8"
 async-trait = { workspace = true }
 nexo-tool-meta = { version = "0.1.12", path = "../tool-meta" }
 uuid = { workspace = true, features = ["v4"] }

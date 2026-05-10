@@ -2080,6 +2080,18 @@ async fn main() -> Result<()> {
                 tenant_store: tenant_store.clone(),
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
+                // Phase 81.21.b.b follow-up — manual restart
+                // adapter. Set to None: LivePluginRestarter needs
+                // the post-init `wire.plugin_handles` snapshot
+                // which isn't available yet at this admin
+                // bootstrap site (admin bootstrap runs BEFORE
+                // wire_plugin_registry). RPC returns
+                // `plugin restart domain not configured` until a
+                // SharedPluginHandles cell pattern is wired
+                // (deferred follow-up). Backend trait + handler
+                // + capability + adapter are LIVE so external
+                // integrations can drive the adapter directly.
+                plugin_restarter: None,
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(

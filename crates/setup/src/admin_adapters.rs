@@ -5281,3 +5281,251 @@ mod live_memory_snapshot_tests {
         }
     }
 }
+
+// ─── Phase 81.21.b.b follow-up — LivePluginRestarter ──
+
+/// Operator-driven `nexo/admin/plugins/restart` adapter. Looks up
+/// the plugin handle in the snapshot of the daemon's plugin
+/// registry (taken at admin bootstrap), downcasts to
+/// `SubprocessNexoPlugin`, and drives `force_restart()` with the
+/// daemon's shared lifecycle context (broker / memory / llm).
+///
+/// Plugin handles are stable post-init: the daemon doesn't add
+/// or remove plugins at runtime today (manifest changes require
+/// daemon restart). Snapshotting at bootstrap is therefore safe;
+/// no need for a live registry RwLock.
+#[derive(Clone)]
+pub struct LivePluginRestarter {
+    handles: std::sync::Arc<std::collections::BTreeMap<String, std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>>>,
+    ctx_shutdown: tokio_util::sync::CancellationToken,
+    broker: nexo_broker::AnyBroker,
+    memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
+    llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
+    llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+}
+
+impl std::fmt::Debug for LivePluginRestarter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LivePluginRestarter")
+            .field("handles_count", &self.handles.len())
+            .finish()
+    }
+}
+
+impl LivePluginRestarter {
+    pub fn new(
+        handles: std::sync::Arc<
+            std::collections::BTreeMap<
+                String,
+                std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>,
+            >,
+        >,
+        ctx_shutdown: tokio_util::sync::CancellationToken,
+        broker: nexo_broker::AnyBroker,
+        memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
+        llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
+        llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+    ) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            handles,
+            ctx_shutdown,
+            broker,
+            memory,
+            llm_registry,
+            llm_config,
+        })
+    }
+}
+
+#[async_trait]
+impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter
+    for LivePluginRestarter
+{
+    async fn restart(
+        &self,
+        plugin_id: &str,
+    ) -> anyhow::Result<nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse> {
+        let handle = self.handles.get(plugin_id).ok_or_else(|| {
+            anyhow::anyhow!("plugin {plugin_id} not found")
+        })?;
+        let any = handle.as_any();
+        let sub = any
+            .downcast_ref::<nexo_core::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin>()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "plugin {plugin_id} is in-tree, restart not applicable; use daemon restart"
+                )
+            })?;
+        let arc_sub = sub.weak_self_arc().ok_or_else(|| {
+            anyhow::anyhow!(
+                "plugin {plugin_id} weak_self not populated; factory bypassed"
+            )
+        })?;
+        // Re-derive LlmServices the same way init_loop does so
+        // the respawned child speaks through the same provider
+        // plumbing.
+        let llm = Some(nexo_core::agent::nexo_plugin_registry::subprocess::LlmServices {
+            registry: self.llm_registry.clone(),
+            config: self.llm_config.clone(),
+        });
+        arc_sub
+            .force_restart(
+                self.ctx_shutdown.clone(),
+                Some(self.broker.clone()),
+                self.memory.clone(),
+                llm,
+            )
+            .await
+    }
+}
+
+#[cfg(test)]
+mod live_plugin_restarter_tests {
+    //! Adapter-level coverage. We don't spin up a real
+    //! `SubprocessNexoPlugin` (the integration tests in
+    //! `nexo-core` already cover `force_restart` end-to-end
+    //! with mock scripts); here we exercise the lookup +
+    //! downcast guards against synthetic plugin handles.
+    use super::*;
+    use async_trait::async_trait;
+    use nexo_broker::LocalBroker;
+    use nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter as _;
+    use nexo_core::agent::plugin_host::{
+        NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+    };
+    use nexo_plugin_manifest::PluginManifest;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+
+    /// Minimal in-tree plugin (NOT SubprocessNexoPlugin) so the
+    /// adapter's downcast misses + we can verify the in-tree
+    /// branch returns the documented error.
+    #[derive(Debug)]
+    struct InTreePlugin {
+        manifest: PluginManifest,
+    }
+
+    #[async_trait]
+    impl NexoPlugin for InTreePlugin {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn init(
+            &self,
+            _ctx: &mut PluginInitContext<'_>,
+        ) -> Result<(), PluginInitError> {
+            Ok(())
+        }
+        async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+            Ok(())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn fake_manifest(id: &str) -> PluginManifest {
+        let toml_str = format!(
+            r#"
+[plugin]
+id = "{id}"
+version = "0.1.0"
+name = "x"
+description = "x"
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+"#,
+            id = id
+        );
+        toml::from_str(&toml_str).unwrap()
+    }
+
+    fn fake_llm_config() -> nexo_config::LlmConfig {
+        nexo_config::LlmConfig {
+            providers: std::collections::HashMap::new(),
+            retry: nexo_config::RetryConfig {
+                max_attempts: 1,
+                initial_backoff_ms: 1,
+                max_backoff_ms: 1,
+                backoff_multiplier: 1.0,
+            },
+            context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
+        }
+    }
+
+    fn build_restarter(
+        handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
+    ) -> Arc<LivePluginRestarter> {
+        let llm_registry = Arc::new(nexo_llm::LlmRegistry::new());
+        let llm_config = Arc::new(fake_llm_config());
+        LivePluginRestarter::new(
+            Arc::new(handles),
+            CancellationToken::new(),
+            nexo_broker::AnyBroker::Local(LocalBroker::new()),
+            None,
+            llm_registry,
+            llm_config,
+        )
+    }
+
+    #[tokio::test]
+    async fn live_plugin_restarter_rejects_unknown_plugin_id() {
+        let r = build_restarter(BTreeMap::new());
+        let err = r.restart("ghost").await.expect_err("unknown id must error");
+        assert!(
+            err.to_string().contains("not found"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_plugin_restarter_rejects_in_tree_plugin() {
+        let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
+        handles.insert(
+            "in_tree".into(),
+            Arc::new(InTreePlugin {
+                manifest: fake_manifest("in_tree"),
+            }),
+        );
+        let r = build_restarter(handles);
+        let err = r
+            .restart("in_tree")
+            .await
+            .expect_err("in-tree plugin must error");
+        assert!(
+            err.to_string().contains("is in-tree"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_plugin_restarter_rejects_subprocess_without_weak_self() {
+        // SubprocessNexoPlugin built via `new()` (not the
+        // factory) has empty `weak_self`. The adapter must
+        // surface this clearly rather than panic.
+        use nexo_core::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin;
+
+        let mut m = fake_manifest("subproc_no_weak");
+        m.plugin.entrypoint = nexo_plugin_manifest::EntrypointSection {
+            command: Some("/bin/cat".into()),
+            args: vec![],
+            env: Default::default(),
+        };
+        let plugin = Arc::new(SubprocessNexoPlugin::new(m)) as Arc<dyn NexoPlugin>;
+        let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
+        handles.insert("subproc_no_weak".into(), plugin);
+        let r = build_restarter(handles);
+        let err = r
+            .restart("subproc_no_weak")
+            .await
+            .expect_err("missing weak_self must error");
+        assert!(
+            err.to_string().contains("weak_self not populated"),
+            "got: {err}"
+        );
+    }
+}

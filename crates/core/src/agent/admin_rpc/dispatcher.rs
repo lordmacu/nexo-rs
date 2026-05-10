@@ -37,6 +37,7 @@ use super::domains::mcp::McpServerStore;
 use super::domains::memory::{MemoryReader, MemorySnapshotReader};
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::plugin_doctor::PluginDoctorReader;
+use super::domains::plugin_restart::PluginRestarter;
 use super::domains::processing::ProcessingControlStore;
 use super::domains::skills::SkillsStore;
 use super::domains::tenants::TenantStore;
@@ -266,6 +267,11 @@ pub struct AdminRpcDispatcher {
     /// `None` keeps `nexo/admin/plugins/doctor` returning a typed
     /// `plugins domain not configured` -32603.
     plugin_doctor: Option<Arc<dyn PluginDoctorReader>>,
+    /// Phase 81.21.b.b follow-up — manual plugin restart adapter.
+    /// `None` keeps `nexo/admin/plugins/restart` returning a typed
+    /// `plugin restart domain not configured` -32603. Production
+    /// wires `nexo_setup::admin_adapters::LivePluginRestarter`.
+    plugin_restarter: Option<Arc<dyn PluginRestarter>>,
     /// Phase 90.x.memory — long-term memory query reader.
     /// `None` keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603.
@@ -373,6 +379,7 @@ impl AdminRpcDispatcher {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             transcript_appender: None,
@@ -666,6 +673,16 @@ impl AdminRpcDispatcher {
     /// `doctor_render::render_json` pipeline. `None` disables
     /// `nexo/admin/plugins/doctor` (operator falls back to the
     /// `agent doctor plugins` CLI).
+    /// Phase 81.21.b.b follow-up — install the plugin restart
+    /// adapter. Production wires
+    /// `nexo_setup::admin_adapters::LivePluginRestarter`. `None`
+    /// disables `nexo/admin/plugins/restart` (operator falls back
+    /// to daemon-wide restart).
+    pub fn with_plugin_restarter(mut self, restarter: Arc<dyn PluginRestarter>) -> Self {
+        self.plugin_restarter = Some(restarter);
+        self
+    }
+
     pub fn with_plugin_doctor(mut self, reader: Arc<dyn PluginDoctorReader>) -> Self {
         self.plugin_doctor = Some(reader);
         self
@@ -817,6 +834,11 @@ impl AdminRpcDispatcher {
             // on `plugin_doctor`; nexo-plugin-admin declares it
             // required.
             "nexo/admin/plugins/doctor" => Some("plugin_doctor"),
+            // Phase 81.21.b.b follow-up — manual plugin restart
+            // is write+destructive; distinct capability from the
+            // read-only `plugin_doctor` so security review can
+            // grant them independently.
+            "nexo/admin/plugins/restart" => Some("plugin_restart"),
             // Phase 90.x.memory — long-term memory query.
             // Capability `memory_query` so an operator can grant
             // read-only memory inspection independently of broader
@@ -1408,6 +1430,14 @@ impl AdminRpcDispatcher {
                 Some(store) => super::domains::mcp::delete(store.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "mcp domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/restart" => match &self.plugin_restarter {
+                Some(r) => {
+                    super::domains::plugin_restart::restart_plugin(r.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin restart domain not configured".into(),
                 )),
             },
             "nexo/admin/plugins/doctor" => match &self.plugin_doctor {
