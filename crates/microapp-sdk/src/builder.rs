@@ -215,6 +215,14 @@ impl Microapp {
     }
 
     /// Run the JSON-RPC stdio loop until EOF or `shutdown`.
+    ///
+    /// Phase 91.x.wasm.phase-3 — wasm32 has no
+    /// `tokio::io::stdin` / `stdout` (the `io-std` feature is
+    /// rejected on that target). The browser-targeted SDK
+    /// build uses `run_with` against caller-supplied transports
+    /// (typically a `MessageChannel` / wasm-bindgen pipe), not
+    /// stdio. Gate this stdio convenience on non-wasm32.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn run_stdio(self) -> SdkResult<()> {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
