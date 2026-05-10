@@ -4620,3 +4620,139 @@ impl
             .collect())
     }
 }
+
+// ─── Phase 90.x.memory-snapshot — LiveMemorySnapshotReader ────
+
+/// Live snapshot-list reader. Constructed at boot from the
+/// daemon's config_dir; the underlying `LocalFsSnapshotter` is
+/// built lazily on the first `list()` call so the dispatcher
+/// wire-up doesn't have to plumb the late-built per-agent
+/// snapshotter through.
+///
+/// V1 surface = list only (read-only). Create / restore stay
+/// CLI-only — those flows are heavy (tar.zst encoding + optional
+/// age encryption + retention sweep + lock dance) and not yet
+/// worth the operator-UI wire-up.
+///
+/// **Limitation**: uses the default `DefaultPathResolver` over
+/// `<state_root>/<agent_id>` layout. Operators with a custom
+/// `path_resolver` (e.g. per-agent memdir map) will see an empty
+/// list. The follow-up that refactors main.rs to construct the
+/// snapshotter once + thread the same `Arc<dyn MemorySnapshotter>`
+/// through bootstrap is tracked under FOLLOWUPS Phase 90.x.
+#[derive(Clone)]
+pub struct LiveMemorySnapshotReader {
+    config_dir: PathBuf,
+    cached: std::sync::Arc<
+        tokio::sync::Mutex<
+            Option<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>>,
+        >,
+    >,
+}
+
+impl std::fmt::Debug for LiveMemorySnapshotReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveMemorySnapshotReader")
+            .field("config_dir", &self.config_dir)
+            .field("cached", &"<memory-snapshotter>")
+            .finish()
+    }
+}
+
+impl LiveMemorySnapshotReader {
+    /// Build a reader pointed at `<config_dir>/memory.yaml`.
+    /// Lazy open: the first `list()` call constructs the
+    /// `LocalFsSnapshotter`; subsequent calls reuse it.
+    pub fn new(config_dir: PathBuf) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            config_dir,
+            cached: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        })
+    }
+
+    async fn open_or_cached(
+        &self,
+    ) -> anyhow::Result<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>>
+    {
+        let mut slot = self.cached.lock().await;
+        if let Some(s) = slot.as_ref() {
+            return Ok(s.clone());
+        }
+        let mem_cfg: Option<nexo_config::types::MemoryConfig> =
+            nexo_config::load_optional(&self.config_dir, "memory.yaml")
+                .map_err(|e| anyhow::anyhow!("memory.yaml load failed: {e}"))?;
+        let cfg = mem_cfg.ok_or_else(|| {
+            anyhow::anyhow!("memory.yaml missing — snapshot subsystem not configured")
+        })?;
+        if !cfg.snapshot.enabled {
+            anyhow::bail!("memory.snapshot.enabled = false");
+        }
+        let state_root: PathBuf = if cfg.snapshot.root.is_empty() {
+            // Fall back to the same `nexo_state_dir()` default
+            // main.rs uses at boot.
+            std::env::var_os("NEXO_STATE_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("./data"))
+        } else {
+            PathBuf::from(&cfg.snapshot.root)
+        };
+        let memdir_root: PathBuf = if cfg.snapshot.memdir_root.is_empty() {
+            state_root.clone()
+        } else {
+            PathBuf::from(&cfg.snapshot.memdir_root)
+        };
+        let sqlite_root: PathBuf = if cfg.snapshot.sqlite_root.is_empty() {
+            state_root.clone()
+        } else {
+            PathBuf::from(&cfg.snapshot.sqlite_root)
+        };
+        let snapshotter = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()
+            .state_root(state_root)
+            .memdir_root(memdir_root)
+            .sqlite_root(sqlite_root)
+            .lock_timeout(std::time::Duration::from_secs(
+                cfg.snapshot.lock_timeout_secs.max(1),
+            ))
+            .build()
+            .map_err(|e| anyhow::anyhow!("LocalFsSnapshotter build failed: {e}"))?;
+        let arc: std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter> =
+            std::sync::Arc::new(snapshotter);
+        *slot = Some(arc.clone());
+        Ok(arc)
+    }
+}
+
+#[async_trait]
+impl
+    nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader
+    for LiveMemorySnapshotReader
+{
+    async fn list(
+        &self,
+        agent_id: &str,
+        tenant: &str,
+    ) -> anyhow::Result<Vec<nexo_tool_meta::admin::memory::SnapshotMetaWire>> {
+        let snapshotter = self.open_or_cached().await?;
+        let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
+        let metas = snapshotter
+            .list(&agent, tenant)
+            .await
+            .map_err(|e| anyhow::anyhow!("snapshotter.list: {e}"))?;
+        Ok(metas
+            .into_iter()
+            .map(|m| nexo_tool_meta::admin::memory::SnapshotMetaWire {
+                id: m.id.to_string(),
+                agent_id: m.agent_id.to_string(),
+                tenant: m.tenant,
+                label: m.label,
+                created_at_ms: m.created_at_ms,
+                bundle_path: m.bundle_path.to_string_lossy().into_owned(),
+                bundle_size_bytes: m.bundle_size_bytes,
+                bundle_sha256: m.bundle_sha256,
+                git_oid: m.git_oid,
+                encrypted: m.encrypted,
+                redactions_applied: m.redactions_applied,
+            })
+            .collect())
+    }
+}

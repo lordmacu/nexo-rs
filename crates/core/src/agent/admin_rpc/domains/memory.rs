@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use nexo_tool_meta::admin::memory::{
     MemoryEntryWire, MemoryQueryParams, MemoryQueryResponse,
+    MemorySnapshotsListParams, MemorySnapshotsListResponse, SnapshotMetaWire,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -32,6 +33,21 @@ pub trait MemoryReader: Send + Sync + std::fmt::Debug {
     ) -> anyhow::Result<Vec<MemoryEntryWire>>;
 }
 
+/// Reader abstraction over the snapshot bundle store. Production
+/// adapter wraps `nexo_memory_snapshot::MemorySnapshotter::list`;
+/// tests inject in-memory fakes.
+#[async_trait]
+pub trait MemorySnapshotReader: Send + Sync + std::fmt::Debug {
+    /// Enumerate snapshots for `agent_id` under `tenant`.
+    /// Newest-first (`created_at_ms` descending). Empty result
+    /// = no snapshots OR snapshot subsystem disabled at boot.
+    async fn list(
+        &self,
+        agent_id: &str,
+        tenant: &str,
+    ) -> anyhow::Result<Vec<SnapshotMetaWire>>;
+}
+
 /// `nexo/admin/memory/query` — recall.
 pub async fn query(reader: &dyn MemoryReader, params: Value) -> AdminRpcResult {
     let p: MemoryQueryParams = match serde_json::from_value(params) {
@@ -51,6 +67,36 @@ pub async fn query(reader: &dyn MemoryReader, params: Value) -> AdminRpcResult {
         }
         Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
             "memory.query: {e}"
+        ))),
+    }
+}
+
+/// `nexo/admin/memory/list_snapshots` — snapshot inventory.
+pub async fn list_snapshots(
+    reader: &dyn MemorySnapshotReader,
+    params: Value,
+) -> AdminRpcResult {
+    let p: MemorySnapshotsListParams = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if p.agent_id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "agent_id is empty".into(),
+        ));
+    }
+    let tenant = if p.tenant.trim().is_empty() {
+        "default"
+    } else {
+        p.tenant.as_str()
+    };
+    match reader.list(&p.agent_id, tenant).await {
+        Ok(snapshots) => {
+            let resp = MemorySnapshotsListResponse { snapshots };
+            AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
+        }
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
+            "memory.list_snapshots: {e}"
         ))),
     }
 }
