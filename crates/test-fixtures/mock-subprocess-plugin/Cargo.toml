@@ -1,0 +1,45 @@
+# Phase 27.2 — mock subprocess plugin extracted into its own
+# workspace crate so cargo-dist 0.31's manifest planner stops
+# trying to ship it as a release binary. Previously lived as a
+# `[[bin]]` on the root `nexo-rs` crate gated by
+# `required-features = ["dev-bins"]`, but cargo-dist 0.31 ignores
+# `required-features` and walked the dist build into a
+# `failed to find bin mock_subprocess_plugin.exe` error on Windows.
+#
+# Setting `[package.metadata.dist] dist = false` excludes this
+# crate from the dist matrix; the binary stays available to the
+# colocated e2e test (`tests/subprocess_flip_e2e.rs`) via the
+# normal `CARGO_BIN_EXE_mock_subprocess_plugin` env var.
+[package]
+name = "nexo-mock-subprocess-plugin"
+version = "0.0.1"
+description = "Internal test fixture — synthetic subprocess plugin used by the daemon's spawn-shape e2e tests. Not published."
+publish = false
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.dist]
+dist = false
+
+[[bin]]
+name = "mock_subprocess_plugin"
+path = "src/main.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# `serial_test` not in `[workspace.dependencies]` (only used in
+# the root crate's e2e tests + here); pin inline to avoid bloating
+# the workspace manifest with a single-consumer dep.
+serial_test = "3"
