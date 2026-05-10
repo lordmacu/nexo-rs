@@ -66,14 +66,15 @@ NOT shipping blockers.
   (`tenant_id`, `name`) inside the wrapper so the rail switcher
   + zustand store keep working unchanged.
 
-- ⬜ **TokenRotated cookie session swap** — when daemon issues
-  `auth_rotate`, the plugin's `LiveTokenState` updates the
-  bearer atomically (via the existing rotation listener), but
-  the `LiveAdminSession` (cookie HMAC secret) stays. Result:
-  existing browser cookies remain valid until 24h TTL even
-  after a token rotation. Wire a notification listener that
-  swaps both atomically when stricter session-on-rotation
-  policy is needed.
+- ✅ ~~**TokenRotated cookie session swap**~~ shipped 2026-05-10
+  in nexo-plugin-admin@0.1.6 — `nexo/notify/token_rotated`
+  listener wired through the SDK. Atomic 2-step swap:
+  (1) `http::handle_token_rotated(LiveTokenState, ...)` for the
+  bearer middleware, (2) fresh `AdminSession::new_random()` +
+  `LiveAdminSession::swap` for the cookie HMAC secret. Existing
+  browser cookies invalidate immediately (signed with the old
+  secret); operator re-logs in with the new password printed
+  to stderr.
 
 - ⬜ **Auto-spawn plugin-not-installed UX** — `agent admin`
   shim today exits with install instructions when the plugin
@@ -85,7 +86,10 @@ NOT shipping blockers.
 - ⬜ **GitHub remote for nexo-rs-plugin-admin** — the sibling
   repo at `/home/familia/chat/nexo-rs-plugin-admin/` is
   local-only; published crate is on crates.io. Add the
-  GitHub remote when ready to accept PRs.
+  GitHub remote when ready to accept PRs. CHANGELOG.md
+  shipped 2026-05-10 with compare-links pointing at the
+  expected GitHub tag URLs (will resolve once the remote
+  exists).
 
 - ⬜ **Plugin admin e2e test** — integration test against a
   running daemon that spawns the plugin via discovery, hits
