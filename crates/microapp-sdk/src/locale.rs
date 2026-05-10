@@ -190,6 +190,56 @@ impl Locale {
     pub fn is_just_language(&self) -> bool {
         !self.0.contains('-')
     }
+
+    /// Iterate every locale that [`FromStr`] would accept: each
+    /// [`LangCode`] paired with `None`, then with each
+    /// [`RegionCode`]. Output is the full cross-product
+    /// (8 × (1 + 17) = 144 entries) regardless of voice picker /
+    /// addendum coverage; the lint script (Phase 81.19.b locale
+    /// item 2) intersects this against the curated frontend
+    /// `SUPPORTED_LOCALES` list to catch drift.
+    ///
+    /// Order is deterministic (alphabetical by language code,
+    /// then language-only first, then alphabetical by region
+    /// code) so the dump is diff-stable.
+    pub fn iter_supported() -> impl Iterator<Item = Locale> {
+        const LANGS: &[LangCode] = &[
+            LangCode::De,
+            LangCode::En,
+            LangCode::Es,
+            LangCode::Fr,
+            LangCode::It,
+            LangCode::Ja,
+            LangCode::Pt,
+            LangCode::Zh,
+        ];
+        const REGIONS: &[RegionCode] = &[
+            RegionCode::Ar,
+            RegionCode::Au,
+            RegionCode::Br,
+            RegionCode::Ca,
+            RegionCode::Cl,
+            RegionCode::Cn,
+            RegionCode::Co,
+            RegionCode::De,
+            RegionCode::Es,
+            RegionCode::Fr,
+            RegionCode::Gb,
+            RegionCode::It,
+            RegionCode::Jp,
+            RegionCode::Mx,
+            RegionCode::Pe,
+            RegionCode::Pt,
+            RegionCode::Us,
+        ];
+        LANGS.iter().flat_map(|lang| {
+            std::iter::once(Locale::new(*lang, None)).chain(
+                REGIONS
+                    .iter()
+                    .map(move |region| Locale::new(*lang, Some(*region))),
+            )
+        })
+    }
 }
 
 impl std::str::FromStr for Locale {
