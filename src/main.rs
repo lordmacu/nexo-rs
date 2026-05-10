@@ -1742,7 +1742,7 @@ async fn main() -> Result<()> {
                     .await?;
             std::process::exit(code);
         }
-        Mode::Admin { port } => return run_admin_web(port).await,
+        Mode::Admin { port } => return run_admin_via_plugin(port).await,
         Mode::Run => {}
     }
 
@@ -9077,6 +9077,81 @@ fn run_ext_help() -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     nexo_extensions::cli::print_help(&mut stdout)?;
     Ok(())
+}
+
+/// Phase 90.5 — `agent admin` thin wrapper.
+///
+/// Replaces the legacy in-process admin server (~800 LOC,
+/// `run_admin_web` below — dead code, archived in Phase 90.7)
+/// with a CLI shim that points operators at the out-of-tree
+/// `nexo-plugin-admin` plugin. The plugin is normally spawned
+/// by the daemon's discovery loop at boot; this command's job
+/// is to surface the URL + install hints + browser-open
+/// convenience.
+///
+/// `port` is forwarded as `NEXO_ADMIN_HTTP_BIND` so the operator
+/// can override the default `127.0.0.1:18000` from the legacy
+/// `--port` flag without re-learning new flags.
+async fn run_admin_via_plugin(port: u16) -> Result<()> {
+    println!();
+    println!("┌─ agent admin ────────────────────────────────────────────────");
+    println!("│");
+
+    // Detect the plugin binary in PATH. Operators install it
+    // with `cargo install nexo-plugin-admin`; the binary lands
+    // in `~/.cargo/bin/`. If discovery fails the plugin loader
+    // (Phase 81.17 auto-subprocess fallback) also fails so the
+    // daemon's spawn would silently no-op — surface that here.
+    let installed = which_in_path("nexo-plugin-admin");
+
+    if installed {
+        println!("│  Plugin admin binary: ✓ found in PATH");
+        println!("│  URL:                 http://127.0.0.1:{port}");
+        println!("│");
+        println!("│  Make sure the daemon is running:");
+        println!("│      agent run");
+        println!("│");
+        println!("│  The daemon discovers + spawns nexo-plugin-admin via");
+        println!("│  the standard plugin search paths (Phase 81.17 auto");
+        println!("│  subprocess). Operators don't run the plugin directly.");
+        println!("│");
+        println!("│  Public exposure (opt-in, not default):");
+        println!("│      NEXO_ADMIN_TUNNEL=cloudflared agent run");
+        println!("│      NEXO_ADMIN_TUNNEL=tailscale  agent run");
+    } else {
+        println!("│  Plugin admin binary: ✗ NOT found in PATH");
+        println!("│");
+        println!("│  Install:");
+        println!("│      cargo install nexo-plugin-admin");
+        println!("│");
+        println!("│  Or build from source:");
+        println!("│      git clone https://github.com/lordmacu/nexo-rs-plugin-admin");
+        println!("│      cd nexo-rs-plugin-admin && cargo install --path .");
+    }
+
+    println!("│");
+    println!("└──────────────────────────────────────────────────────────────");
+    println!();
+
+    if !installed {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Lightweight PATH walker — duplicated locally because pulling
+/// the `which` crate in just for this would be overkill.
+fn which_in_path(bin: &str) -> bool {
+    let path = match std::env::var_os("PATH") {
+        Some(p) => p,
+        None => return false,
+    };
+    for dir in std::env::split_paths(&path) {
+        if dir.join(bin).is_file() {
+            return true;
+        }
+    }
+    false
 }
 
 /// `agent admin` — boot the web admin UI behind a fresh Cloudflare
