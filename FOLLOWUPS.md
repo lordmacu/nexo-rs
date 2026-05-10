@@ -32,10 +32,14 @@ NOT shipping blockers.
   the approve flow needs a server-name picker + binding-allowlist
   editor. Operator approves new channels via yaml today.
 
-- ⬜ **Tenants CRUD wrappers** — `api/tenants.ts` only exports
-  `tenantsList`. Add `tenantCreate` / `tenantUpdate` / 
-  `tenantDeactivate` wrappers around the existing daemon-side
-  `nexo/admin/tenants/*` admin RPCs (Phase 83.8.12).
+- ✅ ~~**Tenants CRUD wrappers**~~ shipped 2026-05-10 (commit 007a3d3
+  in nexo-rs-plugin-admin) — `api/tenants.ts` now exposes
+  `tenantsUpsert`, `tenantsSetActive`, `tenantsDelete` (with
+  cascade-purge on orphan agents). UI in `/m/tenants` has create
+  modal + activate/deactivate + delete buttons. Daemon shape
+  (`id`, `display_name`) is translated to legacy frontend shape
+  (`tenant_id`, `name`) inside the wrapper so the rail switcher
+  + zustand store keep working unchanged.
 
 - ⬜ **TokenRotated cookie session swap** — when daemon issues
   `auth_rotate`, the plugin's `LiveTokenState` updates the
