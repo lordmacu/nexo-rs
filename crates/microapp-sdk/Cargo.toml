@@ -82,6 +82,22 @@ stt-candle-hub = [
     "stt-candle",
     "dep:hf-hub",
 ]
+# Phase 91.x.wasm.phase-4 — cloud STT backends. Pulls `reqwest`
+# (already shared with `wizard`) + adds an `SttProvider` trait
+# with three impls: OpenAI Whisper (`/v1/audio/transcriptions`),
+# Groq (OpenAI-compatible at `openai/v1/audio/transcriptions`),
+# and Anthropic `voice_stream` WebSocket (per the
+# claude-code-leak mining). Cloud-first dispatch + Candle
+# fallback wires into `transcribe_file` so operators get
+# graceful degradation when the network drops.
+#
+# Works on `wasm32-unknown-unknown` (reqwest swaps to the
+# browser fetch API on that target; the Anthropic WebSocket
+# uses `web-sys::WebSocket`). Native targets use rustls-tls
+# (workspace TLS posture).
+stt-cloud = [
+    "dep:reqwest",
+]
 # Phase 91.10 — GPU / SIMD acceleration backends for the Candle
 # STT path. Default `stt-candle` is CPU-only pure-Rust so it
 # cross-compiles to every target the workspace ships. Opt into
@@ -368,7 +384,14 @@ symphonia = { version = "0.5", default-features = false, features = [
 ], optional = true }
 # `wizard` feature — server-side LLM key probe. rustls-only to
 # match the agent-creator-microapp baseline (no system OpenSSL).
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# Phase 91.x.wasm.phase-4 — `multipart` lets the cloud STT
+# providers (OpenAI / Groq) upload the audio buffer; `json`
+# parses the response. `rustls-tls` is native-only (Cargo
+# doesn't accept per-target features on a single optional
+# dep without a duplicate-key error). WASM consumers wanting
+# cloud STT: filed as Phase 91.x.wasm.phase-4c — a separate
+# `gloo-net`-based path that swaps the transport on wasm32.
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"], optional = true }
 # `voice` feature — Microsoft Edge Read-Aloud websocket wrapper.
 msedge_tts = { package = "msedge-tts", version = "0.3", optional = true }
 regex      = { version = "1", optional = true }
