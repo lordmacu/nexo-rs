@@ -69,6 +69,34 @@ stt-candle = [
     "dep:tokenizers",
     "dep:hf-hub",
 ]
+# Phase 91.10 — GPU / SIMD acceleration backends for the Candle
+# STT path. Default `stt-candle` is CPU-only pure-Rust so it
+# cross-compiles to every target the workspace ships. Opt into
+# one of these per build target when the deployment has the
+# matching hardware + toolchain available; they stack on top
+# of `stt-candle` (the audio decode + tokenizer pipeline stays
+# the same — only the Tensor backend swaps).
+#
+# Mutually exclusive: pick the one matching your runtime
+# hardware. Mixing them is a Candle-level error, not ours.
+stt-candle-metal = [
+    "stt-candle",
+    "candle-core/metal",
+    "candle-nn/metal",
+    "candle-transformers/metal",
+]
+stt-candle-cuda = [
+    "stt-candle",
+    "candle-core/cuda",
+    "candle-nn/cuda",
+    "candle-transformers/cuda",
+]
+stt-candle-accelerate = [
+    "stt-candle",
+    "candle-core/accelerate",
+    "candle-nn/accelerate",
+    "candle-transformers/accelerate",
+]
 # First-run wizard scaffolding: a generic `CachedSnapshot<T>` with
 # TTL invalidation and an `LlmProber` that validates an OpenAI-
 # compatible API key server-side (`GET {base_url}/models`) so the
