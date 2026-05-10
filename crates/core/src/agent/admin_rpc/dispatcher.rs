@@ -35,6 +35,7 @@ use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::mcp::McpServerStore;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
+use super::domains::plugin_doctor::PluginDoctorReader;
 use super::domains::processing::ProcessingControlStore;
 use super::domains::skills::SkillsStore;
 use super::domains::tenants::TenantStore;
@@ -260,6 +261,10 @@ pub struct AdminRpcDispatcher {
     /// CLI / direct edit only). Production wires
     /// `nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore`.
     mcp_store: Option<Arc<dyn McpServerStore>>,
+    /// Phase 90.x.plugins — plugin doctor snapshot reader.
+    /// `None` keeps `nexo/admin/plugins/doctor` returning a typed
+    /// `plugins domain not configured` -32603.
+    plugin_doctor: Option<Arc<dyn PluginDoctorReader>>,
     /// Phase 82.13.b.1 — transcript appender used by
     /// `processing/intervention` (and later `processing/resume`)
     /// to stamp operator replies / summary / replayed inbounds
@@ -358,6 +363,7 @@ impl AdminRpcDispatcher {
             channel_outbound: None,
             tenant_store: None,
             mcp_store: None,
+            plugin_doctor: None,
             transcript_appender: None,
             event_emitter: None,
             secrets_store: None,
@@ -644,6 +650,16 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 90.x.plugins — install the plugin doctor reader.
+    /// Production wires the live `wire_plugin_registry` +
+    /// `doctor_render::render_json` pipeline. `None` disables
+    /// `nexo/admin/plugins/doctor` (operator falls back to the
+    /// `agent doctor plugins` CLI).
+    pub fn with_plugin_doctor(mut self, reader: Arc<dyn PluginDoctorReader>) -> Self {
+        self.plugin_doctor = Some(reader);
+        self
+    }
+
     /// Phase 83.8.4.a — install the channel-outbound dispatcher
     /// used by `processing/intervention` when the action is
     /// `Reply`. Without one wired the handler returns
@@ -760,6 +776,11 @@ impl AdminRpcDispatcher {
             | "nexo/admin/mcp/get"
             | "nexo/admin/mcp/upsert"
             | "nexo/admin/mcp/delete" => Some("mcp_crud"),
+            // Phase 90.x.plugins — admin/plugins/doctor — live
+            // snapshot of plugin discovery + spawn status. Gated
+            // on `plugin_doctor`; nexo-plugin-admin declares it
+            // required.
+            "nexo/admin/plugins/doctor" => Some("plugin_doctor"),
             // Phase 82.10.k — secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
@@ -1335,6 +1356,12 @@ impl AdminRpcDispatcher {
                 Some(store) => super::domains::mcp::delete(store.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "mcp domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/doctor" => match &self.plugin_doctor {
+                Some(reader) => super::domains::plugin_doctor::doctor(reader.as_ref()).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugins domain not configured".into(),
                 )),
             },
             "nexo/admin/secrets/write" => match &self.secrets_store {

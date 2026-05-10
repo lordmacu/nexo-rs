@@ -4441,3 +4441,76 @@ mod tenants_yaml_tests {
     #[allow(dead_code)]
     fn _suppress_unused_imports(_t: &TenantDetail, _u: &Utc) {}
 }
+
+// ─── Phase 90.x.plugins — LivePluginDoctorReader ───────────────
+
+/// Live plugin doctor snapshot. Each call to `report()` re-runs
+/// the same `wire_plugin_registry` + `doctor_render::render_json`
+/// pipeline that powers the `agent doctor plugins --json` CLI.
+///
+/// **Cost**: ~hundreds of ms per call (filesystem walk + manifest
+/// parses + capability aggregation). v1 has no cache; the operator
+/// hits the page manually so per-click fresh data wins over
+/// stale-but-fast.
+#[derive(Debug, Clone)]
+pub struct LivePluginDoctorReader {
+    config_dir: PathBuf,
+    version: semver::Version,
+}
+
+impl LivePluginDoctorReader {
+    /// Build a reader pointed at the daemon's config directory.
+    pub fn new(config_dir: PathBuf, version: semver::Version) -> Arc<Self> {
+        Arc::new(Self {
+            config_dir,
+            version,
+        })
+    }
+}
+
+#[async_trait]
+impl
+    nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader
+    for LivePluginDoctorReader
+{
+    async fn report(&self) -> anyhow::Result<serde_json::Value> {
+        let cfg = nexo_config::AppConfig::load(&self.config_dir)?;
+        // Mirror src/main.rs::core_capability_env_vars — surface
+        // INVENTORY tuples the plugin capability aggregator
+        // expects.
+        let core_envs: Vec<(&'static str, &'static str)> =
+            crate::capabilities::evaluate_all()
+                .into_iter()
+                .map(|s| (s.toggle.env_var, s.toggle.extension))
+                .collect();
+        // Mirror src/main.rs::build_available_capabilities — the
+        // capability set the running daemon advertises so the
+        // aggregator can flag unmet requires as Warn-level.
+        let mut available = std::collections::BTreeSet::new();
+        available.insert("broker".to_string());
+        available.insert("memory".to_string());
+        available.insert("sessions".to_string());
+        if !cfg.memory.long_term.backend.is_empty() {
+            available.insert("long_term_memory".to_string());
+        }
+        let mut agents = cfg.agents;
+        let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
+            &mut agents,
+            &cfg.plugins.discovery,
+            &self.version,
+            &core_envs,
+            &available,
+            None,
+        )
+        .await;
+        let snap = wire.registry.snapshot();
+        let json = nexo_core::agent::nexo_plugin_registry::doctor_render::render_json(
+            &snap,
+            &wire.channel_adapter_registry,
+            &self.config_dir,
+            &self.version,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        Ok(parsed)
+    }
+}

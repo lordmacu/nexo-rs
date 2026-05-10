@@ -1998,6 +1998,20 @@ async fn main() -> Result<()> {
         > = Some(nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore::new(
             config_dir.clone(),
         ));
+        // Phase 90.x.plugins — wire the plugin doctor reader so
+        // /m/plugins gets a live snapshot. Each call re-runs the
+        // discovery + capability aggregation; cost is acceptable
+        // for an operator-driven page.
+        let doctor_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+        let plugin_doctor: Option<
+            std::sync::Arc<
+                dyn nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader,
+            >,
+        > = Some(nexo_setup::admin_adapters::LivePluginDoctorReader::new(
+            config_dir.clone(),
+            doctor_version,
+        ));
         // Phase 82.10.p — build the per-channel pairing trigger
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
@@ -2036,6 +2050,7 @@ async fn main() -> Result<()> {
                 processing_store: Some(std::sync::Arc::clone(&processing_store)),
                 tenant_store: tenant_store.clone(),
                 mcp_store: mcp_store.clone(),
+                plugin_doctor: plugin_doctor.clone(),
                 // Phase 82.10.k — file-backed secrets store at
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new
