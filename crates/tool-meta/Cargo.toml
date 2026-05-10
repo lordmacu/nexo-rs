@@ -22,6 +22,10 @@ serde_json = { workspace = true }
 uuid       = { workspace = true }
 chrono     = { workspace = true }
 base64     = { workspace = true }
+# Phase 81.19.b locale follow-up — Locale type moved here from
+# nexo-microapp-sdk so nexo-config can validate `agents.<id>.language`
+# at YAML deserialise time (microapp-sdk → tool-meta layer inversion).
+thiserror  = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true

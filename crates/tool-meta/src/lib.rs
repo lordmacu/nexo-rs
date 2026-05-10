@@ -50,6 +50,10 @@ pub mod binding;
 pub mod event_source;
 pub mod http_server;
 pub mod inbound;
+/// Phase 81.19.b locale follow-up — moved from nexo-microapp-sdk so
+/// nexo-config can consume the closed-enum validator at YAML
+/// deserialise time. SDK still re-exports for back-compat.
+pub mod locale;
 pub mod marketing;
 pub mod meta;
 pub mod microapp_error;
@@ -58,6 +62,7 @@ pub mod template;
 pub mod webhook;
 
 pub use binding::{binding_id_render, BindingContext};
+pub use locale::{LangCode, Locale, LocaleParseError, RegionCode};
 pub use event_source::{
     format_dispatch_source, format_event_subscriber_source, format_rate_limit_hit, EventSourceMeta,
 };
