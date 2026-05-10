@@ -2,6 +2,70 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 90 — nexo-plugin-admin — shipped, follow-ups open
+
+Phase 90 (admin plugin out-of-tree) shipped 2026-05-10. The
+plugin (`cargo install nexo-plugin-admin`) covers the admin
+surface; ~5342 LOC of `proyecto/admin-ui/` + ~2702 LOC of
+`proyecto/src/main.rs::run_admin_web` removed in the same wave.
+Open items below are degradations the v1 plugin tolerates,
+NOT shipping blockers.
+
+- ⬜ **memory admin RPCs** — `/m/memory` page renders a
+  placeholder pointing at `agent memory snapshot --agent <id>`
+  CLI. Backend endpoints `nexo/admin/memory/query` +
+  `nexo/admin/memory/snapshot` not yet exposed. Wire when an
+  operator demands UI memory inspection (low frequency vs CLI).
+
+- ⬜ **plugins admin RPCs** — `/m/plugins` placeholder. Need
+  `nexo/admin/plugins/list` + `nexo/admin/plugins/doctor` so
+  the page can render live plugin spawn status + capability
+  inventory. CLI `agent doctor plugins` already covers this
+  locally.
+
+- ⬜ **mcp_servers admin RPCs** — `/m/mcp_servers` placeholder.
+  Need `nexo/admin/mcp/{list,upsert,delete}`. Legacy admin-ui
+  used a custom `/api/mcp/servers` HTTP endpoint hosted by the
+  daemon; the new plugin needs first-class admin RPC.
+
+- ⬜ **Channel approve UX** — `/m/channels` ships list + revoke;
+  the approve flow needs a server-name picker + binding-allowlist
+  editor. Operator approves new channels via yaml today.
+
+- ⬜ **Tenants CRUD wrappers** — `api/tenants.ts` only exports
+  `tenantsList`. Add `tenantCreate` / `tenantUpdate` / 
+  `tenantDeactivate` wrappers around the existing daemon-side
+  `nexo/admin/tenants/*` admin RPCs (Phase 83.8.12).
+
+- ⬜ **TokenRotated cookie session swap** — when daemon issues
+  `auth_rotate`, the plugin's `LiveTokenState` updates the
+  bearer atomically (via the existing rotation listener), but
+  the `LiveAdminSession` (cookie HMAC secret) stays. Result:
+  existing browser cookies remain valid until 24h TTL even
+  after a token rotation. Wire a notification listener that
+  swaps both atomically when stricter session-on-rotation
+  policy is needed.
+
+- ⬜ **Auto-spawn plugin-not-installed UX** — `agent admin`
+  shim today exits with install instructions when the plugin
+  binary is missing in PATH. A future enhancement: prompt
+  the operator with `cargo install nexo-plugin-admin` and run
+  it interactively (matches the `cargo install` flow some
+  competitors offer).
+
+- ⬜ **GitHub remote for nexo-rs-plugin-admin** — the sibling
+  repo at `/home/familia/chat/nexo-rs-plugin-admin/` is
+  local-only; published crate is on crates.io. Add the
+  GitHub remote when ready to accept PRs.
+
+- ⬜ **Plugin admin e2e test** — integration test against a
+  running daemon that spawns the plugin via discovery, hits
+  /healthz, hits /api/admin via the bearer middleware, and
+  verifies a CRUD round-trip lands. Currently only unit
+  tests cover the auth + tunnel + assets paths.
+
+
+
 Historical detailed notes that were previously written in Spanish are preserved at:
 - `archive/spanish/FOLLOWUPS.es.txt`
 
