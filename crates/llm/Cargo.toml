@@ -32,7 +32,7 @@ futures      = { workspace = true }
 eventsource-stream = { workspace = true }
 bytes        = { workspace = true }
 dashmap      = { workspace = true }
-nexo-config = { version = "0.1.6", path = "../config" }
+nexo-config = { version = "0.1.7", path = "../config" }
 nexo-resilience = { version = "0.1.2", path = "../resilience" }
 # Phase 82.10.u — factories declare credential schema + auth modes
 # in shared wire types so admin RPC + SPA wizard render dynamic

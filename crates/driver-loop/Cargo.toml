@@ -18,7 +18,7 @@ default = ["nats"]
 nats    = ["dep:async-nats"]
 
 [dependencies]
-nexo-config            = { version = "0.1.4", path = "../config" }
+nexo-config            = { version = "0.1.7", path = "../config" }
 nexo-driver-types      = { version = "0.1.6", path = "../driver-types" }
 nexo-driver-claude     = { version = "0.1.6", path = "../driver-claude" }
 nexo-driver-permission = { version = "0.1.6", path = "../driver-permission" }

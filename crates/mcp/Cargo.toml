@@ -29,7 +29,7 @@ async-trait = { workspace = true }
 parking_lot = "0.12"
 nexo-resilience = { version = "0.1.2", path = "../resilience" }
 nexo-extensions = { version = "0.1.3", path = "../extensions" }
-nexo-config = { version = "0.1.4", path = "../config" }
+nexo-config = { version = "0.1.7", path = "../config" }
 nexo-broker = { version = "0.1.3", path = "../broker" }
 nexo-llm = { version = "0.1.2", path = "../llm" }
 chrono           = { workspace = true }
