@@ -60,7 +60,7 @@ jobs:
           version="${RAW_TAG#nexo-rs-v}"
           echo "value=$RAW_TAG"   >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.tag.outputs.value }}
       - name: Verify GH release exists (release-plz must have run first)
@@ -80,7 +80,7 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
 
@@ -166,7 +166,7 @@ jobs:
             runs-on: macos-14
     runs-on: ${{ matrix.runs-on }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
 
@@ -202,7 +202,7 @@ jobs:
     name: build (x86_64-pc-windows-msvc)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
 
@@ -251,7 +251,7 @@ jobs:
     name: build (aarch64-linux-android, termux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
 
@@ -308,7 +308,7 @@ jobs:
           - arch: arm64
             target: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
       - uses: actions/download-artifact@v4
@@ -357,7 +357,7 @@ jobs:
           - arch: aarch64
             target: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
       - name: Install rpmbuild

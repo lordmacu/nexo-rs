@@ -49,16 +49,16 @@ jobs:
           - nexo-taskflow
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: proyecto
       # Phase 81.18 + 81.19.a — workspace path-deps require the
       # sibling repos for `cargo bench`'s lockfile resolution.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp

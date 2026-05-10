@@ -14,17 +14,17 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: proyecto
       # Phase 81.18 + 81.19.a — `cargo fmt --all` walks the
       # workspace metadata; the path-deps to the sibling repos
       # must resolve before it can list the members to format.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
@@ -53,17 +53,17 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: proyecto
       # Phase 81.18 + 81.19.a — `nexo-plugin-{telegram,whatsapp}`
       # live out of the workspace; check them out as siblings so
       # the path-deps in `proyecto/Cargo.toml` resolve.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
@@ -80,18 +80,18 @@ jobs:
     name: build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: proyecto
           # nexo-project-tracker::git tests grep `git log` for
           # "Phase 67.9" — needs full history, not the depth=1
           # shallow clone actions/checkout defaults to.
           fetch-depth: 0
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
@@ -116,14 +116,14 @@ jobs:
     name: cross-check aarch64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: proyecto
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-telegram
           path: nexo-rs-plugin-telegram
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: lordmacu/nexo-plugin-whatsapp
           path: nexo-rs-plugin-whatsapp
