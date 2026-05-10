@@ -70,7 +70,20 @@
 //! - Keyterms boosting beyond the static `with_keyterms`
 //!   constructor (no dynamic update mid-stream).
 
-#![cfg(all(feature = "stt-cloud", feature = "stt-cloud-anthropic"))]
+// Phase 91.x.wasm.phase-4c — voice_stream WebSocket transport
+// is native-only (tokio-tungstenite drags TCP types absent on
+// wasm32). When phase-4c.3 lands a `gloo-net::websocket`
+// swap-in, the `not(wasm32)` clause drops; until then, browser
+// microapps enabling `stt-cloud-anthropic` get a no-op feature
+// flag (no symbol exposed). The REST legs (`openai.rs`,
+// `groq.rs`) are wasm-portable after phase-4c.2 — they go
+// through `build_openai_multipart_body` instead of
+// `reqwest::multipart::Form`.
+#![cfg(all(
+    feature = "stt-cloud",
+    feature = "stt-cloud-anthropic",
+    not(target_arch = "wasm32"),
+))]
 
 use std::time::Duration;
 

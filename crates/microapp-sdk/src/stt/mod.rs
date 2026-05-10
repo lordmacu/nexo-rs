@@ -79,26 +79,23 @@ pub mod transcribe_candle;
 // Groq Whisper-large-v3, Anthropic voice_stream)
 // + `CompositeProvider` fallback chain.
 //
-// Cfg-gated on `not(target_arch = "wasm32")` because of two
-// concrete wasm32 incompatibilities surfaced during Phase
-// 91.x.wasm.phase-4c spike:
+// Phase 91.x.wasm.phase-4c — one of the two wasm32 blockers
+// identified during the spike is now fixed: the REST legs no
+// longer use `reqwest::multipart::Form` (native-only); they
+// build the multipart body by hand via
+// `build_openai_multipart_body` and submit it through
+// `.body(Vec<u8>)` (cross-platform). The remaining blocker is
+// reqwest's `rustls-tls` feature: rustls doesn't compile for
+// wasm32 — the browser fetch API handles TLS without a TLS
+// feature. Splitting `rustls-tls` behind a sub-feature
+// (e.g. `stt-cloud-native-tls`) so wasm builds can opt out is
+// filed as Phase 91.x.wasm.phase-4c.3.
 //
-//   - reqwest's `multipart` feature is native-only (the wasm32
-//     build exposes only a subset of the builder); `OpenAI` +
-//     `Groq` REST legs use `form.part(...)` which fails type
-//     inference on wasm32.
-//   - tokio-tungstenite drags tokio's `net` feature → `mio`;
-//     mio cfg-gates itself empty on wasm32 but tungstenite's
-//     `connect_async` still needs a TCP stream type that doesn't
-//     exist there.
-//
-// Full WASM cloud STT needs separate transport impls:
-//   - REST legs → `gloo-net::http` or `web-sys::fetch` direct
-//   - WebSocket leg → `gloo-net::websocket` or
-//     `web-sys::WebSocket`
-// Filed as Phase 91.x.wasm.phase-4c follow-up. Until then,
-// WASM consumers needing real STT transcribe out-of-band
-// (e.g. through the SaaS backend the SDK talks to).
+// Until phase-4c.3 lands, the cloud module stays gated on
+// `not(wasm32)` at the parent. The internal refactors (hand-
+// assembled multipart body, `anthropic` carrying its own
+// `not(wasm32)` cfg) make the eventual ungate trivial — only
+// the Cargo feature split blocks today.
 #[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
 pub mod cloud;
 
