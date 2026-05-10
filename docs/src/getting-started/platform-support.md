@@ -43,6 +43,9 @@ dependencies; this is what changes per OS.
 |---|---|---|---|---|---|
 | `stt-candle` | **Default-track** — inbound voice-note transcription via HuggingFace Candle (pure Rust) | ✅ | ✅ | ✅ | ✅ |
 | `stt` | **Legacy** — same surface via whisper.cpp C++ binding (`whisper-rs`) | ✅ | ✅ | ⚠️ needs VS Build Tools 2022 + CMake | ⚠️ needs `cmake` + `clang` packages |
+| `stt-cloud` | Cloud STT — `SttProvider` trait + OpenAI Whisper-1 + Groq Whisper-large-v3 (REST). `CompositeProvider` fallback chain | ✅ | ✅ | ✅ | ✅ |
+| `stt-cloud-anthropic` | Adds Anthropic `voice_stream` WebSocket leg on top of `stt-cloud` (Claude.ai OAuth-gated; conversation engine + Deepgram Nova 3) | ✅ | ✅ | ✅ | ✅ |
+| `stt-cloud-local-candle` | Bridge — `LocalCandleProvider` so the Candle backend joins a `CompositeProvider` chain as the offline fallback leg + `*_then_candle` convenience constructors | ✅ | ✅ | ✅ | ✅ |
 | `voice` | Outbound voice replies via Microsoft Edge TTS + pure-Rust opus encoder | ✅ | ✅ | ✅ | ✅ |
 | `wizard` | First-run LLM key probe via `reqwest` (rustls-tls only) | ✅ | ✅ | ✅ | ✅ |
 | `enrichment` | Disposable-domain classifier + tenant-keyed cache | ✅ | ✅ | ✅ | ✅ |
@@ -143,6 +146,86 @@ still apply:
 Once the C++ build succeeds the first time, subsequent rebuilds
 are cached — operators usually pay this cost once during initial
 setup and never again.
+
+### Cloud STT (`stt-cloud*`) — REST + WebSocket backends
+
+For deployments where on-device inference isn't a good fit
+(SaaS hot path, WASM browser microapps, metered cellular
+devices) the SDK ships a cloud STT path. Three providers, one
+fallback chain primitive, three one-line convenience
+constructors:
+
+| Cargo feature | What it adds |
+|---|---|
+| `stt-cloud` | `SttProvider` trait + `CompositeProvider` fallback chain + `OpenAiProvider` (Whisper-1 REST) + `GroqProvider` (Whisper-large-v3 REST) + `transcribe_file_with_chain` helper |
+| `stt-cloud-anthropic` | Adds `AnthropicVoiceStream` — full WebSocket client for `wss://api.anthropic.com/api/ws/speech_to_text/voice_stream` (OAuth-gated; the same conversation engine + Deepgram Nova 3 stack Claude Code itself uses for voice input) |
+| `stt-cloud-local-candle` | Adds `LocalCandleProvider` so the local Candle backend joins fallback chains as the offline-backup leg, plus `anthropic_then_candle` / `openai_then_candle` / `groq_then_candle` convenience constructors |
+
+#### Cloud-first with local fallback — one line
+
+When `stt-cloud-local-candle` is on, compose any cloud primary
+with a local Candle backup in one call:
+
+```rust
+use std::sync::Arc;
+use nexo_microapp_sdk::stt::{TranscribeConfig, cloud};
+
+let candle_cfg = Arc::new(TranscribeConfig {
+    model_id: Some("openai/whisper-tiny".into()),
+    lang_hint: Some("es".into()),
+    ..Default::default()
+});
+
+// Anthropic voice_stream → Candle fallback:
+let chain = cloud::anthropic_then_candle(oauth_token, candle_cfg.clone());
+
+// Or OpenAI / Groq REST → Candle fallback:
+// let chain = cloud::openai_then_candle(api_key, candle_cfg.clone());
+// let chain = cloud::groq_then_candle(api_key, candle_cfg);
+
+let transcript = cloud::transcribe_file_with_chain(
+    std::path::Path::new("/tmp/voice-note.ogg"),
+    &chain,
+    Some("es"),
+).await?;
+```
+
+The fallback fires on transport errors (HTTP 5xx, network
+unreachable, WebSocket disconnect). Hard audio errors
+(`EmptyAudio`, `UnsupportedFormat`, `Decode`) short-circuit —
+the next leg would hit the same problem on the same bytes.
+
+#### Anthropic `voice_stream` — Claude.ai OAuth required
+
+`AnthropicVoiceStream` connects to the same endpoint Claude
+Code uses internally:
+`wss://api.anthropic.com/api/ws/speech_to_text/voice_stream`.
+Requires a Claude.ai subscriber OAuth token (not a regular
+Anthropic API key — different auth surface).
+
+Wire format (linear16 PCM @ 16 kHz mono, JSON control frames,
+binary audio frames). The SDK collapses the streaming
+endpoint to a one-shot call: open WS, send buffer, send
+`{"type":"CloseStream"}`, drain until the 4-trigger finalize
+state machine resolves (PostCloseStreamEndpoint @ ~300 ms /
+NoDataTimeout @ 1.5 s / SafetyTimeout @ 5 s / WsClose). Live
+push-to-talk streaming is a deferred follow-up — see
+[`FOLLOWUPS.md`](https://github.com/lordmacu/nexo-rs/blob/main/FOLLOWUPS.md)
+`91.x.wasm.phase-4b.streaming`.
+
+#### WASM (`wasm32-unknown-unknown`) — cloud only
+
+The pure-Rust local backends (`stt-candle` Candle + `stt`
+whisper-rs) don't compile for `wasm32-unknown-unknown` today
+— the inference stack depends on crates that need kernel
+networking (`mio`) or aren't WASM-clean (`opus-wave`,
+`tokenizers` with `onig`, Candle's GEMM kernels). `stt-cloud`
+**does** compile on WASM (reqwest swaps to the browser fetch
+API automatically) — that's the supported STT path for
+browser microapps. `stt-cloud-anthropic` is native-only
+(tokio-tungstenite needs kernel sockets); browser microapps
+wanting voice_stream would need a `web-sys::WebSocket`-based
+swap-in (filed as `91.x.wasm.phase-4c`).
 
 ### Voice (TTS) is portable everywhere
 
