@@ -465,11 +465,49 @@ telegram).
 
   Status: ✅ closed.
 
-- ~~**`release-plz.path-dep-walk-blocker`**~~ — RESOLVED in
-  the same wave above. The fix was option (1) from the
-  spec — publish the missing upstream + drop workspace
-  path-deps for the three extracted plugins + add a
-  `[patch.crates-io]` unification block.
+- ~~**`release-plz.path-dep-walk-blocker`**~~ — **NOT FIXED**.
+  Subsequent investigation 2026-05-10: even after the May 9
+  publish wave + the May 10 24-crate re-publish wave that
+  migrated every crate's `cargo_vcs_info.json` baseline to
+  the clean commit `d1ab5ae`/`3bbe48f`, release-plz STILL
+  walked the older v0.1.5 anchor (commit `5971ff7`) and
+  failed because its tmp-clone diff walker can't handle
+  path-deps in historical workspace state. Suspected cause:
+  `--allow-dirty` flag on the publish wave marked
+  `cargo_vcs_info.json` with `dirty: true`, which
+  release-plz seems to discount, falling back to the
+  previous published version's anchor. Re-publishing every
+  crate from a clean tree would be a third 24-crate wave;
+  diminishing returns.
+
+  **Resolution: replace release-plz with cargo-release.**
+  cargo-release runs in the workspace directly (no tmp
+  clone), so the path-dep historical-state failure mode
+  doesn't apply. New `release.toml` lives at the repo root
+  with the operator-facing usage:
+    ```bash
+    cargo release patch -p nexo-X --execute   # bump + publish + tag + push
+    ```
+  release-plz workflow file kept as `workflow_dispatch:`
+  only (not deleted yet — pending cleanup follow-up
+  `release-plz.workflow-deletion`).
+
+- **`release-plz.workflow-deletion`** — delete the
+  `.github/workflows/release-plz.yml` file once cargo-release
+  is proven on a real release for ≥ 2 weeks. Until then it
+  stays available as `workflow_dispatch:` only fallback.
+  Owner: ops. Status: pending.
+
+- **`cargo-release.template-warnings`** — `cargo-release v1.1.2`
+  emits `[WARN ] Unrendered {{version}}` and
+  `[WARN ] Unrendered {{crate_name}}` for the configured
+  `pre-release-commit-message` template. The release proceeds
+  correctly (tag + push reflect the right values) but the
+  commit message contains the literal `{{...}}` placeholders.
+  Either upgrade cargo-release when a fix lands, or switch
+  templates to the v1.x-supported variant (e.g. drop
+  consolidate-commits + use the default per-crate message).
+  Owner: ops. Status: cosmetic, low priority.
 
   **Shipped (kept):**
     * `release-plz.toml` reduced from 42 `[[package]]`
