@@ -34,6 +34,13 @@ jobs:
       - working-directory: proyecto
         run: cargo fmt --all -- --check
 
+      # Phase 81.19.b locale follow-up item 2 — verify the curated
+      # frontend `agent-creator-microapp/frontend/src/data/locales.ts`
+      # `SUPPORTED_LOCALES` array is a subset of the Rust accept-list.
+      # Soft-skip if the microapp checkout isn't present alongside.
+      - working-directory: proyecto
+        run: bash scripts/lint-locale-list-sync.sh
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
