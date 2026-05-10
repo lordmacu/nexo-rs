@@ -34,11 +34,34 @@
 //! # let _ = app;
 //! ```
 
+// Phase 91 — backend dispatch. Both backends speak the same
+// `transcribe_file(path, cfg) -> Result<String>` signature so the
+// public re-export at the bottom of this file picks the right one
+// at compile time.
+//
+// Precedence when both features are enabled simultaneously
+// (typically only the parity test in Phase 91.8): `stt-candle`
+// wins as the public re-export; parity tests reference the
+// whisper-rs path directly through
+// `super::stt::transcribe::transcribe_file` and compare against
+// `super::stt::transcribe_candle::transcribe_file`.
+//
+// Production builds should pick exactly one backend. Phase 91.11
+// CHANGELOG flags the migration path; Phase 91.12 removes the
+// legacy `stt` feature entirely after a stability window.
+
 pub mod tool;
+
+// Shared audio decode chain (ogg-opus → s16 PCM → f32) — used by
+// both backends. Available whenever either feature is on, since
+// the parent module is gated on `any(...)`.
+pub(crate) mod audio;
+
+// Legacy whisper-rs path.
+#[cfg(feature = "stt")]
 pub mod transcribe;
-// Phase 91 — Candle backend module tree. Cfg-gated to avoid
-// pulling Candle deps into builds that only enable `stt`
-// (whisper-rs legacy). The submodules themselves carry the same
+
+// Phase 91 Candle path — the submodules carry their own
 // `#[cfg(feature = "stt-candle")]` guard so a stale build cache
 // doesn't surface unrelated errors when toggling features.
 #[cfg(feature = "stt-candle")]
@@ -51,6 +74,16 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 pub use tool::InboundTransformHandler;
+
+// Backend dispatch — re-export the same `transcribe_file`
+// symbol from whichever backend is active. Downstream microapps
+// don't need to know which one is in effect. When both are on
+// (parity tests), `stt-candle` wins as the default re-export;
+// the legacy whisper-rs entry stays reachable through
+// `super::stt::transcribe::transcribe_file`.
+#[cfg(feature = "stt-candle")]
+pub use transcribe_candle::transcribe_file;
+#[cfg(all(feature = "stt", not(feature = "stt-candle")))]
 pub use transcribe::transcribe_file;
 
 /// Result alias for STT operations.
