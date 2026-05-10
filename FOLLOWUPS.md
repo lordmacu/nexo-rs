@@ -23,10 +23,15 @@ NOT shipping blockers.
   inventory. CLI `agent doctor plugins` already covers this
   locally.
 
-- ⬜ **mcp_servers admin RPCs** — `/m/mcp_servers` placeholder.
-  Need `nexo/admin/mcp/{list,upsert,delete}`. Legacy admin-ui
-  used a custom `/api/mcp/servers` HTTP endpoint hosted by the
-  daemon; the new plugin needs first-class admin RPC.
+- ✅ ~~**mcp_servers admin RPCs**~~ shipped 2026-05-10 — added
+  `nexo/admin/mcp/{list,get,upsert,delete}` admin RPC family
+  (capability `mcp_crud`) + `McpYamlStore` round-tripping
+  through serde_yaml::Value to preserve operator-set top-level
+  keys. Plugin admin's `/m/mcp_servers` page is LIVE in
+  nexo-plugin-admin@0.1.2 (live table + create modal +
+  transport picker for stdio/streamable_http/sse/auto). 10
+  unit tests cover yaml round-trip + idempotent upsert +
+  cascade-delete + transport validation.
 
 - ⬜ **Channel approve UX** — `/m/channels` ships list + revoke;
   the approve flow needs a server-name picker + binding-allowlist
