@@ -549,6 +549,19 @@ impl SubprocessNexoPlugin {
                     return;
                 }
                 AttemptOutcome::Crashed { exit_code, stderr_tail } => {
+                    // Phase 81.21.b.b follow-up — capture the
+                    // dying Inner's uptime BEFORE drain so the
+                    // subsequent `respawned` event can report
+                    // how long the previous attempt lived.
+                    // Operators can graph crash-cycle duration
+                    // to spot degrading plugins.
+                    let prev_inner_uptime_ms: u64 = {
+                        let inner_guard = self.inner.lock().await;
+                        inner_guard
+                            .as_ref()
+                            .map(|i| i.spawned_at.elapsed().as_millis() as u64)
+                            .unwrap_or(0)
+                    };
                     // Always publish `crashed` (matches
                     // Phase 81.21.b operator-observable behavior).
                     Self::publish_lifecycle_event(
@@ -644,11 +657,15 @@ impl SubprocessNexoPlugin {
                                 json!({
                                     "plugin_id": plugin_id,
                                     "attempt": attempt + 1,
-                                    // Real per-Inner uptime
-                                    // telemetry deferred to
-                                    // FOLLOWUPS — set 0 so the
-                                    // wire field stays stable.
-                                    "total_uptime_ms": 0,
+                                    // Phase 81.21.b.b follow-up
+                                    // — uptime of the PREVIOUS
+                                    // Inner (the one that just
+                                    // crashed and triggered this
+                                    // respawn). Operators graph
+                                    // this per-cycle duration to
+                                    // spot plugins whose stable
+                                    // lifetime is degrading.
+                                    "total_uptime_ms": prev_inner_uptime_ms,
                                 }),
                             )
                             .await;
@@ -3769,6 +3786,59 @@ exit {exit_code}
             respawned.is_empty(),
             "no respawned event after shutdown; got {} events",
             respawned.len()
+        );
+        cancel.cancel();
+    }
+
+    /// Phase 81.21.b.b follow-up — `respawned.total_uptime_ms`
+    /// reports the previous Inner's lifespan (handshake → crash
+    /// detection). Operators graph this per-cycle to spot
+    /// degrading plugins. Field used to be hard-coded `0`; now
+    /// must be a positive number greater than the supervisor's
+    /// 500ms poll interval (the script crashes ~50ms after
+    /// handshake, supervisor catches it on the next ~500ms tick).
+    #[tokio::test]
+    async fn respawned_event_carries_previous_inner_uptime() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_always_crash_script(
+            "nexo-respawn-test-uptime",
+            "test_plugin",
+            50,
+            1,
+        );
+        // backoff small so the respawn fires fast.
+        let m = manifest_with_supervisor(path.to_str().unwrap(), true, 5, 20);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut respawned_sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.respawned")
+            .await
+            .expect("subscribe respawned");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        use futures::StreamExt;
+        let event = tokio::time::timeout(Duration::from_secs(3), respawned_sub.next())
+            .await
+            .expect("respawned event arrives within 3s")
+            .expect("subscription delivers Some");
+        let uptime = event
+            .payload
+            .get("total_uptime_ms")
+            .and_then(|v| v.as_u64())
+            .expect("total_uptime_ms field");
+        // Previous Inner survived ~50ms of script lifetime + up
+        // to 500ms of supervisor poll latency. Conservative
+        // bounds: at least 1ms (positive), at most 5s (sane
+        // upper bound).
+        assert!(
+            uptime >= 1,
+            "uptime must be positive (placeholder 0 is bug); got {uptime}"
+        );
+        assert!(
+            uptime < 5_000,
+            "uptime should be sub-second-scale for fast-crash test; got {uptime}"
         );
         cancel.cancel();
     }
