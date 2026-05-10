@@ -28,7 +28,7 @@ tracing      = { workspace = true }
 bytes        = { workspace = true }
 futures      = { workspace = true }
 tokio-util   = { workspace = true }
-nexo-config = { version = "0.1.4", path = "../config" }
+nexo-config = { version = "0.1.7", path = "../config" }
 nexo-resilience = { version = "0.1.2", path = "../resilience" }
 
 [dev-dependencies]
