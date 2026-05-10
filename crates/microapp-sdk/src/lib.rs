@@ -85,6 +85,9 @@ pub mod email_threading;
 #[cfg(feature = "email-template")]
 pub mod email_template;
 
+#[cfg(feature = "module-state")]
+pub mod module_state;
+
 #[cfg(feature = "dedup")]
 pub mod dedup;
 
