@@ -277,7 +277,7 @@ rustls             = { version = "0.23", default-features = false, features = ["
 rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
 rand               = "0.8"
-nexo-tool-meta     = { version = "0.1.7", path = "crates/tool-meta" }
+nexo-tool-meta     = { version = "0.1.8", path = "crates/tool-meta" }
 nexo-microapp-sdk  = { version = "0.1.14", path = "crates/microapp-sdk" }
 # Phase 83.14.b — sanitize/media published independently as 0.1.6
 # so consumers (microapp-sdk's `email-template` feature) can
@@ -367,7 +367,7 @@ nexo-driver-types      = { version = "0.1.6", path = "crates/driver-types" }
 nexo-memory-snapshot   = { version = "0.1.1", path = "crates/memory-snapshot" }
 nexo-plugin-manifest   = { version = "0.1.0", path = "crates/plugin-manifest" }
 nexo-project-tracker   = { version = "0.1.6", path = "crates/project-tracker" }
-nexo-tool-meta         = { version = "0.1.7", path = "crates/tool-meta" }
+nexo-tool-meta         = { version = "0.1.8", path = "crates/tool-meta" }
 nexo-webhook-receiver  = { version = "0.1.6", path = "crates/webhook-receiver" }
 nexo-webhook-server    = { version = "0.1.6", path = "crates/webhook-server" }
 dirs                   = "5"
