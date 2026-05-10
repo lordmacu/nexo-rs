@@ -91,6 +91,7 @@ members = [
     "crates/microapp-http",
     "crates/compliance-primitives",
     "crates/sanitize",
+    "crates/media",
     "crates/tool-meta",
     "crates/webhook-receiver",
     "crates/webhook-server",
