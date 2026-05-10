@@ -43,6 +43,15 @@ pub mod anthropic;
 pub mod groq;
 pub mod openai;
 
+// Phase 91.x.wasm.phase-4d — bridge that wraps the local Candle
+// backend behind the cloud `SttProvider` trait so it can sit at
+// the tail of a `CompositeProvider` chain. Only compiled when
+// `stt-cloud` AND `stt-candle` are both on; cloud-only WASM
+// builds skip it (Candle inference path can't run on wasm32
+// today — Phase 91.x.wasm.phase-4 follow-up).
+#[cfg(feature = "stt-candle")]
+pub mod local_candle;
+
 /// What every cloud STT provider must implement: take a raw
 /// audio buffer (any format the upstream understands —
 /// ogg-opus, mp3, wav, m4a, ...), an optional language hint,

@@ -109,6 +109,25 @@ stt-cloud-anthropic = [
     "dep:tokio-tungstenite",
     "dep:futures",
 ]
+# Phase 91.x.wasm.phase-4d — bridge feature that wraps the local
+# Candle backend under the cloud `SttProvider` trait so it can
+# sit at the tail of a `CompositeProvider` fallback chain.
+# Implies both `stt-cloud` (trait + composite) and `stt-candle`
+# (local inference) and pulls `tempfile` for the in-memory-bytes
+# → on-disk-path bridge the audio decode chain requires. Use:
+#
+#   CompositeProvider::new(vec![
+#       Box::new(AnthropicVoiceStream::new(token)),  // cloud
+#       Box::new(LocalCandleProvider::new(cfg)),     // fallback
+#   ])
+#
+# Microapps wanting cloud-first + offline fallback enable this
+# feature to opt-in.
+stt-cloud-local-candle = [
+    "stt-cloud",
+    "stt-candle",
+    "dep:tempfile",
+]
 # Phase 91.10 — GPU / SIMD acceleration backends for the Candle
 # STT path. Default `stt-candle` is CPU-only pure-Rust so it
 # cross-compiles to every target the workspace ships. Opt into
@@ -413,6 +432,15 @@ tokio-tungstenite = { workspace = true, optional = true }
 # read/write split + select_all on the finalize timers. The
 # workspace already pins `futures = "0.3"`.
 futures = { workspace = true, optional = true }
+# Phase 91.x.wasm.phase-4d — RAII tempfile for the
+# `LocalCandleProvider` bridge: cloud-side `SttProvider` calls
+# arrive with the audio buffer in memory, but Candle's decode
+# chain reads from disk, so we materialise to a tempfile before
+# handing off. Cleanup on drop guarantees voice notes don't leak
+# even on inference panic. Direct version pin (the workspace
+# only carries `tempfile` as a regular dep on the root daemon
+# binary, not as a `workspace.dependencies` entry).
+tempfile = { version = "3", optional = true }
 # `voice` feature — Microsoft Edge Read-Aloud websocket wrapper.
 msedge_tts = { package = "msedge-tts", version = "0.3", optional = true }
 regex      = { version = "1", optional = true }

@@ -51,24 +51,72 @@ for the detailed close-out.
   Android NDK r27c). 25 stt:: native unit tests still green
   across both backend configs.
 
-- ⬜ **91.x.wasm.phase-4 — WASM-side STT inference** — Phase 91
-  v1 WASM consumers get the wire types (`TranscribeConfig`,
-  `SttError`, microapp builder) but no `transcribe_file`.
-  Bringing local STT to WASM requires upstream WASM support
-  per dep: `opus-wave` (audio decode), `ogg` (container demux),
-  `candle-{core,nn,transformers}` (Candle has a
-  `candle-wasm-examples` directory but its GEMM kernels need
-  the wasm32-simd128 target feature, plus the Whisper example
-  hard-codes a fixed bundled model). Three pragmatic paths:
-  (a) Upstream PRs per dep — slow.
-  (b) Cloud STT fallback — new `stt-cloud` feature pointing at
-      Groq / OpenAI Whisper / Deepgram via reqwest's wasm32
-      HTTP support. WASM consumer uploads audio to the cloud
-      and gets the transcript back. Reasonable workaround.
-  (c) Pure-Rust browser inference via `transformers.js` /
-      `whisper-wasm` interop. Adds a wasm-bindgen bridge;
-      defer.
-  Defer until a microapp demands browser-side STT.
+- ✅ ~~**91.x.wasm.phase-4 — WASM-side STT inference**~~ shipped
+  2026-05-10 — picked path (b) from the original three options:
+  cloud STT via `stt-cloud` feature wired with `reqwest`'s
+  wasm32 browser-fetch transport.
+  - **phase-4** (cloud trait + OpenAI / Groq REST + Anthropic
+    voice_stream stub + `CompositeProvider` fallback chain) —
+    shipped at `c87e40a` per the parent Phase 91 commit history.
+  - **phase-4b** (Anthropic `voice_stream` WebSocket real
+    implementation, mining
+    `claude-code-leak/src/services/voiceStreamSTT.ts`) —
+    shipped at `fb46dd2`: full one-shot client with KeepAlive
+    heartbeat, 4-trigger finalize state machine
+    (PostCloseStreamEndpoint / NoDataTimeout / SafetyTimeout /
+    WsClose), 15/15 unit tests. Native-only (tokio-tungstenite
+    pulls tokio `net`); WASM voice_stream falls under
+    sub-follow-up 4c below.
+  - **phase-4d** (`LocalCandleProvider` bridge so the local
+    Candle backend joins `CompositeProvider` chains as the
+    offline fallback leg) — shipped this same commit: 6 new
+    unit tests, MIME picker (ogg-opus only), RAII tempfile
+    cleanup, Cow-based per-request lang-hint override.
+  Path (a) upstream WASM PRs per local-inference dep + path
+  (c) `transformers.js` bridge remain deferred — see
+  `91.x.wasm.phase-4c` / `phase-4e` below.
+
+- ⬜ **91.x.wasm.phase-4c — WASM transport for the cloud STT
+  legs** — `tokio-tungstenite` doesn't compile on wasm32
+  (drags tokio's `net` feature → mio → kernel-only), so the
+  Anthropic `voice_stream` WebSocket client is native-only
+  today. WASM consumers wanting Anthropic STT need either:
+  (a) a `gloo-net` (or `web-sys::WebSocket` direct) bridge,
+      swap-in behind the same `AnthropicVoiceStream` surface;
+  (b) fallback to `OpenAiProvider` / `GroqProvider` REST
+      (reqwest's wasm32 fetch path already works).
+  The REST legs are the cheap default; voice_stream gives the
+  Anthropic conversation_engine + Deepgram Nova 3 stack — wire
+  the gloo-net path when a browser microapp demands it.
+
+- ⬜ **91.x.wasm.phase-4b.streaming — full push-to-talk live
+  transcription** — phase-4b ships the one-shot path (buffer →
+  WebSocket → CloseStream → finalize). The original
+  `claude-code-leak/src/services/voiceStreamSTT.ts` reference is
+  a live PTT experience: microphone chunks stream every ~32 ms,
+  interim text drives a UI shimmer, utterance boundaries fire
+  segment events. Wire when a microapp surfaces live dictation
+  (dictation panel, voice commands). Mining notes already
+  captured in the phase-4b commit body.
+
+- ⬜ **91.x.wasm.phase-4b.segmentation — auto-finalize on
+  non-cumulative interim shift** — claude-code-leak ships
+  segmentation logic: when an interim transcript shifts away
+  from cumulative growth (the server effectively redacts a
+  partial word), the client flushes the accumulated text and
+  starts a new segment without waiting for `TranscriptEndpoint`.
+  Phase-4b finalizes only on the 4 explicit triggers; add the
+  shift detector when a microapp surfaces multi-utterance
+  dictation. Trivial state-machine extension; defer until
+  there's a real product UX driving the requirement.
+
+- ⬜ **91.x.wasm.phase-4e — pure-Rust browser inference via
+  transformers.js / whisper-wasm** — path (c) from the
+  original phase-4 brainstorm. Adds a wasm-bindgen bridge so
+  WASM consumers get fully-offline STT in the browser without
+  cloud round-trips. Not on the critical path because Candle +
+  cloud already covers every non-browser deployment; this is a
+  privacy-first browser micro-app feature. Defer.
 
 - ⬜ **91.x.wasm.phase-5 — workspace-wide tokio "full" split** —
   if the daemon binary itself ever needs to compile as WASM
