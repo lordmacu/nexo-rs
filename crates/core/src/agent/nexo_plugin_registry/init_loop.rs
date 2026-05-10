@@ -341,6 +341,60 @@ async fn register_remote_channels_after_init(
     }
 }
 
+/// Phase 81.21.b.b — after every other post-init step succeeds,
+/// spawn the per-plugin auto-respawn supervisor task. Only fires
+/// when the handle is a `SubprocessNexoPlugin`; in-tree plugins
+/// don't need a respawn loop (they share the daemon's lifetime).
+/// Returns `None` always — `spawn_supervisor_loop` is
+/// fire-and-forget and can't fail.
+fn start_plugin_supervisor_loop_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    ctx: &PluginInitContext<'_>,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any
+        .downcast_ref::<crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin>()
+    {
+        Some(s) => s,
+        None => return None,
+    };
+    // Re-derive the LlmServices the same way `init()` did so
+    // respawned children speak through the same provider plumbing.
+    let llm = Some(crate::agent::nexo_plugin_registry::subprocess::LlmServices {
+        registry: ctx.llm_registry.clone(),
+        config: ctx.llm_config.clone(),
+    });
+    // The respawn loop needs `Arc<SubprocessNexoPlugin>` (typed,
+    // not `Arc<dyn NexoPlugin>`). The factory stashed a
+    // `Weak<SubprocessNexoPlugin>` inside the concrete struct
+    // immediately after `Arc::new`, before coercing to
+    // `Arc<dyn>`; upgrading that Weak gives us the typed Arc
+    // back without a clone. If the upgrade fails (only possible
+    // for hand-built plugins constructed outside the factory —
+    // i.e. tests), skip the supervisor loop silently.
+    let Some(arc_sub) = sub.weak_self_arc() else {
+        tracing::debug!(
+            target: "plugins.init",
+            plugin_id = %plugin_id,
+            "supervisor loop skipped (no Weak<Self> populated; factory bypassed)"
+        );
+        return None;
+    };
+    arc_sub.spawn_supervisor_loop(
+        ctx.shutdown.clone(),
+        Some(ctx.broker.clone()),
+        ctx.long_term_memory.clone(),
+        llm,
+    );
+    tracing::debug!(
+        target: "plugins.init",
+        plugin_id = %plugin_id,
+        "supervisor loop spawned (auto-respawn per manifest.supervisor.respawn)"
+    );
+    None
+}
+
 /// Phase 81.3 — drain ScopedToolRegistry after `init()` returns and,
 /// in Strict mode, escalate any violations to `InitOutcome::Failed`.
 /// Returns `None` when the post-init outcome is unchanged.
@@ -470,6 +524,12 @@ where
                                     .await
                                 {
                                     outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    start_plugin_supervisor_loop_after_init(
+                                        &id, &handle, &ctx,
+                                    )
+                                {
+                                    outcomes.insert(id, failed);
                                 } else {
                                     outcomes.insert(id.clone(), InitOutcome::Ok { duration_ms });
                                     handles.insert(id, handle);
@@ -557,6 +617,11 @@ where
                             &ctx.tool_registry,
                         )
                         .await
+                        {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) = start_plugin_supervisor_loop_after_init(
+                            &id, &handle, &ctx,
+                        )
                         {
                             outcomes.insert(id, failed);
                         } else {

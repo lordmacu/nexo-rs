@@ -2978,20 +2978,62 @@ coordinación de archivos cross-cutting.
   reminder that the actual loop is in 81.21.b.b. 17/17
   subprocess tests + 2/2 e2e + 295 in-tree plugin tests pass.
 
-- **81.21.b.b ⬜** Plugin supervisor auto-respawn loop. Wires
-  the parsed `manifest.supervisor.respawn` field into actual
-  behavior: on crash, if respawn enabled AND attempts <
-  max_attempts → cancel current bridge tasks → wait
-  exponential backoff → spawn fresh child → redo handshake →
-  redo bridge wiring. Requires either a higher-level supervisor
-  task that owns SubprocessNexoPlugin lifecycle (and atomically
-  swaps `Inner` instances) OR `Inner` refactor to be
-  partially-replaceable. The current `Mutex<Option<Inner>>`
-  shape is single-shot owned by the adapter — supervisor task
-  only has Arc handles to child + cancel + broker, not write
-  access to Inner. Either path is ~2-3 d careful state
-  management. Required before community-tier plugins are safe
-  in production.
+- ✅ ~~**81.21.b.b**~~ Plugin supervisor auto-respawn loop —
+  shipped 2026-05-10 in nexo-core 0.1.13. Architecture: rename
+  `spawn_and_handshake` → `spawn_one_attempt`; new `respawn_loop`
+  owns lifecycle + replaces Inner transparently; supervisor task
+  refactored to detect-only via AttemptOutcome oneshot;
+  `weak_self: OnceLock<Weak<Self>>` populated by both subprocess
+  factories so init_loop's new
+  `start_plugin_supervisor_loop_after_init` hook can upgrade back
+  to typed Arc. 4 lifecycle events: `crashed` (existing) +
+  `respawning` + `respawned` + `gave_up`. Backoff exponential
+  capped 60s; reset-counter heuristic (`base_ms × max_attempts × 2`);
+  pending oneshots drained "plugin restarted; retry" before new
+  Inner install; shutdown short-circuits backoff via Notify;
+  race protection re-checks `shutdown_signaled` between
+  `spawn_one_attempt` Ok and install (kills new child if
+  shutdown won). `respawn=false` keeps Phase 81.21.b semantics.
+  4 unit (`next_backoff`) + 4 integration tests pass. Docs:
+  `docs/src/plugins/supervisor.md`.
+
+- **81.21.b.b deferred test cases ⬜** 6 test scenarios planned
+  but skipped during shipping because the heuristic + mock
+  scripting was fiddly:
+  1. `pending_drained_with_retry_error_before_new_inner` —
+     observable timing of pending oneshot drain vs new Inner
+     install; needs internal RPC handler to fake a pending entry.
+  2. `attempt_counter_resets_after_window` — script that crashes,
+     stays alive `> reset_window_ms`, then crashes again; verify
+     attempt counter at 0 not at 2.
+  3. `sandbox_stash_reused_across_respawns` — mock SandboxRunner
+     with call counter; verify second spawn reuses the stash.
+  4. `respawn_handshake_failure_counts_as_attempt` — script
+     succeeds first time, fails handshake on respawn; verify
+     attempt bumps + eventual gave_up.
+  5. `shutdown_during_respawn_handshake_kills_new_child` —
+     script with artificial 2s handshake delay; trigger
+     shutdown 200ms in; verify no new Inner installed, no
+     respawned event.
+  6. `lifecycle_event_payload_shapes_match_spec` — golden JSON
+     assertion exercising all 4 events with exact payload field
+     verification.
+
+- **81.21.b.b: `nexo/admin/plugins/restart` admin RPC ⬜** —
+  manual operator restart from UI. Today operators restart the
+  daemon to recover from `gave_up`. Wire as nexo/admin RPC under
+  capability `plugin_restart` (or reuse `plugin_doctor` if
+  operator UX collapses them).
+
+- **81.21.b.b: real `respawned.total_uptime_ms` telemetry ⬜** —
+  currently always 0. Track per-Inner uptime in respawn_loop
+  (Instant::now() - inner.spawned_at at exit detection) and
+  populate the field. Operators wanting per-cycle uptime
+  meanwhile diff `crashed`/`respawned` event timestamps.
+
+- **81.21.b.b: Prometheus counter ⬜**
+  `nexo_plugin_respawn_total{plugin_id, outcome}`. Pending the
+  general metrics pipeline.
 
 - **81.21.c ⬜** Plugin resource limits. OS-divergent: linux
   cgroup v2 + rlimit, macOS sandbox-exec resource caps, fallback

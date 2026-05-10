@@ -63,7 +63,7 @@ pub struct SubprocessRuntime {
     pub llm_config: Arc<nexo_config::LlmConfig>,
     /// Phase 81.22 — sandbox runner shared across subprocess
     /// plugin spawns. Discovers `bwrap` once + caches env-driven
-    /// capability flags. Used by `SubprocessNexoPlugin::spawn_and_handshake`
+    /// capability flags. Used by `SubprocessNexoPlugin::spawn_one_attempt`
     /// to wrap each plugin's command with bwrap argv when the
     /// plugin's manifest declares `[plugin.sandbox] enabled = true`.
     pub sandbox: Arc<crate::agent::plugin_sandbox::SandboxRunner>,
