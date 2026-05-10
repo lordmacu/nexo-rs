@@ -96,11 +96,16 @@ NOT shipping blockers.
   All 9 commits + 8 release tags (v0.1.0 → v0.1.8) pushed.
   CHANGELOG.md compare-links now resolve. PR-ready.
 
-- ⬜ **Plugin admin e2e test** — integration test against a
-  running daemon that spawns the plugin via discovery, hits
-  /healthz, hits /api/admin via the bearer middleware, and
-  verifies a CRUD round-trip lands. Currently only unit
-  tests cover the auth + tunnel + assets paths.
+- 🟡 **Plugin admin e2e test** — partial. 3 binary-only smoke
+  tests shipped 2026-05-10 in nexo-plugin-admin@0.1.9
+  (`tests/handshake_smoke.rs` + `tests/http_smoke.rs`):
+  handshake initialize reply shape (server_info + empty tools)
+  + HTTP /healthz + /api/admin 401 path (no bearer + wrong
+  bearer) + /login form render. `#[ignore]` by default; opt in
+  with `cargo test --tests -- --ignored` locally + as a
+  release gate. Daemon-backed CRUD round-trip (spawn daemon +
+  plugin + drive a real `nexo/admin/agents/list`) is heavier
+  and remains open as a follow-up.
 
 
 
