@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-tool-meta"
 description = "Wire-shape types shared between the Nexo agent runtime and any third-party microapp that consumes its events."
-version       = "0.1.3"
+version       = "0.1.4"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -16,6 +16,15 @@ categories    = ["api-bindings", "data-structures"]
 [lints]
 workspace = true
 
+[features]
+default = []
+# Phase 83.12.ts-types-codegen — derive `ts_rs::TS` on the wire
+# structs/enums when ON. Off in production builds; ON when running
+# `cargo test --features=ts-export -p nexo-tool-meta -- ts_export_writes_files`
+# from `proyecto/scripts/regen-ts-types.sh` to regenerate the
+# `agent-creator-microapp/frontend/src/api/types.gen.ts` file.
+ts-export = ["dep:ts-rs"]
+
 [dependencies]
 serde      = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -26,6 +35,10 @@ base64     = { workspace = true }
 # nexo-microapp-sdk so nexo-config can validate `agents.<id>.language`
 # at YAML deserialise time (microapp-sdk → tool-meta layer inversion).
 thiserror  = { workspace = true }
+# Phase 83.12.ts-types-codegen — feature-gated derive macro for
+# Rust→TypeScript wire-shape codegen. Zero runtime impact when
+# the `ts-export` feature is OFF (default release builds).
+ts-rs = { version = "12", optional = true, features = ["serde-compat", "serde-json-impl", "uuid-impl", "chrono-impl"] }
 
 [package.metadata.docs.rs]
 all-features = true

@@ -37,6 +37,7 @@ use crate::event_source::EventSourceMeta;
 /// assert!(ctx.channel.is_none());
 /// ```
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BindingContext {
     /// Stable agent identifier (`agents.yaml.<id>`).

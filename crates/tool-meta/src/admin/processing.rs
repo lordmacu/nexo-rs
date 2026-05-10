@@ -19,6 +19,7 @@ use uuid::Uuid;
 /// other variants are accepted on the wire but the dispatcher
 /// returns `-32601 not_implemented`.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProcessingScope {
@@ -167,6 +168,7 @@ impl InterventionAction {
 /// default — every scope starts in this state and the store
 /// only allocates a row once an operator pauses it.
 #[non_exhaustive]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ProcessingControlState {

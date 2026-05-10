@@ -92,6 +92,7 @@ impl OutboundReplyKind {
 
 /// Context the framework hands transformers + channel plugins for
 /// every outbound reply. Read-only.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutboundReplyContext {
     /// Stable agent id producing the reply.

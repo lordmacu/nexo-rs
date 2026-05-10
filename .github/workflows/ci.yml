@@ -41,6 +41,14 @@ jobs:
       - working-directory: proyecto
         run: bash scripts/lint-locale-list-sync.sh
 
+      # Phase 83.12.ts-types-codegen — verify the checked-in
+      # `agent-creator-microapp/frontend/src/api/types.gen.ts` is
+      # up-to-date with the `nexo-tool-meta` `#[ts(export)]`
+      # structs at HEAD. Soft-skip if the microapp checkout
+      # isn't present alongside.
+      - working-directory: proyecto
+        run: bash scripts/lint-ts-types-sync.sh
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest

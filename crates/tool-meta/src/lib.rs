@@ -74,3 +74,17 @@ pub use meta::{
 pub use microapp_error::{MicroappError, MicroappErrorKind, MICROAPP_ERROR_NOTIFY_METHOD};
 pub use template::{render_template, MISSING_PLACEHOLDER};
 pub use webhook::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};
+
+// Phase 83.12.ts-types-codegen — types tagged
+// `#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]`
+// auto-generate one test per type via the `ts_rs::TS` derive macro.
+// Running `cargo test --features=ts-export -p nexo-tool-meta` triggers
+// every test, which writes per-type `.ts` files into the directory
+// pointed at by `TS_RS_EXPORT_DIR` (or `./bindings` by default). The
+// wrapper script `proyecto/scripts/regen-ts-types.sh` sets the env
+// var to point at agent-creator-microapp's frontend api/ directory
+// and concatenates the per-type files into a single `types.gen.ts`
+// with a banner header.
+//
+// Production builds (no `ts-export` feature) skip the derive
+// entirely — zero runtime impact.
