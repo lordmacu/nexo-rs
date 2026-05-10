@@ -20,7 +20,8 @@ libsqlite is required at runtime.
 | macOS | aarch64 (Apple Silicon) | ✅ | `curl …/nexo-rs-installer.sh \| sh` |
 | Windows | x86_64 | ✅ | Download `.zip` from [Releases](https://github.com/lordmacu/nexo-rs/releases) |
 | Windows (WSL) | x86_64 | ✅ | Same Linux installer works inside WSL |
-| Android (Termux) | aarch64 | ✅ | Per-release `.deb` for `pkg install` |
+| **Docker** (any host) | amd64 + arm64 | ✅ | `docker pull ghcr.io/lordmacu/nexo-rs:latest` |
+| Android (Termux) | aarch64 | ⚠️ build locally | `pkg install rust && cargo install --git ...` (CI .deb temporarily disabled — see [FOLLOWUPS](https://github.com/lordmacu/nexo-rs/blob/main/FOLLOWUPS.md)) |
 
 The shell installer auto-detects platform + arch and downloads the
 right tarball. Apple Silicon laptops, Intel macs, and Linux servers

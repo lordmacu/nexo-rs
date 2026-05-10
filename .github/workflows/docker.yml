@@ -12,12 +12,19 @@ name: docker
 # Cosign signing of the digest is layered on in Phase 27.3.
 
 on:
-  # Disabled by default during active development to avoid long/stuck
-  # multi-arch image builds on every push.
-  # Re-enable automatic publish by uncommenting:
-  # push:
-  #   branches: [main]
-  #   tags: ["v*"]
+  # Auto-publish enabled. Multi-arch builds amd64 + arm64 take
+  # ~10-15 min per run — slow but worth it for the multi-arch
+  # adoption story.
+  #
+  # Triggers:
+  #   - main push        → :edge + :sha-<short>      (every commit)
+  #   - nexo-rs-v* tag   → :latest + :vX.Y.Z         (release)
+  #
+  # Tag pattern matches release-plz's `git_tag_name = "{{ package }}-v{{ version }}"`
+  # so a release tag fires this workflow alongside release.yml.
+  push:
+    branches: [main]
+    tags: ["nexo-rs-v*"]
   workflow_dispatch:
 
 permissions:
@@ -60,10 +67,15 @@ jobs:
           tags: |
             type=ref,event=branch,suffix=-{{sha}}
             type=edge,branch=main
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            # Tag pattern is `nexo-rs-vX.Y.Z`, not bare `vX.Y.Z`,
+            # so `type=semver` won't auto-match. Use `type=match`
+            # with capture groups to strip the `nexo-rs-` prefix.
+            type=match,pattern=nexo-rs-v(.+),group=1
+            type=match,pattern=nexo-rs-v(\d+\.\d+),group=1
+            type=match,pattern=nexo-rs-v(\d+),group=1
+            # `:latest` only on GA tags — pre-release `-rc` /
+            # `-beta` / `-alpha` markers don't claim it.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/nexo-rs-v') && !contains(github.ref, '-rc') && !contains(github.ref, '-beta') && !contains(github.ref, '-alpha') }}
           labels: |
             org.opencontainers.image.title=Nexo
             org.opencontainers.image.description=Multi-agent Rust framework with NATS, MCP, and channel plugins

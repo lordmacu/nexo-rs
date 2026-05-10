@@ -190,9 +190,11 @@ LLM API key, walks the Google OAuth consent if you want Gmail. It
 tells you exactly what's missing instead of failing silently.
 
 > **Platform support**: Linux x86_64 + aarch64 (musl static), macOS
-> Intel + Apple Silicon, Windows x86_64, Android via Termux. Some
-> optional features (STT — voice-note transcription) require extra
-> build tools per OS. See
+> Intel + Apple Silicon, Windows x86_64, plus a multi-arch container
+> image (`ghcr.io/lordmacu/nexo-rs:latest`). Some optional features
+> (STT — voice-note transcription) require extra build tools per OS.
+> Termux ships via local `cargo install --git ...` (CI `.deb`
+> temporarily disabled — see FOLLOWUPS.md). See
 > [Platform support](https://lordmacu.github.io/nexo-rs/docs/getting-started/platform-support.html)
 > for the per-OS prerequisites + feature matrix.
 >
