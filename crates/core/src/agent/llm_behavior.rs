@@ -2234,6 +2234,14 @@ impl LlmAgentBehavior {
                     _ => format!("plugin.outbound.{}", plugin),
                 };
                 // Build the per-turn reply kind + transform context.
+                // Phase 81.19.b locale follow-up item 5 — pull
+                // `language` from `EffectiveBindingPolicy` so a binding
+                // override (`InboundBinding.language`) propagates to
+                // the reply ctx instead of always inheriting the
+                // agent-level value. `resolve_language(agent, binding)`
+                // already implements `binding > agent > None`
+                // precedence inside `effective.rs`.
+                let resolved_language = ctx.effective_policy().language.clone();
                 let transform_ctx = nexo_tool_meta::reply_kind::OutboundReplyContext {
                     agent_id: ctx.agent_id.clone(),
                     session_id: msg.session_id.to_string(),
@@ -2242,7 +2250,7 @@ impl LlmAgentBehavior {
                     recipient: msg.sender_id.clone(),
                     tenant_id: ctx.config.tenant_id.clone(),
                     conversation_key: format!("{}:session:{}", ctx.agent_id, msg.session_id),
-                    language: ctx.config.language.clone(),
+                    language: resolved_language,
                 };
                 let mut current_reply =
                     nexo_tool_meta::reply_kind::OutboundReplyKind::text(text.clone());
