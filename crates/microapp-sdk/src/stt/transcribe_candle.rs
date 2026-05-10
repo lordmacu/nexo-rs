@@ -204,6 +204,100 @@ fn find_safetensors(model_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Resolve the directory that holds the SafeTensors model weights
+/// + `tokenizer.json` + `config.json`.
+///
+/// Precedence:
+///
+/// 1. `cfg.model_path` is non-empty → use it verbatim (air-gapped
+///    operator deployment). The path may point at a directory or
+///    at the SafeTensors file directly; we normalise to the parent
+///    directory either way.
+/// 2. `cfg.model_path` is empty + `cfg.model_id` is set →
+///    `hf-hub` fetch into `~/.cache/huggingface/hub/`. Three
+///    files: `model.safetensors`, `tokenizer.json`, `config.json`.
+/// 3. Both empty → [`SttError::ModelMissing`] with both knob
+///    names quoted so the operator knows which to fix.
+async fn resolve_model_dir(cfg: &TranscribeConfig) -> Result<PathBuf> {
+    // Treat an empty PathBuf (`PathBuf::from("")`) the same as
+    // an unset field. `TranscribeConfig::default()` populates a
+    // sentinel non-empty path; explicit empties signal "use
+    // HF Hub".
+    let path_is_empty = cfg.model_path.as_os_str().is_empty();
+
+    if !path_is_empty {
+        let p = cfg.model_path.clone();
+        // Operator may point at `model.safetensors` directly OR
+        // at the directory; normalise to the directory so the
+        // tokenizer + config lookups in `load_backend` find
+        // their files.
+        if p.is_file() {
+            return Ok(p
+                .parent()
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(".")));
+        }
+        return Ok(p);
+    }
+
+    let model_id = cfg.model_id.as_deref().ok_or_else(|| {
+        SttError::ModelMissing(
+            "neither `model_path` nor `model_id` is set on TranscribeConfig — \
+             provide either a local SafeTensors directory or a HuggingFace \
+             Hub repo id (e.g. \"openai/whisper-tiny\")"
+                .into(),
+        )
+    })?;
+
+    fetch_from_hf_hub(model_id).await
+}
+
+/// Fetch the three required Whisper assets from HuggingFace Hub
+/// into the user's cache (typically `~/.cache/huggingface/hub/`)
+/// and return the directory holding them.
+async fn fetch_from_hf_hub(model_id: &str) -> Result<PathBuf> {
+    use hf_hub::api::tokio::Api;
+
+    let api = Api::new()
+        .map_err(|e| SttError::Whisper(format!("hf-hub Api init: {e}")))?;
+    let repo = api.model(model_id.to_string());
+
+    tracing::info!(
+        target: "stt.candle.hf_hub",
+        repo = model_id,
+        "fetching Whisper assets from HuggingFace Hub (first run downloads ~150 MB)"
+    );
+
+    let weights = repo
+        .get("model.safetensors")
+        .await
+        .map_err(|e| SttError::Whisper(format!("hf-hub fetch model.safetensors: {e}")))?;
+    // The three assets land in the same snapshot directory under
+    // the HF Hub cache, so the parent of the SafeTensors file
+    // already holds `tokenizer.json` + `config.json`. Fetch them
+    // anyway to make sure the cache row is complete; the calls
+    // are no-ops when the files are already present.
+    let _tokenizer = repo
+        .get("tokenizer.json")
+        .await
+        .map_err(|e| SttError::Whisper(format!("hf-hub fetch tokenizer.json: {e}")))?;
+    let _config = repo
+        .get("config.json")
+        .await
+        .map_err(|e| SttError::Whisper(format!("hf-hub fetch config.json: {e}")))?;
+
+    let dir = weights
+        .parent()
+        .ok_or_else(|| {
+            SttError::Whisper(format!(
+                "hf-hub returned weights path with no parent directory: {}",
+                weights.display()
+            ))
+        })?
+        .to_path_buf();
+    Ok(dir)
+}
+
 /// Transcribe the audio at `path` using `cfg`. Returns the
 /// trimmed transcript.
 ///
@@ -225,10 +319,16 @@ pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<Stri
     }
     let samples = super::audio::pcm_s16_to_f32(&pcm);
 
+    // Phase 91.7 — resolve the model directory. Either the
+    // operator points at a local SafeTensors layout via
+    // `model_path`, or sets `model_id` and we auto-fetch from
+    // HuggingFace Hub on first call. Both empty is a hard error
+    // — boot paths must not silently no-op.
+    let model_dir = resolve_model_dir(cfg).await?;
+
     let lang_hint = cfg.lang_hint.clone();
-    let model_path = cfg.model_path.clone();
     let transcript = tokio::task::spawn_blocking(move || -> Result<String> {
-        let backend = load_backend(&model_path)?;
+        let backend = load_backend(&model_dir)?;
         run_inference(&backend, &samples, lang_hint.as_deref())
     })
     .await
@@ -395,6 +495,59 @@ mod tests {
         let err = expect_load_err(load_backend(tmp.path()));
         let msg = err.to_string();
         assert!(msg.contains("config.json not found"), "got: {msg}");
+    }
+
+    /// Build a `TranscribeConfig` with the two model-locator
+    /// knobs (`model_path`, `model_id`) controllable per-test.
+    /// Other fields populated with the same defaults the YAML
+    /// loader applies.
+    fn cfg_with_locators(model_path: PathBuf, model_id: Option<&str>) -> TranscribeConfig {
+        #[allow(deprecated)] // populate the legacy `ffmpeg_path` for backwards compat
+        TranscribeConfig {
+            model_path,
+            lang_hint: None,
+            ffmpeg_path: PathBuf::from("ffmpeg"),
+            target_sample_rate: 16_000,
+            model_id: model_id.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_model_dir_with_both_locators_empty_fails_fast() {
+        // No `model_path`, no `model_id` — the resolver must
+        // refuse to silently no-op and surface a clear hint that
+        // names both knobs.
+        let cfg = cfg_with_locators(PathBuf::new(), None);
+        let err = match resolve_model_dir(&cfg).await {
+            Ok(p) => panic!("resolver must fail-fast; got Ok({})", p.display()),
+            Err(e) => e,
+        };
+        assert!(matches!(err, SttError::ModelMissing(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("model_path"), "must name model_path: {msg}");
+        assert!(msg.contains("model_id"), "must name model_id: {msg}");
+    }
+
+    #[tokio::test]
+    async fn resolve_model_dir_with_directory_returns_it_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = cfg_with_locators(tmp.path().to_path_buf(), None);
+        let resolved = resolve_model_dir(&cfg).await.expect("directory path");
+        assert_eq!(resolved, tmp.path());
+    }
+
+    #[tokio::test]
+    async fn resolve_model_dir_with_file_returns_parent() {
+        // Operator may pin `model_path` at the SafeTensors file
+        // directly; the resolver must normalise to the parent so
+        // the tokenizer + config lookups in `load_backend` find
+        // their files in the same directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let weights = tmp.path().join("model.safetensors");
+        std::fs::write(&weights, b"").unwrap();
+        let cfg = cfg_with_locators(weights, None);
+        let resolved = resolve_model_dir(&cfg).await.expect("file path");
+        assert_eq!(resolved, tmp.path());
     }
 
     #[test]

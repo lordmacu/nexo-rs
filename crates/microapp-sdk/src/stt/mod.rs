@@ -170,6 +170,21 @@ pub struct TranscribeConfig {
     /// Defaults to 16 000 Hz (the rate whisper.cpp is trained on);
     /// other rates produce garbage.
     pub target_sample_rate: u32,
+
+    /// Phase 91 — HuggingFace Hub repository id used to auto-fetch
+    /// the SafeTensors weights + tokenizer + config on first call
+    /// when [`Self::model_path`] is empty (the Candle backend
+    /// only; the whisper-rs backend ignores this field).
+    ///
+    /// Typical values: `Some("openai/whisper-tiny".into())`,
+    /// `Some("openai/whisper-base".into())`. The asset cache lives
+    /// under `~/.cache/huggingface/hub/`; subsequent calls reuse
+    /// the cached files without hitting the network.
+    ///
+    /// `None` (the default) disables auto-fetch — air-gapped
+    /// operators ship the SafeTensors directory under
+    /// [`Self::model_path`] explicitly.
+    pub model_id: Option<String>,
 }
 
 impl Default for TranscribeConfig {
@@ -183,6 +198,7 @@ impl Default for TranscribeConfig {
             lang_hint: None,
             ffmpeg_path: PathBuf::from("ffmpeg"),
             target_sample_rate: 16_000,
+            model_id: None,
         }
     }
 }
