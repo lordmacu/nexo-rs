@@ -189,10 +189,12 @@ nexo --config ./config
 LLM API key, walks the Google OAuth consent if you want Gmail. It
 tells you exactly what's missing instead of failing silently.
 
-> **Apple Silicon, Windows, Homebrew, npm**: scoped for the next
-> release window. Today the shell installer covers Linux musl
-> x86_64 + aarch64 (works on every modern distro + Termux). For
-> other platforms: `cargo install --git https://github.com/lordmacu/nexo-rs nexo`.
+> **Platform support today**: Linux musl x86_64 + aarch64 (every
+> modern distro + WSL on Windows). Android via Termux ships as a
+> separate `.deb` per release. macOS / native Windows / Homebrew /
+> npm are tracked under
+> [`FOLLOWUPS.md`](./FOLLOWUPS.md) — for those platforms today,
+> build from source: `cargo install --git https://github.com/lordmacu/nexo-rs nexo`.
 
 ### From source
 

@@ -34,27 +34,18 @@ cargo-dist-version = "0.31.0"
 # `dist generate` is used as a sanity check during config bumps.
 ci = "github"
 
-# Universal `curl | sh` installer detects Linux x86_64 / aarch64 +
-# macOS x86_64 / Apple Silicon and downloads the right tarball. WSL
-# Windows users get the Linux musl binary through the same script.
-# Native Windows (cmd.exe / PowerShell) needs the `powershell` /
-# `msi` installer — deferred to the next adoption phase along with
-# `homebrew` (publishes the formula to lordmacu/homebrew-nexo-rs)
-# and `npm` (publishes @nexo-rs/cli replacing the placeholder).
+# `curl | sh` installer only. PowerShell / Homebrew / npm / msi
+# installers DROPPED with the Apple/Windows targets — re-add when
+# those targets are revived (see Phase 27.2 follow-up in
+# FOLLOWUPS.md).
 installers = ["shell"]
 
-# 5-target shippable matrix. Linux musl uses cargo-zigbuild for
-# static linking; Apple + Windows use native cargo on their
-# respective runners (zigbuild isn't needed — those platforms ship
-# dynamically-linked binaries by convention). Termux
-# (`aarch64-linux-android`, bionic) is built OUTSIDE cargo-dist by
-# `packaging/termux/build.sh`.
+# 2-target shippable matrix. Both linked statically against musl via
+# `cargo-zigbuild`. Termux (`aarch64-linux-android`, bionic) is built
+# OUTSIDE cargo-dist by `packaging/termux/build.sh`.
 targets = [
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
 ]
 
 # Each crate that opted in via `[package.metadata.dist] dist = true`
