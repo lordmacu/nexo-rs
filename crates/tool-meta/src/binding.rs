@@ -87,6 +87,15 @@ pub struct BindingContext {
     /// remains the channel-side discriminator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
+
+    /// Phase 81.19.b locale follow-up item 6 — resolved BCP-47
+    /// locale for this binding (`InboundBinding.language` over
+    /// `AgentConfig.language`). When present, the SDK's STT
+    /// inbound transform handler trims to ISO-639-1 and passes
+    /// it as a hint to whisper for accented audio. `None` lets
+    /// whisper auto-detect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl BindingContext {
@@ -103,6 +112,7 @@ impl BindingContext {
             mcp_channel_source: None,
             event_source: None,
             tenant_id: None,
+            language: None,
         }
     }
 

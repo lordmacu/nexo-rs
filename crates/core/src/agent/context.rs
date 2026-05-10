@@ -260,6 +260,12 @@ pub fn binding_context_from_effective(
         ctx.account_id = policy.account_id.clone();
         ctx.binding_id = policy.binding_id();
     }
+    // Phase 81.19.b locale follow-up item 6 — surface the
+    // resolved binding > agent locale on the wire so the SDK's
+    // STT inbound transform handler can read it from
+    // `ctx.binding.language` and pass it as a whisper hint
+    // (BCP-47 trimmed to ISO-639-1 inside the handler).
+    ctx.language = policy.language.clone();
     ctx
 }
 impl AgentContext {
