@@ -6334,14 +6334,25 @@ Shipped 2026-05-10 (audit close-out). Frontend scaffold
 in `agent-creator-microapp/frontend/` covers the bulk of the
 spec; four follow-ups capture the gaps:
 
-- **`83.12.audit-page`** — `pages/audit.tsx` rendering
-  the `microapp_admin_audit` table tail with paginated
-  scroll, filterable by `actor` / `op` / time range, and
-  a JSON-payload toggle for the raw row. Today operators
-  query the SQLite DB directly with `sqlite3` to inspect
-  audit history. Owner: microapp UI. Trigger: any
-  operator demand for a UI-side audit view. Effort:
-  ~1-2h. Status: pending.
+- **`83.12.audit-page`** — RESOLVED 2026-05-10. New `audit`
+  module in `agent-creator-microapp/frontend/src/modules/`
+  (rail order 60, FileText icon) consuming the new
+  `nexo/admin/microapp_audit/tail` admin RPC. Backend changes:
+  4 wire types (`AdminAuditRow`, `AdminAuditResult`,
+  `AuditTailFilter`, `AuditTailPage`) moved to
+  `nexo-tool-meta::admin::audit` with `#[ts(export)]` derives;
+  `AdminAuditReader` trait added in `nexo-core` (separate
+  from `AdminAuditWriter` per read/write SoC); dispatcher
+  gains `audit_reader` field + `with_audit_reader` setter +
+  `audit_read` capability gate. `SqliteAdminAuditWriter` impls
+  both traits so the same Arc satisfies write + read paths.
+  Bumps: `nexo-tool-meta` 0.1.4 → 0.1.5, `nexo-core` 0.1.4 →
+  0.1.5. Frontend: Zustand store with paged reload +
+  loadMore (OpenClaw `cron.runs` pattern), filter row
+  (microapp/method/result/since), div-based list with
+  click-to-copy args-hash. plugin.toml gains `audit_read` in
+  optional capabilities (graceful denial when not granted).
+  Status: ✅ closed.
 
 - **`83.12.llm-keys-page`** — full `pages/llm_keys.tsx`
   consolidating list + create + rotate + delete of LLM
