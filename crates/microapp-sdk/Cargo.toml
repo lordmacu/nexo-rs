@@ -156,6 +156,13 @@ dedup-sled = ["dedup", "dep:sled"]
 # templates). Pulls sqlx + chrono + sha2 + nexo-sanitize +
 # nexo-media.
 email-template = ["dep:sqlx", "dep:chrono", "dep:sha2", "dep:nexo-sanitize", "dep:nexo-media"]
+# Per-tenant module on/off toggle. Operator-facing pause
+# switch: store + RwLock cache + admin-friendly read/write.
+# Lifted from the marketing extension's `MarketingState`;
+# any microapp that wants a kill switch on its automated
+# effects (cron sweeps, AI calls, notifications) consumes
+# this module. Pulls sqlx + chrono.
+module-state = ["dep:sqlx", "dep:chrono"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -241,7 +248,7 @@ nexo-sanitize = { path = "../sanitize", optional = true }
 nexo-media    = { path = "../media",    optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 
