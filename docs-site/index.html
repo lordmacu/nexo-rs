@@ -59,7 +59,8 @@
       <div class="flex items-center gap-6 text-sm">
         <a href="docs/what-you-can-build.html" class="text-ink-300 hover:text-white transition hidden md:inline">What to build</a>
         <a href="docs/getting-started/quickstart.html" class="text-ink-300 hover:text-white transition hidden md:inline">Quickstart</a>
-        <a href="#plugins" class="text-ink-300 hover:text-white transition hidden md:inline">Plugins</a>
+        <a href="#official-plugins" class="text-ink-300 hover:text-white transition hidden md:inline">Plugins</a>
+        <a href="#plugins" class="text-ink-300 hover:text-white transition hidden md:inline">SDKs</a>
         <a href="#extensions" class="text-ink-300 hover:text-white transition hidden md:inline">Extensions</a>
         <a href="#microapps" class="text-ink-300 hover:text-white transition hidden md:inline">Microapps</a>
         <a href="docs/" class="text-ink-300 hover:text-white transition">Docs</a>
@@ -346,6 +347,131 @@
           </p>
           <div class="text-accent-400 text-sm font-medium">Build a product · admin RPC API →</div>
         </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Official plugins — shipped + maintained out-of-tree -->
+  <section id="official-plugins" class="border-t border-ink-800 py-24 scroll-mt-20">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Official plugins</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Channels + ops, already shipped.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          Five plugins maintained out-of-tree on their own GitHub repos + crates.io. Install with <code class="bg-ink-900 px-2 py-0.5 rounded text-base">cargo install</code> + drop the manifest under your <code class="bg-ink-900 px-2 py-0.5 rounded text-base">plugins.discovery.search_paths</code>. Pure-Rust + rustls on every cross-compile target (Linux musl, macOS, Windows MSVC, Android NDK / Termux).
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- WhatsApp -->
+        <a href="https://github.com/lordmacu/nexo-plugin-whatsapp" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-green-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">💬</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-green-400 transition">WhatsApp</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-whatsapp</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Signal Protocol via <code>wa-agent</code> upstream. QR pairing, multi-account, recording presence (<code>media="audio"</code>), inbound voice-note hook.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-green-400 font-medium">github.com/lordmacu/nexo-plugin-whatsapp →</span>
+            <span class="text-ink-500">rustls · all OS</span>
+          </div>
+        </a>
+
+        <!-- Telegram -->
+        <a href="https://github.com/lordmacu/nexo-plugin-telegram" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-blue-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">✈️</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-blue-400 transition">Telegram</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-telegram</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Bot API long-poll + send. Group chat support, multi-bot routing per agent, file uploads, voice notes round-trip.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-blue-400 font-medium">github.com/lordmacu/nexo-plugin-telegram →</span>
+            <span class="text-ink-500">rustls · all OS</span>
+          </div>
+        </a>
+
+        <!-- Email -->
+        <a href="https://github.com/lordmacu/nexo-plugin-email" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-purple-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">📧</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-purple-400 transition">Email</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-email</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            IMAP poll + <code>lettre</code> SMTP. Multi-account, Google OAuth, block-based composer, tracking pixels, disposable-domain classifier.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-purple-400 font-medium">github.com/lordmacu/nexo-plugin-email →</span>
+            <span class="text-ink-500">rustls · all OS</span>
+          </div>
+        </a>
+
+        <!-- Browser -->
+        <a href="https://github.com/lordmacu/nexo-plugin-browser" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-orange-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">🌐</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-orange-400 transition">Browser</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-browser</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Chrome DevTools Protocol (CDP) via WebSocket. 12 <code>browser_*</code> tools (navigate, click, fill, screenshot, evaluate, snapshot…). Per-agent profile isolation.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-orange-400 font-medium">github.com/lordmacu/nexo-plugin-browser →</span>
+            <span class="text-ink-500">cross-platform auto-detect</span>
+          </div>
+        </a>
+
+        <!-- Admin -->
+        <a href="https://github.com/lordmacu/nexo-rs-plugin-admin" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-accent-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">🛠️</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-accent-400 transition">Admin</div>
+              <div class="text-sm text-ink-400"><code>nexo-rs-plugin-admin</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Admin RPC over NATS — tenants CRUD, MCP catalog, plugins doctor, memory query + snapshot create/restore, channels approve, token rotation. Self-hostable web UI included.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-accent-400 font-medium">github.com/lordmacu/nexo-rs-plugin-admin →</span>
+            <span class="text-ink-500">ops + tenancy</span>
+          </div>
+        </a>
+
+        <!-- Build your own — invite to Layer 1 SDK section -->
+        <a href="#plugins" class="block bg-ink-950 border border-dashed border-ink-700 rounded-xl p-6 hover:border-accent-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">➕</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-accent-400 transition">Build your own</div>
+              <div class="text-sm text-ink-400">Rust / Python / TypeScript / PHP</div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Same JSON-RPC subprocess wire contract every official plugin above speaks. Pick one of the four language SDKs and ship a single <code>noarch</code> tarball.
+          </p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-accent-400 font-medium">Jump to the SDK cards ↓</span>
+            <span class="text-ink-500">contract v1.10.0</span>
+          </div>
+        </a>
+
       </div>
     </div>
   </section>
