@@ -20,18 +20,29 @@ for the detailed close-out.
   in microapp telemetry + parity tests green across two
   consecutive RCs.
 
-- ⬜ **91.x.wasm — unblock `wasm32-unknown-unknown`** — the
-  current build fails inside `mio` because `hf-hub 0.4` requires
-  `tokio` with the `net` feature for its async HTTP client; WASM
-  has no kernel networking primitives. Fix paths (any one):
-  1. Gate `hf-hub` behind a `stt-candle-hub` sub-feature so WASM
-     consumers can build `stt-candle` minus `hf-hub`. They ship
-     the SafeTensors bundled in the WASM artifact and pin
-     `model_path` explicitly.
-  2. Upstream PR to `hf-hub` swapping `reqwest` to a
-     wasm-bindgen-aware transport.
-  3. Drop WASM from the matrix entirely (current de facto state).
-  Files as 91.x.wasm.
+- 🟡 **91.x.wasm — unblock `wasm32-unknown-unknown`** — partial
+  (commit ada8514, phase-1). The STT-specific blocker (hf-hub →
+  mio) is resolved: `stt-candle` no longer pulls `hf-hub`; the
+  auto-fetch path lives behind a new `stt-candle-hub`
+  sub-feature. WASM consumers build `--features stt-candle
+  --no-default-features` and pin
+  `TranscribeConfig.model_path` to a SafeTensors directory
+  bundled in the WASM artifact. `uuid` gains the `js` feature
+  on wasm32 so browser `crypto.getRandomValues` powers v4/v5
+  generation.
+
+- ⬜ **91.x.wasm.phase-2 — workspace-wide tokio "full" → minimal
+  features** — the residual WASM blocker is the workspace-level
+  `tokio = { features = ["full"] }` pin in
+  `proyecto/Cargo.toml`. `full` includes the `net` feature
+  which forces `mio` into every dep tree. mio doesn't compile
+  on wasm32. Fix: split the workspace pin into per-consumer
+  feature lists so STT / inference paths can ask for just
+  `["sync", "macros", "rt", "io-util", "time"]` (no `net`),
+  while the daemon's HTTP / NATS layers keep `net`. Touches
+  every workspace crate's Cargo.toml + needs a careful audit
+  to avoid breaking the rest of the workspace. Out of Phase 91
+  STT scope; file as cross-cutting tech debt.
 
 - ⬜ **91.x.long-form — audio clips > 30 seconds** — Phase 91 v1
   rejects clips exceeding `m::N_SAMPLES` (30 s @ 16 kHz) with
