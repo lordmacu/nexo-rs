@@ -1918,6 +1918,14 @@ async fn main() -> Result<()> {
         "broker ready",
     );
 
+    // Phase 90.x.memory-snapshot.b — shared cell handed to the
+    // admin RPC reader pre-bootstrap. main.rs writes the real
+    // snapshotter into it later in boot once the late-stage
+    // construction completes. Scoped at this outer level so
+    // both the inner bootstrap block AND the post-snapshotter
+    // population can reach it.
+    let snapshotter_cell = nexo_setup::admin_adapters::shared_snapshotter_cell();
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2021,6 +2029,10 @@ async fn main() -> Result<()> {
         > = Some(nexo_setup::admin_adapters::LiveMemoryReader::new(
             config_dir.clone(),
         ));
+        // Phase 90.x.memory-snapshot.b — shared cell scoped above
+        // (declared before this block so the post-snapshotter
+        // population can also write into it). Cloned here so the
+        // adapter outlives the bootstrap match.
         // Phase 82.10.p — build the per-channel pairing trigger
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
@@ -2061,18 +2073,9 @@ async fn main() -> Result<()> {
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
                 memory_reader: memory_reader.clone(),
-                // Phase 90.x.memory-snapshot — lazy-builds the
-                // LocalFsSnapshotter from `<config_dir>/memory.yaml`
-                // on first list() call, sidestepping the
-                // boot-order constraint that the daemon's main
-                // snapshotter is constructed AFTER admin
-                // bootstrap. Limitation: uses DefaultPathResolver
-                // — operators with custom path_resolver maps see
-                // an empty list. Future refactor threads the
-                // shared `Arc<dyn MemorySnapshotter>` through.
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
-                        config_dir.clone(),
+                        snapshotter_cell.clone(),
                     ),
                 ),
                 // Phase 82.10.k — file-backed secrets store at
@@ -2446,6 +2449,17 @@ async fn main() -> Result<()> {
             );
             None
         };
+
+    // Phase 90.x.memory-snapshot.b — populate the admin cell with
+    // the live snapshotter so /m/memory's snapshot panel reflects
+    // the operator's real `path_resolver` map (per-agent memdir
+    // overrides, custom sqlite roots). When snapshots are
+    // disabled at boot, the cell stays None and the admin RPC
+    // returns "memory snapshot subsystem not configured".
+    if let Some(ref s) = memory_snapshotter {
+        let mut guard = snapshotter_cell.write().await;
+        *guard = Some(s.clone());
+    }
 
     // Phase 36.2 — broker-backed event publisher used by the mutation
     // hook on every memory write. Best-effort: a publish error must

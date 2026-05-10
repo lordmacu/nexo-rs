@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use nexo_tool_meta::admin::memory::{
     MemoryEntryWire, MemoryQueryParams, MemoryQueryResponse,
+    MemorySnapshotsDeleteParams, MemorySnapshotsDeleteResponse,
     MemorySnapshotsListParams, MemorySnapshotsListResponse, SnapshotMetaWire,
 };
 
@@ -34,8 +35,8 @@ pub trait MemoryReader: Send + Sync + std::fmt::Debug {
 }
 
 /// Reader abstraction over the snapshot bundle store. Production
-/// adapter wraps `nexo_memory_snapshot::MemorySnapshotter::list`;
-/// tests inject in-memory fakes.
+/// adapter wraps `nexo_memory_snapshot::MemorySnapshotter`; tests
+/// inject in-memory fakes.
 #[async_trait]
 pub trait MemorySnapshotReader: Send + Sync + std::fmt::Debug {
     /// Enumerate snapshots for `agent_id` under `tenant`.
@@ -46,6 +47,14 @@ pub trait MemorySnapshotReader: Send + Sync + std::fmt::Debug {
         agent_id: &str,
         tenant: &str,
     ) -> anyhow::Result<Vec<SnapshotMetaWire>>;
+
+    /// Remove one bundle. Idempotent — missing ids return Ok(()).
+    async fn delete(
+        &self,
+        agent_id: &str,
+        tenant: &str,
+        snapshot_id: &str,
+    ) -> anyhow::Result<()>;
 }
 
 /// `nexo/admin/memory/query` — recall.
@@ -97,6 +106,41 @@ pub async fn list_snapshots(
         }
         Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
             "memory.list_snapshots: {e}"
+        ))),
+    }
+}
+
+/// `nexo/admin/memory/delete_snapshot` — idempotent removal.
+pub async fn delete_snapshot(
+    reader: &dyn MemorySnapshotReader,
+    params: Value,
+) -> AdminRpcResult {
+    let p: MemorySnapshotsDeleteParams = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if p.agent_id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "agent_id is empty".into(),
+        ));
+    }
+    if p.id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "id is empty".into(),
+        ));
+    }
+    let tenant = if p.tenant.trim().is_empty() {
+        "default"
+    } else {
+        p.tenant.as_str()
+    };
+    match reader.delete(&p.agent_id, tenant, &p.id).await {
+        Ok(()) => {
+            let resp = MemorySnapshotsDeleteResponse { removed: true };
+            AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
+        }
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
+            "memory.delete_snapshot: {e}"
         ))),
     }
 }
@@ -157,6 +201,131 @@ mod tests {
             created_at: "2026-05-10T00:00:00Z".into(),
             memory_type: None,
         }
+    }
+
+    #[derive(Debug)]
+    struct StubSnapshotReader {
+        list_returns: Vec<SnapshotMetaWire>,
+        deleted: std::sync::Mutex<Vec<(String, String, String)>>,
+    }
+
+    #[async_trait]
+    impl MemorySnapshotReader for StubSnapshotReader {
+        async fn list(
+            &self,
+            _agent_id: &str,
+            _tenant: &str,
+        ) -> anyhow::Result<Vec<SnapshotMetaWire>> {
+            Ok(self.list_returns.clone())
+        }
+        async fn delete(
+            &self,
+            agent_id: &str,
+            tenant: &str,
+            snapshot_id: &str,
+        ) -> anyhow::Result<()> {
+            self.deleted.lock().unwrap().push((
+                agent_id.to_string(),
+                tenant.to_string(),
+                snapshot_id.to_string(),
+            ));
+            Ok(())
+        }
+    }
+
+    fn snap_meta(id: &str) -> SnapshotMetaWire {
+        SnapshotMetaWire {
+            id: id.into(),
+            agent_id: "ana".into(),
+            tenant: "default".into(),
+            label: None,
+            created_at_ms: 1_000_000,
+            bundle_path: format!("/snap/{id}.tar.zst"),
+            bundle_size_bytes: 1024,
+            bundle_sha256: "deadbeef".into(),
+            git_oid: None,
+            encrypted: false,
+            redactions_applied: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_snapshots_happy() {
+        let reader = StubSnapshotReader {
+            list_returns: vec![snap_meta("a"), snap_meta("b")],
+            deleted: std::sync::Mutex::new(Vec::new()),
+        };
+        let res = list_snapshots(
+            &reader,
+            serde_json::json!({"agent_id": "ana"}),
+        )
+        .await;
+        let payload = res.result.expect("ok");
+        let snaps = payload["snapshots"].as_array().unwrap();
+        assert_eq!(snaps.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_snapshots_rejects_empty_agent_id() {
+        let reader = StubSnapshotReader {
+            list_returns: vec![],
+            deleted: std::sync::Mutex::new(Vec::new()),
+        };
+        let res = list_snapshots(
+            &reader,
+            serde_json::json!({"agent_id": ""}),
+        )
+        .await;
+        assert!(res.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_snapshots_defaults_empty_tenant_to_default() {
+        let reader = StubSnapshotReader {
+            list_returns: vec![],
+            deleted: std::sync::Mutex::new(Vec::new()),
+        };
+        // No tenant in params + non-empty agent_id reaches the
+        // adapter; the test stub doesn't capture tenant on list,
+        // so we just verify the call shape doesn't error.
+        let res = list_snapshots(
+            &reader,
+            serde_json::json!({"agent_id": "ana"}),
+        )
+        .await;
+        assert!(res.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_snapshot_records_call() {
+        let reader = StubSnapshotReader {
+            list_returns: vec![],
+            deleted: std::sync::Mutex::new(Vec::new()),
+        };
+        let res = delete_snapshot(
+            &reader,
+            serde_json::json!({"agent_id": "ana", "id": "abc"}),
+        )
+        .await;
+        let payload = res.result.expect("ok");
+        assert_eq!(payload["removed"], true);
+        let recorded = reader.deleted.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0], ("ana".into(), "default".into(), "abc".into()));
+    }
+
+    #[tokio::test]
+    async fn delete_snapshot_rejects_empty_id() {
+        let reader = StubSnapshotReader {
+            list_returns: vec![],
+            deleted: std::sync::Mutex::new(Vec::new()),
+        };
+        let res = delete_snapshot(
+            &reader,
+            serde_json::json!({"agent_id": "ana", "id": ""}),
+        )
+        .await;
+        assert!(res.error.is_some());
     }
 
     #[tokio::test]

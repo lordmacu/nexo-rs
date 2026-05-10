@@ -104,3 +104,25 @@ pub struct MemorySnapshotsListResponse {
     /// Snapshots ordered by `created_at_ms` descending (newest first).
     pub snapshots: Vec<SnapshotMetaWire>,
 }
+
+/// Params for `nexo/admin/memory/delete_snapshot`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemorySnapshotsDeleteParams {
+    /// Owning agent. Snapshots are partitioned by agent_id, so a
+    /// rogue id can't delete another agent's bundle.
+    pub agent_id: String,
+    /// Tenant scope. Empty string = "default".
+    #[serde(default)]
+    pub tenant: String,
+    /// Snapshot id (UUID-shaped) to remove.
+    pub id: String,
+}
+
+/// Response for `nexo/admin/memory/delete_snapshot`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MemorySnapshotsDeleteResponse {
+    /// `true` when the bundle was removed; idempotent retry safe
+    /// (returns `true` on missing id too — daemon's local-fs
+    /// delete is `Ok(())` for already-gone bundles).
+    pub removed: bool,
+}
