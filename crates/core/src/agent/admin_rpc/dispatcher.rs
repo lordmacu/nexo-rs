@@ -822,9 +822,17 @@ impl AdminRpcDispatcher {
             // read-only memory inspection independently of broader
             // capabilities.
             "nexo/admin/memory/query" => Some("memory_query"),
-            // Phase 90.x.memory-snapshot — list snapshots.
+            // Phase 90.x.memory-snapshot — list/delete snapshots
+            // (Phase 90.x.memory-snapshot list+delete) and
+            // create/restore (Phase 90.x.memory-snapshot.create-restore).
+            // All four verbs share the `memory_snapshot` capability:
+            // operators that already grant list+delete don't need
+            // a fresh grant for create+restore — both are gated by
+            // the same operator-side trust boundary.
             "nexo/admin/memory/list_snapshots"
-            | "nexo/admin/memory/delete_snapshot" => Some("memory_snapshot"),
+            | "nexo/admin/memory/delete_snapshot"
+            | "nexo/admin/memory/create_snapshot"
+            | "nexo/admin/memory/restore_snapshot" => Some("memory_snapshot"),
             // Phase 82.10.k — secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
@@ -1425,6 +1433,22 @@ impl AdminRpcDispatcher {
             "nexo/admin/memory/delete_snapshot" => match &self.memory_snapshot_reader {
                 Some(reader) => {
                     super::domains::memory::delete_snapshot(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "memory snapshot domain not configured".into(),
+                )),
+            },
+            "nexo/admin/memory/create_snapshot" => match &self.memory_snapshot_reader {
+                Some(reader) => {
+                    super::domains::memory::create_snapshot(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "memory snapshot domain not configured".into(),
+                )),
+            },
+            "nexo/admin/memory/restore_snapshot" => match &self.memory_snapshot_reader {
+                Some(reader) => {
+                    super::domains::memory::restore_snapshot(reader.as_ref(), params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "memory snapshot domain not configured".into(),

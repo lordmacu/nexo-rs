@@ -52,7 +52,7 @@ Phase 81 plug-and-play P2/P3 chain ✅ (81.3/81.4/81.5/81.6/
 81.7/81.8/81.9/81.9.b/81.10/81.11/81.12.a-d/81.14-81.28 all
 shipped); Phase 85/86/87 P2/P3 ✅ (85.1/85.2/86.1/87.1 shipped).
 
-**2026-05-10 update** — Phase 90 ✅ (18/18 shipped) — admin plugin
+**2026-05-10 update** — Phase 90 ✅ (19/19 shipped) — admin plugin
 extracted out-of-tree to `nexo-rs-plugin-admin` sibling repo
 (github.com/lordmacu/nexo-rs-plugin-admin, public). Core 90.1-90.7
 shipped first, then a same-day follow-up wave closed every
@@ -62,14 +62,19 @@ placeholder: 90.x.cleanup (-2702 LOC dead admin code) +
 cookie session swap + 90.x.memory-snapshot list/delete (with
 shared snapshotter cell threading the daemon's real
 `Arc<dyn MemorySnapshotter>` through admin bootstrap) +
-90.x.changelog + 90.x.github-remote + 90.x.e2e (3 binary smoke
-tests). Published 9 plugin versions (0.1.0 → 0.1.9), bumped
-`nexo-tool-meta` 0.1.6 → 0.1.11 and `nexo-core` 0.1.6 → 0.1.11.
+90.x.memory-snapshot.create-restore (admin RPC create+restore
+with dry_run preview, defensive tenant validation, server-side
+encryption recipient resolution, `encryption_available` flag on
+list response, `redact_secrets`+`auto_pre_snapshot` forced
+server-side, restore by `snapshot_id` so admin endpoints can't
+be coerced into arbitrary file reads) + 90.x.changelog +
+90.x.github-remote + 90.x.e2e (3 binary smoke tests). Published
+10 plugin versions (0.1.0 → 0.1.10), bumped
+`nexo-tool-meta` 0.1.6 → 0.1.12 and `nexo-core` 0.1.6 → 0.1.12.
 Daemon binary at 0 warnings (was 45). Daemon `run_admin_web`
 + `proyecto/admin-ui/` (~8044 LOC total) deleted. Pivot
 recognises framework = product, microapps = demos. **Open**:
-daemon-backed e2e test + memory snapshot create/restore admin
-RPCs (CLI-only for now).
+daemon-backed e2e test only.
 
 Genuine pending:
 

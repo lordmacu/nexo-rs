@@ -2084,6 +2084,33 @@ async fn main() -> Result<()> {
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
                         snapshotter_cell.clone(),
+                        // Phase 90.x.memory-snapshot.create-restore —
+                        // adapter resolves the encryption recipient
+                        // for `create(encrypt=true)` from
+                        // `recipients[0]` and the identity file for
+                        // restoring encrypted bundles from
+                        // `identity_path`. Snapshot taken at boot —
+                        // operator YAML edits require restart.
+                        // Project the YAML shape into the
+                        // crate-native EncryptionSection (different
+                        // crates own each, no From impl wired).
+                        nexo_memory_snapshot::config::EncryptionSection {
+                            enabled: cfg.memory.snapshot.encryption.enabled,
+                            recipients: cfg
+                                .memory
+                                .snapshot
+                                .encryption
+                                .recipients
+                                .clone(),
+                            identity_path: {
+                                let p = &cfg.memory.snapshot.encryption.identity_path;
+                                if p.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(std::path::PathBuf::from(p))
+                                }
+                            },
+                        },
                     ),
                 ),
                 // Phase 82.10.k — file-backed secrets store at
