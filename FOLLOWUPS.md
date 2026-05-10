@@ -91,6 +91,50 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 27.2 follow-up.b — Termux release re-enable (rustls aws-lc-sys → ring)
+
+**Disabled**: `build-termux` job in `.github/workflows/release.yml`
+guarded by `if: false` since the v0.1.6-rc1 validation. Cause:
+`aws-lc-sys` (the C-FFI crypto backend `rustls 0.23` ships as
+default) doesn't cross-compile cleanly for `aarch64-linux-android`
+through `cargo-zigbuild`:
+
+```
+fatal error: 'sys/types.h' file not found
+```
+
+The header lives at `<NDK>/sysroot/usr/include/sys/types.h` but
+cargo-zigbuild's wrapper script doesn't pass the NDK sysroot to
+the C compiler when aws-lc-sys's `cc-rs` build script invokes it.
+
+**Why a local fix doesn't work**: Cargo unifies features
+cross-graph. Even if proyecto's `[workspace.dependencies]` reqwest
+switches from `["rustls-tls"]` to `["rustls-tls-no-provider"]`, the
+3 sibling plugin repos (`nexo-rs-plugin-browser`,
+`nexo-rs-plugin-whatsapp`, `nexo-rs-plugin-telegram`) consumed via
+crates.io still enable `rustls-tls` themselves — feature
+unification re-pulls aws-lc-rs at the binary level.
+
+**Fix path** (~half-day, multi-repo coordination):
+
+1. In each plugin repo: change reqwest features
+   `["rustls-tls"]` → `["rustls-tls-no-provider"]`.
+2. Each plugin repo: bump version, push, release-plz publishes.
+   (Plugin binaries don't need a runtime crypto provider —
+   they go through the daemon's broker, not their own TLS.)
+3. In proyecto/Cargo.toml: same change to
+   `[workspace.dependencies] reqwest`.
+4. Bump proyecto's plugin deps to the new versions.
+5. Verify `cargo tree -i aws-lc-rs` returns "package not in tree".
+6. Drop the `if: false` guard on `build-termux` + restore it to
+   `publish.needs:`.
+7. Tag a `nexo-rs-v0.1.7-rc.X` to validate.
+
+The `nexo` daemon binary itself runs fine on Android via Termux
+when built locally (`pkg install rust && cargo install --git ...`)
+because Android's NDK sysroot is present in that environment;
+this only blocks the CI cross-compile shipping the `.deb`.
+
 ### Phase 27.2 follow-up — re-enable Apple / Windows / Homebrew / npm release channels
 
 Phase 27.2 dropped Apple Silicon, Apple x86_64, and Windows targets
