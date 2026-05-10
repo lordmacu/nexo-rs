@@ -1086,6 +1086,14 @@ fn seed_whatsapp_subprocess_env_for(
 /// are absolute paths. `google_auth_path` may be empty — the
 /// subprocess interprets that as "no Gmail OAuth accounts" and
 /// boots with `GoogleCredentialStore::empty()`.
+///
+/// Phase 81.19.b cleanup: dead in production after the email
+/// plugin was extracted out-of-tree (the standalone plugin
+/// manages its own env). Kept under `#[cfg(test)]` so the
+/// existing happy-path / google-omitted regression tests still
+/// document the env contract for the published `nexo-plugin-email`
+/// crate. Removing both function + tests is a separate cleanup.
+#[cfg(test)]
 fn seed_email_subprocess_env_for(
     broker_url: &str,
     config_path: &std::path::Path,
