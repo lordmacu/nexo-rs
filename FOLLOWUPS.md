@@ -6265,6 +6265,53 @@ that stay pending:
   (target nexo-rs 0.2.0). Plugins still on v1 fail boot with a
   migration message.
 
+### Phase 83.12 — Meta-microapp React UI reference scaffold
+
+Shipped 2026-05-10 (audit close-out). Frontend scaffold
+in `agent-creator-microapp/frontend/` covers the bulk of the
+spec; four follow-ups capture the gaps:
+
+- **`83.12.audit-page`** — `pages/audit.tsx` rendering
+  the `microapp_admin_audit` table tail with paginated
+  scroll, filterable by `actor` / `op` / time range, and
+  a JSON-payload toggle for the raw row. Today operators
+  query the SQLite DB directly with `sqlite3` to inspect
+  audit history. Owner: microapp UI. Trigger: any
+  operator demand for a UI-side audit view. Effort:
+  ~1-2h. Status: pending.
+
+- **`83.12.llm-keys-page`** — full `pages/llm_keys.tsx`
+  consolidating list + create + rotate + delete of LLM
+  provider entries. Today the `LlmInstanceCreateModal`
+  handles the create path only; list/rotate/delete go
+  through admin RPC manually. Owner: microapp UI.
+  Trigger: operator demand for end-to-end key
+  management. Effort: ~1-2h. Status: pending.
+
+- **`83.12.ts-types-codegen`** — auto-generate the
+  TypeScript admin RPC types from the Rust admin payload
+  structs (e.g. `BindingContext`, `InboundMsgRef`,
+  `HookDecision`, `microapp_admin_audit` row shape).
+  Pipeline options: `serde_typescript`, `typeshare`,
+  custom build script. Today TS types are hand-curated
+  in `frontend/src/api/types.ts` with implicit drift
+  risk vs the Rust source-of-truth in
+  `crates/setup/src/admin_*.rs`. Mirrors the locale-list
+  drift-lint pattern shipped in
+  `locale-list-codegen-or-lint`. Owner: framework.
+  Trigger: a real drift incident, OR proactive
+  hardening. Effort: ~2-3h. Status: pending.
+
+- **`83.12.e2e-tests`** — playwright / cypress harness
+  covering login → agents CRUD → pairings → conversations.
+  Today only unit tests run (`vitest run`). Reference
+  scaffold's spec asks for "4+ playwright/cypress tests"
+  but the harness wasn't wired. Owner: microapp QA.
+  Trigger: when a regression hits production paths
+  (login flow, pairing UX), OR proactive release
+  hardening. Effort: ~3-5h (browser fixture + 4 tests).
+  Status: pending.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.
