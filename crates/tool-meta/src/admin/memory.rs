@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Params for `nexo/admin/memory/query`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryQueryParams {
     /// Agent whose memory to search.
@@ -28,6 +29,7 @@ pub struct MemoryQueryParams {
 
 /// One memory entry over the wire. Mirrors
 /// `nexo_memory::MemoryEntry` minus internal-only fields.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryEntryWire {
     /// Stable UUID (string for wire stability).
@@ -51,6 +53,7 @@ pub struct MemoryEntryWire {
 }
 
 /// Response for `nexo/admin/memory/query`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryQueryResponse {
     /// Matching entries newest-first within the relevance band.
@@ -58,6 +61,7 @@ pub struct MemoryQueryResponse {
 }
 
 /// Params for `nexo/admin/memory/list_snapshots`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemorySnapshotsListParams {
     /// Agent whose snapshots to list.
@@ -70,6 +74,7 @@ pub struct MemorySnapshotsListParams {
 /// Wire-side projection of `nexo_memory_snapshot::SnapshotMeta`.
 /// Internal fields (bundle_path, schema_versions, git_oid)
 /// surfaced as opaque strings for forward-compat.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SnapshotMetaWire {
     /// Snapshot id (UUID-shaped string).
@@ -99,6 +104,7 @@ pub struct SnapshotMetaWire {
 }
 
 /// Response for `nexo/admin/memory/list_snapshots`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemorySnapshotsListResponse {
     /// Snapshots ordered by `created_at_ms` descending (newest first).
@@ -106,6 +112,7 @@ pub struct MemorySnapshotsListResponse {
 }
 
 /// Params for `nexo/admin/memory/delete_snapshot`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemorySnapshotsDeleteParams {
     /// Owning agent. Snapshots are partitioned by agent_id, so a
@@ -119,6 +126,7 @@ pub struct MemorySnapshotsDeleteParams {
 }
 
 /// Response for `nexo/admin/memory/delete_snapshot`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemorySnapshotsDeleteResponse {
     /// `true` when the bundle was removed; idempotent retry safe
