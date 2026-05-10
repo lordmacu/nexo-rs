@@ -17,11 +17,17 @@ NOT shipping blockers.
   `nexo/admin/memory/snapshot` not yet exposed. Wire when an
   operator demands UI memory inspection (low frequency vs CLI).
 
-- ⬜ **plugins admin RPCs** — `/m/plugins` placeholder. Need
-  `nexo/admin/plugins/list` + `nexo/admin/plugins/doctor` so
-  the page can render live plugin spawn status + capability
-  inventory. CLI `agent doctor plugins` already covers this
-  locally.
+- ✅ ~~**plugins admin RPCs**~~ shipped 2026-05-10 — added
+  `nexo/admin/plugins/doctor` (capability `plugin_doctor`).
+  v1 returns the daemon's `agent doctor plugins --json` output
+  verbatim wrapped with a `generated_at_ms` stamp.
+  `LivePluginDoctorReader` re-runs `wire_plugin_registry` +
+  `doctor_render::render_json` on each call (~hundreds of ms,
+  acceptable for operator-driven page). Plugin admin's
+  `/m/plugins` page is LIVE in nexo-plugin-admin@0.1.3 (4-tile
+  summary + InitOutcome badges + diagnostics). Typed wire mirror
+  deferred until field set stabilises; `admin/plugins/list` not
+  separately needed — `loaded_ids` lives inside the doctor report.
 
 - ✅ ~~**mcp_servers admin RPCs**~~ shipped 2026-05-10 — added
   `nexo/admin/mcp/{list,get,upsert,delete}` admin RPC family
