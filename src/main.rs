@@ -2464,6 +2464,23 @@ async fn main() -> Result<()> {
             },
         ))
     };
+    // Phase 90 follow-up — multi-recipient encrypt boot
+    // validation. Parse every recipient string in
+    // `memory.snapshot.encryption.recipients` upfront so an
+    // operator typo is surfaced at daemon boot rather than at
+    // first encrypt-snapshot time. Skipped when the
+    // `snapshot-encryption` feature is off (parse_recipient
+    // unavailable, operator built without encryption).
+    #[cfg(feature = "snapshot-encryption")]
+    if snapshot_yaml.enabled && snapshot_yaml.encryption.enabled {
+        for (i, s) in snapshot_yaml.encryption.recipients.iter().enumerate() {
+            nexo_memory_snapshot::codec::age_codec::parse_recipient(s).map_err(|e| {
+                anyhow::anyhow!(
+                    "memory.snapshot.encryption.recipients[{i}] failed to parse: {e}"
+                )
+            })?;
+        }
+    }
     let memory_snapshotter: Option<Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> =
         if snapshot_yaml.enabled {
             let s = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()

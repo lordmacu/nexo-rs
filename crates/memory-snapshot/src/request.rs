@@ -10,8 +10,20 @@ use crate::id::AgentId;
 #[non_exhaustive]
 pub enum EncryptionKey {
     /// `age` recipient string in the canonical bech32 form
-    /// (`age1...`). Wraps the bundle body; manifest stays plaintext.
+    /// (`age1...`). Single-recipient path; CLI uses this for
+    /// `--encrypt age:age1...`. Wraps the bundle body; manifest
+    /// stays plaintext inside the encrypted payload.
     AgePublicKey(String),
+
+    /// Phase 90 follow-up — multi-recipient variant. Bundle body
+    /// is wrapped with one `age` header per recipient; any matching
+    /// identity can decrypt the body. Used by the admin RPC create
+    /// path so all `EncryptionSection.recipients` participate in
+    /// the encrypted bundle. Empty Vec is rejected at pack time
+    /// as `SnapshotError::Encryption("empty recipients")`.
+    /// Duplicate recipient strings are silently deduplicated with
+    /// a `tracing::debug!` (operator paste-twice typo is non-fatal).
+    AgePublicKeys(Vec<String>),
 }
 
 /// Identity supplied at restore time to decrypt an age-wrapped bundle.
@@ -114,6 +126,7 @@ mod tests {
         let cloned = k.clone();
         match cloned {
             EncryptionKey::AgePublicKey(s) => assert_eq!(s, "age1abc"),
+            EncryptionKey::AgePublicKeys(_) => panic!("wrong variant"),
         }
     }
 }
