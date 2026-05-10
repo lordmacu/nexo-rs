@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// Compact summary used by `mcp/list` responses.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServerSummary {
     /// Stable identifier (key in `mcp.servers`).
@@ -31,6 +32,7 @@ pub struct McpServerSummary {
 
 /// Full detail used by `mcp/get` + `mcp/upsert` payloads. Fields
 /// not relevant to a given transport are `None` / empty.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServerDetail {
     /// Stable identifier (key in `mcp.servers`).
@@ -68,6 +70,7 @@ pub struct McpServerDetail {
 }
 
 /// Response for `nexo/admin/mcp/list`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersListResponse {
     /// Servers in stable alpha order by name.
@@ -75,6 +78,7 @@ pub struct McpServersListResponse {
 }
 
 /// Params for `nexo/admin/mcp/get`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersGetParams {
     /// Server name to fetch.
@@ -84,6 +88,7 @@ pub struct McpServersGetParams {
 /// Response for `nexo/admin/mcp/get`. `server: None` is the
 /// not-found case (daemon does NOT return an error so callers
 /// can probe for existence cheaply).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersGetResponse {
     /// Matching server, or `None` when the name is unknown.
@@ -95,6 +100,7 @@ pub struct McpServersGetResponse {
 pub type McpServersUpsertInput = McpServerDetail;
 
 /// Response for `nexo/admin/mcp/upsert`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersUpsertResponse {
     /// Final server record after the write.
@@ -105,6 +111,7 @@ pub struct McpServersUpsertResponse {
 }
 
 /// Params for `nexo/admin/mcp/delete`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersDeleteParams {
     /// Server name to remove.
@@ -112,6 +119,7 @@ pub struct McpServersDeleteParams {
 }
 
 /// Response for `nexo/admin/mcp/delete`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpServersDeleteResponse {
     /// `true` when the entry was removed, `false` when the name

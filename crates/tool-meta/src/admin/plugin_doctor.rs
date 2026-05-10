@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Response for `nexo/admin/plugins/doctor`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PluginsDoctorResponse {
     /// Full `PluginDiscoveryReport` JSON. Identical to what the
