@@ -170,6 +170,13 @@ module-state = ["dep:sqlx", "dep:chrono"]
 # the marketing extension; useful for any microapp with an
 # operator compose surface (helpdesk, transactional sends).
 compose-attachment = ["dep:sqlx", "dep:chrono", "dep:sha2"]
+# Per-tenant compose drafts store. Save partial form state
+# (recipient + subject + body + builder blocks + attachment
+# refs + template binding) so the operator can rehydrate
+# WIP outbounds. Configurable table name + empty-title
+# fallback for locale flexibility. Lifted from the marketing
+# extension; useful for any microapp with operator compose.
+compose-draft = ["dep:sqlx", "dep:chrono"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -255,7 +262,7 @@ nexo-sanitize = { path = "../sanitize", optional = true }
 nexo-media    = { path = "../media",    optional = true }
 
 [dev-dependencies]
-nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "dedup", "dedup-sled"] }
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "compose-draft", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
 

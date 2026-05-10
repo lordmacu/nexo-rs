@@ -91,6 +91,9 @@ pub mod module_state;
 #[cfg(feature = "compose-attachment")]
 pub mod compose_attachment;
 
+#[cfg(feature = "compose-draft")]
+pub mod compose_draft;
+
 #[cfg(feature = "dedup")]
 pub mod dedup;
 
