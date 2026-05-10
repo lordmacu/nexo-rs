@@ -11,11 +11,19 @@ surface; ~5342 LOC of `proyecto/admin-ui/` + ~2702 LOC of
 Open items below are degradations the v1 plugin tolerates,
 NOT shipping blockers.
 
-- ⬜ **memory admin RPCs** — `/m/memory` page renders a
-  placeholder pointing at `agent memory snapshot --agent <id>`
-  CLI. Backend endpoints `nexo/admin/memory/query` +
-  `nexo/admin/memory/snapshot` not yet exposed. Wire when an
-  operator demands UI memory inspection (low frequency vs CLI).
+- ✅ ~~**memory admin RPC (query)**~~ shipped 2026-05-10 — added
+  `nexo/admin/memory/query` (capability `memory_query`).
+  `LiveMemoryReader` lazy-opens `LongTermMemory` from
+  `<config_dir>/memory.yaml` on first call (cached via
+  `tokio::Mutex<Option<...>>`). Plugin admin's `/m/memory`
+  page is LIVE in nexo-plugin-admin@0.1.4 — agent_id +
+  free-text query inputs, recall-style result cards with
+  tags + concept_tags + memory_type badge.
+- ⬜ **memory snapshot admin RPC** (`memory/create_snapshot`,
+  `memory/list_snapshots`, `memory/restore_snapshot`) still
+  CLI-only. Snapshot creation is heavy (sqlite backup +
+  optional encryption + retention). Wire when an operator
+  demands UI snapshot management.
 
 - ✅ ~~**plugins admin RPCs**~~ shipped 2026-05-10 — added
   `nexo/admin/plugins/doctor` (capability `plugin_doctor`).
