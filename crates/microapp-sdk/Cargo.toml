@@ -67,6 +67,19 @@ stt-candle = [
     "dep:candle-nn",
     "dep:candle-transformers",
     "dep:tokenizers",
+]
+# Phase 91.x.wasm — HuggingFace Hub auto-fetch on top of the
+# Candle inference path. Pulls `hf-hub 0.4` which transitively
+# requires `tokio` with the `net` feature → `mio` → doesn't
+# compile on `wasm32-unknown-unknown` (no kernel networking).
+# Splitting `hf-hub` behind this sub-feature lets WASM consumers
+# build `stt-candle` minus the auto-fetch path; they ship the
+# SafeTensors bundled in the WASM artifact + pin
+# `TranscribeConfig::model_path` explicitly. On native targets
+# (Linux / macOS / Windows / Android NDK) enable
+# `stt-candle-hub` to keep the first-run download UX.
+stt-candle-hub = [
+    "stt-candle",
     "dep:hf-hub",
 ]
 # Phase 91.10 — GPU / SIMD acceleration backends for the Candle
@@ -247,6 +260,14 @@ tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }
 nexo-tool-meta = { workspace = true }
 uuid        = { workspace = true }
+
+# Phase 91.x.wasm — uuid needs an RNG backend on
+# `wasm32-unknown-unknown` (no kernel `/dev/urandom`). The `js`
+# feature wires uuid to `wasm-bindgen` + `js-sys` so the browser
+# `crypto.getRandomValues` API drives v4/v5 generation. Cfg-gated
+# so native targets don't pull `wasm-bindgen` unnecessarily.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1", features = ["js"] }
 # Phase 82.10 — admin RPC pending-request map. Optional dep
 # (only the `admin` feature pulls it). Keeps the default
 # microapp dep tree slim.
