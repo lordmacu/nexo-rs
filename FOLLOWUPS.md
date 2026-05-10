@@ -6265,6 +6265,65 @@ that stay pending:
   (target nexo-rs 0.2.0). Plugins still on v1 fail boot with a
   migration message.
 
+### Phase 83.13 — `@lordmacu/nexo-microapp-ui-react` component library
+
+MVP shipped 2026-05-10. Sibling repo
+`/home/familia/chat/nexo-rs-microapp-ui-react/` + GitHub
+`lordmacu/nexo-microapp-ui-react`. Five components extracted
+(3 chat + 2 primitives). agent-creator-microapp consumes via
+`file:` dep + vite alias. Three follow-ups capture the gaps:
+
+- **`83.13.publish-npm`** — first `npm publish --access public`
+  to `@lordmacu/nexo-microapp-ui-react` v0.0.1. Today the lib
+  is GitHub-only. Initial publish attempt 2026-05-10 hit a
+  `403 Forbidden` from `https://registry.npmjs.org/`. The
+  `NPM_TOKEN` env var was set (read from `~/.bashrc`) and
+  `npm whoami` confirmed the user as `lordmacu`, but the
+  publish call was rejected with "You may not perform that
+  action with these credentials." Likely causes: granular
+  access token without publish permission for the `@lordmacu`
+  scope, OR npm account has 2FA-required-for-publish active
+  (Classic tokens cannot bypass).
+  Manual fix path:
+  1. Verify token at https://www.npmjs.com/settings/lordmacu/tokens
+     has 'Read and write' permission.
+  2. If 2FA enabled on the account, switch to an 'Automation'
+     token type (bypasses 2FA for CI/scripts).
+  3. From `/home/familia/chat/nexo-rs-microapp-ui-react/`:
+     ```bash
+     echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+     npm publish --access public
+     rm -f .npmrc
+     ```
+     Or: `npm login` interactively then `npm publish --access public`.
+  4. After publish: update `agent-creator-microapp/frontend/package.json`
+     swapping `"file:../../nexo-rs-microapp-ui-react"` for
+     `"^0.0.1"` (npm-published version).
+  Owner: ops. Status: pending manual fix.
+
+- **`83.13.stateful-extraction`** — port 11 stateful chat
+  components (`Chat`, `ChatHeader`, `ChatListItem`,
+  `Conversation`, `ChatsMain`, `BotChatBubble`,
+  `ConnectionBanner`, `InputBar`, `LabelManagerModal`,
+  `EscalationBadge`, `PauseIndicator`) plus `MessageBubble`
+  to the lib. Requires either: (a) per-component refactor
+  to accept state via props with consumer wrapping, OR
+  (b) move associated stores + types to the lib (heavy,
+  changes shape of the lib). Defer until a second
+  microapp consumer materialises (Phase 83.10). Owner:
+  framework. Trigger: 83.10 second microapp landing.
+  Status: pending.
+
+- **`83.13.theme-system`** — CSS variables + dark mode +
+  default theme palette so the lib stops requiring the
+  consumer's `bg-accent` / `text-text-primary` / etc.
+  Tailwind tokens. v0.0.1 ships utility classes inline
+  that ONLY render correctly when the consumer's
+  Tailwind config defines those tokens. Once a default
+  theme + override system lands, third-party consumers
+  drop the requirement. Owner: framework. Trigger: any
+  external consumer. Status: pending.
+
 ### Phase 83.12 — Meta-microapp React UI reference scaffold
 
 Shipped 2026-05-10 (audit close-out). Frontend scaffold
