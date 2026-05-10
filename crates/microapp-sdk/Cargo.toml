@@ -98,6 +98,17 @@ stt-candle-hub = [
 stt-cloud = [
     "dep:reqwest",
 ]
+# Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
+# STT (per the claude-code-leak mining). Adds tokio-tungstenite
+# for the WebSocket transport on top of `stt-cloud`. Native-only
+# because tokio-tungstenite pulls tokio's `net` feature; WASM
+# voice_stream would need a `web-sys::WebSocket`-based client
+# (filed as Phase 91.x.wasm.phase-4c).
+stt-cloud-anthropic = [
+    "stt-cloud",
+    "dep:tokio-tungstenite",
+    "dep:futures",
+]
 # Phase 91.10 — GPU / SIMD acceleration backends for the Candle
 # STT path. Default `stt-candle` is CPU-only pure-Rust so it
 # cross-compiles to every target the workspace ships. Opt into
@@ -392,6 +403,16 @@ symphonia = { version = "0.5", default-features = false, features = [
 # cloud STT: filed as Phase 91.x.wasm.phase-4c — a separate
 # `gloo-net`-based path that swaps the transport on wasm32.
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"], optional = true }
+# Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
+# transport. `rustls-tls-webpki-roots` skips the system trust
+# store probe (we ship the public Mozilla roots inside the
+# wasm-bindgen-free SDK build path; native uses Mozilla CAs
+# too for consistency with the workspace TLS posture).
+tokio-tungstenite = { workspace = true, optional = true }
+# `futures::{StreamExt, SinkExt}` powers the ws split
+# read/write split + select_all on the finalize timers. The
+# workspace already pins `futures = "0.3"`.
+futures = { workspace = true, optional = true }
 # `voice` feature — Microsoft Edge Read-Aloud websocket wrapper.
 msedge_tts = { package = "msedge-tts", version = "0.3", optional = true }
 regex      = { version = "1", optional = true }
