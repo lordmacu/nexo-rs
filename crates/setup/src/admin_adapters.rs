@@ -4750,11 +4750,33 @@ impl
         let id: nexo_memory_snapshot::SnapshotId = snapshot_id
             .parse()
             .map_err(|e| anyhow::anyhow!("snapshot id `{snapshot_id}` invalid: {e}"))?;
-        snapshotter
-            .delete(&agent, tenant, id)
+        // Defensive cross-tenant guard (mirrors restore()). Today's
+        // LocalFsSnapshotter scopes disk roots per tenant so a leaked
+        // id from another tenant naturally NotFounds inside
+        // snapshotter.delete(); this guard makes the adapter robust
+        // against future shared-pool layouts and gives the operator
+        // a clear "wrong tenant" error rather than a silent Ok(()).
+        let metas = snapshotter
+            .list(&agent, tenant)
             .await
-            .map_err(|e| anyhow::anyhow!("snapshotter.delete: {e}"))?;
-        Ok(())
+            .map_err(|e| anyhow::anyhow!("snapshotter.list during delete tenant check: {e}"))?;
+        if let Some(meta) = metas.iter().find(|m| m.id == id) {
+            if meta.tenant != tenant {
+                anyhow::bail!(
+                    "snapshot {snapshot_id} belongs to tenant `{}`, request specified `{}`",
+                    meta.tenant,
+                    tenant
+                );
+            }
+        }
+        // Trait contract: missing id returns Ok(()). NotFound is
+        // common (concurrent delete + stale UI list); operators should
+        // not see a generic Internal -32603 for a successful retry.
+        match snapshotter.delete(&agent, tenant, id).await {
+            Ok(()) => Ok(()),
+            Err(nexo_memory_snapshot::error::SnapshotError::NotFound(_)) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("snapshotter.delete: {e}")),
+        }
     }
 
     async fn list(
@@ -4939,6 +4961,10 @@ mod live_memory_snapshot_tests {
         snapshot_calls: Mutex<Vec<SnapshotRequest>>,
         restore_calls: Mutex<Vec<RestoreRequest>>,
         list_returns: Mutex<Vec<nexo_memory_snapshot::SnapshotMeta>>,
+        // Phase 90 audit fix — adapter-level coverage for delete().
+        // Track each successful delete so cross-tenant + idempotency
+        // tests can assert "did the snapshotter actually run?".
+        delete_calls: Mutex<Vec<SnapshotId>>,
     }
 
     impl std::fmt::Debug for MockSnapshotter {
@@ -5068,8 +5094,18 @@ mod live_memory_snapshot_tests {
             &self,
             _agent_id: &AgentId,
             _tenant: &str,
-            _id: SnapshotId,
+            id: SnapshotId,
         ) -> Result<(), SnapshotError> {
+            // Mimic LocalFsSnapshotter — if the id isn't in our
+            // staged listing, it isn't on disk, surface NotFound so
+            // adapter idempotency mapping is exercised.
+            let mut listing = self.list_returns.lock().unwrap();
+            let initial = listing.len();
+            listing.retain(|m| m.id != id);
+            if listing.len() == initial {
+                return Err(SnapshotError::NotFound(id));
+            }
+            self.delete_calls.lock().unwrap().push(id);
             Ok(())
         }
 
@@ -5279,6 +5315,79 @@ mod live_memory_snapshot_tests {
             None => panic!("encrypt=true must produce Some encryption key"),
             other => panic!("unexpected variant: {other:?}"),
         }
+    }
+
+    // ── Phase 90 audit follow-ups — delete() coverage ──
+
+    #[tokio::test]
+    async fn live_delete_happy_path_removes_bundle() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_disabled()).await;
+        let staged = meta_at("default", false);
+        let staged_id = staged.id;
+        *mock.list_returns.lock().unwrap() = vec![staged];
+
+        reader
+            .delete("ana", "default", &staged_id.to_string())
+            .await
+            .expect("delete ok");
+
+        // Snapshotter saw exactly the right id.
+        let calls = mock.delete_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], staged_id);
+    }
+
+    #[tokio::test]
+    async fn live_delete_is_idempotent_on_missing_id() {
+        // Trait contract (domains/memory.rs:76) promises Ok(()) for
+        // a missing id. Concurrent delete + stale UI list are common
+        // — operators should not see a generic Internal -32603 for a
+        // successful retry.
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_disabled()).await;
+        // No list_returns staged ⇒ the id will not match anything.
+        let phantom = SnapshotId::new();
+        reader
+            .delete("ana", "default", &phantom.to_string())
+            .await
+            .expect("missing id must map to Ok per trait contract");
+        // Snapshotter received the call but returned NotFound — the
+        // adapter swallowed it. delete_calls tracks SUCCESSES only,
+        // so it should be empty.
+        assert!(mock.delete_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_delete_rejects_tenant_mismatch() {
+        // Defense-in-depth: a leaked id from `staging` aimed at
+        // tenant=prod must error explicitly. Today's
+        // LocalFsSnapshotter is per-tenant on disk so this path is
+        // also naturally NotFound, but the explicit guard gives the
+        // operator a clear "wrong tenant" error and survives a
+        // future shared-pool layout.
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_disabled()).await;
+        // Stage a meta whose tenant is `staging` but answer the
+        // adapter's tenant=prod list lookup with that meta — mock
+        // ignores the tenant param so the find-by-id catches it.
+        let staged = meta_at("staging", false);
+        let staged_id = staged.id;
+        *mock.list_returns.lock().unwrap() = vec![staged];
+
+        let err = reader
+            .delete("ana", "prod", &staged_id.to_string())
+            .await
+            .expect_err("tenant mismatch must error");
+        let msg = err.to_string();
+        assert!(msg.contains("staging"), "must quote bundle tenant: {msg}");
+        assert!(msg.contains("prod"), "must quote requested tenant: {msg}");
+        assert!(
+            msg.contains("belongs to tenant"),
+            "matches handler regex: {msg}"
+        );
+        // Snapshotter.delete must NOT have run.
+        assert!(mock.delete_calls.lock().unwrap().is_empty());
     }
 }
 

@@ -2568,7 +2568,11 @@ async fn main() -> Result<()> {
     // and logs internally).
     let memory_event_publisher: Arc<dyn nexo_memory_snapshot::EventPublisher> =
         if snapshot_yaml.events.mutation_publish_enabled && memory_snapshotter.is_some() {
-            Arc::new(BrokerEventPublisher::new(broker.clone()))
+            Arc::new(BrokerEventPublisher::new(
+                broker.clone(),
+                snapshot_yaml.events.lifecycle_subject_prefix.clone(),
+                snapshot_yaml.events.mutation_subject_prefix.clone(),
+            ))
         } else {
             Arc::new(nexo_memory_snapshot::NoopPublisher)
         };
@@ -10448,18 +10452,29 @@ async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
 /// transaction is never poisoned by broker degradation.
 struct BrokerEventPublisher {
     broker: AnyBroker,
+    // Phase 90 audit fix — honour the operator-configured
+    // `EventsSection.lifecycle_subject_prefix` /
+    // `mutation_subject_prefix`. Captured at construction so a
+    // hot-reload would require rebuilding the publisher (acceptable;
+    // memory-snapshot config is boot-time today).
+    lifecycle_prefix: String,
+    mutation_prefix: String,
 }
 
 impl BrokerEventPublisher {
-    fn new(broker: AnyBroker) -> Self {
-        Self { broker }
+    fn new(broker: AnyBroker, lifecycle_prefix: String, mutation_prefix: String) -> Self {
+        Self {
+            broker,
+            lifecycle_prefix,
+            mutation_prefix,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl nexo_memory_snapshot::EventPublisher for BrokerEventPublisher {
     async fn publish_lifecycle(&self, event: nexo_memory_snapshot::LifecycleEvent) {
-        let topic = event.subject();
+        let topic = event.subject_with_prefix(&self.lifecycle_prefix);
         let payload = match serde_json::to_value(&event) {
             Ok(v) => v,
             Err(e) => {
@@ -10478,7 +10493,7 @@ impl nexo_memory_snapshot::EventPublisher for BrokerEventPublisher {
     }
 
     async fn publish_mutation(&self, event: nexo_memory_snapshot::MutationEvent) {
-        let topic = event.subject();
+        let topic = event.subject_with_prefix(&self.mutation_prefix);
         let payload = match serde_json::to_value(&event) {
             Ok(v) => v,
             Err(e) => {

@@ -56,16 +56,28 @@ pub enum LifecycleEvent {
 }
 
 impl LifecycleEvent {
-    /// Subject the publisher should write to. Includes the agent id so
-    /// downstream subscribers can filter cheaply.
+    /// Subject the publisher should write to using the default
+    /// [`LIFECYCLE_SUBJECT_PREFIX`]. Convenience wrapper around
+    /// [`Self::subject_with_prefix`]; producers that respect the
+    /// operator-configured `EventsSection.lifecycle_subject_prefix`
+    /// (every production publisher should) call the prefixed
+    /// variant instead.
     pub fn subject(&self) -> String {
+        self.subject_with_prefix(LIFECYCLE_SUBJECT_PREFIX)
+    }
+
+    /// Subject formed from a runtime-configured prefix. The publisher
+    /// passes `EventsSection.lifecycle_subject_prefix` so multi-daemon
+    /// shard isolation (or simple namespace overrides) works as the
+    /// YAML knob promises.
+    pub fn subject_with_prefix(&self, prefix: &str) -> String {
         let (agent_id, kind) = match self {
             LifecycleEvent::Created(m) => (m.agent_id.as_str(), "created"),
             LifecycleEvent::Restored(r) => (r.agent_id.as_str(), "restored"),
             LifecycleEvent::Deleted { agent_id, .. } => (agent_id.as_str(), "deleted"),
             LifecycleEvent::Gc { .. } => ("_all", "gc"),
         };
-        format!("{LIFECYCLE_SUBJECT_PREFIX}.{agent_id}.{kind}")
+        format!("{prefix}.{agent_id}.{kind}")
     }
 }
 
@@ -109,8 +121,16 @@ pub struct MutationEvent {
 }
 
 impl MutationEvent {
+    /// Default subject — convenience wrapper. Producers that respect
+    /// `EventsSection.mutation_subject_prefix` call
+    /// [`Self::subject_with_prefix`] instead.
     pub fn subject(&self) -> String {
-        format!("{MUTATION_SUBJECT_PREFIX}.{}", self.agent_id)
+        self.subject_with_prefix(MUTATION_SUBJECT_PREFIX)
+    }
+
+    /// Runtime-configured subject. See [`LifecycleEvent::subject_with_prefix`].
+    pub fn subject_with_prefix(&self, prefix: &str) -> String {
+        format!("{prefix}.{}", self.agent_id)
     }
 }
 
@@ -232,6 +252,43 @@ mod tests {
             }
             .subject(),
             "nexo.memory.snapshot._all.gc"
+        );
+    }
+
+    #[test]
+    fn lifecycle_subject_with_prefix_overrides_default() {
+        // Phase 90 audit fix — multi-daemon shard isolation requires
+        // the configured prefix to win, not the const default.
+        let m = sample_meta();
+        assert_eq!(
+            LifecycleEvent::Created(m).subject_with_prefix("shard.alpha.snap"),
+            "shard.alpha.snap.ana.created"
+        );
+        assert_eq!(
+            LifecycleEvent::Gc {
+                ts_ms: 0,
+                report: Default::default(),
+            }
+            .subject_with_prefix("shard.alpha.snap"),
+            "shard.alpha.snap._all.gc"
+        );
+    }
+
+    #[test]
+    fn mutation_subject_with_prefix_overrides_default() {
+        let e = MutationEvent {
+            agent_id: "ana".into(),
+            tenant: "default".into(),
+            scope: MutationScope::SqliteLongTerm,
+            op: MutationOp::Insert,
+            key: "row".into(),
+            old_hash: None,
+            new_hash: None,
+            ts_ms: 0,
+        };
+        assert_eq!(
+            e.subject_with_prefix("shard.alpha.mut"),
+            "shard.alpha.mut.ana"
         );
     }
 
