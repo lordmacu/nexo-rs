@@ -1,0 +1,40 @@
+# cargo-release config for the nexo-rs workspace.
+#
+# Migration from release-plz (Phase 81.19.b cleanup): release-plz
+# couldn't reliably automate releases for this workspace because
+# its tmp-clone diff walker hit path-dep state in historical
+# commits even after the May 9 publish wave migrated every crate's
+# `cargo_vcs_info.json` baseline. cargo-release runs in the
+# workspace directly (no tmp clone) so this failure mode doesn't
+# apply.
+#
+# Usage (one crate at a time):
+#   cargo release patch -p nexo-X --execute     # patch bump + publish
+#   cargo release minor -p nexo-X --execute     # minor bump
+#   cargo release major -p nexo-X --execute     # major bump
+#
+# Without --execute it dry-runs and prints the plan.
+
+# Tag pattern matches what release-plz wrote so historical tags
+# stay coherent (`<crate>-v<version>`).
+tag-name = "{{prefix}}v{{version}}"
+tag-prefix = "{{crate_name}}-"
+
+# One push at the end of the release, batching tags.
+push = true
+
+# Single git commit per release that bumps the version + sync's
+# every internal `path` dep version pin.
+consolidate-commits = true
+pre-release-commit-message = "chore(release): {{crate_name}} v{{version}}"
+
+# Per-crate independent versioning (don't sync workspace.package.version).
+shared-version = false
+
+# Auto-cargo-publish? Yes. Tagging without publishing is half a release.
+publish = true
+sign-tag = false
+sign-commit = false
+
+# Run `cargo build --release` before publishing each crate.
+verify = true

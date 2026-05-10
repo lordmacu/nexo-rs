@@ -20,22 +20,23 @@ name: release-plz
 #
 # Workflow is skipped when the commit message contains `[skip release-plz]`.
 
-# Phase 81.19.b cleanup — re-enabled on push to main after the
-# wa-agent v0.1.6 + nexo-plugin-whatsapp v0.1.3 publish wave
-# eliminated the last sibling-repo path-dep blocker. The
-# workspace `[workspace.dependencies]` now consumes the 3
-# extracted plugins via crates.io versions only (no `path = `).
-# A `[patch.crates-io]` block in `proyecto/Cargo.toml` redirects
-# every internal `nexo-*` crate back to local paths so the dep
-# graph unifies (one copy of every crate, no trait/type identity
-# splits between registry and path sources).
+# Phase 81.19.b cleanup superseded — `release-plz` retired in
+# favour of `cargo-release` (see `release.toml`). release-plz
+# couldn't reliably automate this workspace because its tmp-clone
+# diff walker hits path-dep state in HISTORICAL commits (from
+# before the May 9 sibling-extract was complete), even after every
+# crate's current `cargo_vcs_info.json` baseline got migrated to a
+# clean commit. The May 10 publish wave confirmed this: 24 crates
+# re-published from clean state, new tags created, but release-plz
+# still walked the older v0.1.5 anchor and failed.
 #
-# Skip the workflow on a commit by including `[skip release-plz]`
-# in the message — useful during manual `cargo publish` waves
-# to avoid race conditions with the workflow.
+# This workflow stays as `workflow_dispatch:` only for now — it
+# CAN be invoked manually to test, but day-to-day releases run via
+# `cargo release patch -p nexo-X --execute` from a clean working
+# tree. See `release.toml` for the cargo-release config.
+#
+# Future cleanup: delete this workflow + uninstall release-plz.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
