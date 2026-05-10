@@ -82,7 +82,7 @@ regex = "1"
 # pairing/cancel.
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
-nexo-tool-meta = { version = "0.1.8", path = "../tool-meta" }
+nexo-tool-meta = { version = "0.1.9", path = "../tool-meta" }
 uuid = { workspace = true, features = ["v4"] }
 
 [lints]
