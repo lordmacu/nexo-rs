@@ -4784,7 +4784,6 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "reqwest",
- "rust-embed",
  "rustls 0.23.38",
  "semver",
  "serde",
@@ -6343,7 +6342,6 @@ version = "8.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5bcdef0be6fe7f6fa333b1073c949729274b05f123a0ad7efcb8efd878e5c3b1"
 dependencies = [
- "globset",
  "sha2",
  "walkdir",
 ]
