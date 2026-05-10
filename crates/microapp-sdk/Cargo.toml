@@ -253,7 +253,22 @@ db-migrate = ["dep:sqlx"]
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
 serde_json  = { workspace = true }
-tokio       = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+# Phase 91.x.wasm.phase-2 — direct version pin (not `workspace =
+# true`) so this crate's tokio feature set isn't unionised with
+# the workspace-level `tokio = { features = [\"full\"] }` pin
+# when this crate is built standalone (e.g. `cargo check -p
+# nexo-microapp-sdk --target wasm32-unknown-unknown`). `full`
+# includes `net` which drags `mio`, which doesn't compile on
+# wasm32.
+#
+# WASM-safe baseline: `macros`, `rt`, `sync`, `io-util`, `time`
+# (tokio's own compile_error allows only these on wasm32). The
+# extra `io-std` + `rt-multi-thread` features the native SDK
+# uses (stdin/stdout for plugin JSON-RPC; multi-threaded runtime
+# for parallel tasks) are added only on non-wasm targets via
+# the cfg-target-specific block below. Cargo unifies the two
+# dep entries for native builds; WASM only sees the baseline.
+tokio       = { version = "1", default-features = false, features = ["macros", "rt", "sync", "io-util", "time"] }
 async-trait = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }
@@ -268,6 +283,18 @@ uuid        = { workspace = true }
 # so native targets don't pull `wasm-bindgen` unnecessarily.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }
+
+# Phase 91.x.wasm.phase-2 — extra tokio features the native SDK
+# needs on top of the WASM-safe baseline above. `io-std` powers
+# stdin/stdout for the plugin JSON-RPC dispatch; `rt-multi-thread`
+# is the runtime daemon binaries use to parallelise work; `fs`
+# is the async-fs reader the audio decode chain uses (the
+# legacy whisper-rs path also needs it via `tokio::fs::read`).
+# All three are unsupported on wasm32 — tokio's own
+# compile_error rejects them — so they live behind a non-wasm32
+# cfg.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["io-std", "rt-multi-thread", "fs", "process"] }
 # Phase 82.10 — admin RPC pending-request map. Optional dep
 # (only the `admin` feature pulls it). Keeps the default
 # microapp dep tree slim.
