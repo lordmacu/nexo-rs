@@ -19,11 +19,11 @@ nats    = ["dep:async-nats"]
 
 [dependencies]
 nexo-config            = { version = "0.1.4", path = "../config" }
-nexo-driver-types      = { version = "0.1.5", path = "../driver-types" }
-nexo-driver-claude     = { version = "0.1.5", path = "../driver-claude" }
-nexo-driver-permission = { version = "0.1.5", path = "../driver-permission" }
+nexo-driver-types      = { version = "0.1.6", path = "../driver-types" }
+nexo-driver-claude     = { version = "0.1.6", path = "../driver-claude" }
+nexo-driver-permission = { version = "0.1.6", path = "../driver-permission" }
 nexo-llm               = { version = "0.1.2", path = "../llm" }
-nexo-memory            = { version = "0.1.3", path = "../memory" }
+nexo-memory            = { version = "0.1.4", path = "../memory" }
 sqlx                   = { workspace = true }
 anyhow                 = { workspace = true }
 async-nats             = { workspace = true, optional = true }
