@@ -823,7 +823,8 @@ impl AdminRpcDispatcher {
             // capabilities.
             "nexo/admin/memory/query" => Some("memory_query"),
             // Phase 90.x.memory-snapshot — list snapshots.
-            "nexo/admin/memory/list_snapshots" => Some("memory_snapshot"),
+            "nexo/admin/memory/list_snapshots"
+            | "nexo/admin/memory/delete_snapshot" => Some("memory_snapshot"),
             // Phase 82.10.k — secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
@@ -1416,6 +1417,14 @@ impl AdminRpcDispatcher {
             "nexo/admin/memory/list_snapshots" => match &self.memory_snapshot_reader {
                 Some(reader) => {
                     super::domains::memory::list_snapshots(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "memory snapshot domain not configured".into(),
+                )),
+            },
+            "nexo/admin/memory/delete_snapshot" => match &self.memory_snapshot_reader {
+                Some(reader) => {
+                    super::domains::memory::delete_snapshot(reader.as_ref(), params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "memory snapshot domain not configured".into(),
