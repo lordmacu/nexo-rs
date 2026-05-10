@@ -4668,31 +4668,48 @@ main.rs's bootstrap code. 1 new test
 confirms the env var lands on the spawned `Command` and
 points at the per-extension dir.
 
-### Phase 83.14 — actual crates.io upload + release-plz CI + npm
+### Phase 83.14 — actual crates.io upload + release-plz CI + npm — ✅ shipped 2026-05-10 (83.14.b)
 
 Phase 83.14 shipped publish-readiness for the four Tier-A
 crates: clean dry-run on `nexo-tool-meta`,
 `nexo-plugin-manifest`, `nexo-compliance-primitives`. Per-crate
 README.md + CHANGELOG.md present. Publishing doc
 (`docs/src/microapps/publishing.md`) covers the dependency
-order. Three pieces deferred to 83.14.b:
+order.
 
-- **Actual crates.io upload**: operator runs the documented
-  publish sequence on tag day. `nexo-microapp-sdk` is gated on
-  `nexo-tool-meta` propagating to crates.io first (chicken-
-  and-egg between path-dep and registry index).
-- **release-plz CI integration**: `.github/workflows/publish.yml`
-  triggers on `v*.*.*` tags, reads `CARGO_REGISTRY_TOKEN`,
-  walks the publish order with index-propagation waits between
-  steps.
-- **npm package `@nexo/microapp-ui-react`**: lands when 83.13
-  ships the React component library. Until then there is
-  nothing to publish to npm.
-- **out-of-tree consumer migration** (agent-creator from
-  path-dep to versioned `0.1` deps) — straightforward
-  Cargo.toml edit on the consumer side post-publish.
+Phase 83.14.b execution shipped 2026-05-10:
 
-Target phase: 83.14.b (folded with the v0.1.0 tag day).
+- ✅ **Actual crates.io upload**: tool-meta@0.1.6, core@0.1.6,
+  microapp-sdk@0.1.14 published via `cargo release patch -p X
+  --no-verify --execute`. Two prereqs published as straight
+  `cargo publish` (no bump) because they had never reached the
+  registry: nexo-sanitize@0.1.6 + nexo-media@0.1.6.
+- ✅ **out-of-tree consumer migration**: agent-creator-microapp's
+  Cargo.toml flipped from 4 path-deps to versioned crates.io
+  refs in commit `eac0fe8`. `cargo build --profile release-fast`
+  passes standalone.
+- ✅ **release.toml hardening**: dropped unrendered
+  `{{crate_name}}` from `pre-release-commit-message`
+  (cargo-release 1.x doesn't render it under
+  `consolidate-commits = true`). Past commits had literal
+  `{{crate_name}}` in the log; future ones won't.
+- ✅ **workspace.dependencies fix**: nexo-sanitize +
+  nexo-media added at workspace scope so `microapp-sdk`
+  consumes them through `workspace = true`. Before, the SDK
+  declared them as path-only which failed publish-time
+  validation (`all dependencies must have a version
+  requirement`).
+
+Deferred (intentional, low risk):
+
+- **release-plz CI integration**: superseded by cargo-release
+  manual flow per memory `feedback_cargo_release_not_release_plz`.
+  CI publish workflow on tag push is a separate item if/when we
+  want it.
+- **npm package**: ✅ already shipped — `@lordmacu/nexo-microapp-ui-react`
+  on npm at 0.1.0+ since 83.13 theme work.
+
+**Followup completed.**
 
 ### Phase 83.11 — walkthrough docs + admin-ui PHASES entries
 
