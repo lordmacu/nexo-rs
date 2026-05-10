@@ -76,16 +76,29 @@ pub(crate) mod mel;
 pub mod transcribe_candle;
 
 // Phase 91.x.wasm.phase-4 — cloud STT backends (OpenAI Whisper,
-// Groq Whisper-large-v3, Anthropic voice_stream placeholder)
+// Groq Whisper-large-v3, Anthropic voice_stream)
 // + `CompositeProvider` fallback chain.
 //
-// Cfg-gated on `not(target_arch = "wasm32")` because the
-// underlying `reqwest` build for wasm32 can't share an optional
-// dep declaration with the native rustls-tls path (Cargo
-// duplicate-key error). WASM-side cloud STT is filed as
-// Phase 91.x.wasm.phase-4c — separate `gloo-net`-based client.
-// Until then, WASM consumers needing real STT must transcribe
-// out-of-band (e.g. through the SaaS backend the SDK talks to).
+// Cfg-gated on `not(target_arch = "wasm32")` because of two
+// concrete wasm32 incompatibilities surfaced during Phase
+// 91.x.wasm.phase-4c spike:
+//
+//   - reqwest's `multipart` feature is native-only (the wasm32
+//     build exposes only a subset of the builder); `OpenAI` +
+//     `Groq` REST legs use `form.part(...)` which fails type
+//     inference on wasm32.
+//   - tokio-tungstenite drags tokio's `net` feature → `mio`;
+//     mio cfg-gates itself empty on wasm32 but tungstenite's
+//     `connect_async` still needs a TCP stream type that doesn't
+//     exist there.
+//
+// Full WASM cloud STT needs separate transport impls:
+//   - REST legs → `gloo-net::http` or `web-sys::fetch` direct
+//   - WebSocket leg → `gloo-net::websocket` or
+//     `web-sys::WebSocket`
+// Filed as Phase 91.x.wasm.phase-4c follow-up. Until then,
+// WASM consumers needing real STT transcribe out-of-band
+// (e.g. through the SaaS backend the SDK talks to).
 #[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
 pub mod cloud;
 

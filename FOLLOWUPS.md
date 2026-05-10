@@ -77,17 +77,40 @@ for the detailed close-out.
   `91.x.wasm.phase-4c` / `phase-4e` below.
 
 - ⬜ **91.x.wasm.phase-4c — WASM transport for the cloud STT
-  legs** — `tokio-tungstenite` doesn't compile on wasm32
-  (drags tokio's `net` feature → mio → kernel-only), so the
-  Anthropic `voice_stream` WebSocket client is native-only
-  today. WASM consumers wanting Anthropic STT need either:
-  (a) a `gloo-net` (or `web-sys::WebSocket` direct) bridge,
-      swap-in behind the same `AnthropicVoiceStream` surface;
-  (b) fallback to `OpenAiProvider` / `GroqProvider` REST
-      (reqwest's wasm32 fetch path already works).
-  The REST legs are the cheap default; voice_stream gives the
-  Anthropic conversation_engine + Deepgram Nova 3 stack — wire
-  the gloo-net path when a browser microapp demands it.
+  legs** — full WASM cloud STT remains gated out. A spike
+  during phase-4d.b finalisation removed the `not(wasm32)`
+  gate on `stt/mod.rs::cloud` and found two concrete blockers:
+  1. **reqwest multipart is native-only** — wasm32 reqwest
+     exposes a stripped builder surface; `OpenAI` + `Groq`
+     legs use `form.part(...).file_name(...).mime_str(...)`
+     which fails type inference on wasm32 (`cannot infer
+     type` on `.send().await` / `.text().await` /
+     `.json().await`).
+  2. **tokio-tungstenite drags TCP types** — mio cfg-gates
+     itself empty on wasm32 but `connect_async` still needs
+     a `TcpStream`-shaped type that doesn't exist there.
+  Unblock needs separate transport impls per cloud leg:
+  (a) REST legs (`OpenAi` + `Groq`) → swap multipart for
+      raw `gloo-net::http::Request` POST with audio body +
+      JSON form data, OR `web-sys::fetch` direct.
+  (b) WebSocket leg (`AnthropicVoiceStream`) → swap
+      tokio-tungstenite for `gloo-net::websocket::futures::
+      WebSocket` (Sink + Stream wrapper around `web-sys::
+      WebSocket`), wrap KeepAlive heartbeat in
+      `wasm_bindgen_futures::spawn_local` instead of
+      `tokio::spawn`.
+  Estimated cost: ~6-8 h. Mining reference:
+  `gloo-net::websocket::futures` exposes the same `Sink<
+  Message>` + `Stream<Item = Result<Message>>` API as
+  `tokio_tungstenite::WebSocketStream`, so the protocol
+  state-machine logic (KeepAlive heartbeat, 4-trigger
+  finalize, event parser) stays identical — only the
+  `connect_async` + `Message` enum differ. Splitting the
+  `AnthropicVoiceStream::transcribe` body into a private
+  `transcribe_protocol<Sink, Stream>` generic over the two
+  trait bounds + two cfg-gated thin opener fns
+  (`open_ws_native` / `open_ws_wasm`) is the cleanest design
+  path. Defer until a browser microapp demands cloud STT.
 
 - ⬜ **91.x.wasm.phase-4b.streaming — full push-to-talk live
   transcription** — phase-4b ships the one-shot path (buffer →
