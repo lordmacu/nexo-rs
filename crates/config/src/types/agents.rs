@@ -1,6 +1,35 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Phase 81.19.b locale follow-up item 1 — closed-enum validator
+/// for `agents.<id>.language` and `InboundBinding.language` at
+/// YAML deserialise time. Pre-89 the daemon would silently treat
+/// an unknown `language: "klingon"` as `None`; the validator
+/// surfaces the typo as a hard parse error so a hand-edit of the
+/// YAML never ships an unsupported locale to production.
+///
+/// Wire shape stays `Option<String>` (admin RPC + microapp
+/// parsers consume strings); only the validation gate changes.
+fn deserialize_locale_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use std::str::FromStr;
+
+    let opt: Option<String> = Option::deserialize(d)?;
+    if let Some(ref s) = opt {
+        nexo_tool_meta::locale::Locale::from_str(s).map_err(|e| {
+            D::Error::custom(format!(
+                "invalid locale {s:?}: {e}. Supported codes: see \
+                 nexo_tool_meta::locale::Locale or run \
+                 `cargo run -p nexo-microapp-sdk --bin locale_dump`"
+            ))
+        })?;
+    }
+    Ok(opt)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
@@ -69,7 +98,12 @@ pub struct AgentConfig {
     ///
     /// Per-binding `InboundBinding::language` overrides this for the
     /// matched channel.
-    #[serde(default)]
+    ///
+    /// Phase 81.19.b — strict-validated at YAML deserialise time
+    /// against `nexo_tool_meta::locale::Locale::from_str`.
+    /// `language: "klingon"` aborts boot with a typed parse error
+    /// instead of silently dropping to `None`.
+    #[serde(default, deserialize_with = "deserialize_locale_string")]
     pub language: Option<String>,
     /// Phase 21 — link understanding. When enabled, the runtime
     /// detects URLs in inbound messages, fetches each one once per
@@ -668,7 +702,10 @@ pub struct InboundBinding {
     /// languages (e.g. Spanish on a local WhatsApp, English on a
     /// support Telegram). `None` (default) inherits the agent-level
     /// `language` field.
-    #[serde(default)]
+    ///
+    /// Phase 81.19.b — strict-validated at YAML deserialise time;
+    /// see `AgentConfig.language` for the closed-enum reference.
+    #[serde(default, deserialize_with = "deserialize_locale_string")]
     pub language: Option<String>,
     /// Phase 21 — per-binding override of the link-understanding
     /// config. Same opaque-JSON shape as the agent-level field;
@@ -1092,5 +1129,86 @@ tool_rate_limits:
         let yaml = "plugin: whatsapp\ninstance: enterprise\n";
         let b: InboundBinding = serde_yaml::from_str(yaml).unwrap();
         assert!(b.tool_rate_limits.is_none());
+    }
+}
+
+/// Phase 81.19.b locale follow-up item 1 — strict YAML validation
+/// of `agents.<id>.language` and `InboundBinding.language` against
+/// the closed-enum `nexo_tool_meta::locale::Locale`.
+#[cfg(test)]
+mod locale_yaml_validation_tests {
+    use super::*;
+
+    fn agent_yaml(language_block: &str) -> String {
+        format!(
+            r#"
+id: ana
+description: ""
+model:
+  provider: test
+  model: gpt-test
+plugins: []
+allowed_tools: []
+{language_block}
+"#
+        )
+    }
+
+    #[test]
+    fn deserializes_valid_es_ar_locale() {
+        let y = agent_yaml("language: es-AR");
+        let a: AgentConfig =
+            serde_yaml::from_str(&y).expect("valid es-AR locale must deserialize");
+        assert_eq!(a.language.as_deref(), Some("es-AR"));
+    }
+
+    #[test]
+    fn rejects_unknown_lang_code() {
+        let y = agent_yaml(r#"language: "klingon""#);
+        let err = serde_yaml::from_str::<AgentConfig>(&y).expect_err("klingon must reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid locale") || msg.contains("klingon"),
+            "expected closed-enum rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_region() {
+        let y = agent_yaml(r#"language: "es-XX""#);
+        let err = serde_yaml::from_str::<AgentConfig>(&y).expect_err("es-XX must reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid locale") || msg.contains("XX"),
+            "expected closed-enum region rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn accepts_lang_only_locale() {
+        let y = agent_yaml("language: en");
+        let a: AgentConfig = serde_yaml::from_str(&y).expect("language-only en must deserialize");
+        assert_eq!(a.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn accepts_null_language() {
+        // Field omitted entirely (default = None).
+        let y = agent_yaml("");
+        let a: AgentConfig = serde_yaml::from_str(&y).expect("absent language must default None");
+        assert_eq!(a.language, None);
+    }
+
+    /// Same validator gate fires on `InboundBinding.language` —
+    /// per-binding overrides cannot ship an unsupported locale.
+    #[test]
+    fn rejects_unknown_locale_on_binding_override() {
+        let y = "plugin: whatsapp\ninstance: support\nlanguage: \"klingon\"\n";
+        let err = serde_yaml::from_str::<InboundBinding>(y).expect_err("klingon on binding rejects");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("invalid locale") || msg.contains("klingon"),
+            "expected binding-language rejection, got: {msg}"
+        );
     }
 }
