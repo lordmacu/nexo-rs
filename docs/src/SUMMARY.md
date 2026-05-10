@@ -9,6 +9,7 @@
 
 - [Installation](./getting-started/installation.md)
 - [Quickstart](./getting-started/quickstart.md)
+- [Platform support](./getting-started/platform-support.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
 - [Verifying releases](./getting-started/verify.md)
 
