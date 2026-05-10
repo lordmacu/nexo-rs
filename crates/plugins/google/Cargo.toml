@@ -16,7 +16,7 @@ categories    = { workspace = true }
 # Native Google OAuth client + the 4 google_* tools. Lives outside of
 # nexo-core so the runtime doesn't ship the reqwest OAuth machinery
 # when an agent has no `google_auth:` block.
-nexo-core = { version = "0.1.11", path = "../../core" }
+nexo-core = { version = "0.1.12", path = "../../core" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-resilience = { version = "0.1.1", path = "../../resilience" }
 anyhow      = { workspace = true }
