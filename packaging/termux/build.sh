@@ -41,19 +41,38 @@ if [ "${1:-}" = "--binary" ] && [ -n "${2:-}" ]; then
 elif [ -n "${TERMUX_BINARY:-}" ]; then
     BINARY="$TERMUX_BINARY"
 else
-    # Cross-compile via `cargo-zigbuild`. Requires `cargo install
-    # cargo-zigbuild` + `pip install ziglang` on the host. CI provides
-    # both pre-installed; local builds may need them set up first.
-    echo "==> cross-compiling for aarch64-linux-android (cargo-zigbuild)"
-    if ! command -v cargo-zigbuild >/dev/null; then
-        echo "  ERROR: cargo-zigbuild missing. Install with:" >&2
-        echo "    cargo install cargo-zigbuild" >&2
-        echo "    pip install ziglang" >&2
+    # Cross-compile via `cargo-ndk` + the real Android NDK. Phase
+    # 27.2-follow-up.b proved that zig 0.13's bundled Android sysroot
+    # is incomplete for the C-source crates we depend on (`ring`
+    # needs `<assert.h>`, `libsqlite3-sys` needs `<stdio.h>`), and
+    # cargo-zigbuild 0.22.3 doesn't accept an API-level suffix on
+    # the target name. cargo-ndk delegates to the actual NDK
+    # toolchain which ships full Bionic libc headers — works
+    # end-to-end with the rustls/tokio-rustls ring pin landed in
+    # the same wave.
+    #
+    # Requires:
+    #   - cargo-ndk:        cargo install cargo-ndk --locked
+    #   - Android NDK r26+: download via `setup-ndk` action in CI
+    #                       or `sdkmanager` locally, then export
+    #                       `ANDROID_NDK_HOME` to the install root.
+    echo "==> cross-compiling for aarch64-linux-android (cargo-ndk)"
+    if ! command -v cargo-ndk >/dev/null; then
+        echo "  ERROR: cargo-ndk missing. Install with:" >&2
+        echo "    cargo install cargo-ndk --locked" >&2
+        exit 2
+    fi
+    if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+        echo "  ERROR: ANDROID_NDK_HOME unset." >&2
+        echo "  Install Android NDK r26+ and export ANDROID_NDK_HOME to its root." >&2
         exit 2
     fi
     rustup target add aarch64-linux-android
+    # `--platform 21` matches the minimum Bionic API level we target
+    # (Android 5.0+). cargo-ndk infers the right toolchain wrapper
+    # from `$ANDROID_NDK_HOME` + the requested target.
     (cd "$REPO_ROOT" && \
-     cargo zigbuild --release --bin nexo --target aarch64-linux-android)
+     cargo ndk --target arm64-v8a --platform 21 build --release --bin nexo)
     BINARY="$REPO_ROOT/target/aarch64-linux-android/release/nexo"
 fi
 
