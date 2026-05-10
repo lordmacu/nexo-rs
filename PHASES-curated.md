@@ -52,6 +52,14 @@ Phase 81 plug-and-play P2/P3 chain ✅ (81.3/81.4/81.5/81.6/
 81.7/81.8/81.9/81.9.b/81.10/81.11/81.12.a-d/81.14-81.28 all
 shipped); Phase 85/86/87 P2/P3 ✅ (85.1/85.2/86.1/87.1 shipped).
 
+**2026-05-10 update** — Phase 90 ✅ (7/7 shipped) — admin plugin
+extracted out-of-tree to `nexo-rs-plugin-admin` sibling repo,
+published as `nexo-plugin-admin@0.1.0` on crates.io. Daemon
+`run_admin_web` (~2702 LOC) + `proyecto/admin-ui/` (~5342 LOC)
+deleted. Pivot recognises framework = product, microapps = demos.
+9 admin modules in plugin UI (5 live + 4 placeholders awaiting
+backend admin RPCs — see FOLLOWUPS for the deferred endpoints).
+
 Genuine pending:
 
 1. **P1** — Phase 83.10 second microapp validation (agent-creator production validation — out-of-tree work at `/home/familia/chat/agent-creator-microapp/`)
