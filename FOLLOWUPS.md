@@ -19,18 +19,59 @@ NOT shipping blockers.
   page is LIVE in nexo-plugin-admin@0.1.4 — agent_id +
   free-text query inputs, recall-style result cards with
   tags + concept_tags + memory_type badge.
-- 🟡 **memory snapshot admin RPC** — list + delete shipped.
-  `list_snapshots` shipped 2026-05-10 in
-  nexo-plugin-admin@0.1.7. `delete_snapshot` + shared cell
-  refactor (lifts the path_resolver limitation) shipped
-  2026-05-10 in nexo-plugin-admin@0.1.8. The
-  `LiveMemorySnapshotReader` now reads from the SAME
-  `Arc<dyn MemorySnapshotter>` instance the agent runtime
-  uses, so operators with custom `path_resolver` maps see
-  the actual snapshot list (no longer DefaultPathResolver-
-  only). `create_snapshot` and `restore_snapshot` still
-  CLI-only — those flows are heavy (tar.zst + optional age
-  encryption + retention sweep + lock dance).
+- ✅ ~~**memory snapshot admin RPC** — full CRUD shipped~~.
+  `list_snapshots` shipped 2026-05-10 in nexo-plugin-admin@0.1.7.
+  `delete_snapshot` + shared cell refactor (lifts the
+  path_resolver limitation) shipped 2026-05-10 in
+  nexo-plugin-admin@0.1.8. `create_snapshot` +
+  `restore_snapshot` shipped 2026-05-10 in
+  nexo-plugin-admin@0.1.10 (Phase 90.x.memory-snapshot.create-restore):
+  trait `MemorySnapshotReader` extended with `create()` +
+  `restore()`, `MemorySnapshotsListResponse` gained
+  `encryption_available: bool`, defaults forced server-side
+  (`redact_secrets=true`, `auto_pre_snapshot=true`,
+  `created_by="admin-ui"`, recipient resolved from
+  `recipients[0]`). Restore by `snapshot_id` (server resolves
+  bundle_path, never accepts client-supplied paths). Tenant
+  REQUIRED + manifest validation rejects mismatch before
+  touching disk. `dry_run=true` returns RestoreReportWire
+  preview without mutation. Fixed-shape contract logged in
+  `docs/src/ops/memory-snapshot.md` § Admin RPC surface.
+  Backend: nexo-tool-meta 0.1.11→0.1.12 (5 new wire types +
+  shape change on list response), nexo-core 0.1.11→0.1.12
+  (trait + dispatcher arms + 8 unit tests). Adapter: 4
+  integration tests in `crates/setup/src/admin_adapters.rs`
+  (`live_memory_snapshot_tests`).
+
+- ⬜ **memory snapshot trait rename `MemorySnapshotReader` →
+  `MemorySnapshotAdmin`** — Phase 90.x.memory-snapshot.create-restore
+  added write methods (`create`, `restore`) to a trait still
+  named `…Reader`. Naming kept as deuda to avoid breaking
+  `nexo-core 0.1.x` consumers that pin `Arc<dyn
+  MemorySnapshotReader>`. Slated for next major bump.
+
+- ⬜ **memory snapshot multi-recipient encrypt** — Phase
+  90.x.memory-snapshot.create-restore resolves only
+  `EncryptionSection.recipients[0]` for `create(encrypt=true)`.
+  Operators with multi-recipient setups expect bundles wrapped
+  for every recipient. Trigger: operator request.
+
+- ⬜ **memory snapshot streaming progress** —
+  `nexo/notify/snapshot_progress` for long-running creates.
+  Defer until post-launch metrics show p95 > 30s. Today the
+  request blocks until completion which is acceptable for
+  typical agent state sizes.
+
+- ⬜ **memory snapshot verify-bundle preview RPC** —
+  `nexo/admin/memory/verify_snapshot` exposing
+  `MemorySnapshotter::verify` results in the SPA so operators
+  can audit bundle integrity before restoring. Defer — UI
+  does not currently expose verify; CLI keeps the verb.
+
+- ⬜ **memory snapshot diff RPC from UI** —
+  `nexo/admin/memory/diff_snapshots` exposing
+  `MemorySnapshotter::diff` for two-bundle comparison. Defer
+  until operator request.
 
 - ✅ ~~**plugins admin RPCs**~~ shipped 2026-05-10 — added
   `nexo/admin/plugins/doctor` (capability `plugin_doctor`).

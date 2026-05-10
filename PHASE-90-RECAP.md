@@ -123,25 +123,24 @@ cargo build && cargo test --tests -- --ignored
 
 ## 2. Qué falta
 
-### 2.1 Phase 90 follow-ups deferred (2 items)
+### 2.1 Phase 90 follow-ups deferred (1 item, was 2)
 
-#### 2.1.1 Memory snapshot create/restore admin RPCs 🟡
+#### 2.1.1 ~~Memory snapshot create/restore admin RPCs~~ ✅ shipped 2026-05-10
 
-**Estado**: list + delete shipped. Create + restore CLI-only.
+**Estado**: shipped en `nexo-plugin-admin@0.1.10` + `nexo-tool-meta@0.1.12` + `nexo-core@0.1.12` (sub-fase `90.x.memory-snapshot.create-restore`).
 
-**Por qué deferred**: heavyweight flows.
-- `create_snapshot`: tar.zst encoding + opcional age encryption + retention sweep + lock dance.
-- `restore_snapshot`: restaura sqlite/memdir desde bundle, requiere agent paused + lock acquired.
-
-**Para shipearlo**:
-1. Add wire types: `MemorySnapshotsCreateParams { agent_id, tenant, label?, encrypt? }` + `MemorySnapshotsRestoreParams { agent_id, tenant, snapshot_id, dry_run }`
-2. Extend `MemorySnapshotReader` trait con `create()` + `restore()` methods
-3. Wrap `nexo_memory_snapshot::MemorySnapshotter::snapshot()` + `.restore()` en `LiveMemorySnapshotReader`
-4. Dispatcher routes
-5. Frontend: "+ Create snapshot" button con label input + encrypt toggle, "Restore" button con dry_run toggle + warning modal
-6. Tests: encrypt path + plaintext path + concurrent restore lock contention
-
-**Effort estimado**: 4-6h. **Trigger**: operador pide snapshot UI management (low-frequency vs CLI).
+**Lo entregado**:
+- 5 nuevos wire types en `crates/tool-meta/src/admin/memory.rs`: `MemorySnapshotsCreateParams/Response`, `MemorySnapshotsRestoreParams/Response`, `RestoreReportWire`.
+- Shape change en `MemorySnapshotsListResponse` — añade `encryption_available: bool` (SHAPE CHANGE: `Vec<SnapshotMetaWire>` → `struct { snapshots, encryption_available }`).
+- Trait `MemorySnapshotReader` extendido con `create()` + `restore()` (naming hangover documentado, rename diferido al próximo major).
+- 2 nuevos handlers en `crates/core/src/agent/admin_rpc/domains/memory.rs` + dispatcher arms (capability `memory_snapshot` reusada).
+- `LiveMemorySnapshotReader::new(cell, encryption_section)` extendido en `crates/setup/src/admin_adapters.rs` — clonado de `EncryptionSection` al boot drives `encryption_available` flag, recipient resolution para create, identity resolution para restore.
+- Defaults forzados server-side: `redact_secrets=true`, `auto_pre_snapshot=true`, `created_by="admin-ui"`.
+- Restore por `snapshot_id` (server resuelve `bundle_path` via `list()` lookup — admin endpoint nunca acepta paths raw).
+- Tenant REQUIRED + manifest validation rechaza mismatch antes de tocar disco.
+- 8 unit tests nuevos en domains/memory + 4 integration tests en admin_adapters (mock snapshotter).
+- Frontend pendiente Fase G: `CreateSnapshotModal` + `RestoreSnapshotModal` + `RestoreReportTable` + i18n keys es+en.
+- Docs: `docs/src/ops/memory-snapshot.md` § Admin RPC surface explica defaults + tenant + encryption + dry-run + lock semantics.
 
 #### 2.1.2 Plugin admin daemon-backed e2e test 🟡
 

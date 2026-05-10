@@ -4656,27 +4656,42 @@ pub fn shared_snapshotter_cell() -> SharedMemorySnapshotter {
 /// per-agent memdir map, custom sqlite roots, etc.) so the page
 /// reflects exactly what `agent memory snapshot list` would.
 ///
-/// V1 surface = list + delete. Create / restore stay CLI-only
-/// (heavy: tar.zst + optional age encryption + retention sweep +
-/// lock dance).
+/// Surface (Phase 90.x.memory-snapshot list/delete +
+/// 90.x.memory-snapshot.create-restore): list, delete, create,
+/// restore. The CLI keeps power-user knobs (`--no-auto-pre`,
+/// `--identity`, retention sweep) the UI doesn't expose.
 #[derive(Clone)]
 pub struct LiveMemorySnapshotReader {
     cell: SharedMemorySnapshotter,
+    /// Snapshot of `memory.snapshot.encryption` at boot. Used to:
+    ///   - report `encryption_available` on list responses
+    ///   - resolve the recipient when `create(encrypt=true)`
+    ///   - resolve the identity file when restoring an encrypted bundle
+    ///
+    /// Cloned (not shared) on construct — config doesn't hot-reload.
+    encryption: nexo_memory_snapshot::config::EncryptionSection,
 }
 
 impl std::fmt::Debug for LiveMemorySnapshotReader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LiveMemorySnapshotReader")
             .field("cell", &"<shared-snapshotter>")
+            .field("encryption.enabled", &self.encryption.enabled)
+            .field("encryption.recipients_count", &self.encryption.recipients.len())
             .finish()
     }
 }
 
 impl LiveMemorySnapshotReader {
     /// Wrap a shared cell. The cell may be `None` at construction
-    /// time; the daemon writes the live snapshotter in later.
-    pub fn new(cell: SharedMemorySnapshotter) -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { cell })
+    /// time; the daemon writes the live snapshotter in later. The
+    /// `encryption` clone reflects the operator's YAML at boot —
+    /// reload requires daemon restart.
+    pub fn new(
+        cell: SharedMemorySnapshotter,
+        encryption: nexo_memory_snapshot::config::EncryptionSection,
+    ) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self { cell, encryption })
     }
 
     async fn snapshotter(
@@ -4688,6 +4703,34 @@ impl LiveMemorySnapshotReader {
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("memory snapshot subsystem not configured"))
+    }
+
+    /// True iff at least one age recipient is configured.
+    /// Surfaced on list responses so the SPA can disable the
+    /// encrypt toggle without operators wondering why their
+    /// requests get rejected.
+    fn encryption_available(&self) -> bool {
+        self.encryption.enabled && !self.encryption.recipients.is_empty()
+    }
+
+    /// Project a `SnapshotMeta` to the wire shape. Shared by
+    /// list() + create() so the response shape stays identical.
+    fn project_meta(
+        m: nexo_memory_snapshot::SnapshotMeta,
+    ) -> nexo_tool_meta::admin::memory::SnapshotMetaWire {
+        nexo_tool_meta::admin::memory::SnapshotMetaWire {
+            id: m.id.to_string(),
+            agent_id: m.agent_id.to_string(),
+            tenant: m.tenant,
+            label: m.label,
+            created_at_ms: m.created_at_ms,
+            bundle_path: m.bundle_path.to_string_lossy().into_owned(),
+            bundle_size_bytes: m.bundle_size_bytes,
+            bundle_sha256: m.bundle_sha256,
+            git_oid: m.git_oid,
+            encrypted: m.encrypted,
+            redactions_applied: m.redactions_applied,
+        }
     }
 }
 
@@ -4718,28 +4761,447 @@ impl
         &self,
         agent_id: &str,
         tenant: &str,
-    ) -> anyhow::Result<Vec<nexo_tool_meta::admin::memory::SnapshotMetaWire>> {
+    ) -> anyhow::Result<nexo_tool_meta::admin::memory::MemorySnapshotsListResponse> {
         let snapshotter = self.snapshotter().await?;
         let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
         let metas = snapshotter
             .list(&agent, tenant)
             .await
             .map_err(|e| anyhow::anyhow!("snapshotter.list: {e}"))?;
-        Ok(metas
+        Ok(nexo_tool_meta::admin::memory::MemorySnapshotsListResponse {
+            snapshots: metas.into_iter().map(Self::project_meta).collect(),
+            encryption_available: self.encryption_available(),
+        })
+    }
+
+    async fn create(
+        &self,
+        agent_id: &str,
+        tenant: &str,
+        label: Option<&str>,
+        encrypt: bool,
+    ) -> anyhow::Result<nexo_tool_meta::admin::memory::SnapshotMetaWire> {
+        // User-recoverable error — the handler maps the
+        // "no recipients configured" substring back to
+        // InvalidParams so the SPA can branch.
+        if encrypt && !self.encryption_available() {
+            anyhow::bail!(
+                "encryption requested but no recipients configured \
+                 (set memory.snapshot.encryption.recipients in config)"
+            );
+        }
+        let snapshotter = self.snapshotter().await?;
+        let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
+        let encrypt_key = if encrypt {
+            // `encryption_available()` guarantees recipients[0] exists.
+            Some(nexo_memory_snapshot::request::EncryptionKey::AgePublicKey(
+                self.encryption.recipients[0].clone(),
+            ))
+        } else {
+            None
+        };
+        let req = nexo_memory_snapshot::request::SnapshotRequest {
+            agent_id: agent,
+            tenant: tenant.to_string(),
+            label: label.map(|s| s.to_string()),
+            // Forced server-side: UI download path must never leak
+            // secrets into a portable bundle by accident. CLI keeps
+            // `--no-redact` for power users.
+            redact_secrets: true,
+            encrypt: encrypt_key,
+            // Provenance trace surfaced in the manifest's `created_by`.
+            created_by: "admin-ui".to_string(),
+        };
+        let meta = snapshotter
+            .snapshot(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("snapshotter.snapshot: {e}"))?;
+        Ok(Self::project_meta(meta))
+    }
+
+    async fn restore(
+        &self,
+        agent_id: &str,
+        tenant: &str,
+        snapshot_id: &str,
+        dry_run: bool,
+    ) -> anyhow::Result<nexo_tool_meta::admin::memory::RestoreReportWire> {
+        let snapshotter = self.snapshotter().await?;
+        let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
+        // Server-side resolution of `snapshot_id → bundle_path`. The
+        // UI never sends a filesystem path — that would be an
+        // arbitrary-file-read primitive against the admin endpoint.
+        let metas = snapshotter
+            .list(&agent, tenant)
+            .await
+            .map_err(|e| anyhow::anyhow!("snapshotter.list during restore lookup: {e}"))?;
+        let target_id: nexo_memory_snapshot::SnapshotId = snapshot_id
+            .parse()
+            .map_err(|e| anyhow::anyhow!("snapshot id `{snapshot_id}` invalid: {e}"))?;
+        let meta = metas
             .into_iter()
-            .map(|m| nexo_tool_meta::admin::memory::SnapshotMetaWire {
-                id: m.id.to_string(),
-                agent_id: m.agent_id.to_string(),
-                tenant: m.tenant,
-                label: m.label,
-                created_at_ms: m.created_at_ms,
-                bundle_path: m.bundle_path.to_string_lossy().into_owned(),
-                bundle_size_bytes: m.bundle_size_bytes,
-                bundle_sha256: m.bundle_sha256,
-                git_oid: m.git_oid,
-                encrypted: m.encrypted,
-                redactions_applied: m.redactions_applied,
+            .find(|m| m.id == target_id)
+            // The "not found" wording is mapped back to InvalidParams
+            // by the handler — the operator likely refreshed against
+            // a stale list and the bundle was deleted out-of-band.
+            .ok_or_else(|| anyhow::anyhow!("snapshot {snapshot_id} not found"))?;
+        // Defensive tenant check. The wire param is REQUIRED so an
+        // operator typo can never accidentally restore a `staging`
+        // bundle into a `prod` agent (or vice versa).
+        if meta.tenant != tenant {
+            anyhow::bail!(
+                "snapshot {snapshot_id} belongs to tenant `{}`, request specified `{}`",
+                meta.tenant,
+                tenant
+            );
+        }
+        let decrypt = if meta.encrypted {
+            let identity = self
+                .encryption
+                .identity_path
+                .clone()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "snapshot {snapshot_id} is encrypted but no identity_path \
+                         configured; restore via CLI with --identity"
+                    )
+                })?;
+            Some(nexo_memory_snapshot::request::DecryptionIdentity::AgeIdentityFile(
+                identity,
+            ))
+        } else {
+            None
+        };
+        let req = nexo_memory_snapshot::request::RestoreRequest {
+            agent_id: nexo_memory_snapshot::AgentId::from(agent_id.to_string()),
+            tenant: tenant.to_string(),
+            bundle: meta.bundle_path.clone(),
+            dry_run,
+            // Forced server-side: every UI restore is reversible
+            // via the auto-captured pre-snapshot. CLI keeps
+            // `--no-auto-pre` for power users with their own
+            // backup story.
+            auto_pre_snapshot: true,
+            decrypt,
+        };
+        let report = snapshotter
+            .restore(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("snapshotter.restore: {e}"))?;
+        Ok(nexo_tool_meta::admin::memory::RestoreReportWire {
+            agent_id: report.agent_id.to_string(),
+            from_snapshot_id: report.from.to_string(),
+            pre_snapshot_id: report.pre_snapshot.map(|id| id.to_string()),
+            git_reset_oid: report.git_reset_oid,
+            sqlite_restored_dbs: report.sqlite_restored_dbs,
+            state_files_restored: report.state_files_restored,
+            workers_restarted: report.workers_restarted,
+            dry_run: report.dry_run,
+        })
+    }
+}
+
+#[cfg(test)]
+mod live_memory_snapshot_tests {
+    //! Adapter-level coverage for the create/restore pipeline.
+    //! We mock the underlying `MemorySnapshotter` rather than spin
+    //! up `LocalFsSnapshotter` (which needs git + sqlite + a real
+    //! agent state on disk) — the goal is to verify the adapter's
+    //! request shaping, the snapshot_id → bundle_path resolution,
+    //! and the encryption/tenant guards. The bundle-format end of
+    //! the contract is covered by `nexo-memory-snapshot`'s own
+    //! `local_fs` tests.
+    use super::*;
+    use async_trait::async_trait;
+    use nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader;
+    use nexo_memory_snapshot::config::EncryptionSection;
+    use nexo_memory_snapshot::error::SnapshotError;
+    use nexo_memory_snapshot::manifest::SchemaVersions;
+    use nexo_memory_snapshot::request::{RestoreRequest, SnapshotRequest};
+    use nexo_memory_snapshot::{
+        AgentId, MemorySnapshotter as MemorySnapshotterTrait, SnapshotId,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+
+    /// Mock snapshotter that records inbound requests + serves a
+    /// preset list back. Lets the adapter tests assert exactly
+    /// what the LiveMemorySnapshotReader sent down.
+    #[derive(Default)]
+    struct MockSnapshotter {
+        snapshot_calls: Mutex<Vec<SnapshotRequest>>,
+        restore_calls: Mutex<Vec<RestoreRequest>>,
+        list_returns: Mutex<Vec<nexo_memory_snapshot::SnapshotMeta>>,
+    }
+
+    impl std::fmt::Debug for MockSnapshotter {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MockSnapshotter").finish()
+        }
+    }
+
+    fn meta_at(tenant: &str, encrypted: bool) -> nexo_memory_snapshot::SnapshotMeta {
+        nexo_memory_snapshot::SnapshotMeta {
+            id: SnapshotId::new(),
+            agent_id: AgentId::from("ana".to_string()),
+            tenant: tenant.to_string(),
+            label: Some("seed".into()),
+            created_at_ms: 1_700_000_000_000,
+            bundle_path: PathBuf::from("/tmp/ana-seed.tar.zst"),
+            bundle_size_bytes: 4096,
+            bundle_sha256: "00".repeat(32),
+            git_oid: None,
+            schema_versions: SchemaVersions::CURRENT,
+            encrypted,
+            redactions_applied: true,
+        }
+    }
+
+    #[async_trait]
+    impl MemorySnapshotterTrait for MockSnapshotter {
+        async fn snapshot(
+            &self,
+            req: SnapshotRequest,
+        ) -> Result<nexo_memory_snapshot::SnapshotMeta, SnapshotError> {
+            // Forge a wire-shaped meta mirroring inputs so the
+            // adapter's projection has something well-formed to
+            // map. Tenant + label propagated; encryption flag
+            // mirrors whether `encrypt` was supplied.
+            let m = nexo_memory_snapshot::SnapshotMeta {
+                id: SnapshotId::new(),
+                agent_id: req.agent_id.clone(),
+                tenant: req.tenant.clone(),
+                label: req.label.clone(),
+                created_at_ms: 1_700_000_001_000,
+                bundle_path: PathBuf::from("/tmp/created.tar.zst"),
+                bundle_size_bytes: 1024,
+                bundle_sha256: "ab".repeat(32),
+                git_oid: None,
+                schema_versions: SchemaVersions::CURRENT,
+                encrypted: req.encrypt.is_some(),
+                redactions_applied: req.redact_secrets,
+            };
+            self.snapshot_calls.lock().unwrap().push(req);
+            Ok(m)
+        }
+
+        async fn restore(
+            &self,
+            req: RestoreRequest,
+        ) -> Result<nexo_memory_snapshot::RestoreReport, SnapshotError> {
+            let report = nexo_memory_snapshot::RestoreReport {
+                agent_id: req.agent_id.clone(),
+                from: SnapshotId::new(),
+                pre_snapshot: if req.dry_run { None } else { Some(SnapshotId::new()) },
+                git_reset_oid: None,
+                sqlite_restored_dbs: vec!["long_term.sqlite".into()],
+                state_files_restored: vec!["extract_cursor".into()],
+                workers_restarted: !req.dry_run,
+                dry_run: req.dry_run,
+            };
+            self.restore_calls.lock().unwrap().push(req);
+            Ok(report)
+        }
+
+        async fn list(
+            &self,
+            _agent_id: &AgentId,
+            _tenant: &str,
+        ) -> Result<Vec<nexo_memory_snapshot::SnapshotMeta>, SnapshotError> {
+            Ok(self.list_returns.lock().unwrap().clone())
+        }
+
+        async fn diff(
+            &self,
+            _agent_id: &AgentId,
+            _tenant: &str,
+            a: SnapshotId,
+            b: SnapshotId,
+        ) -> Result<nexo_memory_snapshot::SnapshotDiff, SnapshotError> {
+            Ok(nexo_memory_snapshot::SnapshotDiff {
+                a,
+                b,
+                git_summary: nexo_memory_snapshot::GitDiffSummary {
+                    commits_between: 0,
+                    files_changed: 0,
+                    insertions: 0,
+                    deletions: 0,
+                },
+                sqlite_summary: nexo_memory_snapshot::SqliteDiffSummary {
+                    long_term_rows_added: 0,
+                    long_term_rows_removed: 0,
+                    vector_rows_added: 0,
+                    vector_rows_removed: 0,
+                    concepts_rows_added: 0,
+                    concepts_rows_removed: 0,
+                    compactions_added: 0,
+                },
+                state_summary: nexo_memory_snapshot::StateDiffSummary {
+                    extract_cursor_changed: false,
+                    last_dream_run_changed: false,
+                },
             })
-            .collect())
+        }
+
+        async fn verify(
+            &self,
+            bundle: &Path,
+        ) -> Result<nexo_memory_snapshot::VerifyReport, SnapshotError> {
+            Ok(nexo_memory_snapshot::VerifyReport {
+                bundle: bundle.to_path_buf(),
+                manifest_ok: true,
+                bundle_sha256_ok: true,
+                per_artifact_ok: true,
+                schema_versions: SchemaVersions::CURRENT,
+                age_protected: false,
+            })
+        }
+
+        async fn delete(
+            &self,
+            _agent_id: &AgentId,
+            _tenant: &str,
+            _id: SnapshotId,
+        ) -> Result<(), SnapshotError> {
+            Ok(())
+        }
+
+        async fn export(
+            &self,
+            _agent_id: &AgentId,
+            _tenant: &str,
+            _id: SnapshotId,
+            target: &Path,
+        ) -> Result<PathBuf, SnapshotError> {
+            Ok(target.to_path_buf())
+        }
+    }
+
+    async fn build_reader(
+        snapshotter: Arc<MockSnapshotter>,
+        encryption: EncryptionSection,
+    ) -> Arc<LiveMemorySnapshotReader> {
+        let cell = shared_snapshotter_cell();
+        {
+            let mut g = cell.write().await;
+            *g = Some(snapshotter as Arc<dyn MemorySnapshotterTrait>);
+        }
+        LiveMemorySnapshotReader::new(cell, encryption)
+    }
+
+    fn encryption_with_recipient() -> EncryptionSection {
+        EncryptionSection {
+            enabled: true,
+            recipients: vec!["age1exampleexampleexample".into()],
+            identity_path: Some(PathBuf::from("/tmp/identity.txt")),
+        }
+    }
+
+    fn encryption_disabled() -> EncryptionSection {
+        EncryptionSection::default()
+    }
+
+    #[tokio::test]
+    async fn live_create_then_list_then_restore_dry_run_round_trip() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_with_recipient()).await;
+
+        // CREATE — tenant defaults to "default", label propagates,
+        // encrypt resolves recipient server-side and the request
+        // carries a forced `redact_secrets=true` + `created_by`.
+        let snap = reader
+            .create("ana", "default", Some("pre-deploy"), true)
+            .await
+            .expect("create ok");
+        assert_eq!(snap.label.as_deref(), Some("pre-deploy"));
+        assert!(snap.encrypted, "encrypt=true should set wire flag");
+        let req = mock.snapshot_calls.lock().unwrap()[0].clone();
+        assert_eq!(req.tenant, "default");
+        assert!(req.redact_secrets, "must force redact_secrets=true");
+        assert_eq!(req.created_by, "admin-ui", "must set provenance");
+        assert!(req.encrypt.is_some(), "encrypt key resolved server-side");
+
+        // LIST — exposes encryption_available based on config.
+        // Stage a synthetic meta the restore lookup can match.
+        let staged = meta_at("default", false);
+        let staged_id = staged.id;
+        *mock.list_returns.lock().unwrap() = vec![staged];
+        let resp = reader.list("ana", "default").await.expect("list ok");
+        assert!(resp.encryption_available);
+        assert_eq!(resp.snapshots.len(), 1);
+
+        // RESTORE dry_run — adapter resolves snapshot_id → meta,
+        // forces auto_pre_snapshot=true, and the projection mirrors
+        // dry_run + leaves pre_snapshot_id unset.
+        let report = reader
+            .restore("ana", "default", &staged_id.to_string(), true)
+            .await
+            .expect("restore ok");
+        assert!(report.dry_run);
+        assert!(report.pre_snapshot_id.is_none(), "dry_run skips pre-snapshot");
+        let r = mock.restore_calls.lock().unwrap()[0].clone();
+        assert!(r.auto_pre_snapshot, "adapter must force auto_pre_snapshot=true");
+        assert!(r.decrypt.is_none(), "plaintext bundle ⇒ no DecryptionIdentity");
+        assert_eq!(r.bundle, PathBuf::from("/tmp/ana-seed.tar.zst"));
+    }
+
+    #[tokio::test]
+    async fn live_restore_rejects_tenant_mismatch() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_disabled()).await;
+
+        // Bundle was captured under tenant=staging; operator tries
+        // to restore into tenant=prod. Adapter must refuse and
+        // mention BOTH tenants in the error.
+        let staged = meta_at("staging", false);
+        let staged_id = staged.id;
+        *mock.list_returns.lock().unwrap() = vec![staged];
+
+        let err = reader
+            .restore("ana", "prod", &staged_id.to_string(), false)
+            .await
+            .expect_err("tenant mismatch must error");
+        let msg = err.to_string();
+        assert!(msg.contains("staging"), "error must quote bundle tenant: {msg}");
+        assert!(msg.contains("prod"), "error must quote requested tenant: {msg}");
+        assert!(msg.contains("belongs to tenant"), "matches handler regex: {msg}");
+        // No restore call should reach the snapshotter.
+        assert!(mock.restore_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_create_with_encrypt_but_no_recipients_errors() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_disabled()).await;
+        let err = reader
+            .create("ana", "default", None, true)
+            .await
+            .expect_err("encrypt=true with no recipients must error");
+        assert!(
+            err.to_string()
+                .contains("encryption requested but no recipients configured"),
+            "must match handler regex: {err}"
+        );
+        // Snapshotter never invoked.
+        assert!(mock.snapshot_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn live_restore_of_encrypted_bundle_resolves_identity() {
+        let mock = Arc::new(MockSnapshotter::default());
+        let reader = build_reader(mock.clone(), encryption_with_recipient()).await;
+        let staged = meta_at("default", true);
+        let staged_id = staged.id;
+        *mock.list_returns.lock().unwrap() = vec![staged];
+
+        reader
+            .restore("ana", "default", &staged_id.to_string(), false)
+            .await
+            .expect("restore ok");
+        let r = mock.restore_calls.lock().unwrap()[0].clone();
+        assert!(
+            r.decrypt.is_some(),
+            "encrypted bundle ⇒ DecryptionIdentity must be set"
+        );
     }
 }

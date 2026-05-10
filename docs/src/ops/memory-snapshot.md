@@ -189,6 +189,84 @@ The full sequence for a real (non-`--dry-run`) restore:
 8. State provider replay: extractor cursor + last dream-run row.
 9. Drop staging dir + lock.
 
+## Admin RPC surface (Phase 90.x.memory-snapshot + .create-restore)
+
+The `nexo-plugin-admin` SPA at `/m/memory` drives four admin RPCs that
+mirror the CLI's `list`, `delete`, `snapshot`, and `restore` verbs.
+All four are gated by the `memory_snapshot` capability — operators
+that already grant the read-only pair (`list_snapshots` +
+`delete_snapshot`) automatically get write access via the same trust
+boundary.
+
+| Method | Capability | Behaviour |
+|---|---|---|
+| `nexo/admin/memory/list_snapshots` | `memory_snapshot` | Newest-first list + `encryption_available` flag |
+| `nexo/admin/memory/delete_snapshot` | `memory_snapshot` | Idempotent removal by `snapshot_id` |
+| `nexo/admin/memory/create_snapshot` | `memory_snapshot` | Capture fresh bundle (`label?`, `encrypt?`) |
+| `nexo/admin/memory/restore_snapshot` | `memory_snapshot` | Restore by `snapshot_id` (`dry_run?`) |
+
+### Defaults forced server-side
+
+Unlike the CLI, the admin path forces a fixed contract so operator
+mistakes via the SPA don't leak secrets or skip the safety net:
+
+- **`redact_secrets = true`** — UI-driven snapshots always run the
+  secret-guard scanner. The CLI keeps `--no-redact` for power users
+  who want raw bundles.
+- **`auto_pre_snapshot = true`** — every UI restore captures a
+  pre-restore bundle so the operation is reversible. The CLI keeps
+  `--no-auto-pre-snapshot` for fresh-agent restores.
+- **`created_by = "admin-ui"`** — provenance trace lands in the
+  bundle manifest's `created_by` column for audit reads.
+
+### Restore by `snapshot_id`, not `bundle_path`
+
+The wire never carries a filesystem path. The daemon resolves
+`snapshot_id → bundle_path` via its own `list()` lookup before
+opening the bundle. This forecloses on accidentally turning the
+admin endpoint into an arbitrary-file-read primitive.
+
+### Defensive tenant validation
+
+`restore_snapshot` requires `tenant` in the params. The adapter
+reads the bundle manifest's recorded tenant and refuses if they
+disagree, with both tenants quoted in the error. Operator typos
+that would have crossed `staging` ↔ `prod` accidentally are
+caught before any disk mutation.
+
+### Encryption recipient resolution
+
+When `create_snapshot` is invoked with `encrypt: true`, the daemon
+resolves the actual age recipient from
+`memory.snapshot.encryption.recipients[0]` — the wire never carries
+the recipient string, and operators rotate recipients via YAML +
+restart. The same `EncryptionSection` clone surfaces
+`encryption_available` on every list response so the SPA can grey
+out the encrypt toggle when no recipients are configured.
+
+For restore of an encrypted bundle the adapter resolves
+`identity_path` from the same `EncryptionSection`. Missing
+`identity_path` with an encrypted bundle errors with "encrypted
+but no identity_path configured; restore via CLI".
+
+### Dry-run UX
+
+`restore_snapshot { dry_run: true }` runs the full validation
+pipeline (tenant check + bundle resolution + identity resolution)
+but stops short of mutating live state. The returned
+`RestoreReportWire { dry_run: true }` carries the
+`sqlite_restored_dbs[]` and `state_files_restored[]` the SPA
+renders as a preview table — the operator inspects the diff
+before flipping the toggle and re-issuing destructively.
+
+### Lock semantics
+
+Restore takes the same per-agent `AgentLockMap` lock the CLI uses.
+A restore against an agent already holding the lock (concurrent
+snapshot, retention sweep, second restore) will time out with
+`Concurrent` after `lock_timeout_secs`. The handler bubbles the
+error through; the SPA renders it as a retryable warning.
+
 ## See also
 
 - [Backup + restore](./backup.md) — operator backup script (Phase 36.1)
