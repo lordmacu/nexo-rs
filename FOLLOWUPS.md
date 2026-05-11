@@ -176,28 +176,62 @@ for the detailed close-out.
     instead of a compile error (defense in depth — the parent
     `cloud` gate still blocks wasm but the module is
     independently safe).
-  - ⬜ **phase-4c.3 — reqwest `rustls-tls` feature split** —
-    the remaining wasm32 blocker. reqwest 0.12's `rustls-tls`
-    feature pulls `rustls` which doesn't compile for wasm32
-    (the browser fetch API handles TLS without a TLS feature).
-    The microapp-sdk's optional reqwest declaration carries
-    `["json", "rustls-tls"]` in `[dependencies]`; Cargo
-    rejects splitting features per-target on a single optional
-    dep (`duplicate key` error). Three unblock options:
-    (a) sub-feature `stt-cloud-native-tls = ["stt-cloud",
-        "reqwest?/rustls-tls"]` so base `stt-cloud` is
-        wasm-compatible and consumers explicitly enable
-        rustls on native;
-    (b) split into two optional crates with different
-        package names (e.g. `reqwest-native` / `reqwest-wasm`)
-        — Cargo's separate-package workaround for per-target
-        features;
-    (c) drop the optional flag and use feature-gated `dep:`
-        references instead — more invasive but clean.
-    Estimated cost: ~1-2 h once a microapp demands wasm cloud
-    STT. The internal refactors (phase-4c.2 multipart, the
-    anthropic cfg) make the eventual ungate trivial — only
-    the Cargo feature split blocks today.
+  - ⬜ **phase-4c.3 — workspace-level reqwest split (real cost
+    far higher than original estimate)** — second spike during
+    2026-05-11 session confirmed the wasm32 blocker is
+    structural, not feature-flag-shaped. The attempt split
+    `stt-cloud` into `stt-cloud-wasm` (no TLS feature) +
+    `stt-cloud` (adds `reqwest?/rustls-tls` for native). Source
+    code + Cargo feature definitions compiled fine on native.
+    But on wasm32, `cargo tree --invert reqwest --target
+    wasm32-unknown-unknown` reports "nothing to print" even
+    with `--features stt-cloud-wasm` explicitly enabled —
+    reqwest never enters the wasm32 dep tree.
+
+    Root cause: **resolver-2 cross-workspace feature
+    unification.** The workspace daemon binary
+    (`src/main.rs`) carries `reqwest = { workspace = true }`
+    and the workspace pin requests features that can't
+    activate on wasm32: `["rustls-tls", "json", "stream",
+    "cookies", "charset", "http2",
+    "macos-system-configuration"]`. Resolver-2 unifies
+    features for the same crate across ALL workspace members
+    per-target. On wasm32 it tries to unify with the daemon's
+    request, fails to satisfy `macos-system-configuration` +
+    `rustls-tls`, and silently drops reqwest from the wasm32
+    graph — even for SDK consumers that requested only
+    `["json"]`. The drop is silent because the daemon binary
+    itself never builds for wasm32; only the SDK does, but
+    the resolver still pessimistically excludes the dep.
+
+    Real unblock paths (cost dramatically higher than the
+    original 1-2 h estimate):
+    (a) **workspace daemon reqwest split** — give the daemon
+        its own reqwest declaration that doesn't go through
+        `workspace = true`, restricting feature pollution to
+        the daemon binary. Touches every workspace crate that
+        currently pulls reqwest transitively (~8 crates) —
+        each must declare an isolated reqwest pin. High blast
+        radius.
+    (b) **rename reqwest in SDK** —
+        `reqwest-sdk = { package = "reqwest", ... }`. Requires
+        source-level rename of every `reqwest::Client::new()`
+        etc. Cargo treats the two as separate crates; SDK
+        gets its own wasm-clean feature set. Source touch
+        points: ~6 files in `stt/cloud/`. Medium effort.
+    (c) **extract SDK out of workspace entirely** — already
+        published to crates.io; could move to a separate repo
+        with its own workspace. Cleanest but biggest move.
+        Loses the in-repo iteration loop.
+
+    Recommendation: defer until a real browser microapp drives
+    the demand. The decision tree changes once we have a
+    concrete user — for nexo-rs itself, the SDK's WASM
+    consumers will likely be served better by routing STT
+    through the SaaS backend (which IS native and has cloud
+    STT working) rather than uploading directly from the
+    browser. Phase-4c.3 only makes sense when a microapp
+    explicitly demands browser-side cloud STT.
   - ⬜ **phase-4c.4 — Anthropic voice_stream WASM transport** —
     after phase-4c.3 unblocks the parent gate, the
     `AnthropicVoiceStream` impl still needs a `gloo-net::
