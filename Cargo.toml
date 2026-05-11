@@ -152,10 +152,11 @@ description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LL
 # Phase 27.2 RC validation — pre-release marker so the
 # `nexo-rs-v0.1.6-rc<N>` tag's version matches what cargo-dist
 # verifies. After the multi-platform RC is green, `release-plz`
-# bumps this to `"0.1.6"` for the GA cut. rc3 = build-termux
-# job re-enabled (cargo-zigbuild → cargo-ndk + NDK r27c, drops
-# the `if: false` guard; full 6-target matrix covered).
-version      = "0.1.6-rc3"
+# bumps this to `"0.1.6"` for the GA cut. rc4 = first RC carrying
+# the Phase 92-95 ergonomics (broker stdio-bridge, `nexo
+# set-broker`, zero-config boot, `--override-from` deep-merge,
+# `nexo init` 19-template scaffolder) + packaging postinst hooks.
+version      = "0.1.6-rc4"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
