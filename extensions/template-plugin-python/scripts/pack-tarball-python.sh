@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Phase 31.4 — Pack the per-release `noarch` tarball for a Python
-# plugin. Output asset matches the convention 31.1 expects:
+# Pack the per-release `noarch` tarball for a Python plugin. Output
+# asset matches the convention the installer expects:
 #
 #   <id>-<version>-noarch.tar.gz
 #   ├── nexo-plugin.toml
@@ -8,9 +8,9 @@
 #   └── lib/
 #       ├── plugin/
 #       │   └── main.py
-#       └── nexo_plugin_sdk/
-#           └── ...
-#       (plus any vendored requirements.txt deps)
+#       └── nexo_plugin_sdk/  # the `nexoai` PyPI package; module name
+#           └── ...           # is `nexo_plugin_sdk`
+#       (plus any other vendored requirements.txt deps)
 #
 # Plus a sidecar `<asset>.sha256` containing one line of
 # lowercase 64-char hex.
@@ -18,8 +18,10 @@
 # Usage:
 #   bash scripts/pack-tarball-python.sh
 #
-# Override the SDK source via `SDK_SRC=/abs/path` and the deps
-# vendor target via `SKIP_PIP=1` for tests.
+# The SDK (and any other deps) are vendored from `requirements.txt`
+# via `pip install --target lib`. For tests / local dev against a
+# checkout you can short-circuit that with `SDK_SRC=/abs/path/to/
+# nexo_plugin_sdk` (copied verbatim into lib/) and `SKIP_PIP=1`.
 
 set -euo pipefail
 
@@ -27,23 +29,24 @@ set -euo pipefail
 source "$(dirname "$0")/extract-plugin-meta.sh"
 
 TARGET="noarch"
-SDK_SRC="${SDK_SRC:-../sdk-python/nexo_plugin_sdk}"
-
-if [[ ! -d "$SDK_SRC" ]]; then
-  echo "::error::SDK source not found at $SDK_SRC. Adjust SDK_SRC env or check the relative path." >&2
-  exit 1
-fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$STAGE/bin" "$STAGE/lib/plugin"
 
-# 1. Vendor the SDK at lib/nexo_plugin_sdk.
-cp -r "$SDK_SRC" "$STAGE/lib/"
+# 1. Optional: vendor an SDK checkout directly (tests / local dev).
+if [[ -n "${SDK_SRC:-}" ]]; then
+  if [[ ! -d "$SDK_SRC" ]]; then
+    echo "::error::SDK_SRC set but not a directory: $SDK_SRC" >&2
+    exit 1
+  fi
+  cp -r "$SDK_SRC" "$STAGE/lib/"
+fi
 
-# 2. Vendor any requirements.txt deps (pure-Python only — see
-#    verify-pure-python.sh).
+# 2. Vendor requirements.txt deps (pure-Python only — see
+#    verify-pure-python.sh). This is where the SDK (`nexoai`) comes
+#    from in a normal build.
 if [[ -z "${SKIP_PIP:-}" ]] && [[ -s requirements.txt ]] \
     && grep -qvE '^\s*(#|$)' requirements.txt; then
   pip install --target "$STAGE/lib" --quiet -r requirements.txt

@@ -1,16 +1,18 @@
 # TypeScript plugin SDK
 
-Phase 31.5. Author plugins in TypeScript (or plain JavaScript)
-that the daemon spawns as subprocesses, talking the same
-JSON-RPC 2.0 wire format used by the Rust SDK in
+Author plugins in TypeScript (or plain JavaScript) that the daemon
+spawns as subprocesses, talking the same JSON-RPC 2.0 wire format used
+by the Rust SDK in
 [`crates/microapp-sdk/`](https://github.com/lordmacu/nexo-rs/tree/main/crates/microapp-sdk)
-and the Python SDK in
-[`extensions/sdk-python/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/sdk-python).
+and the [Python](./python-sdk.md) / [PHP](./php-sdk.md) SDKs.
 
 Reference template:
-[`extensions/template-plugin-typescript/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-typescript).
-The SDK package itself lives at
-[`extensions/sdk-typescript/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/sdk-typescript).
+[`extensions/template-plugin-typescript/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-typescript)
+(or run `nexo plugin new --lang typescript`). The SDK package lives in
+the [`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks)
+repo (`typescript/` subdir) and ships on npm as
+[`nexo-plugin-sdk`](https://www.npmjs.com/package/nexo-plugin-sdk) —
+`npm install nexo-plugin-sdk`.
 
 ## Why subprocess + Node instead of an embedded runtime
 
@@ -195,8 +197,10 @@ node --test tests/pack-tarball.test.mjs
 
 ## SDK tests
 
+In a clone of [`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks):
+
 ```bash
-cd extensions/sdk-typescript
+cd typescript
 npm install
 npm run build
 npm test

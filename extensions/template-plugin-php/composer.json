@@ -1,6 +1,6 @@
 {
     "name": "nexo/template-plugin-php",
-    "description": "Skeleton out-of-tree subprocess plugin for nexo (PHP). Phase 31.5.c.",
+    "description": "Skeleton out-of-tree subprocess plugin for nexo (PHP).",
     "type": "project",
     "license": "MIT OR Apache-2.0",
     "authors": [
@@ -13,15 +13,6 @@
         "php": "^8.1",
         "nexo/plugin-sdk": "^0.1.0"
     },
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../sdk-php",
-            "options": {
-                "symlink": false
-            }
-        }
-    ],
     "autoload": {
         "psr-4": {
             "TemplatePluginPhp\\": "src/"
@@ -31,6 +22,5 @@
         "sort-packages": true,
         "preferred-install": "dist"
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    "minimum-stability": "stable"
 }
