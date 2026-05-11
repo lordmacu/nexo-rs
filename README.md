@@ -2,7 +2,8 @@
 
 > **The Rust alternative to [OpenClaw](https://github.com/openclaw/openclaw).**
 > Multi-agent LLM gateway for WhatsApp, Telegram, Gmail and the browser —
-> single static binary, NATS-backed, fault-tolerant, MCP-native.
+> single static binary, event-driven (NATS *or* a built-in local broker —
+> no external infra), fault-tolerant, MCP-native. Boots with zero config.
 
 [![docs](https://img.shields.io/badge/📘%20docs-lordmacu.github.io%2Fnexo--rs-blue?style=for-the-badge)](https://lordmacu.github.io/nexo-rs/)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green?style=for-the-badge)](#license)
@@ -22,15 +23,25 @@
 **nexo-rs** is a **Rust multi-agent LLM framework** — an
 **OpenClaw alternative in Rust** — for building **WhatsApp bots**,
 **Telegram bots**, **Gmail pollers** and **browser agents** behind a
-single binary. Event-driven by **NATS**, with per-agent tool
-sandboxes, **MCP** client + server, **Claude / Anthropic / MiniMax /
-OpenAI-compatible** providers, durable workflows (TaskFlow), and
-drop-in configuration for private vs. public agents.
+single binary. Event-driven over **NATS** *or* a built-in **local
+broker** (stdio-bridge for subprocess plugins — no NATS server,
+no external infra), with per-agent tool sandboxes, **MCP** client +
+server, **Claude / Anthropic / MiniMax / OpenAI-compatible / Gemini /
+DeepSeek** providers, durable workflows (TaskFlow), and drop-in
+configuration for private vs. public agents.
 
 One process, many agents, many channels. Kate handles your personal
 Telegram; Ana works the WhatsApp sales line; a cron-style poller sweeps
 Gmail for leads — all sharing one broker, one tool registry, one
 memory layer.
+
+Install the pre-built binary (`curl … install.sh | bash`,
+`cargo install nexo-rs`, or a `.deb` / `.rpm` / Termux `.deb` from
+[GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest)),
+then `nexo` — the daemon boots against documented defaults with no
+config dir. Add a channel plugin with `nexo plugin install
+<owner>/<repo>`, a persona with `nexo persona install <owner>/<repo>`,
+or scaffold 19 commented sample YAMLs with `nexo init`.
 
 **Keywords:** OpenClaw alternative · Rust agent framework · multi-agent
 LLM · WhatsApp LLM bot · Telegram AI agent · Gmail agent · MCP server
@@ -61,9 +72,10 @@ OpenClaw proved the model works. nexo-rs takes that blueprint and
 rebuilds it on a substrate Node simply cannot match — Rust, tokio,
 NATS — so the runtime can do things the original never could:
 
-- **Single static binary, ~34 MB.** No `pnpm install`, no `node_modules`,
-  no runtime VM. Drop the binary on a Termux phone, a Raspberry Pi,
-  a Proxmox container — it runs.
+- **Single static binary, ~90 MB** (the release tarball you download
+  is ~15 MB, xz-compressed; `.deb` ~18 MB, `.rpm` ~25 MB). No
+  `pnpm install`, no `node_modules`, no runtime VM. Drop the binary
+  on a Termux phone, a Raspberry Pi, a Proxmox container — it runs.
 - **Memory-safe by construction.** Rust's ownership model refuses
   whole bug classes at compile time: use-after-free, data races,
   null deref. The agent loop is `unsafe`-free.
@@ -97,9 +109,10 @@ NATS — so the runtime can do things the original never could:
 
 | Dimension | OpenClaw | nexo-rs |
 |-----------|----------|---------|
-| Language / runtime | TypeScript on Node 22+ | Rust, no runtime — single binary |
-| Install footprint | `pnpm install` (~42 runtime deps) + Node | one **34 MB** binary (29 MB stripped, 13 MB gzipped) |
-| Process model | single Node process | multi-process via NATS broker; in-process fallback when broker is offline |
+| Language / runtime | TypeScript on Node 22+ | Rust, no runtime — single binary; pre-built for Linux / macOS / Windows + `.deb` / `.rpm` / Termux |
+| Install footprint | `pnpm install` (~42 runtime deps) + Node | one **~90 MB** binary; ~15 MB to download (xz tarball), ~18 MB `.deb`, ~25 MB `.rpm` |
+| First boot | wire `.env` + config before it runs | zero-config — `nexo` boots against documented defaults; `nexo init` scaffolds 19 commented YAMLs |
+| Broker / process model | single Node process, in-memory | NATS (multi-host) **or** a local stdio bridge (single-host, no external server); subprocess plugins talk to whichever; `nexo set-broker` flips at runtime |
 | Fault tolerance | best-effort | broker has disk queue + DLQ + circuit breaker; events survive NATS outages |
 | Concurrency | JS event loop | tokio async + per-agent runtimes, share-nothing per session |
 | Hot reload | restart | `agent reload` swaps `RuntimeSnapshot` via `ArcSwap` — in-flight turns keep the old config |
@@ -111,7 +124,8 @@ NATS — so the runtime can do things the original never could:
 | MCP | client only | client (stdio + HTTP) **and** agent-as-MCP-server (`agent mcp-server`) |
 | Mobile-friendly | requires Node + npm runtime | runs on Termux without root (no Docker, no Node) |
 | Memory safety | runtime errors | Rust ownership model — whole classes of bugs (use-after-free, data races, null deref) refused at compile time |
-| Bundled skills/extensions | many in `extensions/` | 22 skills + 30+ extensions (browser, gmail-poller, 1password, proxmox, ssh-exec, brave-search, wolfram-alpha, …) |
+| Bundled skills/extensions | many in `extensions/` | 20+ skills + 30+ extensions (browser, gmail-poller, 1password, proxmox, ssh-exec, brave-search, wolfram-alpha, …) |
+| Plugin SDKs | TypeScript | Rust, Python, TypeScript, PHP — same wire spec; `nexo plugin install <owner>/<repo>` |
 
 **What we did not improve.** OpenClaw has a richer installer flow,
 a longer track record, and a TypeScript surface that's familiar to
@@ -123,33 +137,42 @@ Full side-by-side: [docs → vs-openclaw](https://lordmacu.github.io/nexo-rs/arc
 
 ## Status
 
-| Phase | Area | Done |
-|---|---|:---:|
-| 1 | Core runtime + session manager | ✅ |
-| 2 | NATS broker + disk queue + DLQ + circuit breaker | ✅ |
-| 3 | LLM integration (Anthropic, MiniMax, OpenAI-compat) | ✅ |
-| 4 | Browser control (Chrome DevTools Protocol) | ✅ |
-| 5 | Memory (short-term, SQLite long-term, sqlite-vec) | ✅ |
-| 6 | WhatsApp plugin | ✅ |
-| 7 | Heartbeat + reminders | ✅ |
-| 8 | Agent-to-agent routing + delegation | ✅ |
-| 9 | Metrics, health, graceful shutdown, Docker | ✅ |
-| 10 | Soul/identity/dreaming/workspace-git | ✅ |
-| 11 | Extension system (stdio + NATS) | ✅ |
-| 12 | MCP (client + server) | ✅ |
-| 13 | 22 skills/extensions shipped out of the box | ✅ |
-| 14 | TaskFlow runtime (durable multi-step flows) | ✅ |
-| 15 | Claude subscription auth (OAuth PKCE + API keys) | ✅ |
+**v0.1.6 — GA.** Stable [release](https://github.com/lordmacu/nexo-rs/releases/latest)
+with pre-built binaries for Linux (x86_64 / aarch64, static musl),
+macOS (Intel / Apple Silicon) and Windows, plus `.deb` / `.rpm` /
+Termux `.deb` packages, a multi-arch container
+(`ghcr.io/lordmacu/nexo-rs`), and crates.io publishing. Used in
+production for WhatsApp / Telegram sales bots and personal-assistant
+agents.
 
-Total: 113/113 sub-phases.
+Shipped, end-to-end:
+
+- Multi-agent runtime — SessionManager, Heartbeat, CircuitBreaker, agent-to-agent routing + delegation
+- Broker — NATS (disk queue + DLQ + backpressure + single-instance lock) **or** `local` stdio-bridge; `nexo set-broker` flips at runtime; zero-config boot, `nexo init` scaffolds
+- LLM stack — MiniMax M2.5 (primary), Anthropic (API + OAuth PKCE / Claude subscription), OpenAI-compatible, Gemini, DeepSeek; per-provider rate limit + retry
+- Channels — WhatsApp (Signal Protocol, QR pairing), Telegram (full bot API), Email (Gmail poller + outbound), Browser (Chrome DevTools Protocol), Google (Gmail / Calendar / Drive / Sheets) — extracted to standalone plugin repos, `nexo plugin install <owner>/<repo>`
+- Memory — short-term in-memory, long-term SQLite, vector via sqlite-vec; snapshots
+- Extensions — TOML manifest, stdio + NATS runtimes, CLI, 20+ skills, plugin SDKs in Rust / Python / TypeScript / PHP
+- MCP — client (stdio + HTTP) **and** agent-as-server (`nexo mcp-server`), hot-reload
+- TaskFlow — durable multi-step flows with Timer / ExternalEvent / Manual resume
+- Soul — identity, MEMORY.md, dreaming, workspace-git forensics, JSONL transcripts (FTS5 + redactor)
+- Personas — out-of-tree agent packs (v2 manifest, GitHub Releases), `nexo persona install <owner>/<repo>`
+- Ops — Prometheus metrics, health endpoint, loopback admin console, hot-reload, secrets audit, cosign-signed release artifacts
+
+Phase-by-phase done-criteria live in [`PHASES.md`](PHASES.md) /
+[`PHASES-archive.md`](PHASES-archive.md); open follow-ups in
+[`FOLLOWUPS.md`](FOLLOWUPS.md).
 
 ## Architecture
 
 ```
               ┌──────────────────┐
-              │   NATS broker    │◄── fault-tolerant event bus
-              └──┬────────────┬──┘       (disk queue + DLQ
- plugin.inbound.*│            │plugin.outbound.*   when offline)
+              │  NATS broker     │◄── fault-tolerant event bus
+              │  — or local      │      (disk queue + DLQ when
+              │  stdio bridge,   │       offline; local mode pipes
+              │  no NATS server  │       broker.publish/event over
+              └──┬────────────┬──┘       the daemon's stdio JSON-RPC)
+ plugin.inbound.*│            │plugin.outbound.*
                  │            │
     ┌────────────┴──┐       ┌─┴─────────────┐
     │  Channel      │       │  Agent        │
@@ -174,12 +197,12 @@ reconnect. No events lost.
 ## Quick start
 
 ```bash
-# 1. Install (one-liner; needs Rust toolchain — installer
-#    delegates to `cargo install --git` until Phase 27.2
-#    ships pre-built binaries):
+# 1. Install — pre-built binary, no Rust toolchain needed:
 curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
-# OR Docker:
-#   docker pull ghcr.io/lordmacu/nexo-rs:latest
+#    OR  cargo install nexo-rs            # from crates.io
+#    OR  docker pull ghcr.io/lordmacu/nexo-rs:latest
+#    OR  download the .deb / .rpm / Termux .deb from
+#        https://github.com/lordmacu/nexo-rs/releases/latest
 
 # 2. Run — Phase 92-95: zero config, no NATS server needed
 nexo
@@ -211,13 +234,14 @@ Gmail. Use it when you want a guided walkthrough; otherwise
 edit `nexo init`'s scaffolded YAMLs by hand or call admin RPCs
 from the operator UI.
 
-> **Platform support**: Linux x86_64 + aarch64 (musl static), macOS
-> Intel + Apple Silicon, Windows x86_64, plus a multi-arch container
-> image (`ghcr.io/lordmacu/nexo-rs:latest`). Some optional features
-> (STT — voice-note transcription) require extra build tools per OS.
-> Termux ships via local `cargo install --git ...` (CI `.deb`
-> temporarily disabled — see FOLLOWUPS.md). See
-> [Platform support](https://lordmacu.github.io/nexo-rs/docs/getting-started/platform-support.html)
+> **Platform support**: pre-built binaries for Linux x86_64 + aarch64
+> (musl static), macOS Intel + Apple Silicon, Windows x86_64; `.deb`
+> (amd64 / arm64), `.rpm` (x86_64 / aarch64), Termux `.deb` (aarch64,
+> bionic); a multi-arch container (`ghcr.io/lordmacu/nexo-rs:latest`);
+> and crates.io (`cargo install nexo-rs`). Every release artifact is
+> cosign-signed with a `.sha256` sidecar. Some optional features (STT
+> — voice-note transcription) need extra build tools per OS. See
+> [Platform support](https://lordmacu.github.io/nexo-rs/getting-started/platform-support.html)
 > for the per-OS prerequisites + feature matrix.
 >
 > Homebrew formula auto-publish + `npm install -g @nexo-rs/cli` are
@@ -360,14 +384,16 @@ with jitter up to 60 s.
 ## Development
 
 ```bash
-cargo build --workspace           # whole tree
-cargo test --workspace --lib      # unit tests
-cargo run --bin agent -- --help   # subcommands (dlq, ext, flow, setup)
+cargo build --workspace            # whole tree
+cargo nextest run                  # parallel test runner
+cargo build --profile release-fast # release-grade, skip LTO — ~50% faster
+cargo run --bin nexo -- --help     # subcommands (init, setup, plugin, persona, ext, flow, dlq, set-broker, mcp-server, …)
 ```
 
 The project uses a `/forge` convention:
 `brainstorm → spec → plan → ejecutar`. Per-sub-phase done-criteria
-live in [`proyecto/PHASES.md`](proyecto/PHASES.md).
+live in [`PHASES.md`](PHASES.md) (active) / [`PHASES-archive.md`](PHASES-archive.md)
+(closed); open follow-ups in [`FOLLOWUPS.md`](FOLLOWUPS.md).
 
 ## FAQ
 
@@ -383,17 +409,19 @@ parallelism, single-binary deployment, and built-in fault tolerance
 ### How does nexo-rs compare to OpenClaw?
 
 Same shape, different substrate. Full table: [side-by-side](#side-by-side).
-Highlights: 34 MB single binary vs. Node + `pnpm install`,
-multi-process via NATS vs. single Node process, per-agent
-capability sandbox vs. global plugin allowlist, both sides of MCP
-vs. client-only, durable TaskFlow workflows, Claude subscription
-OAuth, Termux-friendly.
+Highlights: a single ~90 MB binary (~15 MB to download) vs. Node +
+`pnpm install`, zero-config boot vs. wire-config-first, NATS *or* a
+local stdio bridge (no external server) vs. in-memory only, per-agent
+capability sandbox vs. global plugin allowlist, both sides of MCP vs.
+client-only, durable TaskFlow workflows, Claude subscription OAuth,
+plugin SDKs in 4 languages, Termux-friendly.
 
 ### Can I run nexo-rs on a Raspberry Pi or Termux phone?
 
-Yes. nexo-rs ships as a **single static Rust binary** (~34 MB,
-13 MB gzipped). No Node, no Docker, no system packages required.
-ARM Termux without root works.
+Yes. nexo-rs ships as a **single static Rust binary** (~90 MB built,
+~12-16 MB to download as an xz tarball; aarch64 `.deb` for Termux).
+No Node, no Docker, no system packages required. ARM Termux without
+root works.
 
 ### Which LLM providers does nexo-rs support?
 
@@ -418,11 +446,15 @@ control** via Chrome DevTools Protocol.
 
 ### Is nexo-rs production-ready?
 
-113 / 113 sub-phases shipped across 15 phases (core runtime,
-NATS broker with disk queue + DLQ + circuit breaker, LLM stack,
-memory, WhatsApp, Telegram, heartbeat, agent-to-agent, metrics,
-hot reload, MCP, TaskFlow, Claude OAuth). Used in production for
-real WhatsApp/Telegram sales bots and personal-assistant agents.
+Yes — **v0.1.6 GA**. Core runtime, NATS/local broker with disk
+queue + DLQ + circuit breaker, the full LLM stack, memory + vector,
+WhatsApp / Telegram / Email / Browser channels, heartbeat,
+agent-to-agent, MCP (both sides), TaskFlow, Claude OAuth, hot reload,
+secrets audit, plus the v0.1.6 ergonomics (zero-config boot,
+`nexo init`, `nexo set-broker`, `nexo plugin install`) all shipped
+end-to-end with a cosign-signed multi-platform release pipeline.
+Used in production for real WhatsApp / Telegram sales bots and
+personal-assistant agents.
 
 ## Looking for an OpenClaw alternative?
 
