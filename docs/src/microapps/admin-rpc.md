@@ -134,8 +134,45 @@ SDK side maps this to `AdminError::CapabilityNotGranted { capability, method }`.
 | `nexo/admin/channels/revoke` | `channels_crud` | channels | yaml mutate |
 | `nexo/admin/channels/doctor` | `channels_crud` | channels | static yaml verdicts |
 | `nexo/admin/reload` | `agents_crud` | meta | force Phase 18 hot-reload |
+| `nexo/admin/llm/complete` | `llm_complete` | llm | one-shot completion (admin debugger) |
+| `nexo/admin/agent_events/list` | `transcripts_read` | agent_events | transcript pagination |
+| `nexo/admin/agent_events/read` | `transcripts_read` | agent_events | single transcript fetch |
+| `nexo/admin/agent_events/search` | `transcripts_read` | agent_events | full-text search |
+| `nexo/admin/microapp_audit/tail` | `audit_read` | audit | per-microapp audit log tail |
+| `nexo/admin/processing/pause` | `operator_intervention` | processing | pause autonomous loop |
+| `nexo/admin/processing/resume` | `operator_intervention` | processing | resume after pause |
+| `nexo/admin/processing/intervention` | `operator_intervention` | processing | inject operator turn |
+| `nexo/admin/processing/state` | `operator_intervention` | processing | read pause/intervention state |
+| `nexo/admin/escalations/list` | `escalations_read` | escalations | pending escalation queue |
+| `nexo/admin/escalations/resolve` | `escalations_resolve` | escalations | mark escalation handled |
+| `nexo/admin/skills/list` | `skills_crud` | skills | filesystem walk + manifest read |
+| `nexo/admin/skills/get` | `skills_crud` | skills | single skill manifest |
+| `nexo/admin/skills/upsert` | `skills_crud` | skills | filesystem write + reload |
+| `nexo/admin/skills/delete` | `skills_crud` | skills | filesystem unlink + reload |
+| `nexo/admin/tenants/list` | `tenants_crud` | tenants | tenants.yaml read |
+| `nexo/admin/tenants/get` | `tenants_crud` | tenants | tenants.yaml lookup |
+| `nexo/admin/tenants/upsert` | `tenants_crud` | tenants | tenants.yaml mutate + reload |
+| `nexo/admin/tenants/delete` | `tenants_crud` | tenants | tenants.yaml remove + reload |
+| `nexo/admin/mcp/list` | `mcp_crud` | mcp | mcp.yaml read |
+| `nexo/admin/mcp/get` | `mcp_crud` | mcp | mcp.yaml lookup |
+| `nexo/admin/mcp/upsert` | `mcp_crud` | mcp | mcp.yaml mutate + reload |
+| `nexo/admin/mcp/delete` | `mcp_crud` | mcp | mcp.yaml remove + reload |
+| `nexo/admin/plugins/doctor` | `plugin_doctor` | plugins | discovery snapshot (manifests + capabilities) |
+| `nexo/admin/plugins/restart` | `plugin_restart` | plugins | force-restart subprocess plugin (Phase 81.21.b.b) |
+| `nexo/admin/memory/query` | `memory_query` | memory | LongTermMemory recall |
+| `nexo/admin/memory/list_snapshots` | `memory_snapshot` | memory | snapshot bundle list |
+| `nexo/admin/memory/delete_snapshot` | `memory_snapshot` | memory | snapshot bundle delete (idempotent) |
+| `nexo/admin/memory/create_snapshot` | `memory_snapshot` | memory | capture bundle (server forces redact_secrets+admin-ui provenance) |
+| `nexo/admin/memory/restore_snapshot` | `memory_snapshot` | memory | restore from snapshot_id (server resolves bundle path; auto_pre_snapshot=true) |
+| `nexo/admin/secrets/write` | `secrets_write` | secrets | per-microapp secret store mutate |
+| `nexo/admin/auth/rotate_token` | `auth_rotate` | auth | bearer + cookie HMAC rotation |
+| `nexo/admin/whatsapp/bot/list` | `channels_crud` | whatsapp | bot enumeration |
+| `nexo/admin/whatsapp/bot/send` | `channels_crud` | whatsapp | one-off send |
 
-= 18 endpoints (17 spec methods + reload).
+Live methods: 57 across 17 capabilities. Phase 81.21.b.b added
+`plugin_restart` (write+destructive, distinct from read-only
+`plugin_doctor`). Phase 90.x.memory-snapshot.create-restore added
+`memory_snapshot` covering all four CRUD verbs on snapshot bundles.
 
 ## Many-to-many credentials
 

@@ -98,17 +98,31 @@ and the retention worker picks up the new policy at the next tick.
 
 ## Lifecycle events (NATS)
 
-Best-effort published when a broker is wired:
+Best-effort published when a broker is wired. Subjects are formed
+from `EventsSection.lifecycle_subject_prefix` (default
+`nexo.memory.snapshot`) — operators that override the prefix in
+YAML get the override on every event topic.
 
-| Subject | Trigger | Payload |
+`LifecycleEvent` is `serde(tag = "kind", rename_all = "snake_case")`,
+so every payload below carries an extra `"kind": "<verb>"`
+discriminator field flattened alongside the documented fields:
+
+| Subject | Trigger | Payload (after `serde(flatten)`) |
 |---|---|---|
-| `nexo.memory.snapshot.<agent_id>.created` | snapshot success | `SnapshotMeta` |
-| `nexo.memory.snapshot.<agent_id>.restored` | restore success | `RestoreReport` |
-| `nexo.memory.snapshot.<agent_id>.deleted` | delete success | `{snapshot_id, ts_ms}` |
-| `nexo.memory.snapshot._all.gc` | retention sweep | `{deleted, kept, ts_ms}` |
+| `<prefix>.<agent_id>.created` | snapshot success | `{kind:"created", ...SnapshotMeta}` — flattened: `id`, `agent_id`, `tenant`, `label?`, `created_at_ms`, `bundle_path`, `bundle_size_bytes`, `bundle_sha256`, `git_oid?`, `schema_versions`, `encrypted`, `redactions_applied` |
+| `<prefix>.<agent_id>.restored` | restore success | `{kind:"restored", ...RestoreReport}` — flattened: `agent_id`, `from`, `pre_snapshot?`, `git_reset_oid?`, `sqlite_restored_dbs[]`, `state_files_restored[]`, `workers_restarted`, `dry_run` |
+| `<prefix>.<agent_id>.deleted` | delete success | `{kind:"deleted", agent_id, tenant, snapshot_id, ts_ms}` |
+| `<prefix>._all.gc` | retention sweep | `{kind:"gc", ts_ms, report:{bundles_deleted, orphan_staging_dirs_removed, agents_visited, errors}}` |
+
+The `_all` segment in the `gc` subject is a sentinel — gc events are
+cross-agent and have no single `agent_id` to fan-out on. Subscribers
+filtering with `nexo.memory.snapshot.<agent>.>` therefore miss gc;
+use `nexo.memory.snapshot.>` (or the configured equivalent) to catch
+both.
 
 Mutation events (one per memory write) flow to
-`nexo.memory.mutated.<agent_id>` when
+`<events.mutation_subject_prefix>.<agent_id>` (default prefix
+`nexo.memory.mutated`) when
 `memory.snapshot.events.mutation_publish_enabled = true`. Subscribers
 can stream them into an audit log without forking memory writes.
 

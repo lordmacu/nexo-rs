@@ -1944,6 +1944,20 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
+    // Phase 90 audit follow-up — single Arc<LlmRegistry> shared
+    // between the admin bootstrap (used by LivePluginRestarter
+    // when respawning a child, by `RegistryLlmCompleter` for
+    // admin/llm/complete, and by the boot-time provider catalogue
+    // snapshot) AND the daemon main runtime (used by every agent
+    // worker). Previously each site constructed its own
+    // `LlmRegistry::with_builtins()` Arc; today's builtin-only
+    // registries are content-equivalent so the duplication was
+    // benign, but a future plugin-registered LLM factory landing
+    // between the two construction sites would silently diverge
+    // (admin sees the bootstrap-time registry, agents see the
+    // runtime one). Sharing the Arc closes that gap.
+    let llm_registry = std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins());
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2101,11 +2115,13 @@ async fn main() -> Result<()> {
                 // "plugin handles not yet populated; daemon
                 // still booting" error.
                 //
-                // The `LlmRegistry::with_builtins()` here is a
-                // fresh registry of builtin factories — same as
-                // the daemon's main one constructed later at
-                // boot. Builtin factories carry no shared
-                // mutable state, so the duplication is cheap.
+                // Phase 90 audit follow-up — share the daemon's
+                // single `Arc<LlmRegistry>` rather than building
+                // a fresh one. See the construction site comment
+                // above main.rs:1947 for the rationale (avoids
+                // silent divergence if a plugin-registered LLM
+                // factory lands between this and the runtime
+                // registry build at main.rs:2347).
                 plugin_restarter: Some(
                     nexo_setup::admin_adapters::LivePluginRestarter::new(
                         plugin_handles_cell.clone(),
@@ -2125,7 +2141,7 @@ async fn main() -> Result<()> {
                         tokio_util::sync::CancellationToken::new(),
                         broker.clone(),
                         None,
-                        std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                        llm_registry.clone(),
                         std::sync::Arc::new(cfg.llm.clone()),
                     ),
                 ),
@@ -2178,30 +2194,24 @@ async fn main() -> Result<()> {
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
                 // Phase 82.10.t.x — production LLM completer:
-                // wraps a fresh `LlmRegistry` + an `Arc` of the
-                // current `LlmConfig` so admin/llm/complete
-                // resolves providers exactly the way the agent
-                // runtime does. The runtime registry built later
-                // in main.rs is a different Arc but identical
-                // contents (both `with_builtins()` against the
-                // same `cfg.llm`); divergence would require a
-                // dynamic plugin-registered factory landing
-                // between these two construction sites — rare in
-                // practice + audited if it lands.
+                // shares the daemon's single `Arc<LlmRegistry>`
+                // (Phase 90 audit follow-up) so admin/llm/complete
+                // resolves providers identically to the agent
+                // runtime. Same Arc as `plugin_restarter` above
+                // and the runtime registry at main.rs:2347.
                 llm_completer: Some(nexo_setup::llm_completer::RegistryLlmCompleter::new(
-                    std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                    llm_registry.clone(),
                     std::sync::Arc::new(cfg.llm.clone()),
                 )
                     as std::sync::Arc<
                         dyn nexo_core::agent::admin_rpc::domains::llm::LlmCompleter,
                     >),
-                // Snapshot the LLM provider catalogue from a fresh
-                // `LlmRegistry::with_builtins()` so the admin RPC
-                // can serve `nexo/admin/llm_providers/catalog` from
-                // boot. The runtime registry built later in main.rs
-                // contains the same builtins; plugin-registered
-                // remote providers (rare) land via daemon restart.
-                llm_provider_catalog: nexo_llm::LlmRegistry::with_builtins()
+                // Snapshot the LLM provider catalogue from the
+                // shared registry so the admin RPC can serve
+                // `nexo/admin/llm_providers/catalog` from boot.
+                // Phase 90 audit follow-up — single source of
+                // truth across admin + runtime.
+                llm_provider_catalog: llm_registry
                     .catalog()
                     .into_iter()
                     .map(|e| {
@@ -2344,7 +2354,12 @@ async fn main() -> Result<()> {
     // (after the wire callsite); now the Arc lives from
     // construction onward. All intermediate `llm_registry.method()`
     // calls work via `Arc<T>: Deref<Target = T>`.
-    let llm_registry = Arc::new(LlmRegistry::with_builtins());
+    //
+    // Phase 90 audit follow-up — re-bind to the Arc constructed
+    // BEFORE admin bootstrap (main.rs:1947 area) so the registry
+    // is single-source-of-truth across admin RPCs and the daemon
+    // runtime. No re-construction here; just re-shadow into local
+    // `llm_registry` for the remaining boot sites that consume it.
 
     // Phase 82.10.s.4 — resolve every provider's API key from its
     // configured source (inline / secret_id / env). This populates
