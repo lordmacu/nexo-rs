@@ -65,7 +65,10 @@ import {
 | `manifestToml: string` | ✅ | Body of `nexo-plugin.toml`. Read once at startup; the SDK validates `plugin.id` (regex `/^[a-z][a-z0-9_]{0,31}$/`), `plugin.version`, `plugin.name`, `plugin.description`. |
 | `serverVersion?: string` | ⬜ | Returned in the `initialize` reply. Default `"0.1.0"`. |
 | `onEvent?: EventHandler` | ⬜ | `async (topic, Event, BrokerSender) => Promise<void>`. Invoked for every `broker.event` notification. Handler runs in a detached task; the dispatch loop continues reading stdin without blocking. |
-| `onShutdown?: ShutdownHandler` | ⬜ | `async () => Promise<void>`. Awaited before `{ok: true}` reply to the host's `shutdown` request. In-flight `onEvent` tasks are also awaited before returning. |
+| `onShutdown?: ShutdownHandler` | ⬜ | `async () => Promise<void>`. Awaited before `{ok: true}` reply to the host's `shutdown` request. In-flight `onEvent` (and `tool.invoke`) tasks are also awaited before returning. |
+| `tools?: ToolDef[]` | ⬜ | `{ name, description, inputSchema }[]` — the tool catalog advertised in the `initialize` reply's `tools` array (contract §4.1.1; serialized with the wire key `input_schema`). Every `name` must appear in the manifest's `[plugin.extends].tools` — otherwise the constructor throws `ManifestError`. |
+| `onTool?: (inv) => unknown \| Promise<unknown>` | ⬜ | Dispatch handler for `tool.invoke` (contract §5.t). Runs as a detached task tracked by the shutdown drain. Mutually exclusive with `onToolWithContext`. |
+| `onToolWithContext?: (inv, ctx) => unknown \| Promise<unknown>` | ⬜ | Like `onTool`, but `ctx.broker` is the same `BrokerSender` `onEvent` gets — a tool body can `memoryRecall` / `llmComplete` mid-invocation. Wins over `onTool` when both are set. |
 | `enableStdoutGuard?: boolean` | ⬜ default `true` | Patches `process.stdout.write` so any stray `console.log` from your handler (or a chatty transitive dep) is diverted to stderr tagged with `STDOUT_GUARD_MARKER` instead of corrupting the JSON-RPC frame stream. |
 | `maxFrameBytes?: number` | ⬜ default 1 MiB | Reject inbound frames larger than this with a `WireError` log; dispatch continues. |
 | `handleProcessSignals?: boolean` | ⬜ default `true` | Listen for SIGTERM + SIGINT and trigger graceful shutdown (drain in-flight, exit 0). |
@@ -75,6 +78,35 @@ optional `correlation_id` + `metadata`.
 `BrokerSender.publish(topic, event)` serializes a JSON-RPC
 notification to stdout under a Promise-chain write lock so
 concurrent handler tasks never interleave half-written frames.
+
+## Tool dispatch (`tool.invoke`, contract §4.1.1 + §5.t)
+
+```typescript
+import { PluginAdapter, ToolNotFoundError, ToolArgumentInvalidError, textResult } from "nexo-plugin-sdk";
+
+const adapter = new PluginAdapter({
+  manifestToml: readFileSync("nexo-plugin.toml", "utf-8"),
+  tools: [{ name: "myplugin_weather", description: "Current weather for a city",
+    inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } }],
+  onToolWithContext: async (inv, ctx) => {
+    if (inv.toolName !== "myplugin_weather") throw new ToolNotFoundError(inv.toolName);
+    const city = (inv.args as { city?: string } | null)?.city;
+    if (!city) throw new ToolArgumentInvalidError("missing `city`", { field: "city" });
+    // ctx.broker is the onEvent broker handle — e.g. await ctx.broker.memoryRecall({ agentId: inv.agentId ?? "", query: city });
+    return textResult(`Sunny in ${city}`);     // any JSON value is fine; this is the conventional shape
+  },
+  // or onTool: (inv) => ... when you don't need the broker
+});
+await adapter.run();
+```
+
+The handler's return value becomes the JSON-RPC `result` verbatim
+(non-serializable → `-33403`). Throwing `ToolNotFoundError` /
+`ToolArgumentInvalidError` (`.details`) / `ToolExecutionFailedError` /
+`ToolUnavailableError` (`.retryAfterMs`) / `ToolDeniedError` maps to the
+matching `-33401..-33405` code; an uncaught throw maps to `-33403`; a
+`tool.invoke` with no handler registered replies `-32601`.
+(npm `nexo-plugin-sdk` ≥ 0.3.0.)
 
 ## Tarball convention (`noarch`)
 
