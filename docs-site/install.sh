@@ -21,10 +21,9 @@
 #      whole step with --no-plugins, or just the persona with --no-persona.
 #
 # Pre-built targets: Linux x86_64 / aarch64 (static musl), macOS
-# Intel / Apple Silicon. Windows users: download the .zip from
-# https://github.com/lordmacu/nexo-rs/releases/latest, or use WSL
-# (this script then sees Linux). Termux: `pkg install` the aarch64
-# .deb from the same release page.
+# Intel / Apple Silicon, Windows x86_64 (MSVC). On Windows run this
+# from Git Bash (or use WSL — it then sees Linux). Termux: `pkg
+# install` the aarch64 .deb from the same release page.
 #
 # Flags:
 #   --install-dir <dir>   where to put the `nexo` binary
@@ -105,9 +104,20 @@ detect_target() {
                 arm64|aarch64)  echo "aarch64-apple-darwin" ;;
                 *) echo "" ;;
             esac ;;
+        # Git Bash / MSYS2 / Cygwin shells on Windows.
+        MINGW*|MSYS*|CYGWIN*|Windows_NT)
+            case "$arch" in
+                x86_64|amd64)   echo "x86_64-pc-windows-msvc" ;;
+                *) echo "" ;;
+            esac ;;
         *) echo "" ;;
     esac
 }
+
+# Archive extension + binary name for a target triple. Windows ships a
+# `.zip` with `nexo.exe`; everything else a `.tar.xz` with `nexo`.
+asset_ext()  { case "$1" in *windows*) echo "zip" ;; *) echo "tar.xz" ;; esac; }
+asset_bin()  { case "$1" in *windows*) echo "nexo.exe" ;; *) echo "nexo" ;; esac; }
 
 # --- where does the binary go ----------------------------------------
 resolve_install_dir() {
@@ -136,11 +146,13 @@ sha256_of() {
 }
 
 install_from_binary() {
-    local target tarball url tmp bin dir
+    local target ext binname tarball url tmp bin dir
     target="$(detect_target)"
     [ -n "$target" ] || return 1
+    ext="$(asset_ext "$target")"
+    binname="$(asset_bin "$target")"
 
-    tarball="nexo-rs-${target}.tar.xz"
+    tarball="nexo-rs-${target}.${ext}"
     url="${RELEASES}/latest/download/${tarball}"
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' RETURN
@@ -163,18 +175,29 @@ install_from_binary() {
     fi
 
     echo "→ extracting …"
-    if ! tar -xJf "$tmp/$tarball" -C "$tmp" 2>/dev/null; then
-        # tar without xz support — pipe through xz.
-        have xz || { echo "error: cannot extract .tar.xz (need 'xz' or an xz-aware tar)" >&2; return 2; }
-        xz -dc "$tmp/$tarball" | tar -x -C "$tmp" || { echo "error: extract failed" >&2; return 2; }
-    fi
-    bin="$(find "$tmp" -maxdepth 3 -type f -name nexo -perm -u+x | head -n1)"
-    [ -n "$bin" ] || { echo "error: no 'nexo' binary inside the tarball" >&2; return 2; }
+    case "$ext" in
+        zip)
+            if have unzip; then
+                unzip -q "$tmp/$tarball" -d "$tmp" || { echo "error: unzip failed" >&2; return 2; }
+            elif tar -xf "$tmp/$tarball" -C "$tmp" 2>/dev/null; then
+                : # bsdtar (Windows 10+ `tar.exe`, macOS) handles zip
+            else
+                echo "error: cannot extract .zip (need 'unzip' or a zip-aware 'tar')" >&2; return 2
+            fi ;;
+        tar.xz)
+            if ! tar -xJf "$tmp/$tarball" -C "$tmp" 2>/dev/null; then
+                have xz || { echo "error: cannot extract .tar.xz (need 'xz' or an xz-aware tar)" >&2; return 2; }
+                xz -dc "$tmp/$tarball" | tar -x -C "$tmp" || { echo "error: extract failed" >&2; return 2; }
+            fi ;;
+    esac
+    bin="$(find "$tmp" -maxdepth 3 -type f -name "$binname" | head -n1)"
+    [ -n "$bin" ] || { echo "error: no '$binname' inside the archive" >&2; return 2; }
 
     dir="$(resolve_install_dir)"
     mkdir -p "$dir"
-    install -m 0755 "$bin" "$dir/nexo" 2>/dev/null || { cp "$bin" "$dir/nexo" && chmod 0755 "$dir/nexo"; }
-    echo "✓ installed: $dir/nexo  ($("$dir/nexo" --version 2>/dev/null || echo nexo))"
+    install -m 0755 "$bin" "$dir/$binname" 2>/dev/null \
+        || { cp "$bin" "$dir/$binname" && chmod 0755 "$dir/$binname" 2>/dev/null || true; }
+    echo "✓ installed: $dir/$binname  ($("$dir/$binname" --version 2>/dev/null || echo nexo))"
 
     case ":$PATH:" in
         *":$dir:"*) ;;
@@ -217,8 +240,10 @@ EOF
 # whatever happens to be first on PATH.
 nexo_bin() {
     local d; d="$(resolve_install_dir)"
-    [ -x "$d/nexo" ] && { echo "$d/nexo"; return 0; }
-    command -v nexo 2>/dev/null && return 0
+    [ -x "$d/nexo.exe" ] && { echo "$d/nexo.exe"; return 0; }
+    [ -x "$d/nexo" ]     && { echo "$d/nexo"; return 0; }
+    command -v nexo.exe 2>/dev/null && return 0
+    command -v nexo     2>/dev/null && return 0
     return 1
 }
 
