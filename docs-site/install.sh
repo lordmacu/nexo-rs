@@ -12,6 +12,10 @@
 #   2. Falls back to `cargo install nexo-rs` (crates.io) if there's no
 #      pre-built binary for your platform, then to `cargo install --git`
 #      if crates.io is unreachable.
+#   3. Installs the bundled channel plugins (whatsapp, telegram, email,
+#      browser) and `nexo-plugin-admin` (the admin web UI behind
+#      `nexo admin`). Best-effort — a failed plugin never aborts the
+#      install. Skip the whole step with --no-plugins.
 #
 # Pre-built targets: Linux x86_64 / aarch64 (static musl), macOS
 # Intel / Apple Silicon. Windows users: download the .zip from
@@ -24,6 +28,7 @@
 #                         (default: $CARGO_HOME/bin if cargo is on
 #                          PATH, else ~/.local/bin)
 #   --from-source         skip the binary download, go straight to cargo
+#   --no-plugins          install only `nexo`, skip the bundled plugins
 #
 # Override the install dir with NEXO_INSTALL_DIR=... too.
 #
@@ -36,13 +41,20 @@ REPO="lordmacu/nexo-rs"
 RELEASES="https://github.com/${REPO}/releases"
 INSTALL_DIR="${NEXO_INSTALL_DIR:-}"
 FROM_SOURCE=0
+INSTALL_PLUGINS=1
+
+# Bundled plugins installed by default (channel plugins ship GitHub
+# Release tarballs; the admin UI ships on crates.io). Override the
+# channel set with NEXO_PLUGINS="a b c"; use --no-plugins to skip all.
+PLUGINS="${NEXO_PLUGINS:-nexo-plugin-whatsapp nexo-plugin-telegram nexo-plugin-email nexo-plugin-browser}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --install-dir) INSTALL_DIR="$2"; shift 2 ;;
         --install-dir=*) INSTALL_DIR="${1#*=}"; shift ;;
         --from-source) FROM_SOURCE=1; shift ;;
-        -h|--help) sed -n '2,40p' "$0" 2>/dev/null || true; exit 0 ;;
+        --no-plugins) INSTALL_PLUGINS=0; shift ;;
+        -h|--help) sed -n '2,42p' "$0" 2>/dev/null || true; exit 0 ;;
         *) echo "warning: ignoring unknown flag '$1'" >&2; shift ;;
     esac
 done
@@ -182,22 +194,68 @@ EOF
     return 3
 }
 
+# --- where the `nexo` binary landed ----------------------------------
+nexo_bin() {
+    command -v nexo 2>/dev/null && return 0
+    local d; d="$(resolve_install_dir)"
+    [ -x "$d/nexo" ] && { echo "$d/nexo"; return 0; }
+    return 1
+}
+
+# Install the bundled plugins. Best-effort: a failure prints a hint
+# and the script carries on — the daemon still works without them.
+install_plugins() {
+    [ "$INSTALL_PLUGINS" -eq 1 ] || return 0
+    local nexo p
+    nexo="$(nexo_bin)" || { echo "  ⚠ can't find the freshly-installed 'nexo' — skipping plugins" >&2; return 0; }
+
+    echo
+    echo "─────────────────────────────────────────────────────────────"
+    echo "  Installing bundled plugins"
+    echo "─────────────────────────────────────────────────────────────"
+
+    # Channel plugins — GitHub Release tarballs via `nexo plugin install`.
+    for p in $PLUGINS; do
+        echo "→ ${p}"
+        "$nexo" plugin install "lordmacu/${p}" </dev/null \
+            || echo "  ⚠ skipped ${p} — retry later:  nexo plugin install lordmacu/${p}" >&2
+    done
+
+    # Admin web UI — `nexo-plugin-admin` ships on crates.io only.
+    if have cargo; then
+        echo "→ nexo-plugin-admin  (cargo install)"
+        cargo install nexo-plugin-admin </dev/null \
+            || echo "  ⚠ skipped nexo-plugin-admin — retry later:  cargo install nexo-plugin-admin" >&2
+    else
+        echo "  ⚠ skipped nexo-plugin-admin — needs the Rust toolchain." >&2
+        echo "    Install Rust, then:  cargo install nexo-plugin-admin" >&2
+    fi
+}
+
 next_steps() {
     cat <<'EOF'
 
 Next:
   1. Boot the daemon — zero config required:
-       nexo
+       nexo            # foreground
+       nexo start      # background (nexo stop / nexo restart to manage it)
 
-  2. Add a channel plugin (GitHub Releases tarball):
-       nexo plugin install lordmacu/nexo-plugin-whatsapp
-       # also: nexo-plugin-{telegram,email,browser}
+  2. Open the admin web UI (auto-installs nexo-plugin-admin if missing):
+       nexo admin --open
+       nexo admin --tunnel    # + a free public Cloudflare URL
 
   3. Add a persona pack (one-line ready-to-run agents):
        nexo persona install lordmacu/nexo-persona-cody
 
   4. (Optional) Scaffold 19 documented sample YAMLs:
        nexo init
+
+  More plugins / re-run a skipped one:
+       nexo plugin install lordmacu/nexo-plugin-whatsapp
+       # also: nexo-plugin-{telegram,email,browser}
+
+  Update later:
+       nexo update
 
 Docs: https://lordmacu.github.io/nexo-rs/
 EOF
@@ -215,6 +273,7 @@ main() {
             install_from_cargo || exit $?
         fi
     fi
+    install_plugins
     next_steps
 }
 
