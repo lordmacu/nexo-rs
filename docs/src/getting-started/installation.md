@@ -8,7 +8,8 @@ gets onto your machine and which dependencies come bundled.
 
 | Channel | When to pick it | Time to first run | Needs Rust? |
 |---|---|---|---|
-| **Pre-built binary (`install.sh`)** | Just want `nexo` on PATH, fast | ~10 s | No |
+| **Pre-built binary — Linux/macOS (`install.sh`)** | Just want `nexo` on PATH, fast | ~10 s | No |
+| **Pre-built binary — Windows (`install.ps1`)** | Native Windows, PowerShell | ~10 s | No |
 | **crates.io (`cargo install nexo-rs`)** | You already have a Rust toolchain | ~3-5 min build | Yes |
 | **[Debian / Ubuntu (`.deb`)](./install-deb.md)** | systemd host, `apt` integration | ~10 s | No |
 | **[Fedora / RHEL / Rocky (`.rpm`)](./install-rpm.md)** | systemd host, `dnf` integration | ~10 s | No |
@@ -19,17 +20,25 @@ gets onto your machine and which dependencies come bundled.
 
 ## Quickest path — pre-built binary
 
+**Linux / macOS** (also Windows from Git Bash):
+
 ```bash
 curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 ```
 
+**Windows** (PowerShell):
+
+```powershell
+irm https://lordmacu.github.io/nexo-rs/install.ps1 | iex
+```
+
 Detects your OS + arch (Linux x86_64 / aarch64 static-musl,
-macOS Intel / Apple Silicon), downloads the matching release
-tarball from [GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest),
-verifies its sha256, and drops `nexo` into `$CARGO_HOME/bin` (or
-`~/.local/bin`; override with `--install-dir`). Falls back to
-`cargo install nexo-rs` → `cargo install --git` if there's no
-pre-built binary for your platform. Every release artifact is
+macOS Intel / Apple Silicon, Windows x86_64-MSVC), downloads the
+matching release artifact from [GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest),
+verifies its sha256, drops `nexo` (`nexo.exe` on Windows) onto your
+PATH, then installs the bundled channel plugins + a persona. Falls
+back to `cargo install nexo-rs` → `cargo install --git` if there's
+no pre-built binary for your platform. Every release artifact is
 cosign-signed.
 
 Then:

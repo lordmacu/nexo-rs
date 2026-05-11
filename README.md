@@ -35,8 +35,9 @@ Telegram; Ana works the WhatsApp sales line; a cron-style poller sweeps
 Gmail for leads — all sharing one broker, one tool registry, one
 memory layer.
 
-Install the pre-built binary (`curl … install.sh | bash`,
-`cargo install nexo-rs`, or a `.deb` / `.rpm` / Termux `.deb` from
+Install the pre-built binary (`curl … install.sh | bash` on Linux/macOS,
+`irm … install.ps1 | iex` on Windows, `cargo install nexo-rs`, or a
+`.deb` / `.rpm` / Termux `.deb` from
 [GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest)),
 then `nexo` — the daemon boots against documented defaults with no
 config dir. Add a channel plugin with `nexo plugin install
@@ -57,12 +58,12 @@ how it lands on your machine. The one-liner needs no Rust toolchain.
 
 | Method | Command | Notes |
 |--------|---------|-------|
-| **Pre-built binary** | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` | Linux x86_64 / aarch64 (static musl), macOS Intel / Apple Silicon. Detects OS+arch, verifies sha256, drops `nexo` on PATH. Falls back to `cargo install nexo-rs` for other platforms. |
-| **crates.io** | `cargo install nexo-rs` | Needs a Rust toolchain (1.80+). Compiles the daemon from the published workspace. |
+| **Pre-built binary (Linux / macOS)** | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` | Linux x86_64 / aarch64 (static musl), macOS Intel / Apple Silicon. Detects OS+arch, verifies sha256, drops `nexo` on PATH, then installs the bundled plugins + a persona. Falls back to `cargo install nexo-rs`. Works on Windows too when run from Git Bash. |
+| **Pre-built binary (Windows, PowerShell)** | `irm https://lordmacu.github.io/nexo-rs/install.ps1 \| iex` | Downloads `nexo-rs-x86_64-pc-windows-msvc.zip`, verifies sha256, adds `nexo.exe` to your user PATH, then installs the bundled plugins + a persona. |
+| **crates.io** | `cargo install nexo-rs` | Needs a Rust toolchain (1.80+). Compiles the daemon from the published workspace. Works on every platform Rust supports. |
 | **Debian / Ubuntu** | `sudo apt install ./nexo-rs_<ver>_amd64.deb` | Download the `.deb` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Ships a systemd unit; postinst seeds `/etc/nexo-rs/`. |
 | **Fedora / RHEL / Rocky** | `sudo dnf install ./nexo-rs-<ver>-1.x86_64.rpm` | `.rpm` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Same systemd unit. |
 | **Termux (Android, aarch64)** | `pkg install ./nexo-rs_<ver>_aarch64.deb` | aarch64 `.deb` (bionic libc) from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). No root. |
-| **Windows** | download the `.zip` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest), or `cargo install nexo-rs` | The bash installer is WSL-only. |
 | **Docker / GHCR** | `docker pull ghcr.io/lordmacu/nexo-rs:latest` | Multi-arch (`amd64` + `arm64`); bundles Chrome, cloudflared, ffmpeg, tesseract, yt-dlp; carries SBOM + SLSA provenance. |
 | **Nix flake** | `nix run github:lordmacu/nexo-rs` | Reproducible dev shell + binary. |
 | **From source** | `git clone https://github.com/lordmacu/nexo-rs && cd nexo-rs && cargo build --release` | Track `main`. `--profile release-fast` for ~50 % quicker iterative builds. |
