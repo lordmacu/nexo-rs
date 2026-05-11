@@ -82,28 +82,26 @@ stt-candle-hub = [
     "stt-candle",
     "dep:hf-hub",
 ]
-# Phase 91.x.wasm.phase-4 — cloud STT backends. Pulls `reqwest`
-# (already shared with `wizard`) + adds an `SttProvider` trait
-# with three impls: OpenAI Whisper (`/v1/audio/transcriptions`),
-# Groq (OpenAI-compatible at `openai/v1/audio/transcriptions`),
-# and Anthropic `voice_stream` WebSocket (per the
-# claude-code-leak mining). Cloud-first dispatch + Candle
-# fallback wires into `transcribe_file` so operators get
-# graceful degradation when the network drops.
+# Phase 91.x.wasm.phase-4 — cloud STT backends. Native-only
+# until the workspace daemon's reqwest pin gets split into
+# wasm-safe and native variants (Phase 91.x.wasm.phase-4c.3,
+# real cost much higher than the original estimate — see
+# FOLLOWUPS.md for the spike findings).
 #
-# Works on `wasm32-unknown-unknown` (reqwest swaps to the
-# browser fetch API on that target; the Anthropic WebSocket
-# uses `web-sys::WebSocket`). Native targets use rustls-tls
-# (workspace TLS posture).
+# Adds an `SttProvider` trait with three impls (OpenAI Whisper,
+# Groq, Anthropic voice_stream) + `CompositeProvider` fallback
+# chain wired into `transcribe_file_with_chain`.
 stt-cloud = [
     "dep:reqwest",
 ]
 # Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
 # STT (per the claude-code-leak mining). Adds tokio-tungstenite
-# for the WebSocket transport on top of `stt-cloud`. Native-only
-# because tokio-tungstenite pulls tokio's `net` feature; WASM
-# voice_stream would need a `web-sys::WebSocket`-based client
-# (filed as Phase 91.x.wasm.phase-4c).
+# for the WebSocket transport on top of `stt-cloud` (native
+# only). Implies `stt-cloud` (the native variant) because
+# tokio-tungstenite pulls tokio's `net` feature which doesn't
+# compile for wasm32 — WASM voice_stream would need a
+# `web-sys::WebSocket`-based swap-in (filed as Phase
+# 91.x.wasm.phase-4c.4).
 stt-cloud-anthropic = [
     "stt-cloud",
     "dep:tokio-tungstenite",
@@ -121,8 +119,9 @@ stt-cloud-anthropic = [
 #       Box::new(LocalCandleProvider::new(cfg)),     // fallback
 #   ])
 #
-# Microapps wanting cloud-first + offline fallback enable this
-# feature to opt-in.
+# Native-only by transitive dependency (Candle inference doesn't
+# compile for wasm32) — selects the rustls-tls-on `stt-cloud`
+# variant accordingly.
 stt-cloud-local-candle = [
     "stt-cloud",
     "stt-candle",
@@ -422,10 +421,10 @@ symphonia = { version = "0.5", default-features = false, features = [
 # was native-only). The other blocker — `rustls-tls` not
 # compiling for wasm32 — still keeps the cloud module gated
 # on `not(wasm32)` at the parent. Filed as Phase
-# 91.x.wasm.phase-4c.3: split reqwest features per target via
-# a sub-feature (e.g. `stt-cloud-native-tls`) so wasm builds
-# can opt out of `rustls-tls` and use the browser fetch API
-# instead.
+# 91.x.wasm.phase-4c.3: requires workspace-level reqwest split
+# (daemon binary's pin includes `macos-system-configuration`
+# + `rustls-tls` which poisons the resolver-2 unified feature
+# set for wasm32 SDK consumers).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 # Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
 # transport. `rustls-tls-webpki-roots` skips the system trust

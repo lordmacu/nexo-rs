@@ -79,23 +79,23 @@ pub mod transcribe_candle;
 // Groq Whisper-large-v3, Anthropic voice_stream)
 // + `CompositeProvider` fallback chain.
 //
-// Phase 91.x.wasm.phase-4c — one of the two wasm32 blockers
-// identified during the spike is now fixed: the REST legs no
-// longer use `reqwest::multipart::Form` (native-only); they
-// build the multipart body by hand via
-// `build_openai_multipart_body` and submit it through
-// `.body(Vec<u8>)` (cross-platform). The remaining blocker is
-// reqwest's `rustls-tls` feature: rustls doesn't compile for
-// wasm32 — the browser fetch API handles TLS without a TLS
-// feature. Splitting `rustls-tls` behind a sub-feature
-// (e.g. `stt-cloud-native-tls`) so wasm builds can opt out is
-// filed as Phase 91.x.wasm.phase-4c.3.
-//
-// Until phase-4c.3 lands, the cloud module stays gated on
-// `not(wasm32)` at the parent. The internal refactors (hand-
-// assembled multipart body, `anthropic` carrying its own
-// `not(wasm32)` cfg) make the eventual ungate trivial — only
-// the Cargo feature split blocks today.
+// Phase 91.x.wasm.phase-4c — partial unblock. The
+// `phase-4c.2` refactor (hand-assembled multipart) removed one
+// wasm32 blocker. The remaining blocker is workspace-level:
+// the daemon binary's reqwest pin requests features that
+// can't activate on wasm32 (`macos-system-configuration`,
+// `rustls-tls`), and resolver-2's cross-workspace feature
+// unification silently drops reqwest from wasm32 dep
+// resolution for ANY workspace member that pulls it (the SDK
+// included). Confirmed via `cargo tree --invert reqwest
+// --target wasm32-unknown-unknown` — "nothing to print" even
+// after explicit `--features stt-cloud-wasm`. The earlier
+// phase-4c.3 spike split `stt-cloud` into `stt-cloud` /
+// `stt-cloud-wasm` sub-features but reqwest still didn't
+// link on wasm32 — the workspace unification dominates.
+// Real unblock needs structural workspace change (separate
+// `reqwest-wasm` package alias for the SDK, or extracting
+// the SDK out of this workspace). Filed in FOLLOWUPS.
 #[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
 pub mod cloud;
 
