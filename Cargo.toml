@@ -225,7 +225,25 @@ thiserror          = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-nats         = "0.35"
-reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies", "charset", "http2", "macos-system-configuration"] }
+# Phase 91.x.wasm.phase-4c.3 — base pin trimmed to ONLY the
+# wasm-clean features so resolver-2 doesn't unify wasm-broken
+# features into wasm32 SDK builds. Removed:
+#   - `rustls-tls` (rustls doesn't compile for wasm32)
+#   - `macos-system-configuration` (macOS-only proxy detect)
+#   - `stream` (pulls `tokio/fs`, native-only)
+#   - `cookies` (gated `not(wasm32)` in reqwest's manifest)
+#   - `http2` (h2 + hyper/http2, native-only)
+# Native consumers re-add what they need via additive
+# `features = [...]` on their own `workspace = true` decl.
+# Each of the 8 native-only workspace crates adds at least
+# `rustls-tls`; the daemon binary adds `rustls-tls + macos-
+# system-configuration + stream + cookies + http2` (the full
+# original native set).
+#
+# Wasm32 SDK builds get reqwest with just `json` + `charset`
+# (both cross-platform); the browser fetch API handles
+# everything else.
+reqwest            = { version = "0.12", default-features = false, features = ["json", "charset"] }
 sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 tokio-tungstenite  = { version = "0.21", features = ["rustls-tls-native-roots"] }
 uuid               = { version = "1", features = ["v4", "v5", "serde", "macro-diagnostics"] }
@@ -394,7 +412,11 @@ tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 base64              = { workspace = true }
-reqwest             = { workspace = true }
+# Phase 91.x.wasm.phase-4c.3 — daemon re-adds the full native
+# feature set on top of the wasm-clean workspace base.
+# The workspace pin only ships `["json", "charset"]` now so
+# wasm32 SDK builds resolve clean.
+reqwest             = { workspace = true, features = ["rustls-tls", "stream", "cookies", "http2", "macos-system-configuration"] }
 serde               = { workspace = true }
 serde_json          = { workspace = true }
 serde_yaml          = { workspace = true }

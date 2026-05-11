@@ -28,7 +28,7 @@ tracing           = { workspace = true }
 dashmap           = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tokio-util        = { workspace = true }
-reqwest           = { workspace = true }
+reqwest = { workspace = true, features = ["rustls-tls", "stream", "cookies", "http2"] }
 futures           = { workspace = true }
 base64            = { workspace = true }
 

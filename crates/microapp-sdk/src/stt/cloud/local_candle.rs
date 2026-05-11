@@ -42,7 +42,7 @@
 //! inference. Operators on metered cellular get the cheap path
 //! when online and a guaranteed offline backstop.
 
-#![cfg(all(feature = "stt-cloud", feature = "stt-candle"))]
+#![cfg(all(feature = "stt-cloud-wasm", feature = "stt-candle"))]
 
 use std::borrow::Cow;
 use std::path::PathBuf;
