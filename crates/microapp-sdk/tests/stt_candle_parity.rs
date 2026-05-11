@@ -139,9 +139,8 @@ async fn transcribe_with_each(
 #[tokio::test]
 #[ignore = "requires NEXO_STT_PARITY_* env vars + ~200 MB of local models"]
 async fn parity_within_wer_threshold() {
-    let fixtures_dir = locate_fixtures_dir().expect(
-        "set NEXO_STT_PARITY_FIXTURES_DIR to a directory of voice-note fixtures",
-    );
+    let fixtures_dir = locate_fixtures_dir()
+        .expect("set NEXO_STT_PARITY_FIXTURES_DIR to a directory of voice-note fixtures");
     let ggml = locate_ggml_path().expect(
         "set NEXO_STT_PARITY_WHISPER_GGML to a GGML whisper-tiny file (e.g. \
          ggml-tiny-q5_1.bin)",
@@ -160,9 +159,7 @@ async fn parity_within_wer_threshold() {
         }
         let (cpp, candle) = transcribe_with_each(&fixture, lang, &ggml, &safetensors_dir).await;
         let wer = word_error_rate(&cpp, &candle);
-        eprintln!(
-            "[parity] fixture={name} lang={lang} wer={wer:.3} cpp={cpp:?} candle={candle:?}"
-        );
+        eprintln!("[parity] fixture={name} lang={lang} wer={wer:.3} cpp={cpp:?} candle={candle:?}");
         if wer > *max_wer {
             failures.push(format!(
                 "{name}: WER {wer:.3} > threshold {max_wer:.3}\n  whisper-rs: {cpp:?}\n  candle:     {candle:?}"

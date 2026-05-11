@@ -105,10 +105,7 @@ impl EmailTemplateStore {
         &self.pool
     }
 
-    pub async fn list(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<EmailTemplate>, TemplateStoreError> {
+    pub async fn list(&self, tenant_id: &str) -> Result<Vec<EmailTemplate>, TemplateStoreError> {
         let rows = sqlx::query(
             "SELECT id, name, blocks_json, page_background, page_background_image, updated_at_ms \
              FROM marketing_email_templates \
@@ -256,11 +253,7 @@ impl EmailTemplateStore {
         })
     }
 
-    pub async fn delete(
-        &self,
-        tenant_id: &str,
-        id: &str,
-    ) -> Result<bool, TemplateStoreError> {
+    pub async fn delete(&self, tenant_id: &str, id: &str) -> Result<bool, TemplateStoreError> {
         let res = sqlx::query(
             "DELETE FROM marketing_email_templates \
              WHERE tenant_id = ? AND id = ?",
@@ -312,7 +305,8 @@ mod tests {
     async fn create_then_list_returns_row() {
         let s = EmailTemplateStore::new(pool().await);
         let created = s
-            .create("t1", "Welcome", &fixture_blocks(), None, None, 1_000).await
+            .create("t1", "Welcome", &fixture_blocks(), None, None, 1_000)
+            .await
             .unwrap();
         assert_eq!(created.name, "Welcome");
         let list = s.list("t1").await.unwrap();
@@ -325,11 +319,21 @@ mod tests {
     async fn update_replaces_blocks_and_name() {
         let s = EmailTemplateStore::new(pool().await);
         let created = s
-            .create("t1", "Welcome", &fixture_blocks(), None, None, 1_000).await
+            .create("t1", "Welcome", &fixture_blocks(), None, None, 1_000)
+            .await
             .unwrap();
         let new_blocks = vec![EmailBlock::Spacer { height_px: 32 }];
         let updated = s
-            .update("t1", &created.id, "Welcome v2", &new_blocks, None, None, 2_000).await
+            .update(
+                "t1",
+                &created.id,
+                "Welcome v2",
+                &new_blocks,
+                None,
+                None,
+                2_000,
+            )
+            .await
             .unwrap();
         assert_eq!(updated.name, "Welcome v2");
         assert_eq!(updated.blocks.len(), 1);
@@ -340,7 +344,8 @@ mod tests {
     async fn update_unknown_returns_not_found() {
         let s = EmailTemplateStore::new(pool().await);
         let err = s
-            .update("t1", "ghost-id", "x", &fixture_blocks(), None, None, 1).await
+            .update("t1", "ghost-id", "x", &fixture_blocks(), None, None, 1)
+            .await
             .unwrap_err();
         assert!(matches!(err, TemplateStoreError::NotFound(_)));
     }
@@ -349,7 +354,8 @@ mod tests {
     async fn delete_removes_row() {
         let s = EmailTemplateStore::new(pool().await);
         let c = s
-            .create("t1", "x", &fixture_blocks(), None, None, 1).await
+            .create("t1", "x", &fixture_blocks(), None, None, 1)
+            .await
             .unwrap();
         assert!(s.delete("t1", &c.id).await.unwrap());
         assert!(s.list("t1").await.unwrap().is_empty());
@@ -358,8 +364,12 @@ mod tests {
     #[tokio::test]
     async fn tenant_isolation() {
         let s = EmailTemplateStore::new(pool().await);
-        s.create("t1", "n", &fixture_blocks(), None, None, 1).await.unwrap();
-        s.create("t2", "n", &fixture_blocks(), None, None, 1).await.unwrap();
+        s.create("t1", "n", &fixture_blocks(), None, None, 1)
+            .await
+            .unwrap();
+        s.create("t2", "n", &fixture_blocks(), None, None, 1)
+            .await
+            .unwrap();
         assert_eq!(s.list("t1").await.unwrap().len(), 1);
         assert_eq!(s.list("t2").await.unwrap().len(), 1);
     }
@@ -368,7 +378,8 @@ mod tests {
     async fn empty_name_rejected() {
         let s = EmailTemplateStore::new(pool().await);
         let err = s
-            .create("t1", "  ", &fixture_blocks(), None, None, 1).await
+            .create("t1", "  ", &fixture_blocks(), None, None, 1)
+            .await
             .unwrap_err();
         assert!(matches!(err, TemplateStoreError::MissingName));
     }

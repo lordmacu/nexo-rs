@@ -19,5 +19,8 @@ fn main() {
         .collect();
     supported.sort();
     let payload = serde_json::json!({ "supported": supported });
-    println!("{}", serde_json::to_string(&payload).expect("JSON serialise"));
+    println!(
+        "{}",
+        serde_json::to_string(&payload).expect("JSON serialise")
+    );
 }

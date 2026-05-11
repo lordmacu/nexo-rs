@@ -138,10 +138,7 @@ impl ModuleStateStore {
     /// Construct a store backed by `pool` writing to `table_name`.
     /// Returns `Err(InvalidTableName)` when the name doesn't
     /// match the allowlist regex.
-    pub fn new(
-        pool: SqlitePool,
-        table_name: impl Into<String>,
-    ) -> Result<Self, StateError> {
+    pub fn new(pool: SqlitePool, table_name: impl Into<String>) -> Result<Self, StateError> {
         let table = table_name.into();
         validate_table(&table)?;
         Ok(Self { pool, table })
@@ -155,11 +152,7 @@ impl ModuleStateStore {
         &self.table
     }
 
-    pub async fn get(
-        &self,
-        tenant_id: &str,
-        now_ms: i64,
-    ) -> Result<ModuleState, StateError> {
+    pub async fn get(&self, tenant_id: &str, now_ms: i64) -> Result<ModuleState, StateError> {
         let stmt = format!(
             r#"SELECT enabled, paused_reason, updated_at_ms
                FROM {} WHERE tenant_id = ?"#,
@@ -333,17 +326,14 @@ mod tests {
         for bad in &[
             "",
             "Module_State",          // uppercase
-            "1state",                 // leading digit
-            "module-state",           // hyphen
-            "module state",           // space
-            "module_state; DROP --",  // SQL injection
-            "'state'",                // quotes
-            &"a".repeat(65),          // too long
+            "1state",                // leading digit
+            "module-state",          // hyphen
+            "module state",          // space
+            "module_state; DROP --", // SQL injection
+            "'state'",               // quotes
+            &"a".repeat(65),         // too long
         ] {
-            assert!(
-                validate_table(bad).is_err(),
-                "should reject: {bad:?}"
-            );
+            assert!(validate_table(bad).is_err(), "should reject: {bad:?}");
         }
     }
 

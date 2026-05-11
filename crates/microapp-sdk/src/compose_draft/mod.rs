@@ -72,10 +72,7 @@ fn validate_table(name: &str) -> Result<(), ComposeDraftError> {
 /// Run the CREATE TABLE migration. Idempotent — safe on
 /// every boot. Caller passes the same `table_name` they'll
 /// use for the store.
-pub async fn migrate(
-    pool: &SqlitePool,
-    table_name: &str,
-) -> Result<(), ComposeDraftError> {
+pub async fn migrate(pool: &SqlitePool, table_name: &str) -> Result<(), ComposeDraftError> {
     validate_table(table_name)?;
     let stmt = format!(
         r#"
@@ -149,8 +146,12 @@ pub struct ComposeDraft {
     pub updated_at_ms: i64,
 }
 
-fn default_true() -> bool { true }
-fn default_mode() -> String { "rapid".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_mode() -> String {
+    "rapid".to_string()
+}
 
 /// Patch supplied on POST (create) and PUT (update). All
 /// fields are optional so the UI can save partial state — a
@@ -200,10 +201,7 @@ impl ComposeDraftStore {
     /// `table_name`. Uses [`DEFAULT_EMPTY_TITLE`] as the
     /// fallback when neither the operator nor their subject
     /// supplies a title.
-    pub fn new(
-        pool: SqlitePool,
-        table_name: impl Into<String>,
-    ) -> Result<Self, ComposeDraftError> {
+    pub fn new(pool: SqlitePool, table_name: impl Into<String>) -> Result<Self, ComposeDraftError> {
         Self::new_with_fallback(pool, table_name, DEFAULT_EMPTY_TITLE)
     }
 
@@ -232,10 +230,7 @@ impl ComposeDraftStore {
         &self.table
     }
 
-    pub async fn list(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<ComposeDraft>, ComposeDraftError> {
+    pub async fn list(&self, tenant_id: &str) -> Result<Vec<ComposeDraft>, ComposeDraftError> {
         let stmt = format!(
             "SELECT id, title, to_email, to_name, subject, body, \
                     seller_id, with_tracking, template_id, \
@@ -308,9 +303,8 @@ impl ComposeDraftStore {
         };
         let attachments_json = match &input.attachment_refs {
             Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| {
-                    ComposeDraftError::InvalidAttachmentJson(e.to_string())
-                })?,
+                serde_json::to_string(v)
+                    .map_err(|e| ComposeDraftError::InvalidAttachmentJson(e.to_string()))?,
             ),
             None => None,
         };
@@ -379,9 +373,8 @@ impl ComposeDraftStore {
         };
         let attachments_json = match &input.attachment_refs {
             Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| {
-                    ComposeDraftError::InvalidAttachmentJson(e.to_string())
-                })?,
+                serde_json::to_string(v)
+                    .map_err(|e| ComposeDraftError::InvalidAttachmentJson(e.to_string()))?,
             ),
             None => None,
         };
@@ -431,15 +424,8 @@ impl ComposeDraftStore {
         }
     }
 
-    pub async fn delete(
-        &self,
-        tenant_id: &str,
-        id: &str,
-    ) -> Result<bool, ComposeDraftError> {
-        let stmt = format!(
-            "DELETE FROM {} WHERE tenant_id = ? AND id = ?",
-            self.table,
-        );
+    pub async fn delete(&self, tenant_id: &str, id: &str) -> Result<bool, ComposeDraftError> {
+        let stmt = format!("DELETE FROM {} WHERE tenant_id = ? AND id = ?", self.table,);
         let res = sqlx::query(&stmt)
             .bind(tenant_id)
             .bind(id)
@@ -465,21 +451,22 @@ fn row_to_draft(r: &sqlx::sqlite::SqliteRow) -> Result<ComposeDraft, ComposeDraf
         with_tracking: with_tracking != 0,
         template_id: r.try_get("template_id")?,
         template_vars: match template_vars_json {
-            Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                ComposeDraftError::InvalidVarsJson(e.to_string())
-            })?),
+            Some(s) => Some(
+                serde_json::from_str(&s)
+                    .map_err(|e| ComposeDraftError::InvalidVarsJson(e.to_string()))?,
+            ),
             None => None,
         },
         blocks: match blocks_json {
-            Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                ComposeDraftError::InvalidBlocksJson(e.to_string())
-            })?),
+            Some(s) => Some(
+                serde_json::from_str(&s)
+                    .map_err(|e| ComposeDraftError::InvalidBlocksJson(e.to_string()))?,
+            ),
             None => None,
         },
         attachment_refs: match attachment_refs_json {
-            Some(s) => serde_json::from_str(&s).map_err(|e| {
-                ComposeDraftError::InvalidAttachmentJson(e.to_string())
-            })?,
+            Some(s) => serde_json::from_str(&s)
+                .map_err(|e| ComposeDraftError::InvalidAttachmentJson(e.to_string()))?,
             None => Vec::new(),
         },
         mode: r.try_get("mode")?,
@@ -492,10 +479,20 @@ fn row_to_draft(r: &sqlx::sqlite::SqliteRow) -> Result<ComposeDraft, ComposeDraf
 /// wins; otherwise fall back to subject; otherwise the
 /// store's configured empty-title sentinel.
 fn effective_title(input: &ComposeDraftInput, empty_title: &str) -> String {
-    if let Some(t) = input.title.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(t) = input
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return t.to_string();
     }
-    if let Some(s) = input.subject.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(s) = input
+        .subject
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         return s.to_string();
     }
     empty_title.to_string()
@@ -557,8 +554,7 @@ mod tests {
     #[tokio::test]
     async fn fallback_string_is_configurable() {
         let p = pool().await;
-        let s = ComposeDraftStore::new_with_fallback(p, "test_drafts", "(sin asunto)")
-            .unwrap();
+        let s = ComposeDraftStore::new_with_fallback(p, "test_drafts", "(sin asunto)").unwrap();
         let d = s
             .create("t1", &ComposeDraftInput::default(), 1)
             .await

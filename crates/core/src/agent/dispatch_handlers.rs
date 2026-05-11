@@ -23,12 +23,11 @@ use nexo_agent_registry::{AgentRegistry, LogBuffer};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
 use nexo_dispatch_tools::{
     agent_hooks_list, agent_logs_tail, agent_status, ask_user_question, cancel_agent, list_agents,
-    pause_agent, program_phase_chain, program_phase_dispatch, program_phase_parallel,
-    resume_agent, update_budget, AgentHooksListInput, AgentLogsTailInput, AgentStatusInput,
-    AskUserQuestionInput, CancelAgentInput, DispatchDeniedPayload, DispatchSpawnedPayload,
-    HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseChainInput,
-    ProgramPhaseChainOutput, ProgramPhaseInput, ProgramPhaseOutput, ProgramPhaseParallelInput,
-    ProgramPhaseParallelOutput, UpdateBudgetInput,
+    pause_agent, program_phase_chain, program_phase_dispatch, program_phase_parallel, resume_agent,
+    update_budget, AgentHooksListInput, AgentLogsTailInput, AgentStatusInput, AskUserQuestionInput,
+    CancelAgentInput, DispatchDeniedPayload, DispatchSpawnedPayload, HookRegistry, ListAgentsInput,
+    PauseAgentInput, ProgramPhaseChainInput, ProgramPhaseChainOutput, ProgramPhaseInput,
+    ProgramPhaseOutput, ProgramPhaseParallelInput, ProgramPhaseParallelOutput, UpdateBudgetInput,
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -368,7 +367,9 @@ impl ToolHandler for ProgramPhaseParallelHandler {
                     reason: "self-modify is disabled by NEXO_DISALLOW_SELF_MODIFY=1 (production / frozen-binary deploy). Either unset that env var to re-enable, or switch to a different workspace via init_project / set_active_workspace.".into(),
                 })
                 .collect();
-            return Ok(serde_json::to_value(ProgramPhaseParallelOutput { results })?);
+            return Ok(serde_json::to_value(ProgramPhaseParallelOutput {
+                results,
+            })?);
         }
         let out: ProgramPhaseParallelOutput = program_phase_parallel(
             input,

@@ -28,17 +28,12 @@ use super::{Result, SttError, TranscribeConfig};
 /// arrive as ogg-opus, which is the only family this pipeline
 /// understands; non-ogg payloads (mp3 attachments, etc.) surface
 /// as [`SttError::UnsupportedFormat`].
-pub(crate) async fn decode_to_pcm_mono(
-    path: &Path,
-    cfg: &TranscribeConfig,
-) -> Result<Vec<u8>> {
+pub(crate) async fn decode_to_pcm_mono(path: &Path, cfg: &TranscribeConfig) -> Result<Vec<u8>> {
     let bytes = tokio::fs::read(path).await?;
     let target_rate = cfg.target_sample_rate;
-    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-        decode_ogg_opus(&bytes, target_rate)
-    })
-    .await
-    .map_err(|e| SttError::Decode(format!("decode join: {e}")))?
+    tokio::task::spawn_blocking(move || -> Result<Vec<u8>> { decode_ogg_opus(&bytes, target_rate) })
+        .await
+        .map_err(|e| SttError::Decode(format!("decode join: {e}")))?
 }
 
 /// Demux an ogg container, decode opus packets with `opus-wave`,

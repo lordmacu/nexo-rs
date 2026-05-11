@@ -1158,8 +1158,7 @@ allowed_tools: []
     #[test]
     fn deserializes_valid_es_ar_locale() {
         let y = agent_yaml("language: es-AR");
-        let a: AgentConfig =
-            serde_yaml::from_str(&y).expect("valid es-AR locale must deserialize");
+        let a: AgentConfig = serde_yaml::from_str(&y).expect("valid es-AR locale must deserialize");
         assert_eq!(a.language.as_deref(), Some("es-AR"));
     }
 
@@ -1205,7 +1204,8 @@ allowed_tools: []
     #[test]
     fn rejects_unknown_locale_on_binding_override() {
         let y = "plugin: whatsapp\ninstance: support\nlanguage: \"klingon\"\n";
-        let err = serde_yaml::from_str::<InboundBinding>(y).expect_err("klingon on binding rejects");
+        let err =
+            serde_yaml::from_str::<InboundBinding>(y).expect_err("klingon on binding rejects");
         let msg = format!("{err}");
         assert!(
             msg.contains("invalid locale") || msg.contains("klingon"),

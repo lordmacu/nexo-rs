@@ -279,7 +279,10 @@ pub fn render_template_with_page_bg(
     page_background: Option<&str>,
     page_background_image: Option<&str>,
 ) -> String {
-    let body = blocks.iter().map(|b| render_block(b, vars)).collect::<String>();
+    let body = blocks
+        .iter()
+        .map(|b| render_block(b, vars))
+        .collect::<String>();
     let bg_color = page_background
         .map(|c| sanitize_color(c, "#f5f5f5"))
         .unwrap_or_else(|| "#f5f5f5".to_string());
@@ -305,7 +308,13 @@ pub fn render_template_with_page_bg(
 /// the one exception — emits its own nested table inside a tr.
 pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> String {
     match block {
-        EmailBlock::Heading { text, text_html, level, color, align } => {
+        EmailBlock::Heading {
+            text,
+            text_html,
+            level,
+            color,
+            align,
+        } => {
             // Prefer the rich-text body when set. The sanitizer
             // already ran when the operator saved; we run it
             // again defensively so a forged blocks_json can't
@@ -344,7 +353,13 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 align = align.as_str(),
             )
         }
-        EmailBlock::Paragraph { text, text_html, color, align, font_size } => {
+        EmailBlock::Paragraph {
+            text,
+            text_html,
+            color,
+            align,
+            font_size,
+        } => {
             let body = match text_html.as_deref() {
                 Some(html) if !html.is_empty() => {
                     substitute_vars(&crate::email_template::email_safe_html(html), vars)
@@ -367,7 +382,13 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 align = align.as_str(),
             )
         }
-        EmailBlock::Button { text, url, bg_color, text_color, align } => {
+        EmailBlock::Button {
+            text,
+            url,
+            bg_color,
+            text_color,
+            align,
+        } => {
             let text = substitute_vars(text, vars);
             let text = escape_html(&text);
             let url = substitute_vars(url, vars);
@@ -379,7 +400,14 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 align = align.as_str(),
             )
         }
-        EmailBlock::Image { url, alt, width, align, link_url, embed } => {
+        EmailBlock::Image {
+            url,
+            alt,
+            width,
+            align,
+            link_url,
+            embed,
+        } => {
             let url = substitute_vars(url, vars);
             // CID embed rewrites the src to `cid:{sha}` so the
             // recipient's mail client resolves to the inline
@@ -453,8 +481,14 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
             )
         }
         EmailBlock::TwoColumn { left, right } => {
-            let left_html = left.iter().map(|b| render_block(b, vars)).collect::<String>();
-            let right_html = right.iter().map(|b| render_block(b, vars)).collect::<String>();
+            let left_html = left
+                .iter()
+                .map(|b| render_block(b, vars))
+                .collect::<String>();
+            let right_html = right
+                .iter()
+                .map(|b| render_block(b, vars))
+                .collect::<String>();
             // Two nested tables side by side. `valign="top"` so
             // unequal heights don't push one column to the middle.
             // Width 50% each on desktop; the `email-col` class
@@ -467,10 +501,13 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 r#"<tr><td style="padding:8px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="top" width="50%" class="email-col" style="padding:0 12px 0 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tbody>{left_html}</tbody></table></td><td valign="top" width="50%" class="email-col" style="padding:0 0 0 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tbody>{right_html}</tbody></table></td></tr></table></td></tr>"#
             )
         }
-        EmailBlock::Row { columns, background, background_image } => {
+        EmailBlock::Row {
+            columns,
+            background,
+            background_image,
+        } => {
             if columns.is_empty() {
-                return r#"<tr><td style="padding:4px 12px;height:24px;"></td></tr>"#
-                    .to_string();
+                return r#"<tr><td style="padding:4px 12px;height:24px;"></td></tr>"#.to_string();
             }
             let widths = normalize_column_widths(columns);
             let mut tds = String::new();
@@ -489,10 +526,8 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 // Returns both the inline CSS and the legacy
                 // `background="URL"` HTML attr for clients that
                 // ignore CSS-set background-images.
-                let (col_bg, col_attr) = build_bg(
-                    col.background.as_deref(),
-                    col.background_image.as_deref(),
-                );
+                let (col_bg, col_attr) =
+                    build_bg(col.background.as_deref(), col.background_image.as_deref());
                 tds.push_str(&format!(
                     r#"<td valign="top" width="{w}%" class="email-col"{col_attr} style="{col_bg}padding:0 {pad_right}px 0 {pad_left}px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tbody>{inner}</tbody></table></td>"#
                 ));
@@ -500,15 +535,16 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
             // Row-level background lives on the outer TD that
             // wraps the column-table; covers the whole row
             // band (operator's intent for a "section" colour).
-            let (row_bg, row_attr) = build_bg(
-                background.as_deref(),
-                background_image.as_deref(),
-            );
+            let (row_bg, row_attr) = build_bg(background.as_deref(), background_image.as_deref());
             format!(
                 r#"<tr><td{row_attr} style="{row_bg}padding:8px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>{tds}</tr></table></td></tr>"#
             )
         }
-        EmailBlock::List { items, ordered, color } => {
+        EmailBlock::List {
+            items,
+            ordered,
+            color,
+        } => {
             let tag = if *ordered { "ol" } else { "ul" };
             let color = color.as_deref().unwrap_or("#374151");
             let list_items = items
@@ -565,7 +601,11 @@ fn walk_for_inline(
 ) {
     for b in blocks {
         match b {
-            EmailBlock::Image { url, embed: ImageEmbed::Cid, .. } => {
+            EmailBlock::Image {
+                url,
+                embed: ImageEmbed::Cid,
+                ..
+            } => {
                 let url = substitute_vars(url, vars);
                 if let Some(sha) = extract_sha_from_asset_url(&url) {
                     let ext = url
@@ -682,18 +722,14 @@ fn normalize_column_widths(columns: &[Column]) -> Vec<u8> {
     if columns.is_empty() {
         return Vec::new();
     }
-    let raw: Vec<u32> = columns
-        .iter()
-        .map(|c| c.width_pct.max(1) as u32)
-        .collect();
+    let raw: Vec<u32> = columns.iter().map(|c| c.width_pct.max(1) as u32).collect();
     let sum: u32 = raw.iter().sum();
     if sum == 100 {
         return raw.iter().map(|&w| w as u8).collect();
     }
     // Scale proportionally; round; redistribute the rounding
     // delta to the widest column so the total lands at 100.
-    let mut out: Vec<u32> =
-        raw.iter().map(|&w| (w * 100) / sum.max(1)).collect();
+    let mut out: Vec<u32> = raw.iter().map(|&w| (w * 100) / sum.max(1)).collect();
     let total: u32 = out.iter().sum();
     if total < 100 {
         // Funnel the missing % to the widest column.
@@ -784,7 +820,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -833,9 +872,7 @@ mod tests {
     fn rich_text_html_renders_inline_formatting() {
         let b = EmailBlock::Paragraph {
             text: "fallback".into(),
-            text_html: Some(
-                "Hola <strong>{{name}}</strong>, gracias.".into(),
-            ),
+            text_html: Some("Hola <strong>{{name}}</strong>, gracias.".into()),
             color: None,
             align: TextAlign::Left,
             font_size: 16,
@@ -1096,7 +1133,10 @@ mod tests {
         }];
         let html = render_template(&blocks, &HashMap::new());
         // Public URL gone; cid: ref present.
-        assert!(html.contains(&format!("cid:{sha}")), "cid src missing in: {html}");
+        assert!(
+            html.contains(&format!("cid:{sha}")),
+            "cid src missing in: {html}"
+        );
         assert!(!html.contains(&url), "url should not appear when CID");
         let refs = collect_inline_image_refs(&blocks, &HashMap::new());
         assert_eq!(refs.len(), 1);
@@ -1197,9 +1237,24 @@ mod tests {
     #[test]
     fn row_widths_normalize_to_100() {
         let widths = normalize_column_widths(&[
-            Column { blocks: vec![], width_pct: 30, background: None, background_image: None },
-            Column { blocks: vec![], width_pct: 30, background: None, background_image: None },
-            Column { blocks: vec![], width_pct: 30, background: None, background_image: None },
+            Column {
+                blocks: vec![],
+                width_pct: 30,
+                background: None,
+                background_image: None,
+            },
+            Column {
+                blocks: vec![],
+                width_pct: 30,
+                background: None,
+                background_image: None,
+            },
+            Column {
+                blocks: vec![],
+                width_pct: 30,
+                background: None,
+                background_image: None,
+            },
         ]);
         // 30+30+30=90 → scales then redistributes the 10 to widest.
         let sum: u32 = widths.iter().map(|&w| w as u32).sum();
@@ -1208,7 +1263,11 @@ mod tests {
 
     #[test]
     fn row_empty_renders_placeholder() {
-        let blocks = vec![EmailBlock::Row { columns: vec![], background: None, background_image: None }];
+        let blocks = vec![EmailBlock::Row {
+            columns: vec![],
+            background: None,
+            background_image: None,
+        }];
         let html = render_template(&blocks, &HashMap::new());
         // A row with no columns still emits a <tr> so a fresh
         // canvas drop has visual feedback.

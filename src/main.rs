@@ -205,7 +205,9 @@ enum Mode {
     /// Phase F6 — `nexo persona list [--json]`. Walks
     /// `cfg.personas.discovery.search_paths`, applies
     /// disabled / allowlist filters, tabulates each survivor.
-    PersonaList { json: bool },
+    PersonaList {
+        json: bool,
+    },
     /// Phase F6 — `nexo persona remove <id> [--yes] [--json]`.
     /// Atomic dir removal of the install root for `<id>`.
     PersonaRemove {
@@ -216,16 +218,25 @@ enum Mode {
     /// Phase F6 — `nexo persona get <id> [--json]`. STUB; will
     /// surface manifest + lifecycle history in F6.b. Meanwhile
     /// suggests the operator-equivalent shell.
-    PersonaGet { id: String, json: bool },
+    PersonaGet {
+        id: String,
+        json: bool,
+    },
     /// Phase F6 — `nexo persona upgrade <id> [--json]`. STUB;
     /// re-resolve recorded coords + delegate to install path
     /// in F6.b. Meanwhile suggests the install-with-newer-tag
     /// workaround.
-    PersonaUpgrade { id: String, json: bool },
+    PersonaUpgrade {
+        id: String,
+        json: bool,
+    },
     /// Phase F6 — `nexo persona run <path> [--json]`. STUB;
     /// inner-loop dev (mirror of `nexo plugin run`) deferred
     /// to F6.b.
-    PersonaRun { path: PathBuf, json: bool },
+    PersonaRun {
+        path: PathBuf,
+        json: bool,
+    },
     /// Phase F6 — static help block printed by
     /// `nexo persona help`.
     PersonaHelp,
@@ -825,7 +836,9 @@ struct CronRebuildDeps {
 /// resulting `RepoCoords`). Returns `None` for non-GitHub
 /// URLs or paths shorter than `/owner/repo`.
 fn github_owner_repo_from_url(url: &str) -> Option<(String, String)> {
-    let trimmed = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let trimmed = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
     let after_host = trimmed.strip_prefix("github.com/")?;
     let mut parts = after_host.trim_end_matches('/').split('/');
     let owner = parts.next()?.to_string();
@@ -1911,14 +1924,9 @@ async fn main() -> Result<()> {
             target,
             json,
         } => {
-            let code = persona_cli::run_persona_install(
-                &args.config_dir,
-                coords,
-                dest,
-                target,
-                json,
-            )
-            .await?;
+            let code =
+                persona_cli::run_persona_install(&args.config_dir, coords, dest, target, json)
+                    .await?;
             std::process::exit(code);
         }
         Mode::PersonaList { json } => {
@@ -1940,11 +1948,9 @@ async fn main() -> Result<()> {
         Mode::PersonaRun { path, json } => {
             let override_ = match persona_cli::resolve_local_persona(&path) {
                 Ok(o) => o,
-                Err(e) => std::process::exit(persona_cli::emit_persona_run_error(
-                    &e,
-                    json,
-                    Some(path),
-                )),
+                Err(e) => {
+                    std::process::exit(persona_cli::emit_persona_run_error(&e, json, Some(path)))
+                }
             };
             persona_cli::print_persona_run_banner(&override_, json);
             args.persona_run_override = Some(override_);
@@ -2252,9 +2258,7 @@ async fn main() -> Result<()> {
         // configured` -32603 errors and stays as a placeholder.
         let mcp_store: Option<
             std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>,
-        > = Some(nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore::new(
-            config_dir.clone(),
-        ));
+        > = Some(nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore::new(config_dir.clone()));
         // Phase 90.x.plugins — wire the plugin doctor reader so
         // /m/plugins gets a live snapshot. Each call re-runs the
         // discovery + capability aggregation; cost is acceptable
@@ -2339,29 +2343,27 @@ async fn main() -> Result<()> {
                 // silent divergence if a plugin-registered LLM
                 // factory lands between this and the runtime
                 // registry build at main.rs:2347).
-                plugin_restarter: Some(
-                    nexo_setup::admin_adapters::LivePluginRestarter::new(
-                        plugin_handles_cell.clone(),
-                        // Same pragmatic compromise as the
-                        // `subprocess_shutdown` token at the
-                        // wire_plugin_registry call site
-                        // (main.rs:3161): the daemon's main
-                        // shutdown CancellationToken isn't yet
-                        // a shared resource at this scope. A
-                        // fresh local token is fine because the
-                        // subprocess adapter spawns children
-                        // with `kill_on_drop(true)`; daemon exit
-                        // tears the children down regardless of
-                        // whether this token cancelled. Phase
-                        // 81.21 graceful supervisor work is the
-                        // proper fix; defer.
-                        tokio_util::sync::CancellationToken::new(),
-                        broker.clone(),
-                        None,
-                        llm_registry.clone(),
-                        std::sync::Arc::new(cfg.llm.clone()),
-                    ),
-                ),
+                plugin_restarter: Some(nexo_setup::admin_adapters::LivePluginRestarter::new(
+                    plugin_handles_cell.clone(),
+                    // Same pragmatic compromise as the
+                    // `subprocess_shutdown` token at the
+                    // wire_plugin_registry call site
+                    // (main.rs:3161): the daemon's main
+                    // shutdown CancellationToken isn't yet
+                    // a shared resource at this scope. A
+                    // fresh local token is fine because the
+                    // subprocess adapter spawns children
+                    // with `kill_on_drop(true)`; daemon exit
+                    // tears the children down regardless of
+                    // whether this token cancelled. Phase
+                    // 81.21 graceful supervisor work is the
+                    // proper fix; defer.
+                    tokio_util::sync::CancellationToken::new(),
+                    broker.clone(),
+                    None,
+                    llm_registry.clone(),
+                    std::sync::Arc::new(cfg.llm.clone()),
+                )),
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
@@ -2378,12 +2380,7 @@ async fn main() -> Result<()> {
                         // crates own each, no From impl wired).
                         nexo_memory_snapshot::config::EncryptionSection {
                             enabled: cfg.memory.snapshot.encryption.enabled,
-                            recipients: cfg
-                                .memory
-                                .snapshot
-                                .encryption
-                                .recipients
-                                .clone(),
+                            recipients: cfg.memory.snapshot.encryption.recipients.clone(),
                             identity_path: {
                                 let p = &cfg.memory.snapshot.encryption.identity_path;
                                 if p.trim().is_empty() {
@@ -2756,9 +2753,7 @@ async fn main() -> Result<()> {
     if snapshot_yaml.enabled && snapshot_yaml.encryption.enabled {
         for (i, s) in snapshot_yaml.encryption.recipients.iter().enumerate() {
             nexo_memory_snapshot::codec::age_codec::parse_recipient(s).map_err(|e| {
-                anyhow::anyhow!(
-                    "memory.snapshot.encryption.recipients[{i}] failed to parse: {e}"
-                )
+                anyhow::anyhow!("memory.snapshot.encryption.recipients[{i}] failed to parse: {e}")
             })?;
         }
     }
@@ -3131,9 +3126,7 @@ async fn main() -> Result<()> {
     // rather than aborting boot.
     #[allow(unused_imports)]
     use nexo_persona_installer::PersonaAdmin as _PersonaAdminInScope;
-    let persona_admin = std::sync::Arc::new(
-        nexo_persona_installer::InMemoryPersonaAdmin::new(),
-    );
+    let persona_admin = std::sync::Arc::new(nexo_persona_installer::InMemoryPersonaAdmin::new());
     // Phase F7 — `NEXO_DISABLE_BUNDLED_PERSONAS` kill switch.
     // Honored even when search_paths is configured; lets a
     // hardened deployment refuse persona discovery without
@@ -3142,9 +3135,7 @@ async fn main() -> Result<()> {
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
         .unwrap_or(false);
     if personas_killed {
-        tracing::info!(
-            "persona discovery skipped — NEXO_DISABLE_BUNDLED_PERSONAS is set"
-        );
+        tracing::info!("persona discovery skipped — NEXO_DISABLE_BUNDLED_PERSONAS is set");
     }
     if !personas_killed && !cfg.personas.discovery.search_paths.is_empty() {
         let discovered =
@@ -3180,9 +3171,12 @@ async fn main() -> Result<()> {
                 });
             let installed = nexo_persona_installer::InstalledPersona {
                 id: id.clone(),
-                version: d.manifest.persona.version.parse().unwrap_or_else(|_| {
-                    semver::Version::new(0, 0, 0)
-                }),
+                version: d
+                    .manifest
+                    .persona
+                    .version
+                    .parse()
+                    .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
                 install_root: d.install_root.clone(),
                 coords,
                 installed_at: chrono::Utc::now(),
@@ -3292,8 +3286,7 @@ async fn main() -> Result<()> {
                 // their in-process broker is unreachable from
                 // another OS process; the bridge is what gets
                 // the subprocess back to the host broker.
-                let broker_kind =
-                    subprocess_broker_kind_str(cfg.broker.broker.kind);
+                let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for tg_cfg in cfg.plugins.telegram.clone() {
                     let instance_label = tg_cfg.instance.clone().unwrap_or_default();
                     let trimmed = instance_label.trim();
@@ -3367,8 +3360,7 @@ async fn main() -> Result<()> {
                 // Phase 92 — see telegram mirror for the rationale
                 // behind mapping daemon broker kind → subprocess
                 // transport selector.
-                let broker_kind =
-                    subprocess_broker_kind_str(cfg.broker.broker.kind);
+                let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for wa_cfg in cfg.plugins.whatsapp.clone() {
                     if !wa_cfg.enabled {
                         continue;
@@ -3450,25 +3442,20 @@ async fn main() -> Result<()> {
                 // the pre-extract default (email always boots when
                 // configured) while still letting the operator opt
                 // into discovery-mode by stripping this block.
-                let synthetic =
-                    nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin {
-                        manifest: nexo_core::agent::plugin_host::NexoPlugin::manifest(
-                            email_arc.as_ref(),
-                        )
-                        .clone(),
-                        // Synthetic root_dir / manifest_path: the
-                        // config loader only consults `manifest.config
-                        // .schema_path` and the email manifest has no
-                        // schema, so any path works. The loader's
-                        // `<config_dir>/plugins/email/*.yaml` lookup
-                        // is unaffected by these values.
-                        root_dir: std::path::PathBuf::from(
-                            "<synthetic email plugin root>",
-                        ),
-                        manifest_path: std::path::PathBuf::from(
-                            "<synthetic email manifest>",
-                        ),
-                    };
+                let synthetic = nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin {
+                    manifest: nexo_core::agent::plugin_host::NexoPlugin::manifest(
+                        email_arc.as_ref(),
+                    )
+                    .clone(),
+                    // Synthetic root_dir / manifest_path: the
+                    // config loader only consults `manifest.config
+                    // .schema_path` and the email manifest has no
+                    // schema, so any path works. The loader's
+                    // `<config_dir>/plugins/email/*.yaml` lookup
+                    // is unaffected by these values.
+                    root_dir: std::path::PathBuf::from("<synthetic email plugin root>"),
+                    manifest_path: std::path::PathBuf::from("<synthetic email manifest>"),
+                };
                 extra_subprocess_plugins.push(synthetic);
                 tracing::info!(
                     "registered email factory + synthetic discovered plugin (in-process; Phase 81.19.b)"
@@ -9022,7 +9009,7 @@ fn parse_args() -> CliArgs {
                     override_from,
                     mode: Mode::Help,
                     plugin_run_override: None,
-            persona_run_override: None,
+                    persona_run_override: None,
                 }
             }
             other => positional.push(other.to_string()),
@@ -9089,8 +9076,8 @@ fn parse_args() -> CliArgs {
                 config_dir,
                 mode,
                 override_from: override_from.clone(),
-            plugin_run_override: None,
-            persona_run_override: None,
+                plugin_run_override: None,
+                persona_run_override: None,
             };
         }
     }
@@ -9101,8 +9088,8 @@ fn parse_args() -> CliArgs {
                 config_dir,
                 mode,
                 override_from: override_from.clone(),
-            plugin_run_override: None,
-            persona_run_override: None,
+                plugin_run_override: None,
+                persona_run_override: None,
             };
         }
     }
@@ -9145,8 +9132,8 @@ fn parse_args() -> CliArgs {
                 config_dir,
                 mode,
                 override_from: override_from.clone(),
-            plugin_run_override: None,
-            persona_run_override: None,
+                plugin_run_override: None,
+                persona_run_override: None,
             };
         }
     }
@@ -9186,8 +9173,7 @@ fn parse_args() -> CliArgs {
         // walks the outer `positional` directly so it sees flags
         // and their values together.
         [cmd, ..] if cmd == "init" => {
-            let (yaml_filter, output_dir, force, stdout) =
-                init_cli::parse_init_args(&positional);
+            let (yaml_filter, output_dir, force, stdout) = init_cli::parse_init_args(&positional);
             Mode::Init {
                 yaml_filter,
                 output_dir,
@@ -9285,7 +9271,9 @@ fn parse_args() -> CliArgs {
             target: parse_kv_flag(&positional, "--target"),
             json: has_json_flag,
         },
-        [cmd, sub] if cmd == "persona" && sub == "list" => Mode::PersonaList { json: has_json_flag },
+        [cmd, sub] if cmd == "persona" && sub == "list" => Mode::PersonaList {
+            json: has_json_flag,
+        },
         [cmd, sub, id] if cmd == "persona" && sub == "remove" => Mode::PersonaRemove {
             id: id.clone(),
             yes: positional.iter().any(|a| a == "--yes"),
@@ -9534,8 +9522,8 @@ fn parse_args() -> CliArgs {
         config_dir,
         mode,
         override_from: override_from.clone(),
-            plugin_run_override: None,
-            persona_run_override: None,
+        plugin_run_override: None,
+        persona_run_override: None,
     }
 }
 
@@ -9797,7 +9785,6 @@ fn which_in_path(bin: &str) -> bool {
     }
     false
 }
-
 
 fn has_restricted_delegate_allowlist(patterns: &[String]) -> bool {
     !patterns.is_empty() && !patterns.iter().any(|p| p.trim() == "*")
@@ -13311,9 +13298,8 @@ fn run_set_broker(
     // seed; operators that want different limits / paths edit the
     // file afterwards.
     if !broker_yaml.exists() {
-        std::fs::create_dir_all(config_dir).with_context(|| {
-            format!("creating config dir {}", config_dir.display())
-        })?;
+        std::fs::create_dir_all(config_dir)
+            .with_context(|| format!("creating config dir {}", config_dir.display()))?;
         let default_yaml = r#"broker:
   type: local
   url: ""
@@ -13325,9 +13311,8 @@ fn run_set_broker(
     max_pending: 10000
 schema_version: 11
 "#;
-        std::fs::write(&broker_yaml, default_yaml).with_context(|| {
-            format!("seeding default broker.yaml at {}", broker_yaml.display())
-        })?;
+        std::fs::write(&broker_yaml, default_yaml)
+            .with_context(|| format!("seeding default broker.yaml at {}", broker_yaml.display()))?;
         println!(
             "  (seeded default broker.yaml at {} — local mode with persistence)",
             broker_yaml.display()
@@ -13409,7 +13394,9 @@ schema_version: 11
     // dir. `pgrep -f` would be more portable than parsing /proc but
     // the proyecto target ships unix-only today; revisit when
     // Windows is in scope.
-    let cfg_path = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+    let cfg_path = config_dir
+        .canonicalize()
+        .unwrap_or_else(|_| config_dir.to_path_buf());
     let needle = format!("--config {}", cfg_path.display());
     let output = std::process::Command::new("pgrep")
         .args(["-f", &needle])
@@ -14725,7 +14712,10 @@ mod tests {
     fn seed_telegram_env_stdio_bridge_omits_url() {
         let cfg = telegram_cfg("tok", None);
         let env = seed_telegram_subprocess_env_for(&cfg, "stdio_bridge", "nats://ignored");
-        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("stdio_bridge"));
+        assert_eq!(
+            env.get("NEXO_BROKER_KIND").map(String::as_str),
+            Some("stdio_bridge")
+        );
         assert!(
             !env.contains_key("NEXO_BROKER_URL"),
             "stdio_bridge must omit NEXO_BROKER_URL; got env={env:?}"
@@ -14736,8 +14726,14 @@ mod tests {
     fn seed_telegram_env_nats_keeps_url() {
         let cfg = telegram_cfg("tok", None);
         let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://central:4222");
-        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("nats"));
-        assert_eq!(env.get("NEXO_BROKER_URL").map(String::as_str), Some("nats://central:4222"));
+        assert_eq!(
+            env.get("NEXO_BROKER_KIND").map(String::as_str),
+            Some("nats")
+        );
+        assert_eq!(
+            env.get("NEXO_BROKER_URL").map(String::as_str),
+            Some("nats://central:4222")
+        );
     }
 
     #[test]
@@ -14747,7 +14743,10 @@ mod tests {
         // Daemon `Local` triggers the stdio bridge on the child
         // because the in-process broker is unreachable across
         // process boundaries.
-        assert_eq!(subprocess_broker_kind_str(BrokerKind::Local), "stdio_bridge");
+        assert_eq!(
+            subprocess_broker_kind_str(BrokerKind::Local),
+            "stdio_bridge"
+        );
         // `StdioBridge` is daemon-derived; should never appear in
         // operator YAML, but the mapper handles it defensively.
         assert_eq!(
@@ -14891,13 +14890,11 @@ mod tests {
             Some("nats://127.0.0.1:4222")
         );
         assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_CONFIG_PATH")
-                .map(String::as_str),
+            env.get("NEXO_PLUGIN_EMAIL_CONFIG_PATH").map(String::as_str),
             Some("/etc/nexo/email.yaml")
         );
         assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR")
-                .map(String::as_str),
+            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR").map(String::as_str),
             Some("/run/secrets/nexo")
         );
         assert_eq!(
@@ -14921,13 +14918,7 @@ mod tests {
         let secrets = std::path::PathBuf::from("/sec");
         let data = std::path::PathBuf::from("/data");
 
-        let env = seed_email_subprocess_env_for(
-            "local://test",
-            &cfg_path,
-            &secrets,
-            &data,
-            None,
-        );
+        let env = seed_email_subprocess_env_for("local://test", &cfg_path, &secrets, &data, None);
 
         assert!(!env.contains_key("NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH"));
         assert_eq!(

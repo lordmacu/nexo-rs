@@ -148,7 +148,8 @@ impl StdioBridgeBroker {
     /// out of stdin. Bypasses JSON deserialization (the SDK
     /// already did it).
     pub async fn feed_event(&self, topic: String, event: Event) {
-        self.dispatch_event(BrokerEventParams { topic, event }).await;
+        self.dispatch_event(BrokerEventParams { topic, event })
+            .await;
     }
 
     /// Parse one raw JSON-RPC line received from the daemon
@@ -288,7 +289,10 @@ mod tests {
             !envelope.contains_key("id"),
             "publish must be a notification, not a request: {frame:#?}"
         );
-        assert_eq!(envelope.get("method").and_then(Value::as_str), Some("broker.publish"));
+        assert_eq!(
+            envelope.get("method").and_then(Value::as_str),
+            Some("broker.publish")
+        );
         assert_eq!(
             envelope
                 .get("params")
@@ -314,7 +318,10 @@ mod tests {
     #[tokio::test]
     async fn feed_event_routes_to_matching_subscriber() {
         let (broker, _out_rx) = StdioBridgeBroker::with_channel();
-        let mut sub = broker.subscribe("plugin.outbound.whatsapp.>").await.unwrap();
+        let mut sub = broker
+            .subscribe("plugin.outbound.whatsapp.>")
+            .await
+            .unwrap();
         let event = sample_event(
             "plugin.outbound.whatsapp.smoketest",
             serde_json::json!({"hello": "world"}),
@@ -350,7 +357,10 @@ mod tests {
     #[tokio::test]
     async fn non_matching_pattern_dropped() {
         let (broker, _out_rx) = StdioBridgeBroker::with_channel();
-        let mut sub = broker.subscribe("plugin.outbound.whatsapp.>").await.unwrap();
+        let mut sub = broker
+            .subscribe("plugin.outbound.whatsapp.>")
+            .await
+            .unwrap();
         broker
             .feed_event(
                 "plugin.outbound.telegram.bot1".to_string(),

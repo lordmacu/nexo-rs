@@ -159,7 +159,9 @@ async fn mount_happy_release(
     });
 
     Mock::given(method("GET"))
-        .and(path(format!("/repos/alice/nexo-persona-{id}/releases/tags/v{version}")))
+        .and(path(format!(
+            "/repos/alice/nexo-persona-{id}/releases/tags/v{version}"
+        )))
         .respond_with(ResponseTemplate::new(200).set_body_json(release))
         .mount(&server)
         .await;
@@ -186,10 +188,10 @@ async fn mount_happy_release(
     }
 }
 
-async fn run_install(fix: &ReleaseFixture, install_root: &Path) -> Result<
-    nexo_persona_installer::InstalledPersona,
-    PersonaInstallError,
-> {
+async fn run_install(
+    fix: &ReleaseFixture,
+    install_root: &Path,
+) -> Result<nexo_persona_installer::InstalledPersona, PersonaInstallError> {
     let client = reqwest::Client::new();
     install_persona(InstallInputs {
         client: &client,
@@ -249,7 +251,10 @@ async fn install_is_idempotent_when_dir_already_holds_same_version() {
         second.was_already_present,
         "second install must short-circuit via idempotency check"
     );
-    assert_eq!(second.tarball_bytes, 0, "no bytes downloaded on idempotent re-install");
+    assert_eq!(
+        second.tarball_bytes, 0,
+        "no bytes downloaded on idempotent re-install"
+    );
 }
 
 /// Scenario 3: a v1 manifest in the release (operator
@@ -295,7 +300,8 @@ min_nexo_version = ">=0.1.0"
     .await;
     match result {
         Err(PersonaInstallError::Ext(nexo_ext_installer::InstallError::ReleaseShape {
-            reason, ..
+            reason,
+            ..
         })) => {
             assert!(
                 reason.contains("install.sh"),
@@ -388,7 +394,8 @@ async fn install_rejects_release_missing_persona_toml_asset() {
     .await
     {
         Err(PersonaInstallError::Ext(nexo_ext_installer::InstallError::ReleaseShape {
-            reason, ..
+            reason,
+            ..
         })) => {
             assert!(reason.contains("persona.toml"), "got: {reason}");
         }
@@ -436,7 +443,10 @@ async fn install_rejects_when_no_tarball_matches_target_and_no_noarch() {
             available,
             ..
         })) => {
-            assert_eq!(available, vec!["cody-0.2.0-aarch64-apple-darwin.tar.gz".to_string()]);
+            assert_eq!(
+                available,
+                vec!["cody-0.2.0-aarch64-apple-darwin.tar.gz".to_string()]
+            );
         }
         other => panic!("expected TargetNotFound, got {other:?}"),
     }
@@ -457,7 +467,9 @@ async fn install_falls_back_to_noarch_when_per_target_absent() {
     )
     .await;
     let tmp = tempfile::tempdir().unwrap();
-    let installed = run_install(&fix, tmp.path()).await.expect("noarch fallback");
+    let installed = run_install(&fix, tmp.path())
+        .await
+        .expect("noarch fallback");
     assert!(installed.install_root.join("persona.toml").exists());
 }
 
@@ -514,7 +526,8 @@ async fn install_rejects_sha256_mismatch_and_cleans_partial() {
     .await
     {
         Err(PersonaInstallError::Ext(nexo_ext_installer::InstallError::Sha256Mismatch {
-            id, ..
+            id,
+            ..
         })) => assert_eq!(id, "cody"),
         other => panic!("expected Sha256Mismatch, got {other:?}"),
     }
@@ -637,7 +650,9 @@ async fn install_rejects_when_tarball_missing_in_archive_persona_toml() {
         h.set_mode(0o644);
         h.set_entry_type(tar::EntryType::Regular);
         h.set_cksum();
-        builder.append_data(&mut h, "README.md", &payload[..]).unwrap();
+        builder
+            .append_data(&mut h, "README.md", &payload[..])
+            .unwrap();
         builder.into_inner().unwrap().finish().unwrap();
         buf
     };
@@ -699,8 +714,7 @@ async fn install_rejects_when_tarball_missing_in_archive_persona_toml() {
 /// correct source_repo + version.
 #[tokio::test]
 async fn admin_install_register_list_round_trip() {
-    let fix =
-        mount_happy_release("cody", "0.2.0", "x86_64-unknown-linux-gnu", "noarch", &[]).await;
+    let fix = mount_happy_release("cody", "0.2.0", "x86_64-unknown-linux-gnu", "noarch", &[]).await;
     let tmp = tempfile::tempdir().unwrap();
     let installed = run_install(&fix, tmp.path()).await.expect("install");
     let admin = InMemoryPersonaAdmin::new();
@@ -717,8 +731,7 @@ async fn admin_install_register_list_round_trip() {
 /// install dir.
 #[tokio::test]
 async fn admin_register_remove_then_list_is_empty() {
-    let fix =
-        mount_happy_release("cody", "0.2.0", "x86_64-unknown-linux-gnu", "noarch", &[]).await;
+    let fix = mount_happy_release("cody", "0.2.0", "x86_64-unknown-linux-gnu", "noarch", &[]).await;
     let tmp = tempfile::tempdir().unwrap();
     let installed = run_install(&fix, tmp.path()).await.expect("install");
     let install_root = installed.install_root.clone();

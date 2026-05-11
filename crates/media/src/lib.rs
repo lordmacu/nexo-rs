@@ -12,6 +12,4 @@
 
 pub mod image_optimize;
 
-pub use image_optimize::{
-    optimize, JPEG_QUALITY, MAX_DIMENSION, OptimizeError, Optimized,
-};
+pub use image_optimize::{optimize, OptimizeError, Optimized, JPEG_QUALITY, MAX_DIMENSION};

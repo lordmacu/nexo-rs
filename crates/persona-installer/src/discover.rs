@@ -88,9 +88,7 @@ impl DiscoveredPersona {
 /// path uniformly tokio-flavored — uses
 /// [`tokio::fs::read_dir`] + spawn_blocking for the per-file
 /// parse so a slow disk doesn't park the runtime.
-pub async fn discover_personas_in(
-    search_path: &Path,
-) -> Vec<DiscoveredPersona> {
+pub async fn discover_personas_in(search_path: &Path) -> Vec<DiscoveredPersona> {
     let mut found: Vec<DiscoveredPersona> = Vec::new();
     let mut read_dir = match tokio::fs::read_dir(search_path).await {
         Ok(d) => d,
@@ -167,9 +165,7 @@ pub async fn discover_personas_in(
 /// scan order (caller decides dedup policy — disk-backed
 /// admin's `register` overwrites by id, so the LAST scan
 /// path wins).
-pub async fn discover_personas(
-    search_paths: &[PathBuf],
-) -> Vec<DiscoveredPersona> {
+pub async fn discover_personas(search_paths: &[PathBuf]) -> Vec<DiscoveredPersona> {
     let mut all: Vec<DiscoveredPersona> = Vec::new();
     for path in search_paths {
         all.extend(discover_personas_in(path).await);
@@ -232,11 +228,7 @@ min_nexo_version = ">=0.1.0"
         write_persona(&tmp.path().join("cody-0.2.0"), "cody", "0.2.0");
         // Decoy dir with no persona.toml.
         std::fs::create_dir_all(tmp.path().join("not-a-persona")).unwrap();
-        std::fs::write(
-            tmp.path().join("not-a-persona/README.md"),
-            b"hello",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("not-a-persona/README.md"), b"hello").unwrap();
         let found = discover_personas_in(tmp.path()).await;
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].manifest.persona.id, "cody");

@@ -125,8 +125,14 @@ mod tests {
             version: "0.1.0".into(),
             removed_at: fixed_ts(),
         };
-        assert_eq!(ev.subject_with_prefix("nexo.persona."), "nexo.persona.removed");
-        assert_eq!(ev.subject_with_prefix("nexo.persona"), "nexo.persona.removed");
+        assert_eq!(
+            ev.subject_with_prefix("nexo.persona."),
+            "nexo.persona.removed"
+        );
+        assert_eq!(
+            ev.subject_with_prefix("nexo.persona"),
+            "nexo.persona.removed"
+        );
         assert_eq!(ev.subject(), "nexo.persona.removed");
     }
 

@@ -76,7 +76,10 @@ fn agent_events_enabled() -> bool {
 /// runtime gating stay in sync.
 const ADMIN_DOMAIN_KILL_SWITCHES: &[(&str, &str)] = &[
     ("agents_crud", "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED"),
-    ("credentials_crud", "NEXO_MICROAPP_ADMIN_CREDENTIALS_ENABLED"),
+    (
+        "credentials_crud",
+        "NEXO_MICROAPP_ADMIN_CREDENTIALS_ENABLED",
+    ),
     ("pairing_initiate", "NEXO_MICROAPP_ADMIN_PAIRING_ENABLED"),
     ("llm_keys_crud", "NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED"),
     ("channels_crud", "NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED"),
@@ -289,38 +292,32 @@ pub struct AdminBootstrapInputs<'a> {
     /// Production wires
     /// `nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore`
     /// against `<config_dir>/mcp.yaml`.
-    pub mcp_store:
-        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>>,
+    pub mcp_store: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>>,
     /// Phase 90.x.plugins — plugin doctor snapshot reader. `None`
     /// keeps `nexo/admin/plugins/doctor` returning the typed
     /// `plugins domain not configured` -32603. Production wires
     /// `crate::admin_adapters::LivePluginDoctorReader`.
-    pub plugin_doctor: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader>,
-    >,
+    pub plugin_doctor:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader>>,
     /// Phase 81.21.b.b follow-up — manual plugin restart adapter.
     /// `None` keeps `nexo/admin/plugins/restart` returning the
     /// typed `plugin restart domain not configured` -32603.
     /// Production wires `crate::admin_adapters::LivePluginRestarter`
     /// around the daemon's plugin handles snapshot.
-    pub plugin_restarter: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter>,
-    >,
+    pub plugin_restarter:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter>>,
     /// Phase 90.x.memory — long-term memory query reader. `None`
     /// keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603. Production wires
     /// `crate::admin_adapters::LiveMemoryReader` around the daemon's
     /// existing `LongTermMemory` instance.
-    pub memory_reader: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemoryReader>,
-    >,
+    pub memory_reader: Option<Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemoryReader>>,
     /// Phase 90.x.memory-snapshot — snapshot list reader. `None`
     /// keeps `nexo/admin/memory/list_snapshots` returning the
     /// typed `memory snapshot domain not configured` -32603.
     /// Production wires `crate::admin_adapters::LiveMemorySnapshotReader`.
-    pub memory_snapshot_reader: Option<
-        Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader>,
-    >,
+    pub memory_snapshot_reader:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader>>,
     /// Phase 82.10.k — secrets store. `None` keeps
     /// `nexo/admin/secrets/write` returning the typed
     /// `secrets domain not configured` -32603. Production wires
@@ -1241,7 +1238,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1291,7 +1288,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1341,7 +1338,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1399,7 +1396,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1463,7 +1460,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1522,7 +1519,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1659,7 +1656,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1720,7 +1717,7 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_restarter: None,
+                plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1772,7 +1769,9 @@ mod tests {
 
     // ── Phase 90 audit fix — domain kill-switch coverage ─────
 
-    fn make_grants(items: &[(&str, &[&str])]) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+    fn make_grants(
+        items: &[(&str, &[&str])],
+    ) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
         items
             .iter()
             .map(|(id, caps)| {
@@ -1819,10 +1818,8 @@ mod tests {
     /// Single domain off → matching capability stripped, others intact.
     #[test]
     fn kill_switches_single_domain_off_strips_one_cap() {
-        let mut grants = make_grants(&[(
-            "admin",
-            &["agents_crud", "skills_crud", "channels_crud"],
-        )]);
+        let mut grants =
+            make_grants(&[("admin", &["agents_crud", "skills_crud", "channels_crud"])]);
         let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
             if k == "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED" {
                 Some("0".into())
@@ -1848,11 +1845,16 @@ mod tests {
             ("creator", &["agents_crud", "channels_crud"]),
         ]);
         let stripped = apply_admin_domain_kill_switches(&mut grants, |k| match k {
-            "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED"
-            | "NEXO_MICROAPP_ADMIN_SKILLS_ENABLED" => Some("0".into()),
+            "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED" | "NEXO_MICROAPP_ADMIN_SKILLS_ENABLED" => {
+                Some("0".into())
+            }
             _ => None,
         });
-        assert_eq!(stripped.len(), 3, "expected 3 stripped (admin x2 + creator x1)");
+        assert_eq!(
+            stripped.len(),
+            3,
+            "expected 3 stripped (admin x2 + creator x1)"
+        );
         assert!(!grants["admin"].contains("agents_crud"));
         assert!(!grants["admin"].contains("skills_crud"));
         assert!(grants["admin"].contains("memory_snapshot"));
@@ -1867,26 +1869,24 @@ mod tests {
     fn kill_switches_off_value_aliases() {
         for v in ["0", "false", "FALSE", "off", "OFF"] {
             let mut grants = make_grants(&[("admin", &["secrets_write"])]);
-            let stripped =
-                apply_admin_domain_kill_switches(&mut grants, |k| {
-                    if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
-                        Some(v.into())
-                    } else {
-                        None
-                    }
-                });
+            let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
+                if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
+                    Some(v.into())
+                } else {
+                    None
+                }
+            });
             assert_eq!(stripped.len(), 1, "value `{v}` must strip");
         }
         for v in ["", "  ", "1", "true", "yes", "anything"] {
             let mut grants = make_grants(&[("admin", &["secrets_write"])]);
-            let stripped =
-                apply_admin_domain_kill_switches(&mut grants, |k| {
-                    if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
-                        Some(v.into())
-                    } else {
-                        None
-                    }
-                });
+            let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
+                if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
+                    Some(v.into())
+                } else {
+                    None
+                }
+            });
             assert!(
                 stripped.is_empty(),
                 "value `{v}` must NOT strip (only explicit off-ish strip)"

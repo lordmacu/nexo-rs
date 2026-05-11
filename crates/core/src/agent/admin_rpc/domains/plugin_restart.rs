@@ -18,9 +18,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use nexo_tool_meta::admin::plugin_restart::{
-    PluginsRestartParams, PluginsRestartResponse,
-};
+use nexo_tool_meta::admin::plugin_restart::{PluginsRestartParams, PluginsRestartResponse};
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 
@@ -32,27 +30,19 @@ use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 pub trait PluginRestarter: Send + Sync + std::fmt::Debug {
     /// Force-restart the named plugin. See module-level docs for
     /// the error → `AdminRpcError` mapping the handler applies.
-    async fn restart(
-        &self,
-        plugin_id: &str,
-    ) -> anyhow::Result<PluginsRestartResponse>;
+    async fn restart(&self, plugin_id: &str) -> anyhow::Result<PluginsRestartResponse>;
 }
 
 /// `nexo/admin/plugins/restart` — operator-driven subprocess
 /// plugin restart. Empty `plugin_id` is rejected before reaching
 /// the adapter so a typo doesn't tear down the wrong plugin.
-pub async fn restart_plugin(
-    reader: &dyn PluginRestarter,
-    params: Value,
-) -> AdminRpcResult {
+pub async fn restart_plugin(reader: &dyn PluginRestarter, params: Value) -> AdminRpcResult {
     let p: PluginsRestartParams = match serde_json::from_value(params) {
         Ok(v) => v,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.plugin_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "plugin_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("plugin_id is empty".into()));
     }
     match reader.restart(&p.plugin_id).await {
         Ok(resp) => AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null)),
@@ -72,9 +62,7 @@ pub async fn restart_plugin(
             {
                 AdminRpcResult::err(AdminRpcError::InvalidParams(msg))
             } else {
-                AdminRpcResult::err(AdminRpcError::Internal(format!(
-                    "plugins.restart: {msg}"
-                )))
+                AdminRpcResult::err(AdminRpcError::Internal(format!("plugins.restart: {msg}")))
             }
         }
     }
@@ -93,10 +81,7 @@ mod tests {
 
     #[async_trait]
     impl PluginRestarter for StubRestarter {
-        async fn restart(
-            &self,
-            plugin_id: &str,
-        ) -> anyhow::Result<PluginsRestartResponse> {
+        async fn restart(&self, plugin_id: &str) -> anyhow::Result<PluginsRestartResponse> {
             self.calls.lock().unwrap().push(plugin_id.to_string());
             if let Some(msg) = self.next_err.lock().unwrap().take() {
                 anyhow::bail!(msg);
@@ -113,11 +98,7 @@ mod tests {
     #[tokio::test]
     async fn restart_plugin_records_call() {
         let r = StubRestarter::default();
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": "browser"}),
-        )
-        .await;
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": "browser"})).await;
         let payload = res.result.expect("ok");
         assert_eq!(payload["plugin_id"], "browser");
         assert_eq!(payload["previous_uptime_ms"], 12345);
@@ -129,11 +110,7 @@ mod tests {
     #[tokio::test]
     async fn restart_plugin_rejects_empty_plugin_id() {
         let r = StubRestarter::default();
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": ""}),
-        )
-        .await;
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": ""})).await;
         let err = res.error.expect("err");
         assert_eq!(err.code(), -32602);
         assert!(err.to_string().contains("plugin_id is empty"));
@@ -145,13 +122,8 @@ mod tests {
     async fn restart_plugin_maps_not_found_and_in_tree_to_invalid_params() {
         let r = StubRestarter::default();
         // not_found → InvalidParams
-        *r.next_err.lock().unwrap() =
-            Some("plugin xyz not found in registry".into());
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": "xyz"}),
-        )
-        .await;
+        *r.next_err.lock().unwrap() = Some("plugin xyz not found in registry".into());
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": "xyz"})).await;
         let err = res.error.expect("err");
         assert_eq!(err.code(), -32602);
         assert!(err.to_string().contains("not found"));
@@ -159,11 +131,7 @@ mod tests {
         // in-tree → InvalidParams
         *r.next_err.lock().unwrap() =
             Some("plugin assistant is in-tree, restart not applicable".into());
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": "assistant"}),
-        )
-        .await;
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": "assistant"})).await;
         let err = res.error.expect("err");
         assert_eq!(err.code(), -32602);
         assert!(err.to_string().contains("is in-tree"));
@@ -171,11 +139,7 @@ mod tests {
         // timeout → Internal (NOT InvalidParams)
         *r.next_err.lock().unwrap() =
             Some("restart timed out, plugin may be in degraded state".into());
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": "browser"}),
-        )
-        .await;
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": "browser"})).await;
         let err = res.error.expect("err");
         assert_eq!(err.code(), -32603); // Internal
     }
@@ -189,16 +153,15 @@ mod tests {
     #[tokio::test]
     async fn restart_plugin_maps_not_yet_populated_to_invalid_params() {
         let r = StubRestarter::default();
-        *r.next_err.lock().unwrap() = Some(
-            "plugin handles not yet populated; daemon still booting".into(),
-        );
-        let res = restart_plugin(
-            &r,
-            serde_json::json!({"plugin_id": "browser"}),
-        )
-        .await;
+        *r.next_err.lock().unwrap() =
+            Some("plugin handles not yet populated; daemon still booting".into());
+        let res = restart_plugin(&r, serde_json::json!({"plugin_id": "browser"})).await;
         let err = res.error.expect("err");
-        assert_eq!(err.code(), -32602, "boot-window error must be user-recoverable");
+        assert_eq!(
+            err.code(),
+            -32602,
+            "boot-window error must be user-recoverable"
+        );
         assert!(err.to_string().contains("not yet populated"));
     }
 }

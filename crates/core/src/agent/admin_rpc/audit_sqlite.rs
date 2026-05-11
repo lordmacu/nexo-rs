@@ -218,10 +218,7 @@ impl SqliteAdminAuditWriter {
         // UI label. Same WHERE clause as the SELECT below; kept
         // as a separate query so the LIMIT/OFFSET don't taint the
         // count.
-        let count_sql = format!(
-            "SELECT COUNT(*) FROM microapp_admin_audit {}",
-            where_sql
-        );
+        let count_sql = format!("SELECT COUNT(*) FROM microapp_admin_audit {}", where_sql);
         let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
         for b in &str_binds {
             count_q = count_q.bind(b);

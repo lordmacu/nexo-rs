@@ -1915,7 +1915,10 @@ mod tests {
         match sys {
             None => {}
             Some(Value::Array(a)) => {
-                assert!(a.is_empty(), "system array must be empty without spoof, got {a:?}");
+                assert!(
+                    a.is_empty(),
+                    "system array must be empty without spoof, got {a:?}"
+                );
             }
             Some(Value::String(s)) if s.is_empty() => {}
             Some(other) => panic!("unexpected system shape: {other:?}"),

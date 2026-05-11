@@ -24,9 +24,7 @@ pub async fn tail(reader: &dyn AdminAuditReader, params: Value) -> AdminRpcResul
     let page = match reader.tail(&filter).await {
         Ok(p) => p,
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "audit_reader.tail: {e}"
-            )));
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("audit_reader.tail: {e}")));
         }
     };
 

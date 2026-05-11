@@ -17,12 +17,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use nexo_tool_meta::admin::memory::{
-    MemoryEntryWire, MemoryQueryParams, MemoryQueryResponse,
-    MemorySnapshotsCreateParams, MemorySnapshotsCreateResponse,
-    MemorySnapshotsDeleteParams, MemorySnapshotsDeleteResponse,
-    MemorySnapshotsListParams, MemorySnapshotsListResponse,
-    MemorySnapshotsRestoreParams, MemorySnapshotsRestoreResponse,
-    RestoreReportWire, SnapshotMetaWire,
+    MemoryEntryWire, MemoryQueryParams, MemoryQueryResponse, MemorySnapshotsCreateParams,
+    MemorySnapshotsCreateResponse, MemorySnapshotsDeleteParams, MemorySnapshotsDeleteResponse,
+    MemorySnapshotsListParams, MemorySnapshotsListResponse, MemorySnapshotsRestoreParams,
+    MemorySnapshotsRestoreResponse, RestoreReportWire, SnapshotMetaWire,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -74,12 +72,7 @@ pub trait MemorySnapshotReader: Send + Sync + std::fmt::Debug {
     ) -> anyhow::Result<MemorySnapshotsListResponse>;
 
     /// Remove one bundle. Idempotent — missing ids return Ok(()).
-    async fn delete(
-        &self,
-        agent_id: &str,
-        tenant: &str,
-        snapshot_id: &str,
-    ) -> anyhow::Result<()>;
+    async fn delete(&self, agent_id: &str, tenant: &str, snapshot_id: &str) -> anyhow::Result<()>;
 
     /// Capture a fresh bundle. `encrypt=true` requires server-side
     /// recipients; adapters MUST reject with an error containing
@@ -128,9 +121,7 @@ pub async fn query(reader: &dyn MemoryReader, params: Value) -> AdminRpcResult {
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.agent_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "agent_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
     }
     let limit = clamp_limit(p.limit);
     match reader.query(&p.agent_id, &p.query, limit).await {
@@ -138,25 +129,18 @@ pub async fn query(reader: &dyn MemoryReader, params: Value) -> AdminRpcResult {
             let resp = MemoryQueryResponse { entries };
             AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
         }
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "memory.query: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("memory.query: {e}"))),
     }
 }
 
 /// `nexo/admin/memory/list_snapshots` — snapshot inventory.
-pub async fn list_snapshots(
-    reader: &dyn MemorySnapshotReader,
-    params: Value,
-) -> AdminRpcResult {
+pub async fn list_snapshots(reader: &dyn MemorySnapshotReader, params: Value) -> AdminRpcResult {
     let p: MemorySnapshotsListParams = match serde_json::from_value(params) {
         Ok(v) => v,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.agent_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "agent_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
     }
     let tenant = if p.tenant.trim().is_empty() {
         "default"
@@ -172,23 +156,16 @@ pub async fn list_snapshots(
 }
 
 /// `nexo/admin/memory/delete_snapshot` — idempotent removal.
-pub async fn delete_snapshot(
-    reader: &dyn MemorySnapshotReader,
-    params: Value,
-) -> AdminRpcResult {
+pub async fn delete_snapshot(reader: &dyn MemorySnapshotReader, params: Value) -> AdminRpcResult {
     let p: MemorySnapshotsDeleteParams = match serde_json::from_value(params) {
         Ok(v) => v,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.agent_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "agent_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
     }
     if p.id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("id is empty".into()));
     }
     let tenant = if p.tenant.trim().is_empty() {
         "default"
@@ -214,18 +191,13 @@ pub async fn delete_snapshot(
 /// recognised "encryption requested but no recipients configured"
 /// substring back to `InvalidParams` so the SPA can surface a
 /// targeted error instead of a generic Internal.
-pub async fn create_snapshot(
-    reader: &dyn MemorySnapshotReader,
-    params: Value,
-) -> AdminRpcResult {
+pub async fn create_snapshot(reader: &dyn MemorySnapshotReader, params: Value) -> AdminRpcResult {
     let p: MemorySnapshotsCreateParams = match serde_json::from_value(params) {
         Ok(v) => v,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.agent_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "agent_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
     }
     let tenant = if p.tenant.trim().is_empty() {
         "default"
@@ -233,10 +205,7 @@ pub async fn create_snapshot(
         p.tenant.as_str()
     };
     let label = p.label.as_deref().filter(|s| !s.trim().is_empty());
-    match reader
-        .create(&p.agent_id, tenant, label, p.encrypt)
-        .await
-    {
+    match reader.create(&p.agent_id, tenant, label, p.encrypt).await {
         Ok(snapshot) => {
             let resp = MemorySnapshotsCreateResponse { snapshot };
             AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
@@ -268,18 +237,13 @@ pub async fn create_snapshot(
 /// "snapshot {id} not found" + "belongs to tenant" + "specified"
 /// substrings are mapped back to `InvalidParams` so SPA branches
 /// on user-recoverable errors versus Internal.
-pub async fn restore_snapshot(
-    reader: &dyn MemorySnapshotReader,
-    params: Value,
-) -> AdminRpcResult {
+pub async fn restore_snapshot(reader: &dyn MemorySnapshotReader, params: Value) -> AdminRpcResult {
     let p: MemorySnapshotsRestoreParams = match serde_json::from_value(params) {
         Ok(v) => v,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if p.agent_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "agent_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
     }
     if p.tenant.trim().is_empty() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(
@@ -289,9 +253,7 @@ pub async fn restore_snapshot(
         ));
     }
     if p.snapshot_id.trim().is_empty() {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "snapshot_id is empty".into(),
-        ));
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("snapshot_id is empty".into()));
     }
     match reader
         .restore(&p.agent_id, &p.tenant, &p.snapshot_id, p.dry_run)
@@ -478,7 +440,11 @@ mod tests {
             Ok(RestoreReportWire {
                 agent_id: agent_id.into(),
                 from_snapshot_id: snapshot_id.into(),
-                pre_snapshot_id: if dry_run { None } else { Some("stub-pre".into()) },
+                pre_snapshot_id: if dry_run {
+                    None
+                } else {
+                    Some("stub-pre".into())
+                },
                 git_reset_oid: None,
                 sqlite_restored_dbs: vec!["long_term.db".into()],
                 state_files_restored: vec!["extract_cursor".into()],
@@ -510,11 +476,7 @@ mod tests {
             list_returns: vec![snap_meta("a"), snap_meta("b")],
             ..StubSnapshotReader::empty()
         };
-        let res = list_snapshots(
-            &reader,
-            serde_json::json!({"agent_id": "ana"}),
-        )
-        .await;
+        let res = list_snapshots(&reader, serde_json::json!({"agent_id": "ana"})).await;
         let payload = res.result.expect("ok");
         let snaps = payload["snapshots"].as_array().unwrap();
         assert_eq!(snaps.len(), 2);
@@ -523,11 +485,7 @@ mod tests {
     #[tokio::test]
     async fn list_snapshots_rejects_empty_agent_id() {
         let reader = StubSnapshotReader::empty();
-        let res = list_snapshots(
-            &reader,
-            serde_json::json!({"agent_id": ""}),
-        )
-        .await;
+        let res = list_snapshots(&reader, serde_json::json!({"agent_id": ""})).await;
         assert!(res.error.is_some());
     }
 
@@ -537,22 +495,15 @@ mod tests {
         // No tenant in params + non-empty agent_id reaches the
         // adapter; the test stub doesn't capture tenant on list,
         // so we just verify the call shape doesn't error.
-        let res = list_snapshots(
-            &reader,
-            serde_json::json!({"agent_id": "ana"}),
-        )
-        .await;
+        let res = list_snapshots(&reader, serde_json::json!({"agent_id": "ana"})).await;
         assert!(res.error.is_none());
     }
 
     #[tokio::test]
     async fn delete_snapshot_records_call() {
         let reader = StubSnapshotReader::empty();
-        let res = delete_snapshot(
-            &reader,
-            serde_json::json!({"agent_id": "ana", "id": "abc"}),
-        )
-        .await;
+        let res =
+            delete_snapshot(&reader, serde_json::json!({"agent_id": "ana", "id": "abc"})).await;
         let payload = res.result.expect("ok");
         assert_eq!(payload["removed"], true);
         let recorded = reader.deleted.lock().unwrap().clone();
@@ -563,11 +514,7 @@ mod tests {
     #[tokio::test]
     async fn delete_snapshot_rejects_empty_id() {
         let reader = StubSnapshotReader::empty();
-        let res = delete_snapshot(
-            &reader,
-            serde_json::json!({"agent_id": "ana", "id": ""}),
-        )
-        .await;
+        let res = delete_snapshot(&reader, serde_json::json!({"agent_id": "ana", "id": ""})).await;
         assert!(res.error.is_some());
     }
 
@@ -606,11 +553,7 @@ mod tests {
     #[tokio::test]
     async fn create_snapshot_rejects_empty_agent_id() {
         let reader = StubSnapshotReader::empty();
-        let res = create_snapshot(
-            &reader,
-            serde_json::json!({"agent_id": ""}),
-        )
-        .await;
+        let res = create_snapshot(&reader, serde_json::json!({"agent_id": ""})).await;
         assert!(res.error.is_some());
         // Reader was never called.
         assert!(reader.created.lock().unwrap().is_empty());
@@ -630,10 +573,7 @@ mod tests {
         // -32602 = JSON-RPC invalid params (matches AdminRpcError::InvalidParams).
         assert_eq!(err.code(), -32602);
         let msg = err.to_string();
-        assert!(
-            msg.contains("no recipients configured"),
-            "actual: {msg}"
-        );
+        assert!(msg.contains("no recipients configured"), "actual: {msg}");
     }
 
     #[tokio::test]
@@ -696,8 +636,7 @@ mod tests {
     #[tokio::test]
     async fn restore_snapshot_maps_not_found_to_invalid_params() {
         let reader = StubSnapshotReader::empty();
-        *reader.restore_err.lock().unwrap() =
-            Some("snapshot abc not found".into());
+        *reader.restore_err.lock().unwrap() = Some("snapshot abc not found".into());
         let res = restore_snapshot(
             &reader,
             serde_json::json!({
@@ -715,9 +654,8 @@ mod tests {
     #[tokio::test]
     async fn restore_snapshot_maps_tenant_mismatch_to_invalid_params() {
         let reader = StubSnapshotReader::empty();
-        *reader.restore_err.lock().unwrap() = Some(
-            "snapshot abc belongs to tenant `staging`, request specified `prod`".into(),
-        );
+        *reader.restore_err.lock().unwrap() =
+            Some("snapshot abc belongs to tenant `staging`, request specified `prod`".into());
         let res = restore_snapshot(
             &reader,
             serde_json::json!({
@@ -739,11 +677,7 @@ mod tests {
             encryption_available: true,
             ..StubSnapshotReader::empty()
         };
-        let res = list_snapshots(
-            &reader,
-            serde_json::json!({"agent_id": "ana"}),
-        )
-        .await;
+        let res = list_snapshots(&reader, serde_json::json!({"agent_id": "ana"})).await;
         let payload = res.result.expect("ok");
         assert_eq!(payload["encryption_available"], true);
         assert!(payload["snapshots"].is_array());
@@ -782,11 +716,7 @@ mod tests {
     #[tokio::test]
     async fn query_rejects_empty_agent_id() {
         let reader = StubReader { rows: vec![] };
-        let res = query(
-            &reader,
-            serde_json::json!({"agent_id": "", "query": "x"}),
-        )
-        .await;
+        let res = query(&reader, serde_json::json!({"agent_id": "", "query": "x"})).await;
         assert!(res.error.is_some());
     }
 

@@ -153,8 +153,7 @@ mod tests {
 
     #[test]
     fn broker_kind_rejects_unknown_variant() {
-        let result: Result<BrokerConfig, _> =
-            serde_yaml::from_str("broker:\n  type: redis\n");
+        let result: Result<BrokerConfig, _> = serde_yaml::from_str("broker:\n  type: redis\n");
         assert!(result.is_err());
     }
 

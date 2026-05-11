@@ -333,7 +333,10 @@ fn string_field(val: &YamlValue, field: &str) -> Option<String> {
 fn yaml_key_to_string(k: &YamlValue) -> String {
     match k {
         YamlValue::String(s) => s.clone(),
-        other => serde_yaml::to_string(other).unwrap_or_default().trim().into(),
+        other => serde_yaml::to_string(other)
+            .unwrap_or_default()
+            .trim()
+            .into(),
     }
 }
 
@@ -439,7 +442,12 @@ fn detail_to_yaml(d: &McpServerDetail) -> YamlValue {
     if !d.args.is_empty() {
         m.insert(
             YamlValue::String("args".into()),
-            YamlValue::Sequence(d.args.iter().map(|s| YamlValue::String(s.clone())).collect()),
+            YamlValue::Sequence(
+                d.args
+                    .iter()
+                    .map(|s| YamlValue::String(s.clone()))
+                    .collect(),
+            ),
         );
     }
     if !d.env.is_empty() {
@@ -447,10 +455,7 @@ fn detail_to_yaml(d: &McpServerDetail) -> YamlValue {
         for (k, v) in &d.env {
             env_map.insert(YamlValue::String(k.clone()), YamlValue::String(v.clone()));
         }
-        m.insert(
-            YamlValue::String("env".into()),
-            YamlValue::Mapping(env_map),
-        );
+        m.insert(YamlValue::String("env".into()), YamlValue::Mapping(env_map));
     }
     if let Some(cwd) = &d.cwd {
         m.insert(
@@ -552,8 +557,14 @@ mod tests {
         };
         store.upsert(detail.clone()).await.unwrap();
         let got = store.get("remote").await.unwrap();
-        assert_eq!(got.as_ref().map(|d| d.transport.as_str()), Some("streamable_http"));
-        assert_eq!(got.as_ref().and_then(|d| d.url.as_deref()), Some("https://api.example.com"));
+        assert_eq!(
+            got.as_ref().map(|d| d.transport.as_str()),
+            Some("streamable_http")
+        );
+        assert_eq!(
+            got.as_ref().and_then(|d| d.url.as_deref()),
+            Some("https://api.example.com")
+        );
     }
 
     #[tokio::test]

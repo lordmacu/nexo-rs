@@ -99,12 +99,12 @@ pub fn optimize(bytes: &[u8], mime: &str) -> Result<Optimized, OptimizeError> {
         // Quality knob lives on the JPEG encoder directly; the
         // generic `write_to` path uses the default 75 which is
         // visibly worse on logos.
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut out, JPEG_QUALITY,
-        );
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY);
         enc.encode_image(&resized).map_err(OptimizeError::Encode)?;
     } else {
-        resized.write_to(&mut out, format).map_err(OptimizeError::Encode)?;
+        resized
+            .write_to(&mut out, format)
+            .map_err(OptimizeError::Encode)?;
     }
     Ok(Optimized {
         bytes: out.into_inner(),
