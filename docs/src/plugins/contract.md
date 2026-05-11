@@ -1474,6 +1474,33 @@ rejects plugins targeting a major version it does not support.
   (§4.1.1 / §5.t — Python `nexoai` ≥ 0.4.0, TypeScript / PHP ≥ 0.3.0).
 - **Go SDK**: not yet planned.
 
+### 11.1 Conformance kit
+
+[`nexo-plugin-sdks/conformance/`](https://github.com/lordmacu/nexo-plugin-sdks/tree/main/conformance)
+is a cross-language conformance kit: one Python mock-host
+(`conformance/mock_host.py`), a set of declarative scenarios
+(`conformance/scenarios/*.json` — the `expect*` steps are the golden),
+and one config-driven fixture per SDK. An SDK is **conformant** iff
+`python conformance/run.py --lang <lang>` passes for it — the kit drives
+the fixture through every exchange this contract defines (`initialize` /
+`shutdown` / `broker.event` / `broker.publish` / `memory.recall` /
+`llm.complete` (+ streaming) / `tool.invoke` + the §4.1.1 catalog) and
+diffs the frames *structurally* (methods, ids, `result`/`error` shapes,
+error codes, `error.data` shape, key presence/absence — **not** message
+text). The `nexo-plugin-sdks` CI runs the `{python, typescript, php}`
+matrix; the Rust SDK runs the same kit in this repo's CI via a shallow
+clone (`--lang rust --fixture <built-binary> --check-contract-version
+docs/src/plugins/contract.md` — the version check ties §13's top entry
+to the kit's `SCENARIOS_TARGET`, so a contract bump that lands without
+updating the kit fails CI). The kit does not replace the per-SDK test
+suites, which cover lang-specific robustness (async readers, Fiber
+scheduling, the stdout guard, signal handling). Added in Phase 31.12;
+the Rust-fixture wiring + reconciling the divergences the kit surfaces
+(the Rust child SDK does not yet emit `error.data.details` /
+`error.data.retry_after_ms`, and its `nexo_broker::Event` serializes
+with extra `id` / `timestamp` / `session_id` fields the scripting SDKs
+omit) is follow-up 31.12.b.
+
 ## 12. Out of contract scope
 
 The following are part of the broader plugin platform but are
