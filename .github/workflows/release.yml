@@ -381,8 +381,20 @@ jobs:
           # Source:
           #   https://src.fedoraproject.org/rpms/systemd
           #   src/rpm/macros.systemd.in
-          # Only the three macros nexo-rs.spec actually calls are
-          # defined here; expand if the spec grows new scriptlets.
+          # Defines the path macro + the three scriptlet macros
+          # nexo-rs.spec actually calls; expand if the spec grows
+          # new ones. `%_unitdir` is the critical one — without it
+          # `%files`'s `%{_unitdir}/nexo-rs.service` line stays a
+          # literal string and rpmbuild bails ("File must begin
+          # with /"). `%_sharedstatedir` is overridden too because
+          # Ubuntu's rpm ships `/usr/com` as the default (vs RHEL's
+          # `/var/lib`), which would land the state dir in the wrong
+          # place even though it wouldn't fail the build.
+          %_unitdir        /usr/lib/systemd/system
+          %_userunitdir    /usr/lib/systemd/user
+          %_presetdir      /usr/lib/systemd/system-preset
+          %_sharedstatedir /var/lib
+
           %systemd_post() \
           if [ $1 -eq 1 ] && [ -x /usr/lib/systemd/systemd-update-helper ]; then \
               /usr/lib/systemd/systemd-update-helper install-system-units %{?*} || : \
