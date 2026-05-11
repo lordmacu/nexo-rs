@@ -68,10 +68,17 @@ jobs:
       - name: Generate CycloneDX SBOM from Cargo.lock
         working-directory: nexo-rs
         run: |
-          cargo cyclonedx --format json --all --output-pattern bom \
-            --output-cdx -v
-          # Single workspace-wide SBOM
-          cp bom.json sbom-cyclonedx.json
+          set -euo pipefail
+          # cargo-cyclonedx dropped `--output-pattern` / `--all` in
+          # the rework after 0.3.x; run it for the root `nexo-rs`
+          # crate (whose transitive dep tree is the full set linked
+          # into the binary), then normalize whatever filename it
+          # emitted (`nexo-rs.cdx.json` on recent versions, `bom.json`
+          # on older) to `sbom-cyclonedx.json`.
+          cargo cyclonedx --format json -v
+          src="$(ls nexo-rs*.json bom.json 2>/dev/null | head -n1 || true)"
+          if [ -z "$src" ]; then echo "no CycloneDX output found:" >&2; ls -la; exit 1; fi
+          cp "$src" sbom-cyclonedx.json
           ls -la sbom-cyclonedx.json
 
       # ----- Filesystem SBOM (SPDX via syft) -----

@@ -78,17 +78,22 @@ jobs:
 
       - name: Build benches
         working-directory: proyecto
-        run: cargo bench -p ${{ matrix.crate }} --no-run
+        # `--benches` so we build only the `[[bench]]` targets, not
+        # the lib's (empty) bench target — the latter uses the
+        # default test harness, which chokes on criterion's
+        # `--save-baseline` flag in the run step below.
+        run: cargo bench -p ${{ matrix.crate }} --benches --no-run
 
       - name: Run benches
         working-directory: proyecto
-        # `--save-baseline pr-${{ github.event.pull_request.number }}` saves
-        # under target/criterion/<group>/<bench>/pr-<n>/. PR runs
-        # produce a per-PR baseline; main runs produce `main`.
+        # `--save-baseline pr-<n>` saves under
+        # target/criterion/<group>/<bench>/pr-<n>/. PR runs produce
+        # a per-PR baseline; main runs produce `main`. `--benches`
+        # restricts to the criterion targets (see above).
         run: |
           set -euo pipefail
           BASELINE="${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}"
-          cargo bench -p ${{ matrix.crate }} -- --save-baseline "$BASELINE"
+          cargo bench -p ${{ matrix.crate }} --benches -- --save-baseline "$BASELINE"
 
       - name: Upload criterion output
         uses: actions/upload-artifact@v4

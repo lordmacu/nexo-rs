@@ -211,11 +211,13 @@ tooling (`cargo dist`, `gh release upload`).
 
 ## Related
 
-- [Persona pack manifest schema (`persona.toml`)](./manifest.md) — TBD
-  follow-up.
+- Persona pack manifest schema (`persona.toml`) — see the
+  [Cody pack README](https://github.com/lordmacu/nexo-persona-cody)
+  for the v2 manifest shape (a dedicated docs page is a TBD
+  follow-up).
 - [Plugin install (`nexo plugin install`)](../plugins/publishing.md)
-  — sister CLI surface; `cody-cli-install` reuses 60% of the
-  resolve+download plumbing.
-- [`docs/architecture/broker.md`](../architecture/broker.md) —
-  daemon broker shapes (orthogonal but referenced by personas
+  — sister CLI surface; the persona installer reuses ~60 % of the
+  resolve + download + sha256-verify plumbing.
+- [Broker shapes](../architecture/broker-shapes.md) — local vs.
+  NATS vs. embedded (orthogonal, but referenced by personas
   declaring `[persona.requires] features`).
