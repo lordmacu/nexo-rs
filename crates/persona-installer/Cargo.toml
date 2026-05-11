@@ -1,0 +1,41 @@
+[package]
+name = "nexo-persona-installer"
+description = "Install / list / remove v2 persona packs from GitHub Releases (cody-cli-install Phase F3)."
+version = "0.1.0"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+# Direct path deps — these crates aren't in workspace.dependencies
+# yet (matches the pattern nexo-plugin-manifest uses).
+nexo-ext-installer    = { version = "0.1.0", path = "../ext-installer" }
+nexo-persona-manifest = { version = "0.1.0", path = "../persona-manifest" }
+async-trait           = { workspace = true }
+chrono                = { workspace = true, features = ["serde"] }
+flate2                = "1"
+reqwest               = { workspace = true }
+semver                = { workspace = true, features = ["serde"] }
+serde                 = { workspace = true, features = ["derive"] }
+serde_json            = { workspace = true }
+tar                   = "0.4"
+thiserror             = { workspace = true }
+tokio                 = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
+tracing               = { workspace = true }
+
+[dev-dependencies]
+sha2     = "0.10"
+hex      = "0.4"
+tempfile = "3"
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+serde_json = { workspace = true }
