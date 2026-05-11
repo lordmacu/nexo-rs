@@ -1102,6 +1102,13 @@ mod drift_tests {
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
+        // Phase 91 STT parity harness — directory pins for the
+        // reference fixtures / safetensors weights / whisper.cpp GGML
+        // model the parity test loads. Pure test-fixture path
+        // overrides; no production code path reads them.
+        "NEXO_STT_PARITY_FIXTURES_DIR",
+        "NEXO_STT_PARITY_SAFETENSORS_DIR",
+        "NEXO_STT_PARITY_WHISPER_GGML",
         // ---- Plugin runtime tuning (non-destructive operator knobs) ----
         "NEXO_INSTALL_TARGET",            // ext-installer arch override.
         "NEXO_PLUGIN_INIT_TIMEOUT_MS",    // 81.17 init handshake timeout.
