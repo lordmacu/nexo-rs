@@ -35,13 +35,14 @@ fn handle(
 }
 
 fn tmp_db_path() -> PathBuf {
+    // process id + a fresh UUID — see the note in
+    // `plan_mode_persists_across_restart.rs`: a coarse clock made the
+    // old `as_nanos()` suffix non-unique under load, so parallel tests
+    // in this binary could collide on one SQLite file.
     let p = std::env::temp_dir().join(format!(
         "nexo-reattach-{}-{}.db",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        Uuid::new_v4()
     ));
     let _ = std::fs::remove_file(&p);
     p
