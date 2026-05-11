@@ -149,14 +149,16 @@ categories   = ["asynchronous", "api-bindings"]
 [package]
 name        = "nexo-rs"
 description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LLM providers, channels (WhatsApp, Telegram, Email, Browser), memory, MCP, skills, and TaskFlow."
-# Phase 27.2 RC validation — pre-release marker so the
-# `nexo-rs-v0.1.6-rc<N>` tag's version matches what cargo-dist
-# verifies. After the multi-platform RC is green, `release-plz`
-# bumps this to `"0.1.6"` for the GA cut. rc4 = first RC carrying
-# the Phase 92-95 ergonomics (broker stdio-bridge, `nexo
-# set-broker`, zero-config boot, `--override-from` deep-merge,
-# `nexo init` 19-template scaffolder) + packaging postinst hooks.
-version      = "0.1.6-rc4"
+# GA cut. The rc1→rc4 pre-release cycle (Phase 27.2 multi-platform
+# matrix validation) is green — the full release.yml pipeline built
+# + published all 9 targets (5 binary tarballs/zip, 2 .deb, 2 .rpm,
+# + cosign sigs) and the install-test matrix (debian/ubuntu .deb,
+# fedora/rocky .rpm) passed. 0.1.6 = the Phase 92-95 ergonomics
+# (broker stdio-bridge, `nexo set-broker`, zero-config boot,
+# `--override-from` deep-merge, `nexo init` 19-template scaffolder)
+# + packaging postinst hooks. Next pre-release wave bumps to
+# `"0.1.7-rc1"` per the same flow.
+version      = "0.1.6"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
@@ -307,7 +309,7 @@ nexo-microapp-sdk  = { version = "0.1.14", path = "crates/microapp-sdk" }
 # Phase 90.x.memory — long-term memory crate exposed at workspace
 # scope so `nexo-setup`'s `LiveMemoryReader` adapter can consume
 # `LongTermMemory` + `MemoryEntry` types via `workspace = true`.
-nexo-memory        = { version = "0.1.2", path = "crates/memory" }
+nexo-memory        = { version = "0.1.4", path = "crates/memory" }
 # Phase 90.x.memory-snapshot — snapshot crate exposed at
 # workspace scope so `nexo-setup`'s `LiveMemorySnapshotReader`
 # adapter can consume `MemorySnapshotter` + `SnapshotMeta`.
@@ -387,10 +389,10 @@ nexo-core = { version = "0.1.17", path = "crates/core" }
 nexo-team-store = { version = "0.1.1", path = "crates/team-store" }
 nexo-extensions = { version = "0.1.3", path = "crates/extensions" }
 nexo-ext-installer = { version = "0.1.0", path = "crates/ext-installer" }
-nexo-llm = { version = "0.1.2", path = "crates/llm" }
+nexo-llm = { version = "0.1.4", path = "crates/llm" }
 nexo-lsp = { version = "0.1.1", path = "crates/lsp" }
 nexo-mcp = { version = "0.1.4", path = "crates/mcp" }
-nexo-memory = { version = "0.1.2", path = "crates/memory" }
+nexo-memory = { version = "0.1.4", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }
 sqlx               = { workspace = true }
 nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
@@ -404,7 +406,7 @@ nexo-driver-loop       = { version = "0.1.6", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.6", path = "crates/driver-permission" }
 nexo-driver-types      = { version = "0.1.6", path = "crates/driver-types" }
 nexo-memory-snapshot   = { version = "0.1.3", path = "crates/memory-snapshot" }
-nexo-plugin-manifest   = { version = "0.1.0", path = "crates/plugin-manifest" }
+nexo-plugin-manifest   = { version = "0.1.3", path = "crates/plugin-manifest" }
 nexo-persona-manifest  = { version = "0.1.0", path = "crates/persona-manifest" }
 nexo-persona-installer = { version = "0.1.0", path = "crates/persona-installer" }
 nexo-project-tracker   = { version = "0.1.6", path = "crates/project-tracker" }
