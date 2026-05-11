@@ -329,7 +329,7 @@ pub fn render_block(block: &EmailBlock, vars: &HashMap<String, String>) -> Strin
                 }
             };
             let level = match *level {
-                1 | 2 | 3 => *level,
+                1..=3 => *level,
                 _ => 2,
             };
             let size = match level {
