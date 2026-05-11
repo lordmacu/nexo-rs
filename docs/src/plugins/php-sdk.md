@@ -1,13 +1,18 @@
 # PHP plugin SDK
 
-Phase 31.5.c. Author plugins in PHP 8.1+ that the daemon spawns
-as subprocesses, talking the same JSON-RPC 2.0 wire format used
-by the Rust + Python + TypeScript SDKs.
+Author plugins in PHP 8.1+ that the daemon spawns as subprocesses,
+talking the same JSON-RPC 2.0 wire format used by the Rust +
+[Python](./python-sdk.md) + [TypeScript](./typescript-sdk.md) SDKs.
 
 Reference template:
-[`extensions/template-plugin-php/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-php).
-The SDK package itself lives at
-[`extensions/sdk-php/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/sdk-php).
+[`extensions/template-plugin-php/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-php)
+(or run `nexo plugin new --lang php`). The SDK package lives in the
+[`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks) repo
+(`php/` subdir, mirrored to
+[`nexo-plugin-sdk-php`](https://github.com/lordmacu/nexo-plugin-sdk-php)
+for Packagist) and ships on Packagist as
+[`nexo/plugin-sdk`](https://packagist.org/packages/nexo/plugin-sdk) —
+`composer require nexo/plugin-sdk`.
 
 ## Why PHP 8.1+
 
@@ -216,8 +221,10 @@ php tests/test_pack_tarball.php
 
 ## SDK tests
 
+In a clone of [`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks):
+
 ```bash
-cd extensions/sdk-php
+cd php
 composer install
 php tests/run-all.php
 ```
