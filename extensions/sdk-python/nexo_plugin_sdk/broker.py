@@ -1,4 +1,4 @@
-"""Phase 31.4 — child-side broker handle.
+"""Child-side broker handle.
 
 Plugin authors call ``broker.publish(topic, event)`` to emit
 notifications back to the daemon. Topics MUST appear on the
@@ -8,29 +8,35 @@ the host side).
 """
 
 import asyncio
-import json
 import sys
-from typing import Any
+from typing import TextIO
 
+from . import wire
 from .events import Event
 
 
 class BrokerSender:
-    """Write-only handle to the daemon's broker. Wraps stdout
-    behind an async lock so concurrent handler tasks do not
-    interleave half-written JSON-RPC frames.
+    """Write-only handle to the daemon's broker.
+
+    Wraps an injected line-writer (the captured *original* stdout,
+    so blessed JSON-RPC frames bypass the stdout guard) behind an
+    async lock so concurrent handler tasks do not interleave
+    half-written frames.
     """
 
-    def __init__(self, write_lock: asyncio.Lock) -> None:
+    def __init__(self, write_lock: asyncio.Lock, writer: TextIO | None = None) -> None:
         self._lock = write_lock
+        # Default to bare ``sys.stdout`` for callers (mainly tests)
+        # that construct a BrokerSender without going through the
+        # adapter. The adapter always injects the captured original.
+        self._writer: TextIO = writer if writer is not None else sys.stdout
 
     async def publish(self, topic: str, event: Event) -> None:
-        notification: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "method": "broker.publish",
-            "params": {"topic": topic, "event": event.to_json()},
-        }
-        line = json.dumps(notification) + "\n"
+        line = wire.serialize_frame(
+            wire.build_notification(
+                "broker.publish", {"topic": topic, "event": event.to_json()}
+            )
+        )
         async with self._lock:
-            sys.stdout.write(line)
-            sys.stdout.flush()
+            self._writer.write(line)
+            self._writer.flush()

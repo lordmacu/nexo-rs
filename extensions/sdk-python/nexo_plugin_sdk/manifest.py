@@ -1,10 +1,11 @@
-"""Phase 31.4 — minimal TOML reader for `nexo-plugin.toml`.
+"""Minimal TOML reader for `nexo-plugin.toml`.
 
-Validates only the fields the SDK needs at startup
-(`plugin.id` + `plugin.version`). The daemon performs full
-schema validation on the manifest at boot.
+Validates only the fields the SDK needs at startup (`plugin.id` —
+incl. the ASCII-slug regex the host enforces — and `plugin.version`).
+The daemon performs full schema validation on the manifest at boot.
 """
 
+import re
 from typing import Any
 
 try:
@@ -14,13 +15,18 @@ except ImportError:  # pragma: no cover - 3.10 fallback
 
 from .errors import ManifestError
 
+#: Same shape the host's `nexo-plugin-manifest` crate enforces and
+#: the TypeScript SDK validates: `^[a-z][a-z0-9_]{0,31}$`.
+PLUGIN_ID_REGEX = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+
 
 def read_manifest(toml_text: str) -> dict[str, Any]:
     """Parse manifest TOML, return the full document dict.
 
     Raises:
-        ManifestError: parse failure or missing `plugin.id` /
-        `plugin.version`.
+        ManifestError: parse failure, missing `plugin.id` /
+        `plugin.version`, or a `plugin.id` that violates
+        :data:`PLUGIN_ID_REGEX`.
     """
     try:
         data = tomllib.loads(toml_text)
@@ -34,6 +40,10 @@ def read_manifest(toml_text: str) -> dict[str, Any]:
     plugin_id = plugin.get("id")
     if not isinstance(plugin_id, str) or not plugin_id:
         raise ManifestError("manifest is missing required string `plugin.id`")
+    if not PLUGIN_ID_REGEX.match(plugin_id):
+        raise ManifestError(
+            f'plugin.id "{plugin_id}" must match {PLUGIN_ID_REGEX.pattern}'
+        )
 
     version = plugin.get("version")
     if not isinstance(version, str) or not version:

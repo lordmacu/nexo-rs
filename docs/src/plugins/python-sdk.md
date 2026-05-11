@@ -1,9 +1,11 @@
 # Python plugin SDK
 
-Phase 31.4. Author plugins in Python that the daemon spawns as
-subprocesses, talking the same JSON-RPC 2.0 wire format used by
-the Rust SDK in
+Author plugins in Python that the daemon spawns as subprocesses,
+talking the same JSON-RPC 2.0 wire format used by the Rust SDK in
 [`crates/microapp-sdk/`](https://github.com/lordmacu/nexo-rs/tree/main/crates/microapp-sdk).
+The robustness defaults (stdout guard, frame cap, signal handling)
+match the [TypeScript](./typescript-sdk.md) and [PHP](./php-sdk.md)
+SDKs (sub-phase 31.4.c).
 
 Reference template:
 [`extensions/template-plugin-python/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-python).
@@ -46,24 +48,43 @@ from `lib/` only — no `site-packages` interference.
 from nexo_plugin_sdk import (
     PluginAdapter,
     BrokerSender,
-    Event,
+    Event, EventHandler, ShutdownHandler,
     PluginError, ManifestError, WireError,
+    read_manifest,
+    install_stdout_guard, uninstall_stdout_guard, is_stdout_guard_installed,
+    STDOUT_GUARD_MARKER,
+    MAX_FRAME_BYTES, JSONRPC_VERSION,
+    serialize_frame, build_response, build_error_response, build_notification,
 )
 ```
 
-`PluginAdapter` constructor:
+`PluginAdapter` constructor (all keyword-only):
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `manifest_toml: str` | ✅ | Body of `nexo-plugin.toml`. Read once at startup; the SDK validates `plugin.id` + `plugin.version`. |
-| `server_version: str = "0.1.0"` | ⬜ | Returned in the `initialize` reply alongside the manifest. |
-| `on_event` | ⬜ | `async (topic, Event, BrokerSender) -> None`. Invoked for every `broker.event` notification. Handler runs in a detached task; the dispatch loop continues reading stdin without blocking. |
-| `on_shutdown` | ⬜ | `async () -> None`. Awaited before the SDK replies `{ok: true}` to the host's `shutdown` request. In-flight `on_event` tasks are also awaited before returning. |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `manifest_toml: str` | *required* | Body of `nexo-plugin.toml`. Parsed + validated once at construction; the SDK checks `plugin.id` (incl. the `^[a-z][a-z0-9_]{0,31}$` slug regex the host enforces) and `plugin.version`. A failed construction leaves no stdout guard installed. |
+| `server_version: str` | `"0.1.0"` | Returned in the `initialize` reply alongside the manifest. |
+| `on_event` | `None` | `async (topic, Event, BrokerSender) -> None`. Invoked for every `broker.event` notification. Handler runs in a detached task; the dispatch loop continues reading stdin without blocking. |
+| `on_shutdown` | `None` | `async () -> None`. Awaited before the SDK replies `{ok: true}` to the host's `shutdown` request. In-flight `on_event` tasks are also awaited before returning. |
+| `enable_stdout_guard: bool` | `True` | Replace `sys.stdout` with a line-buffering proxy that diverts non-JSON lines (a stray `print`) to stderr tagged `[stdout-guard]`. Blessed replies / `broker.publish` frames write through the captured original stdout, bypassing the guard. |
+| `max_frame_bytes: int` | `MAX_FRAME_BYTES` (1 MiB) | Inbound JSON-RPC frames larger than this are rejected with a `WireError` log; dispatch continues. |
+| `handle_process_signals: bool` | `True` | SIGTERM / SIGINT → graceful shutdown: drain in-flight handlers, then exit 0. `loop.add_signal_handler` is the primary path, falling back to `signal.signal` where unavailable (Windows ProactorEventLoop / non-main-thread). |
 
-`Event` is a dataclass with `topic`, `source`, `payload`,
-optional `correlation_id` + `metadata`. `BrokerSender.publish(topic, event)`
-serializes a JSON-RPC notification to stdout under an asyncio
-write lock.
+Calling `run()` twice raises `PluginError`. The stdin reader is fully
+async (`loop.connect_read_pipe` + `asyncio.StreamReader`) — no
+threadpool worker.
+
+`Event` is a dataclass with `topic`, `source`, `payload`, optional
+`correlation_id` + `metadata`. `BrokerSender.publish(topic, event)`
+serializes a JSON-RPC notification to the captured original stdout
+under an asyncio write lock.
+
+### Stdout guard limitation
+
+The guard only intercepts the text-stream API (`print`,
+`sys.stdout.write`). A C extension or subprocess that writes to file
+descriptor 1 directly bypasses it. Plugin authors who need stdout
+output should use `print()` / `sys.stdout.write()`.
 
 ## Tarball convention (`noarch`)
 
@@ -161,8 +182,13 @@ cd extensions/sdk-python
 PYTHONPATH=. python3 -m unittest discover -v tests/
 ```
 
-6 tests: handshake, dispatch (incl. non-blocking reader proof),
-shutdown lifecycle, unknown-method, manifest validation.
+21 tests: handshake (incl. unknown-method `-32601`), manifest
+validation (missing id, invalid TOML, id-regex violation), dispatch
+(incl. non-blocking reader proof + oversized frame rejected with
+continued dispatch), stdout guard (idempotent install, divert vs
+passthrough, handler-print diverted while the blessed frame stays
+clean), `broker.publish` back channel, lifecycle (double `run()`
+rejected, SIGTERM exits 0, SIGTERM drains an in-flight handler).
 
 ## See also
 
