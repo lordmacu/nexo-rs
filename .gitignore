@@ -54,11 +54,24 @@ config/agents.d/*.yaml
 # coming back.)
 .claude/
 
-# `/forge` workflow scratch — brainstorm / spec / plan docs and the
-# per-phase recap / research / handoff notes accumulate at the repo
-# root. The kept trackers are PHASES.md, PHASES-archive.md,
-# FOLLOWUPS.md, design-agent-framework.md and nexo-plugin-contract.md
-# — everything matching the patterns below is transient dev scratch.
+# Project docs that are kept local but out of the published repo /
+# crate tarball — only README.md + CHANGELOG.md (+ the licenses,
+# legally required) ship. CLAUDE.md, the PHASES* trackers,
+# FOLLOWUPS.md, the design notes, the plugin wire-spec, the
+# SECURITY / RELEASE / VOICE notes, and all the `/forge` workflow
+# scratch (brainstorm / spec / plan + per-phase recap/research/
+# handoff notes) stay on the author's disk via `git rm --cached`.
+# Note: `docs/` (the mdBook site) IS tracked — GitHub Pages builds
+# from it; nothing here touches it.
+CLAUDE.md
+PHASES.md
+PHASES-archive.md
+FOLLOWUPS.md
+design-agent-framework.md
+nexo-plugin-contract.md
+SECURITY.md
+RELEASE.md
+VOICE.md
 /brainstorm-*.md
 /spec-*.md
 /plan-*.md

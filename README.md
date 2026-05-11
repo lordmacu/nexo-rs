@@ -16,8 +16,8 @@
 [Architecture](https://lordmacu.github.io/nexo-rs/architecture/overview.html) ·
 [Recipes](https://lordmacu.github.io/nexo-rs/recipes/index.html) ·
 [vs OpenClaw](https://lordmacu.github.io/nexo-rs/architecture/vs-openclaw.html) ·
-[Contributing](./docs/src/contributing.md) ·
-[Security](./SECURITY.md) ·
+[Contributing](https://lordmacu.github.io/nexo-rs/contributing.html) ·
+[Releases](https://github.com/lordmacu/nexo-rs/releases) ·
 [License](#license)
 
 **nexo-rs** is a **Rust multi-agent LLM framework** — an
@@ -159,9 +159,7 @@ Shipped, end-to-end:
 - Personas — out-of-tree agent packs (v2 manifest, GitHub Releases), `nexo persona install <owner>/<repo>`
 - Ops — Prometheus metrics, health endpoint, loopback admin console, hot-reload, secrets audit, cosign-signed release artifacts
 
-Phase-by-phase done-criteria live in [`PHASES.md`](PHASES.md) /
-[`PHASES-archive.md`](PHASES-archive.md); open follow-ups in
-[`FOLLOWUPS.md`](FOLLOWUPS.md).
+Release-by-release notes live in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Architecture
 
@@ -244,8 +242,8 @@ from the operator UI.
 > [Platform support](https://lordmacu.github.io/nexo-rs/getting-started/platform-support.html)
 > for the per-OS prerequisites + feature matrix.
 >
-> Homebrew formula auto-publish + `npm install -g @nexo-rs/cli` are
-> [Phase 27.2 follow-ups](./FOLLOWUPS.md) — the [tap](https://github.com/lordmacu/homebrew-nexo-rs)
+> A Homebrew formula auto-publish + `npm install -g @nexo-rs/cli`
+> are still on the roadmap — the [tap](https://github.com/lordmacu/homebrew-nexo-rs)
 > + [npm scope](https://www.npmjs.com/package/@nexo-rs/cli) are reserved.
 
 ### From source
@@ -390,10 +388,9 @@ cargo build --profile release-fast # release-grade, skip LTO — ~50% faster
 cargo run --bin nexo -- --help     # subcommands (init, setup, plugin, persona, ext, flow, dlq, set-broker, mcp-server, …)
 ```
 
-The project uses a `/forge` convention:
-`brainstorm → spec → plan → ejecutar`. Per-sub-phase done-criteria
-live in [`PHASES.md`](PHASES.md) (active) / [`PHASES-archive.md`](PHASES-archive.md)
-(closed); open follow-ups in [`FOLLOWUPS.md`](FOLLOWUPS.md).
+See [`CHANGELOG.md`](CHANGELOG.md) for what's shipped per release
+and [Contributing](https://lordmacu.github.io/nexo-rs/contributing.html)
+for how to add a plugin / extension / microapp.
 
 ## FAQ
 
