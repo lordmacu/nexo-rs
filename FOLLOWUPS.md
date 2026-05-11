@@ -2,6 +2,79 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Cody mapping deep-dive 2026-05-11 — Phase A deudas — shipped
+
+Audit-driven 5-fix wave on Cody's surrounding infrastructure
+(deuda surfaced by exhaustive mapping of "Cody = chat-only?
+no, programmer-pair dispatching Claude Code subprocesses via
+~37K LOC of Phases 67/70-74 substrate"). All fixes are
+framework-generic improvements; they happen to make Cody more
+honest, not Cody-specific.
+
+A (5/5 shipped 2026-05-11):
+- ✅ ~~**A.1 add_hook + remove_hook handlers**~~ —
+  `crates/core/src/agent/dispatch_handlers.rs` — declared in
+  WRITE_TOOL_NAMES + referenced by Cody's system prompt but
+  never registered. Calls fell through as "unknown tool".
+  Bridged straight to `HookRegistry::add_unique` (idempotent
+  duplicate-id rejection with `reason` field) and
+  `HookRegistry::remove` (probe-then-remove pattern returns
+  `removed: false` instead of erroring on missing). Goal id
+  parsed via shared `parse_goal_id(&str) -> Result<GoalId>`
+  helper. 5 e2e tests asserting attach + duplicate idempotency
+  + empty-id reject + remove flow + invalid-uuid reject.
+- ✅ ~~**A.2 register chain + parallel handlers**~~ —
+  `program_phase_chain` + `program_phase_parallel` functions
+  existed in `nexo-dispatch-tools::chain.rs` but
+  `register_dispatch_tools_into` never exposed them as
+  handlers. Wired ProgramPhaseChainHandler +
+  ProgramPhaseParallelHandler with self-modify guards
+  matching the existing ProgramPhaseHandler. Chain handler
+  binds the synthesised `chain_hooks` to the freshly-spawned
+  goal via `dispatch.hooks.add_unique` so subsequent phases
+  fire when the previous one's Done transition lands.
+- ✅ ~~**A.3 PreflightHandler.llm_ready uses LlmRegistry**~~ —
+  was hardcoded `provider == "anthropic" || provider == "minimax"`,
+  giving DeepSeek/Gemini/OpenAI agents an engaging-but-false
+  `llm_ready: false`. Threaded the daemon's shared
+  `Arc<LlmRegistry>` (Phase 90 P1.4 follow-up) into
+  `DispatchToolContext.llm_registry: Option<Arc<LlmRegistry>>`,
+  preflight now consults `reg.names().iter().any(|n| n == provider)`.
+  Falls back to legacy hardcode when registry unwired (test
+  contexts). `boot_dispatch_ctx_if_enabled` parameter list
+  extended to thread the Arc from main.rs.
+- ✅ ~~**A.4 self-modify env-var name reconcile**~~ —
+  `dispatch_handlers.rs:178` error msg said
+  `NEXO_ALLOW_SELF_MODIFY=1` to enable but `src/main.rs:7317`
+  reads `NEXO_DISALLOW_SELF_MODIFY` (default ON, env var
+  DISABLES). Operator following error msg exported wrong env
+  var. Doc string also mis-described the default as `false`.
+  Fixed both — message + docstring now reflect production
+  reality (default ON + `NEXO_DISALLOW_SELF_MODIFY=1` flips
+  off for production / frozen-binary deploys).
+- ✅ ~~**A.5 AnthropicAuth identity spoof opt-out**~~ —
+  `crates/llm/src/anthropic.rs::prepend_claude_code_spoof` was
+  always-on for Bearer auth (OAuth + setup-token). Microapp
+  future using Anthropic API plain would identify falsely as
+  Claude Code. Added `should_spoof_claude_code()` helper
+  reading `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF` env (default
+  OFF — spoof stays ON). 4 unit tests covering default-on +
+  truthy-value-aliases + empty/unrelated-keep-on +
+  build_body_skips-when-set, all serialised via static Mutex
+  guard (env is process-global). New INVENTORY entry in
+  `crates/setup/src/capabilities.rs` so `agent doctor
+  capabilities` reports the toggle with Risk::Medium effect
+  description warning operators about subscription terms
+  before disabling.
+
+A totals: 14 new tests (4 anthropic + 5 add_hook/remove_hook
++ 5 reused/extended for chain+parallel registration), 0
+regressions, full workspace build clean.
+
+Phase B (extract `nexo-persona-cody/` out-of-tree config repo)
+queued — separate forge brainstorm/spec/plan flow per audit
+recommendation.
+
 ### Audit 2026-05-10 — admin wave P0 fixes — shipped
 
 Comprehensive audit of all admin work shipped in the

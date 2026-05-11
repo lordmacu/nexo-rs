@@ -761,6 +761,18 @@ pub(crate) fn caching_flags(model: &str, req: &ChatRequest) -> CachingFlags {
 /// a legacy `Value::String`, it is promoted to an array with the spoof
 /// first and the original text second; if it is already an array, the
 /// spoof is inserted at position 0.
+/// Phase 90 audit fix (Cody A.5) — env-var gate for the
+/// Claude-Code identity spoof. `false` only when the operator
+/// explicitly exports `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF` to
+/// an "off"-ish value. Empty string + unset + truthy values
+/// keep the spoof ON (backward compatibility).
+fn should_spoof_claude_code() -> bool {
+    match std::env::var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF") {
+        Ok(v) => !matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "ON" | "yes"),
+        Err(_) => true,
+    }
+}
+
 fn prepend_claude_code_spoof(body: &mut Value) {
     let spoof = json!({
         "type": "text",
@@ -891,7 +903,18 @@ fn build_body(model: &str, req: &ChatRequest, is_subscription: bool) -> Value {
     // first system block. Without it, Anthropic rejects Opus / Sonnet 4.x
     // with a generic 4xx that surfaces as "no quota" upstream. Mirrors
     // OpenClaw `anthropic-transport-stream.ts:627-641`.
-    if is_subscription {
+    //
+    // Phase 90 audit fix (Cody A.5) — runtime opt-out via
+    // `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF=1` for microapps that
+    // use Anthropic OAuth/setup-token but do NOT want to falsely
+    // identify as Claude Code (e.g. an integration that surfaces
+    // "<microapp> via Anthropic" telemetry to operators). Default
+    // behaviour unchanged — spoof stays on so existing
+    // subscription tokens keep working out-of-the-box. Audit
+    // your acceptable use before disabling: bypassing the
+    // identity check on a non-Claude-Code workload may violate
+    // your subscription's terms.
+    if is_subscription && should_spoof_claude_code() {
         prepend_claude_code_spoof(&mut body);
     }
     if !req.stop_sequences.is_empty() {
@@ -1831,6 +1854,73 @@ mod tests {
         let m = merge_beta_headers(None, &[], true, false).unwrap();
         assert!(m.contains("prompt-caching-2024-07-31"));
         assert!(!m.contains("extended-cache-ttl"));
+    }
+
+    /// Phase 90 audit fix (Cody A.5) — env-var opt-out for the
+    /// Claude-Code identity spoof on Bearer-auth requests.
+    /// Production default keeps the spoof ON; microapps that
+    /// integrate Anthropic without falsely identifying as Claude
+    /// Code can flip `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF=1`.
+    /// Tests serialize via a static Mutex (env is process-global)
+    /// rather than pulling `serial_test` into deps just for these.
+    fn spoof_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn should_spoof_default_on_when_env_unset() {
+        let _g = spoof_env_lock();
+        std::env::remove_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF");
+        assert!(should_spoof_claude_code(), "default must keep spoof ON");
+    }
+
+    #[test]
+    fn should_spoof_off_for_truthy_opt_out_values() {
+        let _g = spoof_env_lock();
+        for v in ["1", "true", "TRUE", "on", "ON", "yes"] {
+            std::env::set_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF", v);
+            assert!(
+                !should_spoof_claude_code(),
+                "value `{v}` must disable spoof"
+            );
+        }
+        std::env::remove_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF");
+    }
+
+    #[test]
+    fn should_spoof_on_for_empty_or_unrelated_values() {
+        let _g = spoof_env_lock();
+        for v in ["", " ", "0", "false", "no", "anything"] {
+            std::env::set_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF", v);
+            assert!(
+                should_spoof_claude_code(),
+                "value `{v}` must KEEP spoof on (only explicit truthy disables)"
+            );
+        }
+        std::env::remove_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF");
+    }
+
+    #[test]
+    fn build_body_skips_spoof_when_opt_out_env_set() {
+        let _g = spoof_env_lock();
+        std::env::set_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF", "1");
+        let req = ChatRequest::new("claude-sonnet-4-6", vec![]);
+        let body = build_body("claude-sonnet-4-6", &req, /*is_subscription=*/ true);
+        let sys = body.get("system");
+        // No system block at all when no req.system_prompt + no spoof.
+        match sys {
+            None => {}
+            Some(Value::Array(a)) => {
+                assert!(a.is_empty(), "system array must be empty without spoof, got {a:?}");
+            }
+            Some(Value::String(s)) if s.is_empty() => {}
+            Some(other) => panic!("unexpected system shape: {other:?}"),
+        }
+        std::env::remove_var("NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF");
     }
 
     #[test]

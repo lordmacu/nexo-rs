@@ -3858,6 +3858,7 @@ async fn main() -> Result<()> {
             mcp_manager.clone(),
             channel_boot.clone(),
             pending_permissions.clone(),
+            llm_registry.clone(),
         )
         .await;
 
@@ -6673,6 +6674,7 @@ async fn boot_dispatch_ctx_if_enabled(
     mcp_manager: Option<Arc<nexo_mcp::McpRuntimeManager>>,
     channel_boot: nexo_mcp::channel_boot::ChannelBootContext,
     pending_permissions: Arc<nexo_mcp::channel_permission::PendingPermissionMap>,
+    llm_registry: Arc<nexo_llm::LlmRegistry>,
 ) -> Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> {
     // Auto-detect: any agent (or any of its bindings) with
     // dispatch_capability=Full triggers the in-process driver.
@@ -7343,6 +7345,12 @@ async fn boot_dispatch_ctx_if_enabled(
                 audit_cap: Some(2),
             })
                 as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
+            // Phase 90 audit fix (Cody A.3) — share the daemon's
+            // single Arc<LlmRegistry> (Phase 90 P1.4 follow-up)
+            // so PreflightHandler reports llm_ready accurately
+            // for any registered provider, not just the legacy
+            // anthropic/minimax hardcode.
+            llm_registry: Some(llm_registry.clone()),
         },
     ))
 }
