@@ -1,7 +1,7 @@
 [package]
 name = "template-mcp-server"
 description = "Skeleton MCP server extension for Nexo (Phase 76.15)."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Cristian Garcia <informacion@cristiangarcia.co>"]

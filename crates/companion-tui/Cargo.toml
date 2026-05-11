@@ -1,7 +1,7 @@
 [package]
 name          = "nexo-companion-tui"
 description   = "Reference companion CLI for the Nexo pairing protocol — decodes setup-codes and prints the connect plan."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -20,7 +20,7 @@ futures            = { workspace = true }
 serde_json         = { workspace = true }
 tokio              = { workspace = true }
 tokio-tungstenite  = { workspace = true }
-nexo-pairing       = { version = "0.1.2", path = "../pairing", default-features = false }
+nexo-pairing       = { version = "0.1.5", path = "../pairing", default-features = false }
 
 [[bin]]
 name = "nexo-companion"

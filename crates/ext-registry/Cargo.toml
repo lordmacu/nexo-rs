@@ -1,7 +1,7 @@
 [package]
 name = "nexo-ext-registry"
 description = "Phase 31.0 — ext-registry index format types + parser + validation. The catalog of installable nexo plugins (out-of-tree subprocess plugins authored against nexo-plugin-contract.md)."
-version       = "0.1.0"
+version       = "0.1.1"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }

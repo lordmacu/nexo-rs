@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-http"
 description = "Reusable HTTP scaffolding for nexo-rs microapps with operator UIs (axum + tower-http; bearer auth, admin proxy, SPA serving, hot-rotatable token state)."
-version     = "0.1.0"
+version     = "0.1.1"
 edition     = { workspace = true }
 rust-version = { workspace = true }
 license     = { workspace = true }
@@ -12,8 +12,8 @@ categories  = ["web-programming::http-server"]
 readme      = "README.md"
 
 [dependencies]
-nexo-microapp-sdk = { version = "0.1.14", path = "../microapp-sdk", features = ["admin"] }
-nexo-tool-meta = { version = "0.1.13", path = "../tool-meta" }
+nexo-microapp-sdk = { version = "0.1.15", path = "../microapp-sdk", features = ["admin"] }
+nexo-tool-meta = { version = "0.1.14", path = "../tool-meta" }
 axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "tower-log", "query"] }
 tower      = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["limit", "trace", "fs", "compression-gzip", "compression-br"] }

@@ -1,7 +1,7 @@
 [package]
 name = "nexo-setup"
 description   = "Setup wizard, capability inventory, and doctor command for Nexo."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -21,15 +21,15 @@ default = []
 config-self-edit = ["nexo-core/config-self-edit"]
 
 [dependencies]
-nexo-config = { version = "0.1.7", path = "../config" }
+nexo-config = { version = "0.1.8", path = "../config" }
 nexo-plugin-email = { workspace = true }
-nexo-core = { version = "0.1.17", path = "../core" }
-nexo-extensions = { version = "0.1.1", path = "../extensions" }
-nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest" }
+nexo-core = { version = "0.1.18", path = "../core" }
+nexo-extensions = { version = "0.1.4", path = "../extensions" }
+nexo-plugin-manifest = { version = "0.1.4", path = "../plugin-manifest" }
 nexo-tool-meta = { workspace = true }
-nexo-auth = { version = "0.1.1", path = "../auth" }
-nexo-llm = { version = "0.1.1", path = "../llm" }
-nexo-llm-auth = { version = "0.1.0", path = "../llm-auth" }
+nexo-auth = { version = "0.1.7", path = "../auth" }
+nexo-llm = { version = "0.1.5", path = "../llm" }
+nexo-llm-auth = { version = "0.1.1", path = "../llm-auth" }
 nexo-memory = { workspace = true }
 nexo-memory-snapshot = { workspace = true }
 anyhow       = { workspace = true }
@@ -67,11 +67,11 @@ webbrowser = "1"
 # version + path stay synchronised with the proyecto Cargo.toml
 # entry that points at the standalone repo.
 nexo-plugin-whatsapp = { workspace = true }
-nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
-nexo-pairing = { version = "0.1.2", path = "../pairing" }
+nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
+nexo-pairing = { version = "0.1.5", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher
 # adapter (publishes to per-channel `plugin.outbound.*` topics).
-nexo-broker = { version = "0.1.1", path = "../broker" }
+nexo-broker = { version = "0.1.4", path = "../broker" }
 # Phase 81.21.b.b follow-up — `LivePluginRestarter` adapter
 # needs `tokio_util::sync::CancellationToken` for the
 # context-shutdown propagation into `force_restart`.
@@ -88,7 +88,7 @@ regex = "1"
 tokio-util = { workspace = true }
 toml         = "0.8"
 async-trait = { workspace = true }
-nexo-tool-meta = { version = "0.1.13", path = "../tool-meta" }
+nexo-tool-meta = { version = "0.1.14", path = "../tool-meta" }
 uuid = { workspace = true, features = ["v4"] }
 
 [lints]

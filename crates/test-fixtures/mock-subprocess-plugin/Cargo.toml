@@ -12,7 +12,7 @@
 # normal `CARGO_BIN_EXE_mock_subprocess_plugin` env var.
 [package]
 name = "nexo-mock-subprocess-plugin"
-version = "0.0.1"
+version = "0.0.2"
 description = "Internal test fixture — synthetic subprocess plugin used by the daemon's spawn-shape e2e tests. Not published."
 publish = false
 edition = { workspace = true }

@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.14"
+version       = "0.1.15"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -380,15 +380,15 @@ dashmap     = { workspace = true, optional = true }
 # Phase 81.15.a — gated by the `plugin` feature. Pulled only by
 # plugin authors who use `PluginAdapter`; microapp authors leave
 # the feature off and don't pay the dep cost.
-nexo-plugin-manifest = { version = "0.1.1", path = "../plugin-manifest", optional = true }
-nexo-broker = { version = "0.1.1", path = "../broker", optional = true }
+nexo-plugin-manifest = { version = "0.1.4", path = "../plugin-manifest", optional = true }
+nexo-broker = { version = "0.1.4", path = "../broker", optional = true }
 # Phase 81.15.c — child-side typed wrappers for memory.recall +
 # llm.complete RPCs. nexo-llm gives ChatMessage/ChatRequest/
 # ChatResponse types so authors construct + decode messages
 # with the same shape the daemon uses; nexo-memory gives
 # MemoryEntry for recall_memory results.
-nexo-llm = { version = "0.1.1", path = "../llm", optional = true }
-nexo-memory = { version = "0.1.2", path = "../memory", optional = true }
+nexo-llm = { version = "0.1.5", path = "../llm", optional = true }
+nexo-memory = { version = "0.1.5", path = "../memory", optional = true }
 toml = { version = "0.8", optional = true }
 # `events` feature — SQLite append-log + retention sweep +
 # wall-clock cutoff for time-based pruning. All optional;
