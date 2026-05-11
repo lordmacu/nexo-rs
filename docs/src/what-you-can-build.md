@@ -196,6 +196,8 @@ Available today:
 | Pack | Persona | Channels | Use case |
 |------|---------|----------|----------|
 | [`lordmacu/nexo-persona-cody`](https://github.com/lordmacu/nexo-persona-cody) | **Cody** — programmer pair | Telegram, WhatsApp | Drives Claude Code goals from chat. Reads PHASES.md, dispatches one phase at a time, audits the diff before declaring done. Self-modify by default (with git-worktree isolation); production opts out via `NEXO_DISALLOW_SELF_MODIFY=1`. |
+| [`lordmacu/nexo-persona-ana-template`](https://github.com/lordmacu/nexo-persona-ana-template) | **Ana** — sales / lead capture | WhatsApp | Hardened single-tool template for inbound WhatsApp lead capture. `allowed_tools` whitelist + `outbound_allowlist.whatsapp` defense-in-depth: a jailbroken prompt cannot exfiltrate leads to an attacker number. Operator customizes the advisor phone + sales script before going live. |
+| [`lordmacu/nexo-persona-marketing-multiclient-template`](https://github.com/lordmacu/nexo-persona-marketing-multiclient-template) | **Multi-client marketing** | configurable | Three distinct agents (intake / retention / exec) on one daemon, each with its own LLM (MiniMax M2.5 / Claude Haiku 4.5 / DeepSeek v4 flash) + own proactive cadence + own daily turn budget. Demonstrates the multi-tenant single-install pattern. |
 
 More on the way — see the [Cody README](https://github.com/lordmacu/nexo-persona-cody)
 for the v2 manifest shape if you want to publish your own. Inner-
