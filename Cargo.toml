@@ -170,6 +170,30 @@ readme       = { workspace = true }
 keywords     = { workspace = true }
 categories   = { workspace = true }
 
+# Explicit publish allowlist. Needed because `src/plugin_new.rs`
+# embeds the four plugin-scaffold templates via
+# `include_dir!("$CARGO_MANIFEST_DIR/extensions/template-plugin-*")`
+# — those dirs are separate `[workspace.members]`, which cargo
+# omits from a parent package's `.crate` tarball by default, so
+# the proc-macro panics at build time on a `cargo install`d copy.
+# Listing them here copies them into the tarball. Once `include`
+# is set it's an allowlist, so the usual files (src, build.rs,
+# examples, README, licenses; Cargo.toml/Cargo.lock are implicit)
+# have to be enumerated too.
+include = [
+    "src/**/*",
+    "build.rs",
+    "examples/**/*",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "NOTICE",
+    "extensions/template-plugin-rust/**/*",
+    "extensions/template-plugin-python/**/*",
+    "extensions/template-plugin-typescript/**/*",
+    "extensions/template-plugin-php/**/*",
+]
+
 [lints]
 workspace = true
 
