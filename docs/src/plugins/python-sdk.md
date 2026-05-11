@@ -69,7 +69,10 @@ from nexo_plugin_sdk import (
 | `manifest_toml: str` | *required* | Body of `nexo-plugin.toml`. Parsed + validated once at construction; the SDK checks `plugin.id` (incl. the `^[a-z][a-z0-9_]{0,31}$` slug regex the host enforces) and `plugin.version`. A failed construction leaves no stdout guard installed. |
 | `server_version: str` | `"0.1.0"` | Returned in the `initialize` reply alongside the manifest. |
 | `on_event` | `None` | `async (topic, Event, BrokerSender) -> None`. Invoked for every `broker.event` notification. Handler runs in a detached task; the dispatch loop continues reading stdin without blocking. |
-| `on_shutdown` | `None` | `async () -> None`. Awaited before the SDK replies `{ok: true}` to the host's `shutdown` request. In-flight `on_event` tasks are also awaited before returning. |
+| `on_shutdown` | `None` | `async () -> None`. Awaited before the SDK replies `{ok: true}` to the host's `shutdown` request. In-flight `on_event` (and `tool.invoke`) tasks are also awaited before returning. |
+| `tools` | `None` | `list[ToolDef]` — the tool catalog advertised in the `initialize` reply's `tools` array (contract §4.1.1). Also settable post-construction via `.declare_tools([...])`. Every `name` must appear in the manifest's `[plugin.extends].tools` — a name that doesn't raises `ManifestError` at construction (mirrors the host's hard-failure). Omit → no `tools` array in the reply. |
+| `on_tool` | `None` | `(ToolInvocation) -> Any`, sync or async. Dispatch handler for `tool.invoke` (contract §5.t). Runs on a detached task tracked by the shutdown drain. Mutually exclusive with `on_tool_with_context`. |
+| `on_tool_with_context` | `None` | `(ToolInvocation, ToolContext) -> Any`, sync or async. Like `on_tool`, but `ctx.broker` is the same `BrokerSender` `on_event` gets — a tool body can `memory_recall` / `llm_complete` mid-invocation. Wins over `on_tool` when both are set. |
 | `enable_stdout_guard: bool` | `True` | Replace `sys.stdout` with a line-buffering proxy that diverts non-JSON lines (a stray `print`) to stderr tagged `[stdout-guard]`. Blessed replies / `broker.publish` frames write through the captured original stdout, bypassing the guard. |
 | `max_frame_bytes: int` | `MAX_FRAME_BYTES` (1 MiB) | Inbound JSON-RPC frames larger than this are rejected with a `WireError` log; dispatch continues. |
 | `handle_process_signals: bool` | `True` | SIGTERM / SIGINT → graceful shutdown: drain in-flight handlers, then exit 0. `loop.add_signal_handler` is the primary path, falling back to `signal.signal` where unavailable (Windows ProactorEventLoop / non-main-thread). |
@@ -89,6 +92,44 @@ The guard only intercepts the text-stream API (`print`,
 `sys.stdout.write`). A C extension or subprocess that writes to file
 descriptor 1 directly bypasses it. Plugin authors who need stdout
 output should use `print()` / `sys.stdout.write()`.
+
+## Tool dispatch (`tool.invoke`, contract §4.1.1 + §5.t)
+
+A plugin that declares `[plugin.extends].tools = ["myplugin_weather"]`
+advertises a catalog of `ToolDef(name, description, input_schema)` and
+handles one `tool.invoke` request per agent-loop tool call:
+
+```python
+from nexo_plugin_sdk import (
+    PluginAdapter, ToolDef, ToolInvocation, ToolContext,
+    ToolNotFound, ToolArgumentInvalid, ToolExecutionFailed, ToolUnavailable, ToolDenied,
+    text_result,
+)
+
+async def on_tool(inv: ToolInvocation, ctx: ToolContext):
+    if inv.tool_name != "myplugin_weather":
+        raise ToolNotFound(inv.tool_name)
+    city = (inv.args or {}).get("city")
+    if not city:
+        raise ToolArgumentInvalid("missing `city`", details={"field": "city"})
+    # ctx.broker is the on_event broker handle — host calls work mid-invocation:
+    # _ = await ctx.broker.memory_recall(agent_id=inv.agent_id or "", query=city)
+    return text_result(f"Sunny in {city}")     # any JSON value is fine; this is the conventional shape
+
+await PluginAdapter(
+    manifest_toml=MANIFEST,
+    tools=[ToolDef("myplugin_weather", "Current weather for a city",
+                   {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]})],
+    on_tool_with_context=on_tool,   # or on_tool=fn(inv) when you don't need the broker
+).run()
+```
+
+The handler's return value becomes the JSON-RPC `result` verbatim
+(non-JSON-serializable → `-33403`). Raising one of the `ToolInvocationError`
+subclasses maps to the matching `-33401..-33405` code (with
+`error.data.details` / `error.data.retry_after_ms` when set); an uncaught
+generic exception maps to `-33403`; a `tool.invoke` with no handler
+registered replies `-32601`. (PyPI `nexoai` ≥ 0.4.0.)
 
 ## Tarball convention (`noarch`)
 
