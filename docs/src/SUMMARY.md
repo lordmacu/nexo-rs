@@ -37,6 +37,10 @@
 - [Signing & publishing](./plugins/signing-and-publishing.md)
 - [Plugin supervisor (auto-respawn)](./plugins/supervisor.md)
 
+# Personas
+
+- [Installing personas](./personas/install.md)
+
 # Extensions
 
 - [Manifest reference](./extensions/manifest.md)
