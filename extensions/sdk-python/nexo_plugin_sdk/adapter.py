@@ -1,8 +1,9 @@
-"""Phase 31.4 — child-side dispatch loop.
+"""Phase 31.4 — child-side dispatch loop (robustness defaults: 31.4.c).
 
 Mirrors the Rust counterpart in
-`crates/microapp-sdk/src/plugin.rs::PluginAdapter`. Reads
-JSON-RPC 2.0 newline-delimited frames from stdin, dispatches:
+`crates/microapp-sdk/src/plugin.rs::PluginAdapter` and the
+TypeScript counterpart in `extensions/sdk-typescript/src/adapter.ts`.
+Reads JSON-RPC 2.0 newline-delimited frames from stdin, dispatches:
 
   - ``method == "initialize"`` (request) → reply with manifest +
     server_version.
@@ -10,9 +11,14 @@ JSON-RPC 2.0 newline-delimited frames from stdin, dispatches:
     detached task running ``on_event`` so the reader continues
     polling stdin while the handler awaits its own broker
     interactions (mirrors the self-deadlock fix from Phase 81.15.c).
-  - ``method == "shutdown"`` (request) → reply ``{"ok": true}``,
-    invoke ``on_shutdown`` if set, exit the loop.
-  - Anything else → reply error ``-32601 method not found``.
+  - ``method == "shutdown"`` (request) → drain in-flight tasks,
+    reply ``{"ok": true}``, invoke ``on_shutdown`` if set, exit
+    the loop.
+  - Anything else with an id → reply error ``-32601 method not found``.
+  - Anything else without an id (notification) → silently ignore
+    (JSON-RPC 2.0 §4.1).
+
+Wire format: ``nexo-plugin-contract.md``.
 """
 
 import asyncio
@@ -20,9 +26,9 @@ import json
 import sys
 from typing import Any, Awaitable, Callable
 
-from . import wire
+from . import stdout_guard, wire
 from .broker import BrokerSender
-from .errors import WireError
+from .errors import PluginError, WireError
 from .events import Event
 from .manifest import read_manifest
 
@@ -43,11 +49,29 @@ class PluginAdapter:
         server_version: str = "0.1.0",
         on_event: EventHandler | None = None,
         on_shutdown: ShutdownHandler | None = None,
+        enable_stdout_guard: bool = True,
+        max_frame_bytes: int = wire.MAX_FRAME_BYTES,
+        handle_process_signals: bool = True,
     ) -> None:
+        # Parse + validate the manifest first — a failed construction
+        # must not leave a dangling stdout guard installed.
         self._manifest = read_manifest(manifest_toml)
         self._server_version = server_version
         self._on_event = on_event
         self._on_shutdown = on_shutdown
+        self._enable_stdout_guard = enable_stdout_guard
+        self._max_frame_bytes = max_frame_bytes
+        self._handle_process_signals = handle_process_signals
+        # Single-shot guard — run() may be called at most once.
+        self._started = False
+
+        if enable_stdout_guard:
+            stdout_guard.install_stdout_guard()
+        # Blessed frames (initialize/shutdown replies, broker.publish)
+        # write through the captured *original* stdout so they bypass
+        # the guard entirely.
+        self._stdout = stdout_guard.original_stdout() or sys.stdout
+
         self._write_lock = asyncio.Lock()
         self._broker = BrokerSender(self._write_lock)
         # Track in-flight handler tasks so shutdown can await them
@@ -61,42 +85,72 @@ class PluginAdapter:
         return self._manifest
 
     async def run(self) -> None:
+        if self._started:
+            raise PluginError("PluginAdapter.run() already invoked")
+        self._started = True
+
         loop = asyncio.get_event_loop()
-        while True:
-            line = await loop.run_in_executor(None, sys.stdin.readline)
-            if not line:
-                # EOF — host closed stdin.
-                break
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError as e:
-                # Garbage line — log to stderr and continue. The
-                # host is the source of truth; we never mutate the
-                # wire spec from the child side.
-                sys.stderr.write(f"plugin: malformed jsonrpc line: {e}\n")
-                sys.stderr.flush()
-                continue
-            method = msg.get("method")
-            req_id = msg.get("id")
-            if method == "initialize":
-                await self._reply_initialize(req_id)
-            elif method == "broker.event":
-                params = msg.get("params") or {}
-                task = asyncio.create_task(self._dispatch_event(params))
-                self._inflight.add(task)
-                task.add_done_callback(self._inflight.discard)
-            elif method == "shutdown":
-                await self._drain_inflight()
-                await self._reply_shutdown(req_id)
-                break
-            elif req_id is not None:
-                # Unknown request — JSON-RPC requires a reply.
-                await self._send_error(req_id, -32601, "method not found")
-            # Unknown notification (no id) — silently ignore per
-            # JSON-RPC 2.0 §4.1 for fire-and-forget frames.
+        try:
+            while True:
+                line = await loop.run_in_executor(None, sys.stdin.readline)
+                if not line:
+                    # EOF — host closed stdin.
+                    break
+                byte_len = len(line.encode("utf-8"))
+                if byte_len > self._max_frame_bytes:
+                    err = WireError(
+                        f"inbound frame {byte_len} bytes exceeds "
+                        f"max_frame_bytes {self._max_frame_bytes}"
+                    )
+                    sys.stderr.write(f"plugin: {err}\n")
+                    sys.stderr.flush()
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                stop = await self._handle_line(line)
+                if stop:
+                    break
+        finally:
+            await self._drain_inflight()
+            if self._enable_stdout_guard:
+                stdout_guard.uninstall_stdout_guard()
+
+    async def _handle_line(self, line: str) -> bool:
+        """Process one JSON-RPC frame. Returns True if the loop
+        should stop (a ``shutdown`` request was handled)."""
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError as e:
+            # Garbage line — log to stderr and continue. The host is
+            # the source of truth; we never mutate the wire spec from
+            # the child side.
+            sys.stderr.write(f"plugin: malformed jsonrpc line: {e}\n")
+            sys.stderr.flush()
+            return False
+        if not isinstance(msg, dict):
+            sys.stderr.write("plugin: jsonrpc frame must be an object\n")
+            sys.stderr.flush()
+            return False
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            await self._reply_initialize(req_id)
+        elif method == "broker.event":
+            params = msg.get("params") or {}
+            task = asyncio.create_task(self._dispatch_event(params))
+            self._inflight.add(task)
+            task.add_done_callback(self._inflight.discard)
+        elif method == "shutdown":
+            await self._drain_inflight()
+            await self._reply_shutdown(req_id)
+            return True
+        elif req_id is not None:
+            # Unknown request — JSON-RPC requires a reply.
+            await self._send_error(req_id, -32601, "method not found")
+        # Unknown notification (no id) — silently ignore per
+        # JSON-RPC 2.0 §4.1 for fire-and-forget frames.
+        return False
 
     async def _drain_inflight(self) -> None:
         """Wait for outstanding handler tasks before exiting the
@@ -144,11 +198,11 @@ class PluginAdapter:
     async def _send_response(self, req_id: Any, result: dict[str, Any]) -> None:
         line = wire.serialize_frame(wire.build_response(req_id, result))
         async with self._write_lock:
-            sys.stdout.write(line)
-            sys.stdout.flush()
+            self._stdout.write(line)
+            self._stdout.flush()
 
     async def _send_error(self, req_id: Any, code: int, message: str) -> None:
         line = wire.serialize_frame(wire.build_error_response(req_id, code, message))
         async with self._write_lock:
-            sys.stdout.write(line)
-            sys.stdout.flush()
+            self._stdout.write(line)
+            self._stdout.flush()
