@@ -1992,6 +1992,9 @@ async fn main() -> Result<()> {
         Mode::Run => {}
     }
 
+    eprintln!("{NEXO_BANNER}");
+    eprintln!("nexo {} — starting agent daemon", env!("CARGO_PKG_VERSION"));
+
     // Single-instance guard: if another `agent` process is already
     // running against the same data dir, terminate it before we start.
     // Prevents the "two agents on one NATS" bug where both processes
@@ -9603,7 +9606,19 @@ fn print_version(verbose: bool) {
     }
 }
 
+/// Block-letter "NEXO" banner (ANSI Shadow figlet), shown on the
+/// help screen and at daemon start.
+const NEXO_BANNER: &str = "\
+███╗   ██╗███████╗██╗  ██╗ ██████╗\n\
+████╗  ██║██╔════╝╚██╗██╔╝██╔═══██╗\n\
+██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║\n\
+██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║\n\
+██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝\n\
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝";
+
 fn print_usage() {
+    println!("{NEXO_BANNER}");
+    println!();
     println!("agent — multi-agent runtime");
     println!();
     println!("USAGE:");

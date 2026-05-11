@@ -29,7 +29,9 @@
 #                         (default: $CARGO_HOME/bin if cargo is on
 #                          PATH, else ~/.local/bin)
 #   --from-source         skip the binary download, go straight to cargo
-#   --no-plugins          install only `nexo`, skip the bundled plugins
+#   --no-plugins          install only `nexo` — skip the bundled
+#                         plugins and the default persona
+#   --no-persona          install plugins but skip the default persona
 #
 # Override the install dir with NEXO_INSTALL_DIR=... too.
 #
@@ -61,15 +63,22 @@ while [ $# -gt 0 ]; do
         --from-source) FROM_SOURCE=1; shift ;;
         --no-plugins) INSTALL_PLUGINS=0; PERSONA=""; shift ;;
         --no-persona) PERSONA=""; shift ;;
-        -h|--help) sed -n '2,42p' "$0" 2>/dev/null || true; exit 0 ;;
+        -h|--help) sed -n '2,39p' "$0" 2>/dev/null || true; exit 0 ;;
         *) echo "warning: ignoring unknown flag '$1'" >&2; shift ;;
     esac
 done
 
 banner() {
     cat <<'EOF'
-─────────────────────────────────────────────────────────────
-  nexo-rs installer · https://lordmacu.github.io/nexo-rs/
+
+  ███╗   ██╗███████╗██╗  ██╗ ██████╗
+  ████╗  ██║██╔════╝╚██╗██╔╝██╔═══██╗
+  ██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║
+  ██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║
+  ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝
+  ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝
+
+  agent framework · installer · https://lordmacu.github.io/nexo-rs/
 ─────────────────────────────────────────────────────────────
 EOF
 }
@@ -202,10 +211,12 @@ EOF
 }
 
 # --- where the `nexo` binary landed ----------------------------------
+# Prefer the one we just installed (resolve_install_dir/nexo) over
+# whatever happens to be first on PATH.
 nexo_bin() {
-    command -v nexo 2>/dev/null && return 0
     local d; d="$(resolve_install_dir)"
     [ -x "$d/nexo" ] && { echo "$d/nexo"; return 0; }
+    command -v nexo 2>/dev/null && return 0
     return 1
 }
 
@@ -230,7 +241,7 @@ install_plugins() {
 
     # Admin web UI — `nexo-plugin-admin` ships on crates.io only.
     if have cargo; then
-        echo "→ nexo-plugin-admin  (cargo install)"
+        echo "→ nexo-plugin-admin  (cargo install — this can take a few minutes)"
         cargo install nexo-plugin-admin </dev/null \
             || echo "  ⚠ skipped nexo-plugin-admin — retry later:  cargo install nexo-plugin-admin" >&2
     else
