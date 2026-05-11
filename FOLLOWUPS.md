@@ -2837,6 +2837,89 @@ coordinación de archivos cross-cutting.
   PyPI publish (defer until 31.5 lands), NO native-ext
   per-target Python tarballs (defer 31.4.b).
 
+- **31.4.c ✅ shipped 2026-05-11** — Python SDK robustness
+  parity + publish-readiness. Brings `extensions/sdk-python`
+  up to parity with the TS (31.5) and PHP (31.5.c) SDKs:
+  new `nexo_plugin_sdk/stdout_guard.py` (line-buffering
+  `sys.stdout` proxy that diverts non-JSON lines to stderr
+  tagged `[stdout-guard]`; replaces TS's `process.stdout.write`
+  patch / PHP's `ob_start` — Python has neither, so it swaps
+  the text stream object), new `nexo_plugin_sdk/wire.py`
+  (`MAX_FRAME_BYTES`, `JSONRPC_VERSION`, `serialize_frame` /
+  `build_response` / `build_error_response` /
+  `build_notification` — adapter + broker refactored onto it).
+  `PluginAdapter` gains kwargs `enable_stdout_guard:True` /
+  `max_frame_bytes:1<<20` (oversized inbound frame → `WireError`
+  log + dispatch continues) / `handle_process_signals:True`
+  (SIGTERM/SIGINT → graceful drain → exit 0 via
+  `loop.add_signal_handler`, falling back to `signal.signal`
+  on `NotImplementedError`); `run()` raises `PluginError` on
+  second call. The stdin reader is now fully async
+  (`loop.connect_read_pipe` + `asyncio.StreamReader`) instead
+  of `loop.run_in_executor(None, sys.stdin.readline)` — no
+  threadpool worker, clean signal cancellation; `get_event_loop`
+  → `get_running_loop`. `manifest.py` now enforces the
+  `^[a-z][a-z0-9_]{0,31}$` `plugin.id` slug regex (matches the
+  host's `nexo-plugin-manifest` crate + the TS SDK).
+  `BrokerSender` takes an injected line-writer (the captured
+  *original* stdout) so blessed frames bypass the guard.
+  `__version__` 0.1.0 → 0.2.0; `__init__.py` re-exports the
+  guard + wire surface + handler type aliases. `pyproject.toml`
+  publish-ready: classifiers (Beta; Py 3.10–3.13; MIT/Apache;
+  Linux/macOS), keywords, Repository + Bug Tracker URLs,
+  `py.typed` (PEP 561) shipped via `package-data`; verified in
+  an isolated venv that `python -m build` produces a clean
+  sdist + py3-none-any wheel and `twine check` PASSES both.
+  Tests 6 → 21 (handshake + manifest validation incl. id-regex
+  + invalid-TOML; dispatch incl. oversized-frame-rejected;
+  stdout-guard incl. handler-print-diverted-while-blessed-clean;
+  lifecycle: double-`run()`, SIGTERM-exits-0, SIGTERM-drains-
+  in-flight). Tests keep the existing inline-`DRIVER_*` style
+  (no `tests/fixtures/` dir — consistent with the SDK's
+  existing test files; the plan's PHP-mirror suggestion was
+  not adopted). Wire format UNCHANGED — `nexo-plugin-contract.md`
+  not bumped. Docs: README "Robustness defaults" table +
+  limitation note + 31.4.c shipped; `docs/src/plugins/python-sdk.md`
+  constructor table expanded; `mdbook build docs` clean. NO
+  PyPI upload (still deferred — see "extract plugin SDKs"
+  follow-up below), NO `tests/fixtures/` dir, NO change to
+  TS/PHP SDKs, NO per-target Python tarballs (31.4.b still
+  deferred).
+
+- **SDK completeness audit (post-extraction) ⬜** — once the
+  scripting SDKs are split into their own repo(s), audit each
+  for: full `nexo-plugin-contract.md` coverage (currently each
+  SDK only implements `initialize` / `broker.event` /
+  `shutdown` / `broker.publish` — nothing else from the
+  contract), methods not yet surfaced, whether a
+  microapp-tool-server-side API (the analog of the Rust SDK's
+  `ToolCtx` / `ToolReply` / hooks in `crates/microapp-sdk`)
+  should exist for Python/TS/PHP at all, parity vs the Rust SDK
+  surface, and conformance-test the SDKs against the real
+  extracted plugins (browser / telegram / whatsapp / admin) as
+  black-box cases. Output → a per-SDK gap matrix + scoped
+  follow-up phases.
+
+- **Extract plugin SDKs to standalone repo(s) ⬜** — `/forge
+  brainstorm` pending: one `nexo-plugin-sdks` mono-repo
+  (Python + TS + PHP, cross-language parity tests in one CI,
+  one home for the wire contract copy) vs three separate repos
+  (cleaner npm/PyPI/Packagist namespaces, 3× CI/CHANGELOG/
+  release.yml). Rust `nexo-microapp-sdk` stays in `proyecto/`
+  for now (heavy path-dep coupling to `nexo-broker` /
+  `nexo-core` / `nexo-tool-meta`; extraction would trigger the
+  cargo-release republish churn). Order: this comes AFTER the
+  first registry publish from `proyecto/` (validate packaging),
+  and PyPI/npm/Packagist upload happens FROM the extracted
+  repo(s) — don't publish-then-move-then-republish.
+
+- **TS/PHP SDKs: apply 31.4.c learnings ⬜** — review whether
+  the async-reader / signal-handling refinements from the
+  Python parity wave surface any cleanup for the TS
+  (`readline.createInterface`) and PHP (`stream_select`)
+  readers; low priority, both already have the robustness
+  defaults.
+
 - **31.5 ✅ shipped 2026-05-04** — TypeScript plugin SDK +
   template (robusto). New `extensions/sdk-typescript/` ESM
   package with strict tsconfig (Node16 module resolution,
