@@ -20,9 +20,10 @@ nexo-rs is opinionated toward that shape.
   personal Telegram. Ana works the WhatsApp sales line. A cron-style
   poller sweeps Gmail for leads — all sharing one broker, one tool
   registry, and one memory layer.
-- **Single 34 MB binary.** No Node, no npm, no Docker required.
-  Stripped: 29 MB. Gzipped: 13 MB. Runs on a fresh VPS, on Termux
-  without root, or as a systemd unit.
+- **Single binary, ~90 MB.** No Node, no npm, no Docker required.
+  The release tarball you actually download is ~15 MB (xz-compressed);
+  the `.deb` is ~18 MB, the `.rpm` ~25 MB. Runs on a fresh VPS, on
+  Termux without root, or as a systemd unit.
 - **Production-grade by default.** NATS-backed event bus with disk
   fallback. Per-agent capability sandboxes. Cosign-verified plugin
   marketplace. Multi-tenant SaaS-ready.

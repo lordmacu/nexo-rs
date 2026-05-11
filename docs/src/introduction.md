@@ -10,8 +10,9 @@ Telegram; Ana works the WhatsApp sales line; a cron-style poller sweeps
 Gmail for leads — all sharing one broker, one tool registry, and one
 memory layer.
 
-**Single binary, ~34 MB.** No Node, no npm, no Docker required.
-Stripped: 29 MB. Gzipped: 13 MB. Runs on a fresh VPS, on Termux
+**Single binary, ~90 MB.** No Node, no npm, no Docker required.
+The release tarball you download is ~15 MB (xz-compressed); the
+`.deb` is ~18 MB, the `.rpm` ~25 MB. Runs on a fresh VPS, on Termux
 without root, or as a systemd unit. The closest reference point is
 [OpenClaw](https://github.com/openclaw/openclaw) (TypeScript, Node):
 nexo-rs trades JS familiarity for a single static binary, a
