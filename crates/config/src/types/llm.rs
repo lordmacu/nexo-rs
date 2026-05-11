@@ -3,9 +3,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LlmConfig {
+    #[serde(default)]
     pub providers: HashMap<String, LlmProviderConfig>,
     #[serde(default)]
     pub retry: RetryConfig,

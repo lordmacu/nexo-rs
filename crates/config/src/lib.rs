@@ -18,6 +18,12 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub plugins: PluginsConfig,
+    /// Phase F5 of `cody-cli-install` — operator-configured
+    /// persona discovery walk knobs. Loaded from
+    /// `personas/discovery.yaml`. Always populated; absent
+    /// file → empty default (no scan, no installed personas
+    /// surface in admin RPC).
+    pub personas: PersonasConfig,
     /// Phase 11 — optional extension system config. `None` when the file is
     /// absent; consumers should fall back to `ExtensionsConfig::default()`.
     pub extensions: Option<ExtensionsConfig>,
@@ -64,14 +70,30 @@ pub struct McpServerBootConfig {
 
 impl AppConfig {
     pub fn load(dir: &Path) -> Result<Self> {
+        // Phase 93 — zero-config daemon mode. When the config dir
+        // doesn't exist or is missing any of the historically
+        // "required" YAMLs, fall through with `Default::default()`
+        // for that file and emit a `tracing::warn!` so operators
+        // see what's being inferred. Removes the hard requirement
+        // for an operator to maintain agents.yaml / broker.yaml /
+        // llm.yaml / memory.yaml on disk just to boot the daemon.
+        if !dir.exists() {
+            tracing::warn!(
+                config_dir = %dir.display(),
+                "config dir not found — booting with Default::default() for every YAML \
+                 (0 agents, BrokerKind::Local, 0 llm providers, sqlite memory at default path)"
+            );
+            return Ok(AppConfig::default_baked_in());
+        }
         maybe_run_yaml_migrations(dir)?;
-        let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        let mut agents = load_optional_or_default::<AgentsConfig>(dir, "agents.yaml")?;
         merge_agents_drop_in(dir, &mut agents)?;
         resolve_relative_paths(dir, &mut agents);
-        let broker = load_required::<BrokerConfig>(dir, "broker.yaml")?;
-        let llm = load_required::<LlmConfig>(dir, "llm.yaml")?;
-        let memory = load_required::<MemoryConfig>(dir, "memory.yaml")?;
+        let broker = load_optional_or_default::<BrokerConfig>(dir, "broker.yaml")?;
+        let llm = load_optional_or_default::<LlmConfig>(dir, "llm.yaml")?;
+        let memory = load_optional_or_default::<MemoryConfig>(dir, "memory.yaml")?;
         let plugins = load_plugins(dir)?;
+        let personas = load_personas(dir)?;
         let extensions =
             load_optional::<ExtensionsConfigFile>(dir, "extensions.yaml")?.map(|f| f.extensions);
         let mcp = load_optional::<McpConfigFile>(dir, "mcp.yaml")?.map(|f| f.mcp);
@@ -103,6 +125,33 @@ impl AppConfig {
             pairing,
             webhook_receiver,
         })
+    }
+
+    /// Phase 93 — zero-config baked-in defaults. Returned by
+    /// [`AppConfig::load`] when the config dir doesn't exist.
+    /// Mirrors what `Default::default()` for the top-level
+    /// configs produces; every optional + extension subsystem is
+    /// off, all "required" types collapse to empty / sane
+    /// defaults. Daemon boots, has no agents to spawn, has Local
+    /// broker, has no LLM providers (LLM tools fail loudly but
+    /// the daemon stays up to serve admin RPCs).
+    fn default_baked_in() -> Self {
+        AppConfig {
+            agents: AgentsConfig::default(),
+            broker: BrokerConfig::default(),
+            llm: LlmConfig::default(),
+            memory: MemoryConfig::default(),
+            plugins: PluginsConfig::default(),
+            extensions: None,
+            mcp: None,
+            mcp_server: None,
+            runtime: RuntimeConfig::default(),
+            pollers: None,
+            taskflow: TaskflowConfig::default(),
+            transcripts: TranscriptsConfig::default(),
+            pairing: None,
+            webhook_receiver: None,
+        }
     }
 
     /// Phase 12.6 — load only what `agent mcp-server` needs. Tolerant of
@@ -230,6 +279,29 @@ fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Phase 93 — load an optional YAML file that historically was
+/// required, falling back to `Default::default()` with a WARN log
+/// when the file is absent. Same `${ENV_VAR}` placeholder
+/// resolution + same `schema_version` stripping as
+/// [`load_required`]. The warn is non-fatal: operators that boot
+/// with no YAMLs at all are choosing zero-config mode and the
+/// daemon's defaults are sensible (empty agents, Local broker,
+/// no llm providers, sqlite memory at default path).
+pub fn load_optional_or_default<T>(dir: &Path, filename: &str) -> Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    let path = dir.join(filename);
+    if !path.exists() {
+        tracing::warn!(
+            path = %path.display(),
+            "config file missing — using Default::default() (Phase 93 zero-config mode)"
+        );
+        return Ok(T::default());
+    }
+    load_required::<T>(dir, filename)
 }
 
 /// Load a required YAML file, resolving `${ENV_VAR}` placeholders.
