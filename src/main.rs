@@ -500,15 +500,38 @@ enum Mode {
     CronResume {
         id: String,
     },
-    /// Run the web admin UI exposed through a fresh Cloudflare quick
-    /// tunnel. Ensures `cloudflared` is installed (downloads it per
-    /// OS/arch if absent), starts a loopback HTTP server, opens a new
-    /// trycloudflare.com URL on every launch, prints it to stdout,
-    /// and blocks until SIGTERM / Ctrl+C. Useful for reaching the
-    /// admin page from anywhere without DNS, TLS certs, or an account.
+    /// Surface the admin web UI (served by the `nexo-plugin-admin`
+    /// plugin, which the daemon discovers + spawns automatically).
+    /// Auto-installs the plugin via `cargo install nexo-plugin-admin`
+    /// on first use if it isn't on PATH, prints the loopback URL,
+    /// probes whether the daemon has it running, and — with `--open`
+    /// — launches the URL in the default browser. `--tunnel` brings
+    /// up a free Cloudflare quick tunnel (downloading `cloudflared`
+    /// for this OS/arch if needed) so the admin page is reachable
+    /// from anywhere, and blocks until Ctrl-C.
     Admin {
         port: u16,
+        /// `--open`: launch the admin URL in the default browser.
+        open: bool,
+        /// `--tunnel`: expose the admin server via a Cloudflare quick
+        /// tunnel and block until Ctrl-C.
+        tunnel: bool,
     },
+    /// `nexo start [--config <dir>]` — run the daemon detached in the
+    /// background. Writes a pidfile (`<runtime-dir>/nexo.pid`) so
+    /// `stop` / `restart` can find it; stdout+stderr go to
+    /// `<runtime-dir>/nexo.log`. No-op (with a notice) if already running.
+    Start,
+    /// `nexo stop` — SIGTERM the background daemon (SIGKILL after a
+    /// grace period), then remove the pidfile.
+    Stop,
+    /// `nexo restart [--config <dir>]` — `stop` then `start`.
+    Restart,
+    /// `nexo update` (alias `self-update`) — upgrade the `nexo`
+    /// binary in place via `cargo install nexo-rs --force` when the
+    /// Rust toolchain is available, otherwise print the installer
+    /// one-liner.
+    Update,
     /// Print version + (optionally) build provenance.
     /// Short form (`nexo --version` / `-V`) prints `nexo <pkg-version>`.
     /// Verbose form (`nexo version` or `nexo --version --verbose`)
@@ -1946,7 +1969,13 @@ async fn main() -> Result<()> {
             persona_cli::print_persona_help();
             return Ok(());
         }
-        Mode::Admin { port } => return run_admin_via_plugin(port).await,
+        Mode::Admin { port, open, tunnel } => {
+            return run_admin_via_plugin(port, open, tunnel).await
+        }
+        Mode::Start => return run_daemon_start(&args.config_dir).await,
+        Mode::Stop => return run_daemon_stop().await,
+        Mode::Restart => return run_daemon_restart(&args.config_dir).await,
+        Mode::Update => return run_self_update().await,
         Mode::Run => {}
     }
 
@@ -8021,9 +8050,32 @@ fn acquire_single_instance_lock() -> Result<SingleInstanceLock> {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    // /proc/<pid> exists iff the process is alive on Linux. Good enough
-    // for single-instance detection without pulling in a libc dep.
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
+    // Fast path on Linux: /proc/<pid> exists iff the process is alive.
+    #[cfg(target_os = "linux")]
+    if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        return std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+            .unwrap_or(false);
+    }
+    // Portable Unix fallback: `kill -0` succeeds iff the process exists
+    // and we may signal it. Avoids pulling in a libc dep.
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 fn terminate_pid(pid: u32) {
@@ -9457,6 +9509,7 @@ fn parse_args() -> CliArgs {
             // 9090 / 9091 used by the main daemon's health / metrics /
             // admin servers so `agent admin` can run alongside them).
             let mut port: u16 = 9099;
+            let mut open = false;
             let mut iter = positional.iter();
             while let Some(a) = iter.next() {
                 if a == "--port" {
@@ -9469,10 +9522,17 @@ fn parse_args() -> CliArgs {
                     if let Ok(n) = rest.parse() {
                         port = n;
                     }
+                } else if a == "--open" {
+                    open = true;
                 }
             }
-            Mode::Admin { port }
+            let tunnel = positional.iter().any(|a| a == "--tunnel");
+            Mode::Admin { port, open, tunnel }
         }
+        [cmd] if cmd == "start" => Mode::Start,
+        [cmd] if cmd == "stop" => Mode::Stop,
+        [cmd] if cmd == "restart" => Mode::Restart,
+        [cmd] if cmd == "update" || cmd == "self-update" => Mode::Update,
         [cmd] if cmd == "status" => Mode::Status {
             json: has_json_flag,
             endpoint: positional
@@ -9520,7 +9580,10 @@ fn print_usage() {
     println!("agent — multi-agent runtime");
     println!();
     println!("USAGE:");
-    println!("  agent [--config <dir>]                 Start the daemon (default)");
+    println!("  agent [--config <dir>]                 Start the daemon (foreground)");
+    println!("  agent [--config <dir>] start           Start the daemon in the background");
+    println!("  agent stop                             Stop the background daemon");
+    println!("  agent [--config <dir>] restart         Restart the background daemon");
     println!("  agent [--config <dir>] dlq list        List entries in the dead-letter queue");
     println!("  agent [--config <dir>] dlq replay <id> Replay a dead-lettered event");
     println!("  agent [--config <dir>] dlq purge       Delete all dead-letter entries");
@@ -9571,6 +9634,7 @@ fn print_usage() {
     );
     println!("  agent --check-config                   Validate config and exit (no runtime)");
     println!("  agent reload                           Trigger a hot-reload on the running daemon");
+    println!("  agent update                           Upgrade the nexo binary in place");
     println!(
         "  agent setup [<service>]                Interactive setup wizard (defaults to menu)"
     );
@@ -9582,7 +9646,9 @@ fn print_usage() {
     println!(
         "  agent setup telegram-link [<agent>]    Pair an existing Telegram instance to an agent"
     );
-    println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
+    println!(
+        "  agent admin [--port <n>] [--open] [--tunnel]  Show / open / publicly tunnel the admin web UI"
+    );
     println!(
         "  agent mcp-server                       Run as an MCP stdio/HTTP server (expose tools)"
     );
@@ -9699,50 +9765,314 @@ fn run_ext_help() -> Result<()> {
 /// `port` is forwarded as `NEXO_ADMIN_HTTP_BIND` so the operator
 /// can override the default `127.0.0.1:18000` from the legacy
 /// `--port` flag without re-learning new flags.
-async fn run_admin_via_plugin(port: u16) -> Result<()> {
+async fn run_admin_via_plugin(port: u16, open: bool, tunnel: bool) -> Result<()> {
     println!();
-    println!("┌─ agent admin ────────────────────────────────────────────────");
+    println!("┌─ nexo admin ─────────────────────────────────────────────────");
     println!("│");
 
-    // Detect the plugin binary in PATH. Operators install it
-    // with `cargo install nexo-plugin-admin`; the binary lands
-    // in `~/.cargo/bin/`. If discovery fails the plugin loader
-    // (auto-subprocess fallback) also fails so the
-    // daemon's spawn would silently no-op — surface that here.
-    let installed = which_in_path("nexo-plugin-admin");
+    // The admin web UI is served by the `nexo-plugin-admin` binary,
+    // which the daemon discovers + spawns automatically (the standard
+    // auto-subprocess plugin path). Operators never run it directly —
+    // they install it (cargo) and run the daemon.
+    let mut installed = which_in_path("nexo-plugin-admin");
 
-    if installed {
-        println!("│  Plugin admin binary: ✓ found in PATH");
-        println!("│  URL:                 http://127.0.0.1:{port}");
-        println!("│");
-        println!("│  Make sure the daemon is running:");
-        println!("│      agent run");
-        println!("│");
-        println!("│  The daemon discovers + spawns nexo-plugin-admin via");
-        println!("│  the standard plugin search paths (Phase 81.17 auto");
-        println!("│  subprocess). Operators don't run the plugin directly.");
-        println!("│");
-        println!("│  Public exposure (opt-in, not default):");
-        println!("│      NEXO_ADMIN_TUNNEL=cloudflared agent run");
-        println!("│      NEXO_ADMIN_TUNNEL=tailscale  agent run");
+    if !installed {
+        if which_in_path("cargo") {
+            println!("│  nexo-plugin-admin not found — installing it now:");
+            println!("│      cargo install nexo-plugin-admin");
+            println!("│");
+            let ok = std::process::Command::new("cargo")
+                .args(["install", "nexo-plugin-admin"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            installed = ok && which_in_path("nexo-plugin-admin");
+            println!("│");
+            if installed {
+                println!("│  ✓ nexo-plugin-admin installed");
+            } else {
+                println!("│  ✗ `cargo install nexo-plugin-admin` failed");
+            }
+        } else {
+            println!("│  nexo-plugin-admin not found, and `cargo` is not on PATH.");
+        }
     } else {
-        println!("│  Plugin admin binary: ✗ NOT found in PATH");
-        println!("│");
-        println!("│  Install:");
-        println!("│      cargo install nexo-plugin-admin");
-        println!("│");
-        println!("│  Or build from source:");
-        println!("│      git clone https://github.com/lordmacu/nexo-rs-plugin-admin");
-        println!("│      cd nexo-rs-plugin-admin && cargo install --path .");
+        println!("│  nexo-plugin-admin: ✓ found in PATH");
     }
 
+    if !installed {
+        println!("│");
+        println!("│  Install it, then re-run `nexo admin`:");
+        println!("│      cargo install nexo-plugin-admin");
+        println!("│  or from source:");
+        println!("│      git clone https://github.com/lordmacu/nexo-rs-plugin-admin");
+        println!("│      cd nexo-rs-plugin-admin && cargo install --path .");
+        println!("│");
+        println!("└──────────────────────────────────────────────────────────────");
+        println!();
+        std::process::exit(1);
+    }
+
+    let url = format!("http://127.0.0.1:{port}");
+    println!("│");
+    println!("│  URL:  {url}");
+
+    // Probe the port. The plugin only listens once the daemon has
+    // spawned it; a closed port means the daemon isn't running yet.
+    let reachable = format!("127.0.0.1:{port}")
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .map(|addr| {
+            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400))
+                .is_ok()
+        })
+        .unwrap_or(false);
+    if reachable {
+        println!("│  Status: ✓ reachable");
+    } else {
+        println!("│  Status: ✗ not reachable — start the daemon first:");
+        println!("│      nexo            # foreground");
+        println!("│      nexo start      # background");
+        println!("│  (it discovers + spawns nexo-plugin-admin automatically)");
+    }
+    if !tunnel {
+        println!("│");
+        println!("│  Public URL on demand:");
+        println!("│      nexo admin --tunnel        # free Cloudflare quick tunnel");
+    }
     println!("│");
     println!("└──────────────────────────────────────────────────────────────");
     println!();
 
-    if !installed {
-        std::process::exit(1);
+    if open && !tunnel {
+        open_in_browser(&url);
     }
+
+    if tunnel {
+        if !reachable {
+            eprintln!(
+                "note: the admin server isn't listening on {port} yet — the tunnel will 502 until \
+                 you start the daemon (`nexo start`)."
+            );
+        }
+        println!("Bringing up a Cloudflare quick tunnel (downloads `cloudflared` if needed) …");
+        match nexo_tunnel::TunnelManager::new(port).start().await {
+            Ok(handle) => {
+                let public = handle.url.clone();
+                println!();
+                println!("╭───────────────────────────────────────────────────────────╮");
+                println!("│  Admin web UI — public URL (Cloudflare quick tunnel)      │");
+                println!("│                                                           │");
+                println!("│  {public:<57} │");
+                println!("│                                                           │");
+                println!("│  Ctrl-C to close the tunnel.                              │");
+                println!("╰───────────────────────────────────────────────────────────╯");
+                println!();
+                if open {
+                    open_in_browser(&public);
+                }
+                let _ = tokio::signal::ctrl_c().await;
+                println!("closing tunnel …");
+                handle.shutdown().await;
+            }
+            Err(e) => {
+                eprintln!("error: could not start the Cloudflare tunnel: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Open `url` in the platform's default browser, best-effort.
+fn open_in_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let cmd: (&str, &[&str]) = ("open", &[]);
+    #[cfg(target_os = "windows")]
+    let cmd: (&str, &[&str]) = ("cmd", &["/C", "start", ""]);
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let cmd: (&str, &[&str]) = ("xdg-open", &[]);
+    let ok = std::process::Command::new(cmd.0)
+        .args(cmd.1)
+        .arg(url)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        eprintln!("note: couldn't launch a browser — open {url} manually");
+    }
+}
+
+/// Per-user runtime directory for the daemon's pidfile + log
+/// (`nexo start` / `stop` / `restart`). Resolution order:
+/// `$NEXO_RUNTIME_DIR` → `$XDG_RUNTIME_DIR/nexo` → `$HOME/.local/state/nexo`
+/// → `./.nexo` (last resort when even `$HOME` is unset).
+fn nexo_runtime_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("NEXO_RUNTIME_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Some(d) = std::env::var_os("XDG_RUNTIME_DIR") {
+        return PathBuf::from(d).join("nexo");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("state")
+            .join("nexo");
+    }
+    PathBuf::from(".nexo")
+}
+
+fn nexo_pidfile() -> PathBuf {
+    nexo_runtime_dir().join("nexo.pid")
+}
+fn nexo_logfile() -> PathBuf {
+    nexo_runtime_dir().join("nexo.log")
+}
+
+fn read_pidfile(p: &Path) -> Option<u32> {
+    std::fs::read_to_string(p).ok()?.trim().parse().ok()
+}
+
+/// `nexo start` — spawn the daemon detached, write a pidfile, exit.
+async fn run_daemon_start(config_dir: &Path) -> Result<()> {
+    let rt = nexo_runtime_dir();
+    std::fs::create_dir_all(&rt).with_context(|| format!("creating {}", rt.display()))?;
+    let pidfile = nexo_pidfile();
+    let logfile = nexo_logfile();
+
+    if let Some(pid) = read_pidfile(&pidfile) {
+        if pid_alive(pid) {
+            println!("nexo is already running (pid {pid}).");
+            println!("  logs:  {}", logfile.display());
+            println!("  stop:  nexo stop   ·   restart: nexo restart");
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(&pidfile); // stale
+    }
+
+    let exe = std::env::current_exe().context("locating the nexo executable")?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&logfile)
+        .with_context(|| format!("opening {}", logfile.display()))?;
+    let log_err = log.try_clone()?;
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--config")
+        .arg(config_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log))
+        .stderr(std::process::Stdio::from(log_err));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Own process group → Ctrl-C in the launching shell doesn't
+        // hit it; once this parent exits the child is reparented to init.
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS (0x08) | CREATE_NEW_PROCESS_GROUP (0x200)
+        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+    let child = cmd.spawn().context("spawning the daemon")?;
+    let pid = child.id();
+    // `child` is dropped here; std's Child::drop does NOT kill it.
+    std::fs::write(&pidfile, format!("{pid}\n"))
+        .with_context(|| format!("writing {}", pidfile.display()))?;
+
+    println!("nexo started in the background (pid {pid}).");
+    println!("  config:  {}", config_dir.display());
+    println!("  logs:    {}", logfile.display());
+    println!("  pidfile: {}", pidfile.display());
+    println!("  stop: nexo stop   ·   restart: nexo restart   ·   admin: nexo admin --open");
+    Ok(())
+}
+
+/// `nexo stop` — SIGTERM the daemon, escalate to SIGKILL, drop the pidfile.
+async fn run_daemon_stop() -> Result<()> {
+    let pidfile = nexo_pidfile();
+    let Some(pid) = read_pidfile(&pidfile) else {
+        println!("nexo is not running (no pidfile at {}).", pidfile.display());
+        return Ok(());
+    };
+    if !pid_alive(pid) {
+        println!("nexo is not running (stale pidfile — removing).");
+        let _ = std::fs::remove_file(&pidfile);
+        return Ok(());
+    }
+
+    use std::io::Write as _;
+    print!("stopping nexo (pid {pid}) … ");
+    let _ = std::io::stdout().flush();
+
+    #[cfg(not(windows))]
+    {
+        terminate_pid(pid); // SIGTERM
+        let mut still = true;
+        for _ in 0..50 {
+            if !pid_alive(pid) {
+                still = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        if still {
+            kill_pid(pid); // SIGKILL
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+
+    let _ = std::fs::remove_file(&pidfile);
+    println!("stopped.");
+    Ok(())
+}
+
+/// `nexo restart` — `stop` then `start`.
+async fn run_daemon_restart(config_dir: &Path) -> Result<()> {
+    run_daemon_stop().await?;
+    // Brief pause so the daemon's listening ports are released.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    run_daemon_start(config_dir).await
+}
+
+/// `nexo update` — upgrade the `nexo` binary in place. Prefers
+/// `cargo install nexo-rs --force` (Rust toolchain present);
+/// otherwise points at the installer one-liner (which also
+/// re-checks the bundled plugins).
+async fn run_self_update() -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    println!("nexo {current} — updating …");
+    if which_in_path("cargo") {
+        println!("→ cargo install nexo-rs --force --locked");
+        let ok = std::process::Command::new("cargo")
+            .args(["install", "nexo-rs", "--force", "--locked"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            println!("✓ done — run `nexo --version` to confirm.");
+            return Ok(());
+        }
+        eprintln!("✗ `cargo install nexo-rs --force` failed.");
+        eprintln!("  Falling back to the installer:");
+    } else {
+        println!("`cargo` not found — pull the latest pre-built binary with the installer:");
+    }
+    println!("    curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash");
+    println!("    # add `-s -- --no-plugins` to skip re-checking the bundled plugins");
     Ok(())
 }
 
