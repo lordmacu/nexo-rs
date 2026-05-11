@@ -1,4 +1,4 @@
-//! Phase 76.5 — per-principal token-bucket rate-limit, keyed on
+//! Per-principal token-bucket rate-limit, keyed on
 //! `(TenantId, ToolName)`. Sits inside `Dispatcher::dispatch` for
 //! `tools/call`; `tools/list`, `initialize`, etc. bypass.
 //!
@@ -7,24 +7,14 @@
 //! Rejection inside the dispatcher does NOT change HTTP status —
 //! the HTTP layer keeps returning `200 OK` and the JSON-RPC body
 //! carries `error.code = -32099`, `error.data.retry_after_ms`. The
-//! per-IP layer (Phase 76.1) keeps emitting HTTP 429 at its level.
-//! The asymmetry is intentional and documented in
+//! per-IP layer keeps emitting HTTP 429 at its level. The asymmetry
+//! is intentional and documented in
 //! `docs/src/extensions/mcp-server.md`.
 //!
-//! ## Reference patterns
-//!
-//! * **Retry-After parsing** — `claude-code-leak/src/services/api/
-//!   withRetry.ts:803-812 getRetryAfterMs` (header in seconds, ×1000).
-//! * **Early-warning concept** — `claude-code-leak/src/services/
-//!   claudeAiLimits.ts:53-70 EARLY_WARNING_CONFIGS` (multi-tier
-//!   utilization × time-elapsed thresholds; we simplify to one
-//!   fixed threshold).
-//! * **Hard-cap + periodic prune** — OpenClaw
-//!   `research/src/gateway/control-plane-rate-limit.ts:6-7,
-//!   101-110` (10k cap + 5-min stale TTL sweeper). The leak is
-//!   client-side only — it consumes 429s from Anthropic and does
-//!   not implement server-side rate-limit. We port the wire shape
-//!   from the leak and the eviction policy from OpenClaw.
+//! Retry-After is parsed in seconds and scaled ×1000. Early-warning
+//! is a single fixed utilization threshold (simpler than a
+//! multi-tier utilization × time-elapsed scheme). Bucket storage
+//! has a hard cap (10k) with a 5-minute stale-TTL sweeper.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -50,7 +40,7 @@ pub struct PerToolLimit {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PerPrincipalRateLimiterConfig {
-    /// Defaults to `true` so an operator who reaches Phase 76.5
+    /// Defaults to `true` so an operator who configures this block
     /// is rate-limited by default ("secure by default"). Opt out
     /// explicitly with `enabled: false`.
     #[serde(default = "default_enabled")]
@@ -66,9 +56,7 @@ pub struct PerPrincipalRateLimiterConfig {
     /// Fraction (0.0–1.0) of bucket utilization at which an
     /// early-warning `tracing::warn!` is emitted (rate-limited
     /// once per minute per bucket). 0 disables the warning.
-    /// Pattern from `claude-code-leak/src/services/
-    /// claudeAiLimits.ts:53-70 EARLY_WARNING_CONFIGS`,
-    /// simplified to a single fixed threshold.
+    /// A single fixed threshold rather than a multi-tier scheme.
     #[serde(default = "default_warn_threshold")]
     pub warn_threshold: f64,
 }
@@ -183,8 +171,8 @@ impl TokenBucket {
     /// JSON-RPC `-32099 + data.retry_after_ms`).
     ///
     /// `last_seen` is unconditionally bumped so the TTL sweeper
-    /// (Phase 76.5 step 4) sees the bucket as recently active —
-    /// rejected requests still count as "the client is here".
+    /// sees the bucket as recently active — rejected requests still
+    /// count as "the client is here".
     #[allow(dead_code)]
     pub(crate) fn check(&mut self) -> Result<(), u64> {
         self.check_at(Instant::now())
@@ -237,10 +225,9 @@ pub struct RateLimitHit {
     pub retry_after_ms: u64,
 }
 
-/// Read-only snapshot of the limiter's internal counters. Phase
-/// 76.5 exposes this via a public getter so a future Phase 9.2
-/// `MetricsRegistry` (or an in-tree audit tool) can poll it
-/// without taking any of the per-bucket locks.
+/// Read-only snapshot of the limiter's internal counters. Exposed
+/// via a public getter so a `MetricsRegistry` (or an in-tree audit
+/// tool) can poll it without taking any of the per-bucket locks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RateLimiterStats {
     pub buckets: usize,
@@ -250,7 +237,7 @@ pub struct RateLimiterStats {
 pub struct PerPrincipalRateLimiter {
     cfg: Arc<PerPrincipalRateLimiterConfig>,
     buckets: DashMap<(TenantId, String), Mutex<TokenBucket>>,
-    /// Phase 76.5 — counter for `mcp_server_rate_limit_hits_total`.
+    /// Counter for `mcp_server_rate_limit_hits_total`.
     /// Atomic so it doesn't take any lock from the hot path.
     hits: std::sync::atomic::AtomicU64,
     /// Background sweeper handle. Aborted on drop. Held as
@@ -336,9 +323,7 @@ impl PerPrincipalRateLimiter {
         // Hard-cap eviction BEFORE the lookup-then-insert. We do
         // this only when the map is at the cap and the key is
         // genuinely new — otherwise the hot path stays branch-free
-        // past the first `if`. Pattern from
-        // `research/src/gateway/control-plane-rate-limit.ts:6-7,
-        // 101-110` (FIFO eviction at hard cap).
+        // past the first `if`. FIFO eviction at the hard cap.
         if !self.buckets.contains_key(&key) && self.buckets.len() >= self.cfg.max_buckets {
             self.evict_oldest(self.cfg.max_buckets / 100 + 1);
         }
@@ -418,8 +403,8 @@ impl PerPrincipalRateLimiter {
     }
 
     /// Drop entries whose `last_seen` is older than
-    /// `stale_ttl_secs`. Step 4 will call this from a background
-    /// sweeper task; tests can call it directly.
+    /// `stale_ttl_secs`. Called from a background sweeper task;
+    /// tests can call it directly.
     pub(crate) fn prune_stale(&self, now: Instant) {
         let ttl = Duration::from_secs(self.cfg.stale_ttl_secs);
         let mut victims: Vec<(TenantId, String)> = Vec::new();

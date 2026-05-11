@@ -1,4 +1,4 @@
-//! Phase 82.10.h.1 — SQLite-backed admin audit writer.
+//! SQLite-backed admin audit writer.
 //!
 //! Persists [`AdminAuditRow`] across daemon restarts. Append is
 //! fail-tolerant (errors log-warn, never propagate to dispatch).
@@ -24,7 +24,7 @@ use super::audit::{
     AuditTailPage,
 };
 
-// Phase 83.12.audit-page — `AuditTailFilter` moved to
+// `AuditTailFilter` lives in
 // `nexo-tool-meta::admin::audit`. The orphan rule prevents adding
 // `impl AuditTailFilter { fn new() }` here. Callers that previously
 // used `AuditTailFilter::new()` should construct via
@@ -92,11 +92,11 @@ impl SqliteAdminAuditWriter {
         Ok(Self { pool })
     }
 
-    /// Phase 83.8.12.7 — DDL bootstrap. Creates the audit table
-    /// from scratch with the full current schema; for pre-83.8.12.7
-    /// DBs that were created without `tenant_id`, ALTER adds the
-    /// column idempotently (the "duplicate column name" error is
-    /// the green path on already-migrated DBs and is suppressed).
+    /// DDL bootstrap. Creates the audit table from scratch with
+    /// the full current schema; for older DBs that were created
+    /// without `tenant_id`, ALTER adds the column idempotently
+    /// (the "duplicate column name" error is the green path on
+    /// already-migrated DBs and is suppressed).
     async fn run_ddl(pool: &SqlitePool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS microapp_admin_audit (
@@ -114,8 +114,8 @@ impl SqliteAdminAuditWriter {
         )
         .execute(pool)
         .await?;
-        // Forward-only migration for DBs created before 83.8.12.7.
-        // SQLite raises "duplicate column name" if the column
+        // Forward-only migration for DBs created before `tenant_id`
+        // was added. SQLite raises "duplicate column name" if the column
         // already exists — that's the success case.
         if let Err(e) = sqlx::query("ALTER TABLE microapp_admin_audit ADD COLUMN tenant_id TEXT")
             .execute(pool)
@@ -170,7 +170,7 @@ impl SqliteAdminAuditWriter {
         Ok(deleted)
     }
 
-    /// Phase 82.10.h.2 / 83.12.audit-page — tail recent audit rows
+    /// Tail recent audit rows
     /// with filter + pagination support. Returns an
     /// [`AuditTailPage`] with `entries`, `total`, `has_more`, and
     /// `next_offset` so callers (CLI tail formatter + the
@@ -214,7 +214,7 @@ impl SqliteAdminAuditWriter {
             filter.limit.min(500)
         };
 
-        // Phase 83.12.audit-page — total count for "showing N of M"
+        // Total count for "showing N of M"
         // UI label. Same WHERE clause as the SELECT below; kept
         // as a separate query so the LIMIT/OFFSET don't taint the
         // count.
@@ -303,11 +303,11 @@ impl SqliteAdminAuditWriter {
         })
     }
 
-    /// Phase 83.8.12.7 — convenience tail bound to a single tenant.
+    /// Convenience tail bound to a single tenant.
     /// Equivalent to `tail()` with `tenant_id = Some(tenant)`,
     /// `since_ms`, and `limit` set; other filters left empty.
-    /// Used by the `nexo/admin/audit/tail_for_tenant` future
-    /// CLI/RPC subcommand and by SaaS billing pipelines.
+    /// Used by the `nexo/admin/audit/tail_for_tenant` CLI/RPC
+    /// subcommand and by SaaS billing pipelines.
     pub async fn tail_for_tenant(
         &self,
         tenant_id: &str,
@@ -377,8 +377,8 @@ impl SqliteAdminAuditWriter {
     }
 }
 
-/// Phase 82.10.h.2 — render audit rows as a fixed-width text
-/// table for the future `nexo microapp admin audit tail` CLI.
+/// Render audit rows as a fixed-width text
+/// table for the `nexo microapp admin audit tail` CLI.
 /// Columns: `started_at` (ISO-8601 UTC) · `microapp` · `method` ·
 /// `result` · `dur_ms` · `args_hash[..8]`. Uses a stable column
 /// order so operators can grep / awk the output.
@@ -417,7 +417,7 @@ pub fn format_rows_as_table(rows: &[AdminAuditRow]) -> String {
     out
 }
 
-/// Phase 82.10.h.2 — render audit rows as a JSON array for
+/// Render audit rows as a JSON array for
 /// machine-readable consumption (`--format json`). Pretty-prints
 /// for human review; pipelines that need NDJSON can stream
 /// `serde_json::to_string(&row)` per row instead.
@@ -457,7 +457,7 @@ impl AdminAuditWriter for SqliteAdminAuditWriter {
     }
 }
 
-// Phase 83.12.audit-page — read-side trait so the dispatcher can
+// Read-side trait so the dispatcher can
 // wire the same SQLite-backed writer for both writes (audit
 // append) and reads (admin RPC tail) without two separate
 // connection pools.
@@ -787,7 +787,7 @@ mod tests {
         }
     }
 
-    /// Phase 83.12.audit-page — pagination contract: 75 rows
+    /// Pagination contract: 75 rows
     /// total, page-size 50, two pages should return 50 + 25 with
     /// the right `has_more` / `next_offset` markers.
     #[tokio::test]

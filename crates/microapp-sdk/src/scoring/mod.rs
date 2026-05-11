@@ -1,4 +1,4 @@
-//! Lead scoring primitives (M15.23.f).
+//! Lead scoring primitives.
 //!
 //! A small, dep-free framework for **explainable** lead /
 //! contact scoring that any microapp can compose.

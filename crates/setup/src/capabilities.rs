@@ -41,17 +41,14 @@
 //! test with an explicit list of offenders, so the operator-facing
 //! surface stays in sync with reality.
 //!
-//! ## Prior art (validated, not copied)
+//! ## Design notes
 //!
-//! - `claude-code-leak/src/utils/envUtils.ts:32-47` — `isEnvTruthy()`
-//!   helpers but no master registry; ~160 scattered `CLAUDE_*` env
-//!   vars without a single source of truth. We do better.
-//! - `claude-code-leak/src/commands/doctor/` — `/doctor` surfaces
-//!   env vars hardcoded in UI, not generated from a registry. We
-//!   generate from INVENTORY.
-//! - `research/src/agents/auth-profiles/doctor.ts:15-42` —
-//!   `formatAuthDoctorHint()` scoped to OAuth migration only; no
-//!   enumeration of dangerous toggles. We fill that gap.
+//! Comparable tools tend to scatter `is_truthy()`-style helpers across
+//! the codebase without a master registry, or hardcode the env vars in
+//! the doctor UI rather than generating them. This module keeps a single
+//! source of truth: the doctor output and the operator-facing surface
+//! are both generated from INVENTORY, which also covers the dangerous
+//! toggles, not just OAuth migration.
 
 use serde_json::{json, Value};
 
@@ -154,7 +151,7 @@ pub struct ToggleStatus {
 }
 
 const INVENTORY: &[CapabilityToggle] = &[
-    // ── Phase 82.10 — admin RPC domain enables ───────────────────
+    // ── Admin RPC domain enables ───────────────────
     // Per-domain global kill switches. Each is checked BEFORE the
     // operator-granted capability set. Off → all methods in that
     // domain return `-32601 method_not_found` regardless of grant.
@@ -208,7 +205,7 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Enable `nexo/admin/channels/*` admin RPC domain (microapps can approve/revoke MCP-channel servers in agents.yaml).",
         hint: "export NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED=0",
     },
-    // Phase 82.11 — agent event firehose + admin RPC backfill.
+    // Agent event firehose + admin RPC backfill.
     // Off → `nexo/admin/agent_events/*` returns -32601 AND the
     // boot-side broadcast subscriber tasks are not spawned (zero
     // overhead, zero PII surface). Operator-global kill switch
@@ -274,7 +271,7 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Phase 82.13.b.3 — max inbounds buffered per scope while paused. Inbounds beyond cap are evicted FIFO and surfaced via `PendingInboundsDropped` firehose event. `0` disables buffering entirely (every inbound during pause is dropped). Default 50.",
         hint: "export NEXO_PROCESSING_PENDING_QUEUE_CAP=100  # tune buffer size",
     },
-    // Phase 82.12 — microapp HTTP servers (`[capabilities.http_server]`).
+    // Microapp HTTP servers (`[capabilities.http_server]`).
     // Off → boot supervisor skips the health probe AND the
     // monitor loop; microapps that declare an http_server still
     // start, but the daemon never marks them `ready` based on
@@ -405,13 +402,12 @@ const INVENTORY: &[CapabilityToggle] = &[
                  / xAI / Mistral).",
         hint: "export NEXO_CLAUDE_CLI_VERSION=2.2.0",
     },
-    // C3 — Cargo feature gate for the self-config-editing tool.
+    // Cargo feature gate for the self-config-editing tool.
     // Critical: the agent can read + propose + apply edits to its
     // own agents.yaml when this feature is compiled in AND
     // `agents.<id>.config_tool.self_edit = true` AND
-    // `mcp_server.auth_token_env` is configured (Phase 79.M.c
-    // hardening). Provider-agnostic — gates the same ConfigTool
-    // regardless of which LLM provider drives it.
+    // `mcp_server.auth_token_env` is configured. Provider-agnostic —
+    // gates the same ConfigTool regardless of which LLM provider drives it.
     CapabilityToggle {
         extension: "core",
         env_var: "cfg(feature = \"config-self-edit\")",
@@ -424,15 +420,13 @@ const INVENTORY: &[CapabilityToggle] = &[
                  per-agent YAML knob is set.",
         hint: "cargo build --features config-self-edit",
     },
-    // Phase 80.1.c.b — dream_now LLM tool host-level gate. Per-binding
-    // granularity stays in Phase 16 binding policy (`allowed_tools`).
+    // dream_now LLM tool host-level gate. Per-binding
+    // granularity stays in the binding policy (`allowed_tools`).
     // Provider-agnostic: gates registration before LLM dispatch, so the
     // env-var read short-circuits regardless of which provider drives
     // the tool (Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI
-    // / Mistral). Mirror leak `claude-code-leak/src/services/autoDream/
-    // autoDream.ts:95-107` `isGateOpen` composed-flag pattern (we
-    // collapse it to a single env var because the per-binding allow/deny
-    // already lives in Phase 16).
+    // / Mistral). Collapsed to a single env var because the per-binding
+    // allow/deny already lives in the binding policy.
     CapabilityToggle {
         extension: "dream",
         env_var: "NEXO_DREAM_NOW_ENABLED",
@@ -469,7 +463,7 @@ const INVENTORY: &[CapabilityToggle] = &[
                  results truncated.",
         hint: "export NEXO_MEMORY_RESTORE_ALLOW=true",
     },
-    // ── Phase 81.22 — Plugin sandbox capability gates ────────────
+    // ── Plugin sandbox capability gates ────────────
     CapabilityToggle {
         extension: "core",
         env_var: "NEXO_PLUGIN_SANDBOX_REQUIRE",
@@ -496,7 +490,7 @@ const INVENTORY: &[CapabilityToggle] = &[
                  unless this flag is set.",
         hint: "export NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1",
     },
-    // ── Phase F7 of `cody-cli-install` — persona discovery kill switch.
+    // ── Persona discovery kill switch.
     // Default OFF: persona discovery runs at boot and registers any
     // persona pack found under cfg.personas.discovery.search_paths.
     // Set to 1 to skip discovery entirely (admin RPC `persona list`
@@ -701,7 +695,7 @@ pub fn render_json(statuses: &[ToggleStatus]) -> Value {
 }
 
 // =====================================================================
-// Phase 79.10 — `ConfigTool` self-edit denylist.
+// `ConfigTool` self-edit denylist.
 //
 // Hard-coded list of dotted-path globs the `Config` tool MUST NEVER
 // touch even when the agent's `config.self_edit: true` is set. The
@@ -711,14 +705,9 @@ pub fn render_json(statuses: &[ToggleStatus]) -> Value {
 //
 // Source-of-truth lives in code (NOT YAML) so a model that proposes
 // a patch widening the denylist cannot succeed: changing this slice
-// requires a code change + review.
-//
-// Reference (PRIMARY): `proyecto/PHASES.md:5277-5293` enumerates the
-// 13 globs. The leak's `claude-code-leak/src/tools/ConfigTool/
-// supportedSettings.ts:188-190` ships only a whitelist (`isSupported`)
-// — we add this orthogonal denylist as defense-in-depth for a
-// chat-driven approval flow that lacks the leak's `'ask'` host
-// permission prompt.
+// requires a code change + review. This orthogonal denylist exists
+// because the chat-driven approval flow has no interactive host
+// permission prompt to fall back on.
 // =====================================================================
 
 use std::sync::OnceLock;
@@ -925,7 +914,7 @@ mod tests {
         assert!(env_vars.contains(&"OP_ALLOW_REVEAL"));
         assert!(env_vars.contains(&"OP_INJECT_COMMAND_ALLOWLIST"));
         assert!(env_vars.contains(&"CLOUDFLARE_ALLOW_WRITES"));
-        // Phase 80.1.c.b — dream_now host-level gate.
+        // dream_now host-level gate.
         assert!(env_vars.contains(&"NEXO_DREAM_NOW_ENABLED"));
         let dream_entry = inv
             .iter()
@@ -1092,7 +1081,7 @@ mod drift_tests {
         "MOCK_CANCELLED_LOG",
         "MOCK_SAMPLING_LOG",
         "MOCK_SETLEVEL_LOG",
-        // Phase 27.2 — `crates/test-fixtures/mock-subprocess-plugin/`
+        // `crates/test-fixtures/mock-subprocess-plugin/`
         // is a synthetic subprocess plugin used by the daemon-side
         // spawn-shape e2e test (`subprocess_flip_e2e.rs`). When this
         // env var is set to "1" the binary echoes its env to stdout
@@ -1102,16 +1091,16 @@ mod drift_tests {
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
-        // Phase 91 STT parity harness — directory pins for the
-        // reference fixtures / safetensors weights / whisper.cpp GGML
-        // model the parity test loads. Pure test-fixture path
-        // overrides; no production code path reads them.
+        // STT parity harness — directory pins for the reference
+        // fixtures / safetensors weights / whisper.cpp GGML model the
+        // parity test loads. Pure test-fixture path overrides; no
+        // production code path reads them.
         "NEXO_STT_PARITY_FIXTURES_DIR",
         "NEXO_STT_PARITY_SAFETENSORS_DIR",
         "NEXO_STT_PARITY_WHISPER_GGML",
         // ---- Plugin runtime tuning (non-destructive operator knobs) ----
         "NEXO_INSTALL_TARGET",            // ext-installer arch override.
-        "NEXO_PLUGIN_INIT_TIMEOUT_MS",    // 81.17 init handshake timeout.
+        "NEXO_PLUGIN_INIT_TIMEOUT_MS",    // init handshake timeout.
         "NEXO_PLUGIN_NAMESPACE_STRICT",   // 81.3 strict-mode escalation.
         "NEXO_PLUGIN_CHANNEL_TIMEOUT_MS", // 81.24 RemoteChannelAdapter timeout.
         "NEXO_PLUGIN_LLM_TIMEOUT_MS",     // 81.25 RemoteLlmClient timeout.

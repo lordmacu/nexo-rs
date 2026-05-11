@@ -413,7 +413,7 @@ fn validate_agent_into(
         }
     }
 
-    // 4.c — Phase 77.20 / audit M3 — role='coordinator' is mutually
+    // role='coordinator' is mutually
     // exclusive with proactive ticking. Coordinators delegate work to
     // workers and must not run their own tick loop; combining them
     // produces a daemon that wakes itself spuriously and burns model
@@ -916,7 +916,7 @@ mod tests {
         validate_agent(&a, &tg, &tools).expect("happy path must pass");
     }
 
-    // ---- Audit M3: coordinator ⊕ proactive mutual exclusion ----
+    // ---- coordinator ⊕ proactive mutual exclusion ----
 
     #[test]
     fn coordinator_role_with_agent_proactive_enabled_rejected() {
@@ -998,7 +998,7 @@ mod tests {
     fn has_any_override_returns_true_for_each_new_override() {
         // Sanity: covers the seven overrides whose declaration on
         // `InboundBinding` predates being counted by `has_any_override`
-        // (Phase 70.2 fixed the first batch; C1 finishes the job).
+        // (an earlier change fixed the first batch; this finishes the job).
         type Case = (&'static str, fn(&mut InboundBinding));
         let cases: Vec<Case> = vec![
             ("plan_mode", |b| b.plan_mode = Some(Default::default())),

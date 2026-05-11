@@ -2,7 +2,7 @@
 //!
 //!     cargo bench -p nexo-resilience
 //!
-//! Output goes to `target/criterion/`. Phase 35 scaffolding — these
+//! Output goes to `target/criterion/`. These
 //! cover the hottest paths (`allow`, `on_success`, `on_failure`) so
 //! a regression on the breaker shows up immediately under
 //! `cargo bench` in CI. Add new groups for closed→open transitions,

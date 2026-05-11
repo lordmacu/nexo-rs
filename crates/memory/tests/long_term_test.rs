@@ -3,7 +3,7 @@ use chrono::{Duration, Utc};
 use nexo_memory::{EmailFollowupStatus, LongTermMemory};
 use uuid::Uuid;
 
-// ---- Phase 36.2: mutation hook fire sites ----
+// ---- mutation hook fire sites ----
 
 #[tokio::test]
 async fn mutation_hook_fires_on_remember_and_forget() {
@@ -490,7 +490,7 @@ async fn claim_and_advance_email_followup_updates_lifecycle() {
     assert_eq!(exhausted.attempts, 1);
 }
 
-// ── Recall signal tracking (Phase 10.5) ──────────────────────────────────────
+// ── Recall signal tracking ──────────────────────────────────────
 
 #[tokio::test]
 async fn record_recall_event_increments_signals() {
@@ -562,7 +562,7 @@ async fn recall_signals_for_agent_returns_map() {
     assert_eq!(map[&m2].recall_count, 2);
 }
 
-// --- Phase 10.8 stat methods ---
+// --- stat methods ---
 
 #[tokio::test]
 async fn count_memories_empty_is_zero() {

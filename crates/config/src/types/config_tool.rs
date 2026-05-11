@@ -1,5 +1,4 @@
-//! Phase 79.10 — `ConfigTool` per-agent policy + supported-settings
-//! registry.
+//! `ConfigTool` per-agent policy + supported-settings registry.
 //!
 //! `ConfigToolPolicy` lives on `AgentConfig::config` and is the YAML
 //! surface operators flip to enable the chat-driven self-config flow.
@@ -8,16 +7,8 @@
 //! `SUPPORTED_SETTINGS` is the orthogonal whitelist — the list of
 //! dotted paths the model MAY propose to mutate (subject to the
 //! denylist in `crates/setup/src/capabilities.rs::CONFIG_SELF_EDIT_DENYLIST`).
-//!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/ConfigTool/supportedSettings.ts:13-186`
-//!     — `SUPPORTED_SETTINGS` registry shape (key, type, options,
-//!     getOptions, validateOnWrite, formatOnRead). We collapse the
-//!     `source: 'global' | 'settings'` distinction (leak persists in
-//!     two files) into "always agent YAML" because every nexo setting
-//!     lives in a single per-agent block.
-//!   * `claude-code-leak/src/tools/ConfigTool/supportedSettings.ts:188-211`
-//!     — `isSupported` / `getConfig` / `getAllKeys` lookup helpers.
+//! Every nexo setting lives in a single per-agent block, so there is
+//! no global-vs-settings file distinction.
 
 use serde::{Deserialize, Serialize};
 
@@ -39,7 +30,7 @@ fn default_timeout_secs() -> u64 {
 ///   * `allowed_paths: []` — empty list = every key in
 ///     [`SUPPORTED_SETTINGS`] is permitted (subject to denylist).
 ///   * `approval_timeout_secs: 86_400` — 24 h, mirrors the
-///     `PlanModePolicy` pattern from Phase 79.1.
+///     `PlanModePolicy` pattern.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, default)]
 pub struct ConfigToolPolicy {

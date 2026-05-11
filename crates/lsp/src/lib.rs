@@ -1,4 +1,4 @@
-//! Phase 79.5 — `nexo-lsp` crate.
+//! `nexo-lsp` crate.
 //!
 //! Hand-rolled Language Server Protocol *client* for in-process
 //! invocation by the agent runtime. Wraps four built-in servers
@@ -7,16 +7,10 @@
 //! (`go_to_def`, `hover`, `references`, `workspace_symbol`,
 //! `diagnostics`).
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/LSPTool/` — schema, prompt,
-//!     handler, formatters, file-size cap.
-//!   * `claude-code-leak/src/services/lsp/` — `LSPClient`,
-//!     `LSPServerInstance` (FSM, max-restart cap),
-//!     `LSPServerManager` (extension routing).
-//!
-//! Reference (secondary):
-//!   * `research/src/agents/pi-bundle-lsp-runtime.ts:1-398` —
-//!     OpenClaw's hand-rolled JSON-RPC framing reference.
+//! The design borrows from prior art: an `LspClient`, an
+//! `LspServerInstance`-style FSM with a max-restart cap,
+//! extension-routed server management, formatters with a file-size
+//! cap, and a hand-rolled JSON-RPC framing layer.
 //!
 //! Why hand-roll instead of `async-lsp = "0.2.4"`: that crate is
 //! oriented toward *building* LSP servers (tower middleware

@@ -1,15 +1,10 @@
-//! Phase 81.12.0 — manifest-driven plugin factory infrastructure.
+//! Manifest-driven plugin factory infrastructure.
 //!
 //! `PluginFactoryRegistry` maps `plugin.id` → closure that builds
 //! a concrete `Arc<dyn NexoPlugin>` from the parsed manifest.
-//! Per-plugin migration slices (81.12.a / b / c / d) populate this
-//! registry at boot; `run_plugin_init_loop_with_factory` then
-//! consumes it to instantiate + initialize each plugin.
-//!
-//! Today (81.12.0): infrastructure only. `main.rs`'s legacy plugin
-//! registration block is untouched. Operators pass `None` for the
-//! `factory_registry` argument of `wire_plugin_registry`; behavior
-//! is identical to before.
+//! Callers populate this registry at boot;
+//! `run_plugin_init_loop_with_factory` then consumes it to
+//! instantiate + initialize each plugin.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,12 +15,12 @@ use nexo_plugin_manifest::PluginManifest;
 
 use crate::agent::plugin_host::NexoPlugin;
 
-/// Phase 81.12.0 — type-erased error returned by plugin factory
+/// Type-erased error returned by plugin factory
 /// closures. Each plugin author can use their own error type;
 /// the registry boxes them so storage stays homogeneous.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-/// Phase 81.12.0 — closure that constructs an `Arc<dyn NexoPlugin>`
+/// Closure that constructs an `Arc<dyn NexoPlugin>`
 /// from a parsed manifest. The closure typically captures
 /// references to the operator's `&AppConfig` (or specific config
 /// slices) at registration time so it can build plugin-specific
@@ -33,9 +28,8 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type PluginFactory =
     Box<dyn Fn(&PluginManifest) -> Result<Arc<dyn NexoPlugin>, BoxError> + Send + Sync + 'static>;
 
-/// Phase 81.12.0 — factory map keyed by `plugin.id`. Per-plugin
-/// migrations populate this at boot; the
-/// `run_plugin_init_loop_with_factory` helper consults it to
+/// Factory map keyed by `plugin.id`. Callers populate this at boot;
+/// the `run_plugin_init_loop_with_factory` helper consults it to
 /// instantiate concrete plugins from discovered manifests.
 #[derive(Default)]
 pub struct PluginFactoryRegistry {

@@ -1,4 +1,4 @@
-//! Phase 5.4 — sqlite-vec integration helpers.
+//! sqlite-vec integration helpers.
 //!
 //! We register `sqlite3_vec_init` as an SQLite auto-extension the first
 //! time `enable()` is called. Every connection opened thereafter in the

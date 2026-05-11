@@ -20,7 +20,7 @@ fn default_daily_turn_budget() -> u32 {
     200
 }
 
-/// Phase 77.20 — per-agent / per-binding proactive tick loop configuration.
+/// Per-agent / per-binding proactive tick loop configuration.
 ///
 /// When `enabled: true` the driver-loop keeps the goal alive after each LLM
 /// turn. Instead of terminating, it waits for the next `<tick>` injection

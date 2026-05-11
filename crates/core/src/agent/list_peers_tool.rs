@@ -1,4 +1,4 @@
-//! Phase 80.11 — `list_peers` LLM tool.
+//! `list_peers` LLM tool.
 //!
 //! Returns the agent's peers (other in-process agents) with optional
 //! reachability metadata when an `allowed_delegates` policy filter

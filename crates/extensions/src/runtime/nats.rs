@@ -227,7 +227,7 @@ impl NatsRuntime {
         self.shutdown_with_reason("client shutdown").await
     }
 
-    /// Phase 11.3 follow-up — variant that threads a human-readable
+    /// Variant that threads a human-readable
     /// `reason` into the `shutdown` notification params so extensions
     /// can differentiate SIGTERM vs config reload vs explicit shutdown.
     pub async fn shutdown_with_reason(&self, reason: &str) {

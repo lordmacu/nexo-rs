@@ -1,16 +1,15 @@
-//! Phase 82.10.b — admin RPC audit log writer.
+//! Admin RPC audit log writer.
 //!
 //! Records every admin call with `(microapp_id, method,
 //! capability, args_hash, started_at, result, duration_ms)`.
 //! Operator audit pipelines parse these rows for SaaS billing /
 //! compliance.
 //!
-//! Sub-phase scope:
-//! - **82.10.b** (this module): in-memory writer behind a trait.
-//!   Production builds use [`InMemoryAuditWriter`]. Tests inject
-//!   their own implementations via [`AdminAuditWriter`].
-//! - **82.10.g** (deferred): SQLite-backed writer + retention
-//!   sweep + `nexo microapp admin audit tail` CLI.
+//! This module provides an in-memory writer behind a trait.
+//! Production builds use [`InMemoryAuditWriter`]. Tests inject
+//! their own implementations via [`AdminAuditWriter`]. The
+//! SQLite-backed writer with a retention sweep lives in
+//! `audit_sqlite`.
 
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -18,18 +17,17 @@ use std::time::SystemTime;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-// Phase 83.12.audit-page — `AdminAuditRow`, `AdminAuditResult`,
-// `AuditTailFilter`, and `AuditTailPage` moved to `nexo-tool-meta`
-// so the ts-types-codegen pipeline (Phase 83.12.ts-types-codegen)
-// generates their TypeScript declarations. Re-exported here so
+// `AdminAuditRow`, `AdminAuditResult`, `AuditTailFilter`, and
+// `AuditTailPage` live in `nexo-tool-meta` so the ts-types-codegen
+// pipeline generates their TypeScript declarations. Re-exported here so
 // existing consumers (`use nexo_core::agent::admin_rpc::audit::AdminAuditRow`)
 // keep resolving without per-file edits.
 pub use nexo_tool_meta::admin::audit::{
     AdminAuditResult, AdminAuditRow, AuditTailFilter, AuditTailPage,
 };
 
-/// Audit writer abstraction. Async to keep the SQLite future
-/// (82.10.g) plug-compatible without changing this trait.
+/// Audit writer abstraction. Async to keep the SQLite-backed
+/// implementation plug-compatible without changing this trait.
 #[async_trait::async_trait]
 pub trait AdminAuditWriter: Send + Sync + std::fmt::Debug {
     /// Append one row. Errors are logged but not propagated —
@@ -37,7 +35,7 @@ pub trait AdminAuditWriter: Send + Sync + std::fmt::Debug {
     async fn append(&self, row: AdminAuditRow);
 }
 
-/// Phase 83.12.audit-page — read-side trait for the
+/// Read-side trait for the
 /// `nexo/admin/microapp_audit/tail` admin RPC. Separated from
 /// [`AdminAuditWriter`] so the dispatcher can wire write + read
 /// independently (matches the `transcript_reader` pattern).
@@ -50,7 +48,7 @@ pub trait AdminAuditReader: Send + Sync + std::fmt::Debug {
 }
 
 /// In-memory writer used in tests + as the default production
-/// writer until 82.10.g ships SQLite persistence.
+/// writer when SQLite persistence is not configured.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryAuditWriter {
     rows: Arc<Mutex<Vec<AdminAuditRow>>>,
@@ -97,10 +95,10 @@ pub fn hash_params(params: &Value) -> String {
 ///
 /// Called from the dispatcher before [`hash_params`].
 ///
-/// Phase 82.10.k — `secrets/write` redacts `value`. Future
-/// methods that carry secret-grade fields hook in here.
+/// `secrets/write` redacts `value`. Future methods that carry
+/// secret-grade fields hook in here.
 ///
-/// Phase 82.10.n — `credentials/register` redacts secret-grade
+/// `credentials/register` redacts secret-grade
 /// keys inside `payload` + `metadata` (token, password,
 /// xoauth2_token, api_key, secret). The
 /// [`ChannelCredentialPersister`] family routes structured
@@ -130,7 +128,7 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
             return Value::Object(redacted);
         }
     }
-    // Phase 82.10.s.4 — `llm_providers/upsert` carries
+    // `llm_providers/upsert` carries
     // `api_key_secret_value` (write-through API key plaintext)
     // when the operator rotates a key from the SPA. Redact it
     // before audit so the cleartext never lands on disk; the
@@ -144,7 +142,7 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
                     Value::String("<redacted>".into()),
                 );
             }
-            // Phase 82.10.u — schema-driven payload. Walk the
+            // Schema-driven payload. Walk the
             // `fields` map with the same key-based redactor used
             // for credentials/register so secret-grade names
             // (api_key, setup_token, password, etc) get masked.
@@ -176,7 +174,7 @@ fn redact_secret_keys(value: &Value) -> Value {
         "xoauth2_token",
         "api_key",
         "secret",
-        // Phase 82.10.u — schema-driven LLM credentials.
+        // Schema-driven LLM credentials.
         "setup_token",
         "access_token",
         "refresh_token",
@@ -222,7 +220,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-/// Phase 83.8.12.7 — sniff `tenant_id` from JSON params for the
+/// Sniff `tenant_id` from JSON params for the
 /// audit row. Tenant-scoped admin domains (agents/llm_providers/
 /// skills/audit) pass this in the params object; non tenant-
 /// scoped calls (echo, pairing, credentials) lack the field, so
@@ -308,7 +306,7 @@ mod tests {
         assert_eq!(AdminAuditResult::Denied.as_str(), "denied");
     }
 
-    /// Phase 82.10.k — `secrets/write` redacts the `value`
+    /// `secrets/write` redacts the `value`
     /// field BEFORE hashing so low-entropy values can't be
     /// brute-forced from the stored hash.
     #[test]
@@ -325,7 +323,7 @@ mod tests {
         assert_ne!(hash_params(&original), hash_params(&redacted));
     }
 
-    /// Phase 82.10.s.4 — `llm_providers/upsert` redacts the
+    /// `llm_providers/upsert` redacts the
     /// write-through `api_key_secret_value` field so the cleartext
     /// only persists in the SecretsStore, never on the audit log.
     #[test]
@@ -343,7 +341,7 @@ mod tests {
         assert_ne!(hash_params(&original), hash_params(&redacted));
     }
 
-    /// Phase 82.10.u — schema-driven `fields` payload masks
+    /// Schema-driven `fields` payload masks
     /// secret-grade keys (api_key, setup_token) but keeps
     /// non-secret identifiers (group_id, region) literal so the
     /// audit log stays useful for diagnostics.
@@ -373,7 +371,7 @@ mod tests {
         assert_eq!(redacted["factory_type"], "minimax");
     }
 
-    /// Phase 82.10.u — OAuth bundle JSON pasted via
+    /// OAuth bundle JSON pasted via
     /// `api_key_secret_value` would be caught by the existing
     /// `api_key_secret_value` rule, but defense-in-depth: confirm
     /// the new SECRET_KEYS additions also fire when an operator
@@ -414,7 +412,7 @@ mod tests {
         assert_eq!(result, original);
     }
 
-    /// Phase 82.10.n — `credentials/register` redacts the
+    /// `credentials/register` redacts the
     /// telegram bot token in `payload.token` so the audit hash
     /// doesn't fingerprint the secret.
     #[test]

@@ -1,6 +1,6 @@
 //! Stdio MCP client — spawns an MCP server process and speaks JSON-RPC 2.0
 //! over line-delimited stdio. Modelled after `nexo_extensions::runtime::stdio`
-//! (11.3) but narrowed to MCP semantics (initialize + notifications).
+//! but narrowed to MCP semantics (initialize + notifications).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -224,7 +224,7 @@ impl StdioMcpClient {
             events_tx,
             config,
         };
-        // Phase 12.8 — apply configured log level once the handshake is
+        // Apply the configured log level once the handshake is
         // complete. Best-effort: failures (unknown level, missing
         // capability, transport error) degrade to a warn log and the
         // connection stays up.
@@ -266,8 +266,8 @@ impl StdioMcpClient {
         self.state.read().unwrap().clone()
     }
 
-    /// Raw request. Not part of the public 12.1 surface — exposed for tests
-    /// and future sub-phases that need methods beyond `tools/*`.
+    /// Raw request. Not part of the public surface — exposed for tests
+    /// and callers that need methods beyond `tools/*`.
     async fn request(
         &self,
         method: &str,
@@ -320,8 +320,8 @@ impl StdioMcpClient {
         }
     }
 
-    /// Phase 80.9.b — fire-and-forget notification with arbitrary
-    /// method + params. Used by the channel permission relay
+    /// Fire-and-forget notification with arbitrary method + params.
+    /// Used by the channel permission relay
     /// dispatcher to emit `notifications/nexo/channel/permission_request`.
     /// Errors when the underlying child has exited.
     pub async fn send_notification(
@@ -368,7 +368,7 @@ impl StdioMcpClient {
         self.call_tool_with_meta(name, arguments, None).await
     }
 
-    /// Phase 12.8 — `tools/call` with optional spec-level `_meta` carried
+    /// `tools/call` with optional spec-level `_meta` carried
     /// alongside `arguments` (MCP 2024-11-05 request metadata).
     pub async fn call_tool_with_meta(
         &self,
@@ -388,7 +388,7 @@ impl StdioMcpClient {
         serde_json::from_value(v).map_err(McpError::Decode)
     }
 
-    /// Phase 12.8 — send MCP `logging/setLevel`. Validates `level`
+    /// Send MCP `logging/setLevel`. Validates `level`
     /// against the spec-defined RFC-5424 subset and checks the server
     /// advertised the `logging` capability during `initialize`. Wire
     /// failures map to `McpError`; success ignores the empty response
@@ -412,15 +412,15 @@ impl StdioMcpClient {
         Ok(())
     }
 
-    /// Phase 12.5 — list data resources via paginated `resources/list`.
+    /// List data resources via paginated `resources/list`.
     /// Short-circuits to `Protocol` error if the server didn't advertise
     /// the `resources` capability during handshake.
     pub async fn list_resources(&self) -> Result<Vec<crate::types::McpResource>, McpError> {
         self.list_resources_with_meta(None).await
     }
 
-    /// Phase 12.8 — paginated `resources/list` with optional `_meta`
-    /// propagated in every page's request params.
+    /// Paginated `resources/list` with optional `_meta` propagated
+    /// in every page's request params.
     pub async fn list_resources_with_meta(
         &self,
         meta: Option<serde_json::Value>,
@@ -460,7 +460,7 @@ impl StdioMcpClient {
         )))
     }
 
-    /// Phase 12.5 — read a resource body via `resources/read`.
+    /// Read a resource body via `resources/read`.
     pub async fn read_resource(
         &self,
         uri: &str,
@@ -468,7 +468,7 @@ impl StdioMcpClient {
         self.read_resource_with_meta(uri, None).await
     }
 
-    /// Phase 12.8 — `resources/read` with optional `_meta`.
+    /// `resources/read` with optional `_meta`.
     pub async fn read_resource_with_meta(
         &self,
         uri: &str,
@@ -493,7 +493,7 @@ impl StdioMcpClient {
         Ok(out.contents)
     }
 
-    /// Phase 12.8 — paginated `resources/templates/list`.
+    /// Paginated `resources/templates/list`.
     pub async fn list_resource_templates(
         &self,
     ) -> Result<Vec<crate::types::McpResourceTemplate>, McpError> {
@@ -778,8 +778,8 @@ async fn reader_task(
                                     crate::logging::emit_log_notification(&name, params);
                                     continue;
                                 }
-                                // Phase 80.9.c — channel notifications
-                                // carry user-visible content; capture
+                                // Channel notifications carry
+                                // user-visible content; capture
                                 // params so the inbound loop can run
                                 // the gate + parser without
                                 // re-fetching the JSON-RPC frame.
@@ -798,8 +798,8 @@ async fn reader_task(
                                     );
                                     continue;
                                 }
-                                // Phase 80.9.b — permission relay reply
-                                // from a channel server. Same shape as
+                                // Permission relay reply from a
+                                // channel server. Same shape as
                                 // the channel notification: capture
                                 // params verbatim so the pending-map
                                 // resolver can match without rereading

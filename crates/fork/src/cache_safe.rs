@@ -1,9 +1,7 @@
 //! `CacheSafeParams` — fields that must match the parent's last LLM
-//! request for a prompt-cache hit on the fork's first turn. Step 80.19/3.
+//! request for a prompt-cache hit on the fork's first turn.
 //!
-//! Verbatim semantics from `claude-code-leak/src/utils/forkedAgent.ts:57-115`.
-//!
-//! # Critical invariant (leak `:522-525`)
+//! # Critical invariant
 //!
 //! `fork_context_messages` MUST preserve any incomplete tool_use blocks
 //! the parent sent. Filtering them strips the paired tool_result rows and
@@ -38,7 +36,7 @@ pub struct CacheSafeParams {
     /// Tool catalog. Same ordering critical for cache key.
     pub tools: Vec<ToolDef>,
 
-    /// Whether the tool catalog should be cached (Phase 77.x).
+    /// Whether the tool catalog should be cached.
     pub cache_tools: bool,
 
     /// Model id (e.g. `claude-opus-4-7`). Cache key.
@@ -47,23 +45,22 @@ pub struct CacheSafeParams {
     /// Temperature. Some providers fold this into the cache key.
     pub temperature: f32,
 
-    /// Max-output-tokens cap. Per leak `forkedAgent.ts:96-104`, setting
-    /// this clamps `budget_tokens` and may invalidate cache when it
-    /// differs from the parent. Mirror parent's value (or `None` to
-    /// fall back to `ChatRequest` default `4096`).
+    /// Max-output-tokens cap. Setting this clamps `budget_tokens` and
+    /// may invalidate cache when it differs from the parent. Mirror the
+    /// parent's value (or `None` to fall back to `ChatRequest` default
+    /// `4096`).
     pub max_tokens: Option<u32>,
 
     /// Parent context messages — prepended to the fork's prompt
     /// messages on the first turn. Forms the cache prefix.
     ///
     /// **DO NOT FILTER** incomplete tool_use blocks from this list. See
-    /// the module docstring + leak `forkedAgent.ts:522-525`.
+    /// the module docstring.
     pub fork_context_messages: Vec<ChatMessage>,
 }
 
 impl CacheSafeParams {
     /// Snapshot a parent's last `ChatRequest` for fork reuse.
-    /// Mirrors `createCacheSafeParams(REPLHookContext)` (leak `:131-145`).
     pub fn from_parent_request(req: &ChatRequest) -> Self {
         Self {
             system_prompt: req.system_prompt.clone(),
@@ -98,7 +95,7 @@ impl CacheSafeParams {
     }
 
     /// Hash of cache-affecting fields. Used to compare parent vs fork
-    /// snapshots and detect drift via Phase 77.4 cache-break detection.
+    /// snapshots and detect drift via cache-break detection.
     ///
     /// `temperature` and `max_tokens` are NOT hashed — Anthropic does
     /// not key the prompt cache on them. `messages` are NOT hashed
@@ -137,8 +134,7 @@ impl CacheSafeParams {
 /// turn so post-turn forks (autoDream, AWAY_SUMMARY, future eval) can
 /// snapshot the parent's last request without threading params through.
 ///
-/// Mirrors `lastCacheSafeParams` slot from leak `forkedAgent.ts:75-83`,
-/// but per-goal (held by goal driver) instead of global mutable static.
+/// Per-goal (held by the goal driver) instead of a global mutable static.
 #[derive(Debug, Default, Clone)]
 pub struct CacheSafeSlot {
     inner: Arc<RwLock<Option<CacheSafeParams>>>,

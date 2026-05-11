@@ -1,4 +1,4 @@
-//! Phase 79.M — conformance suite for `EXPOSABLE_TOOLS`.
+//! Conformance suite for `EXPOSABLE_TOOLS`.
 //!
 //! For every catalog entry we verify:
 //! 1. Catalog wiring is consistent — `BootKind::Always` entries with
@@ -11,7 +11,7 @@
 //!
 //! These tests do not spawn an MCP server; they drive the boot
 //! dispatcher directly. Wire-protocol coverage lives in
-//! `crates/mcp/tests/*` (Phase 76.12).
+//! `crates/mcp/tests/*`.
 
 use std::sync::Arc;
 

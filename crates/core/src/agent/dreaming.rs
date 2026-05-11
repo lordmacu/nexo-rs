@@ -1,4 +1,4 @@
-//! Dreaming — Phase 10.6.
+//! Dreaming.
 //!
 //! Background memory consolidation. Adapted from OpenClaw's three-phase model
 //! (`research/docs/concepts/dreaming.md`):
@@ -46,7 +46,7 @@ impl From<DreamingWeightsYaml> for DreamWeights {
     }
 }
 /// Config for a single dreaming sweep. Weights + gate thresholds; loaded from
-/// YAML in `main.rs` (Phase 10.6 wiring).
+/// YAML in `main.rs`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DreamingConfig {
     #[serde(default)]
@@ -90,7 +90,7 @@ pub struct DreamWeights {
 }
 impl Default for DreamWeights {
     // OpenClaw defaults (docs/concepts/dreaming.md), minus conceptual_richness
-    // (0.06) which is deferred to Phase 10.7.
+    // (0.06) which is not yet implemented.
     fn default() -> Self {
         Self {
             frequency: 0.24,
@@ -133,21 +133,20 @@ pub struct DreamReport {
     pub candidates_considered: usize,
     pub promoted: Vec<DreamCandidate>,
     pub skipped_already_promoted: usize,
-    /// Phase 80.1.e — `true` when the scoring sweep deferred because
-    /// an autoDream fork-pass was holding the consolidation lock.
-    /// Empty `promoted` + zero `candidates_considered` /
-    /// `skipped_already_promoted` when set. SKIP pattern mirror of
-    /// leak `extractMemories.ts:121-148` `hasMemoryWritesSince`.
+    /// `true` when the scoring sweep deferred because an autoDream
+    /// fork-pass was holding the consolidation lock. Empty `promoted`
+    /// + zero `candidates_considered` / `skipped_already_promoted`
+    /// when set.
     pub deferred_for_fork: bool,
 }
 pub struct DreamEngine {
     memory: std::sync::Arc<LongTermMemory>,
     workspace: PathBuf,
     config: DreamingConfig,
-    /// Phase 77.7 — secret guard for scanning dream candidates
-    /// before writing to MEMORY.md. None = no scanning.
+    /// Secret guard for scanning dream candidates before writing to
+    /// MEMORY.md. None = no scanning.
     guard: Option<nexo_memory::SecretGuard>,
-    /// Phase 80.1.e — optional consolidation-lock probe. When `Some`
+    /// Optional consolidation-lock probe. When `Some`
     /// and `is_live_holder() == true`, `run_sweep` defers (returns
     /// `DreamReport { deferred_for_fork: true, .. }` without touching
     /// memory). Built at boot when the binding has both `dreaming`
@@ -169,20 +168,18 @@ impl DreamEngine {
         }
     }
 
-    /// Phase 77.7 — attach a secret guard for scanning content
-    /// before writing to MEMORY.md.
+    /// Attach a secret guard for scanning content before writing to
+    /// MEMORY.md.
     pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
         self.guard = Some(guard);
         self
     }
 
-    /// Phase 80.1.e — wire a consolidation-lock probe. When set and
-    /// the probe reports a live holder, `run_sweep` returns early
-    /// with `deferred_for_fork: true`. The autoDream fork-pass
-    /// rewrites memory_dir as part of its own work — running the
-    /// scoring sweep concurrently would race on `MEMORY.md` writes.
-    /// SKIP pattern mirror of leak
-    /// `extractMemories.ts:121-148`.
+    /// Wire a consolidation-lock probe. When set and the probe
+    /// reports a live holder, `run_sweep` returns early with
+    /// `deferred_for_fork: true`. The autoDream fork-pass rewrites
+    /// memory_dir as part of its own work — running the scoring sweep
+    /// concurrently would race on `MEMORY.md` writes.
     ///
     /// **Wiring**: at boot, when an agent has both `dreaming.enabled`
     /// AND `auto_dream.is_some()`, construct
@@ -213,13 +210,12 @@ impl DreamEngine {
             workspace = %self.workspace.display(),
             "dream sweep started"
         );
-        // Phase 80.1.e — coordination skip. If a live PID is holding
-        // the autoDream consolidation lock, defer this sweep entirely
-        // (mirror leak `extractMemories.ts:121-148` SKIP pattern).
-        // The fork-pass will rewrite memory_dir as part of its own
-        // work; running the scoring sweep concurrently would race on
-        // MEMORY.md writes. Probe is None when the binding doesn't
-        // have both passes enabled — original behaviour preserved.
+        // Coordination skip. If a live PID is holding the autoDream
+        // consolidation lock, defer this sweep entirely. The fork-pass
+        // will rewrite memory_dir as part of its own work; running the
+        // scoring sweep concurrently would race on MEMORY.md writes.
+        // Probe is None when the binding doesn't have both passes
+        // enabled — original behaviour preserved.
         if let Some(probe) = &self.consolidation_probe {
             if probe.is_live_holder() {
                 tracing::info!(
@@ -285,9 +281,9 @@ impl DreamEngine {
         if !promoted.is_empty() {
             self.append_to_memory_md(&promoted, started_at).await?;
             for cand in &promoted {
-                // Phase 10.7: backfill concept_tags on promoted rows so recall
-                // query expansion can find them later. Rows inserted before
-                // 10.7 (or via paths that bypassed `remember`) have '[]'.
+                // Backfill concept_tags on promoted rows so recall query
+                // expansion can find them later. Rows inserted via paths
+                // that bypassed `remember` have '[]'.
                 let tags = nexo_memory::derive_concept_tags(
                     "",
                     &cand.content,
@@ -376,7 +372,7 @@ impl DreamEngine {
                 cand.signals.unique_days
             ));
         }
-        // Phase 77.7 — scan before writing to MEMORY.md.
+        // Scan before writing to MEMORY.md.
         let block_to_write = if let Some(ref guard) = self.guard {
             match guard.check(&block) {
                 Ok(redacted) => redacted,
@@ -574,7 +570,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Phase 80.1.e — consolidation-lock skip arm ──
+    // ── consolidation-lock skip arm ──
 
     use std::sync::atomic::{AtomicBool, Ordering as StdOrdering};
 

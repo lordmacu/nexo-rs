@@ -1,14 +1,9 @@
-//! Phase 79.6 — per-agent team policy.
+//! Per-agent team policy.
 //!
 //! `TeamPolicy` lives on `AgentConfig::team`. Default is
 //! `enabled: false` (opt-in per agent). When enabled, the agent's
-//! tool registry gains the 5 `Team*` tools.
-//!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/TeamCreateTool/TeamCreateTool.ts:88-90`
-//!     uses `isAgentSwarmsEnabled()` env-toggle. Our YAML capability
-//!     gate is the equivalent — operator opts in per agent, default
-//!     off.
+//! tool registry gains the 5 `Team*` tools. The YAML capability
+//! gate is how an operator opts in per agent, default off.
 
 use serde::{Deserialize, Serialize};
 

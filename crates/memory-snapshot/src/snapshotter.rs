@@ -55,7 +55,7 @@ pub trait MemorySnapshotter: Send + Sync + 'static {
 
 // Compile-time proof that the trait stays object-safe so consumers can
 // hold `Arc<dyn MemorySnapshotter>` without lifetimes leaking. Pattern
-// mirrors `nexo-core::agent::plugin_host::NexoPlugin` (Phase 81.2).
+// mirrors `nexo-core::agent::plugin_host::NexoPlugin`.
 #[allow(dead_code)]
 static _OBJECT_SAFE_CHECK: std::sync::OnceLock<Arc<dyn MemorySnapshotter>> =
     std::sync::OnceLock::new();

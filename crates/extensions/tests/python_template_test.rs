@@ -1,4 +1,4 @@
-//! Phase 11.8 — integration test for the bundled Python extension template.
+//! Integration test for the bundled Python extension template.
 //! Skipped cleanly if either `python3` or the template are missing.
 
 use std::path::PathBuf;

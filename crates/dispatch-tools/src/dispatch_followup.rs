@@ -1,4 +1,4 @@
-//! Phase 67.E.2 — `dispatch_followup` tool. Mirrors `program_phase`
+//! `dispatch_followup` tool. Mirrors `program_phase`
 //! but pulls the goal description from a FOLLOWUPS.md item (by
 //! `code`, e.g. `H-1`) instead of a PHASES.md sub-phase. Useful for
 //! launching hardening / refactor tasks the operator is already
@@ -181,7 +181,7 @@ pub async fn dispatch_followup_call(
     match outcome {
         AdmitOutcome::Admitted => {
             registry.set_max_turns(goal_id, goal.budget.max_turns);
-            // B18 — same auto-audit policy as program_phase_dispatch.
+            // Same auto-audit policy as program_phase_dispatch.
             // Operator wiring sets DispatchToolContext.audit_before_done;
             // we surface the flag here via the optional hook_registry —
             // when callers passed one, attach an audit hook so

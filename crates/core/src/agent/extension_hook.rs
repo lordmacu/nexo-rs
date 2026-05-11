@@ -1,4 +1,4 @@
-//! Phase 11.6 — bridge extension-registered hooks into the agent's
+//! Bridge extension-registered hooks into the agent's
 //! `HookRegistry`. The handler routes `on_hook(name, event)` to the owning
 //! `StdioRuntime` via JSON-RPC method `hooks/<name>`.
 use super::hook_registry::HookHandler;

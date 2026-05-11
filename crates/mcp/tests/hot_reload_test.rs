@@ -1,4 +1,4 @@
-//! Phase 12.8 — integration: a connected `StdioMcpClient` surfaces
+//! Integration: a connected `StdioMcpClient` surfaces
 //! `notifications/tools/list_changed` on its event channel, and the
 //! session runtime fires the `on_tools_changed` callback after the
 //! debounce window.

@@ -1,6 +1,6 @@
 //! [`EventSourceMeta`] — typed metadata describing the NATS
 //! subject + envelope that triggered an agent turn via the
-//! Phase 82.4 event-subscriber pipeline.
+//! event-subscriber pipeline.
 //!
 //! Stamped on [`crate::BindingContext::event_source`] when the
 //! agent's inbound was synthesised from an event (vs arriving
@@ -35,11 +35,10 @@ pub struct EventSourceMeta {
     pub synthesis_mode: String,
 }
 
-/// Phase 72 turn-log marker. Returns `"event:<source_id>"` so a
+/// Turn-log marker. Returns `"event:<source_id>"` so a
 /// downstream audit row can distinguish event-subscriber turns
 /// from native-channel inbounds. Mirrors the `"channel:<server>"`
-/// convention from Phase 80.9 and `"webhook:<source_id>"` from
-/// Phase 82.2.
+/// and `"webhook:<source_id>"` conventions.
 ///
 /// # Example
 ///
@@ -54,7 +53,7 @@ pub fn format_event_subscriber_source(source_id: &str) -> String {
     format!("event:{source_id}")
 }
 
-/// Phase 82.3 turn-log marker. Returns
+/// Turn-log marker. Returns
 /// `"dispatch:<extension>:<channel>:<account_id>"` so the audit
 /// row distinguishes outbound publishes initiated by an extension
 /// from agent-initiated tool calls. Mirrors the `"event:..."` and
@@ -73,15 +72,15 @@ pub fn format_dispatch_source(extension_id: &str, channel: &str, account_id: &st
     format!("dispatch:{extension_id}:{channel}:{account_id}")
 }
 
-/// Phase 82.7 turn-log marker. Returns
+/// Turn-log marker. Returns
 /// `"rate_limited:tool=<name>,binding=<id|none>,rps=<f64>"` so
 /// audit log queries can identify which `(binding, tool)` pairs
 /// hit caps most frequently. Operators wire this to billing /
 /// SaaS metric pipelines.
 ///
 /// `binding_id` is `"none"` for the legacy single-tenant path
-/// (binding-less turns: delegation receive, heartbeat,
-/// pre-Phase-82.7 callers).
+/// (binding-less turns: delegation receive, heartbeat, and other
+/// older callers).
 ///
 /// # Example
 ///

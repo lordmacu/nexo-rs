@@ -1,8 +1,7 @@
 //! Parameterized extraction contract — lets the resolve+download
 //! pipeline serve any source-of-truth manifest, not just
-//! `nexo-plugin.toml`. Introduced for the `cody-cli-install`
-//! wave so the same crate can power both `nexo plugin install`
-//! and the upcoming `nexo persona install` CLI without two
+//! `nexo-plugin.toml`. The same crate powers both `nexo plugin install`
+//! and `nexo persona install` without two
 //! parallel copies of the GitHub Releases plumbing.
 //!
 //! # Why a trait, not an enum

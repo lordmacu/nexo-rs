@@ -3,14 +3,14 @@
 //!
 //! The fork loop (`run_turn_loop`) takes any
 //! `Arc<dyn nexo_fork::ToolDispatcher>` and calls `dispatch(name, args)`
-//! whenever the LLM emits a tool use. Phase 80.1.b.b.b needs a
-//! production impl so `AutoDreamRunner` can do real work inside its
-//! fork pass — file edits scoped to memdir, read-only Bash, etc.
+//! whenever the LLM emits a tool use. This production impl lets
+//! `AutoDreamRunner` do real work inside its fork pass — file edits
+//! scoped to memdir, read-only Bash, etc.
 //!
-//! Tool *visibility* is gated upstream by `AutoMemFilter` (Phase
-//! 80.20) — the catalog the fork sees only contains tools allowed
-//! during the dream sweep. The dispatcher's job is purely the
-//! `tool_name → handler.call(...)` routing.
+//! Tool *visibility* is gated upstream by `AutoMemFilter` — the catalog
+//! the fork sees only contains tools allowed during the dream sweep.
+//! The dispatcher's job is purely the `tool_name → handler.call(...)`
+//! routing.
 //!
 //! Failure modes mapped to the trait's `Err(String)`:
 //! - Tool absent: `unknown tool: <name>` (LLM hallucination escapes

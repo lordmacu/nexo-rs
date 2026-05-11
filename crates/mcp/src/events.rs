@@ -1,4 +1,4 @@
-//! Phase 12.8 — client-side events propagated from live MCP connections.
+//! Client-side events propagated from live MCP connections.
 //!
 //! MCP servers can push notifications like `notifications/tools/list_changed`
 //! and `notifications/resources/list_changed`. `StdioMcpClient` and
@@ -6,10 +6,10 @@
 //! `SessionMcpRuntime` (and anything else that subscribes) can react —
 //! typically by invalidating the tool catalog and re-registering.
 //!
-//! Phase 80.9.c — channel notifications carry user-visible content
-//! that the gate + dispatcher need to inspect, so the variant
+//! Channel notifications carry user-visible content that the gate +
+//! dispatcher need to inspect, so the variant
 //! [`ClientEvent::ChannelMessage`] retains the params payload
-//! verbatim. Existing variants stay payload-free.
+//! verbatim. Other variants stay payload-free.
 
 use crate::channel::CHANNEL_NOTIFICATION_METHOD;
 use crate::channel_permission::PERMISSION_RESPONSE_METHOD;
@@ -24,13 +24,12 @@ pub enum ClientEvent {
     /// Server sent `notifications/nexo/channel`. Carries the raw
     /// `params` so the inbound loop can run
     /// [`crate::channel::parse_channel_notification`] without
-    /// having to re-fetch the JSON-RPC frame. Phase 80.9.c.
+    /// having to re-fetch the JSON-RPC frame.
     ChannelMessage { params: serde_json::Value },
     /// Server sent `notifications/nexo/channel/permission` —
     /// structured reply to a permission prompt the runtime
     /// emitted via
     /// [`crate::channel_permission::PERMISSION_REQUEST_METHOD`].
-    /// Phase 80.9.b.
     ChannelPermissionResponse { params: serde_json::Value },
     /// Any other notification method — forwarded verbatim for observers.
     Other(String),
@@ -63,7 +62,7 @@ pub fn channel_message_event(params: serde_json::Value) -> ClientEvent {
 
 /// Build a `ChannelPermissionResponse` event from raw params.
 /// Caller already classified the method as
-/// `PERMISSION_RESPONSE_METHOD`. Phase 80.9.b.
+/// `PERMISSION_RESPONSE_METHOD`.
 pub fn channel_permission_response_event(params: serde_json::Value) -> ClientEvent {
     ClientEvent::ChannelPermissionResponse { params }
 }

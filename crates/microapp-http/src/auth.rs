@@ -67,7 +67,7 @@ pub struct LiveTokenState {
     /// Current operator-token-hash (sha256 hex truncated to 16
     /// chars). Microapps register this as the source for
     /// `AdminClient::set_operator_token_hash` so SDK calls stamp
-    /// the rotated identity automatically (Phase 82.10.m).
+    /// the rotated identity automatically.
     pub operator_token_hash: ArcSwap<String>,
     rotate_lock: Mutex<()>,
 }

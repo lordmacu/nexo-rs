@@ -1,4 +1,4 @@
-//! Phase 82.10.n — production [`ChannelCredentialPersister`]
+//! Production [`ChannelCredentialPersister`]
 //! impls bridging the admin RPC `credentials/register` flow to
 //! per-channel plugin yaml + secret files.
 //!

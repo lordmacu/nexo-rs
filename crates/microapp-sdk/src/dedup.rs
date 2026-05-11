@@ -1,6 +1,5 @@
-//! Notification dedup cache (Phase 83.18 / F29 — lifted from
-//! `nexo-rs-extension-marketing` 0.17.x where it shipped as
-//! M15.53 / F9 / F25).
+//! Notification dedup cache (lifted from
+//! `nexo-rs-extension-marketing` 0.17.x).
 //!
 //! NATS at-least-once delivery means a transient broker
 //! disconnect can re-deliver the same `plugin.inbound.email.*`
@@ -83,7 +82,7 @@ impl DedupKey {
 /// marketing's volume (<1 publish/sec/tenant), this is a
 /// non-issue.
 ///
-/// ## Backends (F25)
+/// ## Backends
 ///
 /// `DedupCache` wraps an internal `Backend` enum so the
 /// public API stays unchanged across in-memory and
@@ -132,7 +131,7 @@ impl DedupCache {
         }
     }
 
-    /// F25 — open a sled-backed cache at `path`. Survives
+    /// Open a sled-backed cache at `path`. Survives
     /// process restarts so a NATS redelivery after a crash
     /// or planned redeploy still suppresses the duplicate
     /// publish. TTL stays the lazy in-process eviction
@@ -361,7 +360,7 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    // ─── F25 — sled backend (cross-restart dedup) ─────────────
+    // ─── sled backend (cross-restart dedup) ─────────────
 
     #[cfg(feature = "dedup-sled")]
     mod sled_backend {
@@ -406,8 +405,8 @@ mod tests {
 
         #[test]
         fn cross_restart_dedup_survives_reopen() {
-            // The headline F25 invariant: open → write →
-            // close → reopen → second call is deduped.
+            // The headline invariant: open → write → close →
+            // reopen → second call is deduped.
             let dir = tempfile::tempdir().unwrap();
             {
                 let cache = DedupCache::with_sled(dir.path(), Duration::from_secs(3600)).unwrap();

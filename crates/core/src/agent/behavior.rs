@@ -28,7 +28,7 @@ pub trait AgentBehavior: Send + Sync {
     async fn on_heartbeat(&self, _ctx: &AgentContext) -> anyhow::Result<()> {
         Ok(())
     }
-    /// Stub for Phase 3 LLM reasoning. Returns empty string by default.
+    /// Stub for LLM reasoning. Returns empty string by default.
     async fn decide(&self, _ctx: &AgentContext, _msg: &InboundMessage) -> anyhow::Result<String> {
         Ok(String::new())
     }

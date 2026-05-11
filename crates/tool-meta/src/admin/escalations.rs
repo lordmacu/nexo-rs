@@ -1,16 +1,16 @@
-//! Phase 82.14 — agent escalation request wire shapes.
+//! Agent escalation request wire shapes.
 //!
 //! Cross-app primitive: agents that hit work they cannot
 //! complete autonomously raise an escalation against the
 //! current `ProcessingScope`. Operators see a list, dismiss or
-//! take over via [`EscalationsResolveParams`]. v0 ships the
+//! take over via [`EscalationsResolveParams`]. This module ships the
 //! wire types + admin RPC params; the actual `escalate_to_human`
-//! built-in tool that produces these states is deferred to
-//! 82.14.b alongside the BindingContext→scope derivation.
+//! built-in tool that produces these states is wired separately,
+//! alongside the BindingContext→scope derivation.
 //!
-//! Same `#[non_exhaustive]` discipline as 82.13's
-//! `ProcessingScope` so future kinds (batch / image-gen /
-//! event) plug in without breaking microapps.
+//! Same `#[non_exhaustive]` discipline as `ProcessingScope` so
+//! future kinds (batch / image-gen / event) plug in without
+//! breaking microapps.
 
 use std::collections::BTreeMap;
 
@@ -72,7 +72,7 @@ pub enum EscalationUrgency {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResolvedBy {
-    /// Operator paused the scope via 82.13 — auto-resolved.
+    /// Operator paused the scope (processing pause) — auto-resolved.
     OperatorTakeover,
     /// Operator dismissed without action.
     OperatorDismissed {
@@ -157,7 +157,7 @@ pub struct EscalationsListParams {
     /// default 100.
     #[serde(default)]
     pub limit: usize,
-    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` returns
+    /// Multi-tenant filter. `Some(id)` returns
     /// only escalations whose owning agent has
     /// `agents.yaml.<agent_id>.tenant_id` matching. Defense-in-
     /// depth: cross-tenant queries return empty list.
@@ -191,12 +191,12 @@ pub struct EscalationsResolveParams {
     /// Scope to resolve. Must currently be `Pending`.
     pub scope: ProcessingScope,
     /// `dismissed` (with `dismiss_reason`) or `takeover`
-    /// (operator will pause via 82.13 separately).
+    /// (operator will pause processing separately).
     pub by: String,
     /// Free-form reason — required when `by = "dismissed"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dismiss_reason: Option<String>,
-    /// Operator bearer hash (Phase 82.12 token_hash shape).
+    /// Operator bearer hash (`token_hash` shape).
     pub operator_token_hash: String,
 }
 
@@ -210,8 +210,7 @@ pub struct EscalationsResolveResponse {
 }
 
 /// Notification literal pinned for the agent_event firehose
-/// extension (deferred to 82.14.b — emit site lands with the
-/// inbound dispatcher hook).
+/// extension (emit site lands with the inbound dispatcher hook).
 pub const ESCALATION_REQUESTED_NOTIFY_KIND: &str = "escalation_requested";
 /// Sibling literal for resolution events.
 pub const ESCALATION_RESOLVED_NOTIFY_KIND: &str = "escalation_resolved";

@@ -19,9 +19,9 @@ use thiserror::Error;
 use super::types::{CompletionHook, HookAction, HookPayload};
 
 /// Plugin ids whose origin does NOT want a chat-style notify.
-/// Extended as new non-chat origins (`cron`, `webhook`) land. PT-9
-/// upgrades this to a trait method on a future `OriginAdapter` so
-/// each plugin declares its own preference.
+/// Extended as new non-chat origins (`cron`, `webhook`) land. A
+/// future `OriginAdapter` trait method will let each plugin declare
+/// its own preference.
 pub const NON_CHAT_ORIGIN_PLUGINS: &[&str] = &["console", "cron", "webhook", "heartbeat"];
 
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -56,7 +56,7 @@ pub enum HookError {
     Idempotency(String),
 }
 
-/// Phase 67.F.2 — pluggable chainer the dispatcher consults when a
+/// Pluggable chainer the dispatcher consults when a
 /// `DispatchPhase` action fires. Decouples the hook layer from the
 /// concrete `program_phase_dispatch` plumbing so tests can supply a
 /// capturing implementation and runtime callers wrap up the
@@ -109,20 +109,20 @@ impl NatsHookPublisher for NoopNatsHookPublisher {
 }
 
 /// Concrete dispatcher used in production. Holds the pairing
-/// adapter registry (Phase 26) for chat notifications, and a NATS
+/// adapter registry for chat notifications, and a NATS
 /// publisher for `NatsPublish` action hooks.
 pub struct DefaultHookDispatcher {
     pub pairing: PairingAdapterRegistry,
     pub nats: Arc<dyn NatsHookPublisher>,
     pub timeout: Duration,
-    /// 67.F.4 — gate for the `shell` action. Default false.
+    /// Gate for the `shell` action. Default false.
     pub allow_shell: bool,
-    /// 67.F.2 — handler for `DispatchPhase` action. None disables
+    /// Handler for `DispatchPhase` action. None disables
     /// chaining (returns `ChainingNotWired`). Production wiring
     /// will populate this with a chainer that calls the runtime
     /// `program_phase_dispatch`.
     pub chainer: Option<Arc<dyn DispatchPhaseChainer>>,
-    /// PT-4 — when set, the dispatcher claims a slot in the
+    /// When set, the dispatcher claims a slot in the
     /// idempotency store BEFORE running the action. A duplicate
     /// firing (NATS replay, daemon restart between decide and
     /// commit) finds the slot taken and returns
@@ -174,7 +174,7 @@ impl HookDispatcher for DefaultHookDispatcher {
         hook: &CompletionHook,
         payload: &HookPayload,
     ) -> Result<(), HookError> {
-        // PT-4 — claim the idempotency slot atomically before
+        // Claim the idempotency slot atomically before
         // running the action. Duplicate firings find the slot
         // taken and skip without re-publishing.
         if let Some(store) = &self.idempotency {
@@ -199,7 +199,7 @@ impl HookDispatcher for DefaultHookDispatcher {
             Ok(r) => r,
             Err(_) => Err(HookError::Timeout(timeout)),
         };
-        // B10 — release the idempotency claim on failure so a
+        // Release the idempotency claim on failure so a
         // retry can run the action again. Successful firings keep
         // the slot taken so duplicate replays are skipped.
         if result.is_err() {
@@ -238,8 +238,8 @@ async fn run_action(
             // NATS / stdout, not via a chat reply. We list them
             // explicitly so the lookup never silently shadows a
             // legitimate channel id; new non-chat plugins extend
-            // NON_CHAT_ORIGIN_PLUGINS until PT-9 (trait-based
-            // wants_notify) lands.
+            // NON_CHAT_ORIGIN_PLUGINS until a trait-based
+            // wants_notify lands.
             if NON_CHAT_ORIGIN_PLUGINS.contains(&origin.plugin.as_str()) {
                 return Ok(());
             }

@@ -1,4 +1,4 @@
-//! Phase 83.8.6 — `HumanTakeover` SDK helper.
+//! `HumanTakeover` SDK helper.
 //!
 //! Three-step pattern for an operator-driven takeover of a paused
 //! conversation:
@@ -9,8 +9,7 @@
 //! 2. [`HumanTakeover::send_reply`] — dispatch one (or more) manual
 //!    replies through the daemon's
 //!    `processing/intervention` handler. Each call goes out via
-//!    the [`ChannelOutboundDispatcher`] wired in `nexo-setup`
-//!    (Phase 83.8.4).
+//!    the [`ChannelOutboundDispatcher`] wired in `nexo-setup`.
 //! 3. [`HumanTakeover::release`] — resume the agent.
 //!
 //! The helper is a thin orchestration over the generic
@@ -28,7 +27,7 @@ use uuid::Uuid;
 use super::{AdminClient, AdminError};
 
 /// Arguments for [`HumanTakeover::send_reply`]. Mirrors the
-/// `Reply` shape of `InterventionAction` (Phase 82.13) so callers
+/// `Reply` shape of `InterventionAction` so callers
 /// don't have to import the daemon-side enum.
 #[derive(Debug, Clone, Serialize)]
 pub struct SendReplyArgs {
@@ -44,7 +43,7 @@ pub struct SendReplyArgs {
     /// threaded replies.
     #[serde(default)]
     pub reply_to_msg_id: Option<String>,
-    /// Phase 82.13.b.1 — optional session id. When provided AND
+    /// Optional session id. When provided AND
     /// the daemon has a transcript appender wired (production
     /// always does), the operator's reply is appended to the
     /// agent transcript so the agent reanudes coherently after
@@ -67,7 +66,7 @@ impl SendReplyArgs {
         }
     }
 
-    /// Phase 82.13.b.1 — fluent setter for the session id used
+    /// Fluent setter for the session id used
     /// to stamp the operator reply on the agent transcript.
     pub fn with_session(mut self, session_id: Uuid) -> Self {
         self.session_id = Some(session_id);
@@ -83,7 +82,7 @@ pub struct HumanTakeover<'a> {
     admin: &'a AdminClient,
     scope: ProcessingScope,
     operator_token_hash: String,
-    /// Phase 82.13.b.2 — session id remembered for `release()` so
+    /// Session id remembered for `release()` so
     /// the operator can pass `summary_for_agent` without
     /// re-supplying the session. Set via [`Self::with_session`]
     /// (idempotent, returns `Self` so chains work).
@@ -118,7 +117,7 @@ impl<'a> HumanTakeover<'a> {
         })
     }
 
-    /// Phase 82.13.b.2 — pin the session id used for transcript
+    /// Pin the session id used for transcript
     /// stamping (operator reply via [`Self::send_reply`]) and
     /// summary injection (operator narrative via
     /// [`Self::release`]). Both calls fall back to per-call
@@ -154,7 +153,7 @@ impl<'a> HumanTakeover<'a> {
                 "reply_to_msg_id": args.reply_to_msg_id,
             },
         });
-        // Phase 82.13.b.1 — thread session_id when the caller
+        // Thread session_id when the caller
         // provided one. Falls back to the orchestrator's pinned
         // session (set via [`Self::with_session`]). Skip the
         // field on the wire when both are None so legacy
@@ -170,7 +169,7 @@ impl<'a> HumanTakeover<'a> {
 
     /// Resume the agent. Drops the orchestrator.
     ///
-    /// Phase 82.13.b.2 — when `summary_for_agent` is `Some` AND
+    /// When `summary_for_agent` is `Some` AND
     /// the orchestrator has a session pinned (via
     /// [`Self::with_session`]), the daemon stamps a `System`
     /// transcript entry `[operator_summary] <body>` so the
@@ -326,9 +325,8 @@ mod tests {
         assert!(a.session_id.is_none());
     }
 
-    /// Phase 82.13.b.1 — `with_session` threads the session id
-    /// onto the intervention frame so the daemon stamps the
-    /// reply on the agent transcript.
+    /// `with_session` threads the session id onto the intervention
+    /// frame so the daemon stamps the reply on the agent transcript.
     #[tokio::test]
     async fn send_reply_with_session_threads_session_id_onto_wire() {
         let sender = Arc::new(ScriptedSender::default());
@@ -376,9 +374,9 @@ mod tests {
         );
     }
 
-    /// Phase 82.13.b.2 — `release(Some("..."))` after
-    /// `.with_session(id)` threads both `session_id` and
-    /// `summary_for_agent` onto the resume frame.
+    /// `release(Some("..."))` after `.with_session(id)` threads
+    /// both `session_id` and `summary_for_agent` onto the resume
+    /// frame.
     #[tokio::test]
     async fn release_with_session_and_summary_threads_both_onto_wire() {
         let sender = Arc::new(ScriptedSender::default());
@@ -425,9 +423,9 @@ mod tests {
         );
     }
 
-    /// Phase 82.13.b.2 — `release(None)` MUST NOT emit
-    /// `summary_for_agent` on the wire even when a session is
-    /// pinned. Allows operators to release without a summary.
+    /// `release(None)` MUST NOT emit `summary_for_agent` on the
+    /// wire even when a session is pinned. Allows operators to
+    /// release without a summary.
     #[tokio::test]
     async fn release_without_summary_omits_field_on_wire() {
         let sender = Arc::new(ScriptedSender::default());
@@ -467,8 +465,8 @@ mod tests {
     }
 
     /// Round-trip without `with_session` MUST omit `session_id`
-    /// on the wire (graceful absence — pre-Phase 82.13.b daemons
-    /// keep accepting these frames).
+    /// on the wire (graceful absence — older daemons keep
+    /// accepting these frames).
     #[tokio::test]
     async fn send_reply_without_session_skips_field_on_wire() {
         let sender = Arc::new(ScriptedSender::default());

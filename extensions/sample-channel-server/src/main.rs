@@ -1,4 +1,4 @@
-//! Phase 80.9 fixture — minimal MCP server that acts as a
+//! Fixture: minimal MCP server that acts as a
 //! channel surface for nexo. Designed for end-to-end testing of
 //! the channel pipeline without spinning up a real Slack /
 //! Telegram / iMessage adapter.

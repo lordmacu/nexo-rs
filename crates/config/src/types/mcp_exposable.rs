@@ -1,4 +1,4 @@
-//! Phase 79.M — MCP exposure parity sweep.
+//! MCP exposure parity catalog.
 //!
 //! Static catalog of which runtime tools may be advertised by
 //! `nexo mcp-server` to external MCP clients (Claude Desktop, Cursor,
@@ -12,7 +12,7 @@
 //! - `BootKind::DeniedByPolicy` — denied by default (Heartbeat,
 //!   delegate, RemoteTrigger, etc.). `run_mcp_server` may still
 //!   provide explicit operator overrides for selected entries.
-//! - `BootKind::Deferred` — wiring postponed to a follow-up sub-phase.
+//! - `BootKind::Deferred` — wiring postponed to a follow-up.
 
 use serde::Serialize;
 
@@ -49,7 +49,7 @@ pub enum BootKind {
     /// Hard-coded default denial from the dispatcher. Carries a static
     /// reason surfaced in operator warnings.
     DeniedByPolicy { reason: &'static str },
-    /// Wiring deferred to a follow-up sub-phase.
+    /// Wiring deferred to a follow-up.
     Deferred {
         phase: &'static str,
         reason: &'static str,
@@ -71,7 +71,7 @@ pub struct ExposableToolEntry {
 /// Master catalog. Adding a tool here ≠ exposing it — the operator
 /// must still list the name in `mcp_server.expose_tools`.
 pub static EXPOSABLE_TOOLS: &[ExposableToolEntry] = &[
-    // --- Bucket Always (Phase 79.1–.4, .8, .13 — already shipped) ---
+    // --- Bucket Always ---
     ExposableToolEntry {
         name: "EnterPlanMode",
         tier: SecurityTier::ReadWrite,
@@ -254,7 +254,7 @@ pub static EXPOSABLE_TOOLS: &[ExposableToolEntry] = &[
         },
         feature_gate: None,
     },
-    // --- Deferred (sub-phases 79.M.b/c/d) ---
+    // --- Deferred ---
     ExposableToolEntry {
         name: "TeamCreate",
         tier: SecurityTier::Dangerous,

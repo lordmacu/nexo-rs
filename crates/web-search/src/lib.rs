@@ -1,10 +1,10 @@
-//! Phase 25 — multi-provider web search.
+//! Multi-provider web search.
 //!
 //! Native built-in tool that an agent can call as `web_search(query, ...)`.
 //! The runtime selects a provider (Brave / Tavily / DuckDuckGo / Perplexity),
 //! consults a shared SQLite cache, runs the call through a circuit
 //! breaker, sanitises the output, and (optionally) expands top hits via
-//! the Phase 21 [`LinkExtractor`].
+//! the [`LinkExtractor`].
 //!
 //! Boundary:
 //! - This crate owns the trait, the router, the cache, the providers,

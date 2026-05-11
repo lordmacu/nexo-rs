@@ -20,7 +20,7 @@ pub struct MemoryEntry {
     #[serde(default)]
     pub concept_tags: Vec<String>,
     pub created_at: DateTime<Utc>,
-    /// Phase 77.6 — memory type for per-type half-life decay in scoring.
+    /// Memory type for per-type half-life decay in scoring.
     /// None = legacy record, treated as Project (most conservative default).
     #[serde(default)]
     pub memory_type: Option<MemoryType>,
@@ -116,7 +116,7 @@ pub struct LongTermMemory {
     pool: SqlitePool,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     guard: Option<SecretGuard>,
-    /// Phase 36.2 — optional mutation observer. Fires once per write
+    /// Optional mutation observer. Fires once per write
     /// (insert / update / delete) so the snapshot subsystem (or any
     /// other audit consumer) can stream every memory mutation onto
     /// the `nexo.memory.mutated.<agent_id>` NATS subject. Absent by
@@ -134,7 +134,7 @@ impl LongTermMemory {
         Self::open_with_vector(path, None).await
     }
 
-    /// Phase 5.4 — open with an optional embedding provider. When supplied,
+    /// Open with an optional embedding provider. When supplied,
     /// `sqlite-vec` is registered as an auto-extension and the `vec_memories`
     /// virtual table is created (dimension taken from the provider). A
     /// dimension mismatch against an existing DB aborts with a clear error
@@ -186,7 +186,7 @@ impl LongTermMemory {
         self
     }
 
-    /// Phase 36.2 — attach a mutation observer. Fires best-effort on
+    /// Attach a mutation observer. Fires best-effort on
     /// every successful `remember_typed` / `forget` write. Hook
     /// failure must never poison the writer's transaction (the trait
     /// contract enforces this — `on_mutation` returns `()`).
@@ -283,7 +283,7 @@ impl LongTermMemory {
             }
         }
 
-        // Phase 77.6 — memory_type column for per-type half-life decay.
+        // memory_type column for per-type half-life decay.
         // Idempotent: swallow "duplicate column" on re-runs.
         if let Err(e) = sqlx::query("ALTER TABLE memories ADD COLUMN memory_type TEXT")
             .execute(&self.pool)
@@ -389,7 +389,7 @@ impl LongTermMemory {
         .execute(&self.pool)
         .await?;
 
-        // Recall-signal tracking (Phase 10.5). One row per memory hit produced
+        // Recall-signal tracking. One row per memory hit produced
         // by `recall()`. Signals feed the dreaming deep-phase scoring.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS recall_events (
@@ -411,7 +411,7 @@ impl LongTermMemory {
         .execute(&self.pool)
         .await?;
 
-        // Dreaming promotion ledger (Phase 10.6). One row per memory that the
+        // Dreaming promotion ledger. One row per memory that the
         // deep phase has already promoted to MEMORY.md — prevents double-promotion
         // across sweeps and gives dreaming a quick "have I seen this before" lookup.
         sqlx::query(
@@ -445,7 +445,7 @@ impl LongTermMemory {
         self.remember_typed(agent_id, content, tags, None).await
     }
 
-    /// Phase 77.6 — `remember()` variant that also stores the memory type.
+    /// `remember()` variant that also stores the memory type.
     /// When `None`, the column is left NULL (legacy).
     pub async fn remember_typed(
         &self,
@@ -494,7 +494,7 @@ impl LongTermMemory {
 
         tx.commit().await?;
 
-        // Phase 36.2 — best-effort mutation event. Fires after the
+        // Best-effort mutation event. Fires after the
         // SQLite commit succeeds so subscribers never observe a
         // rolled-back row.
         if let Some(hook) = &self.mutation_hook {
@@ -508,7 +508,7 @@ impl LongTermMemory {
             .await;
         }
 
-        // Phase 5.4 — best-effort embedding: vector path is additive, FTS
+        // Best-effort embedding: vector path is additive, FTS
         // already covers recall.
         if let Some(provider) = &self.embedding {
             let trimmed = content.trim();
@@ -552,7 +552,7 @@ impl LongTermMemory {
         query: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        // Phase 10.7: expand the raw query with up to 3 derived concept tags so
+        // Expand the raw query with up to 3 derived concept tags so
         // FTS5 MATCH also hits memories whose stored `content` diverges from
         // the query surface text but shares a known concept.
         let extra_tags = derive_concept_tags("", query, 3);
@@ -615,7 +615,7 @@ impl LongTermMemory {
         Ok(entries)
     }
 
-    /// Replace the concept_tags column for an existing memory row (Phase 10.7).
+    /// Replace the concept_tags column for an existing memory row.
     /// Used by the dreaming sweep when promoting memories to MEMORY.md.
     pub async fn set_concept_tags(&self, memory_id: Uuid, tags: &[String]) -> anyhow::Result<bool> {
         let json = serde_json::to_string(tags)?;
@@ -628,7 +628,7 @@ impl LongTermMemory {
         Ok(affected > 0)
     }
 
-    /// Phase 10.8 — number of memories for this agent.
+    /// Number of memories for this agent.
     pub async fn count_memories(&self, agent_id: &str) -> anyhow::Result<u64> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memories WHERE agent_id = ?")
             .bind(agent_id)
@@ -637,7 +637,7 @@ impl LongTermMemory {
         Ok(count.max(0) as u64)
     }
 
-    /// Phase 10.8 — distinct session count across all interactions this agent
+    /// Distinct session count across all interactions this agent
     /// has participated in.
     pub async fn count_sessions(&self, agent_id: &str) -> anyhow::Result<u64> {
         let (count,): (i64,) = sqlx::query_as(
@@ -649,7 +649,7 @@ impl LongTermMemory {
         Ok(count.max(0) as u64)
     }
 
-    /// Phase 10.8 — number of memories promoted to MEMORY.md by dreaming.
+    /// Number of memories promoted to MEMORY.md by dreaming.
     pub async fn count_promotions(&self, agent_id: &str) -> anyhow::Result<u64> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM memory_promotions WHERE agent_id = ?")
@@ -659,7 +659,7 @@ impl LongTermMemory {
         Ok(count.max(0) as u64)
     }
 
-    /// Phase 10.8 — timestamp of the most recent dreaming promotion, or
+    /// Timestamp of the most recent dreaming promotion, or
     /// `None` if no sweep has promoted anything yet.
     pub async fn last_promotion_ts(&self, agent_id: &str) -> anyhow::Result<Option<DateTime<Utc>>> {
         let row: Option<(Option<i64>,)> =
@@ -672,7 +672,7 @@ impl LongTermMemory {
             .and_then(DateTime::from_timestamp_millis))
     }
 
-    /// Phase 10.8 — number of recall events recorded since `since_ms`
+    /// Number of recall events recorded since `since_ms`
     /// (inclusive).
     pub async fn count_recall_events_since(
         &self,
@@ -688,7 +688,7 @@ impl LongTermMemory {
         Ok(count.max(0) as u64)
     }
 
-    /// Phase 10.8 — top concept tags observed across memories touched by
+    /// Top concept tags observed across memories touched by
     /// recall events in the last window. Tally is done in Rust (no JSON1
     /// dependency); join capped at 200 rows.
     pub async fn top_concept_tags_since(
@@ -725,7 +725,7 @@ impl LongTermMemory {
         Ok(sorted)
     }
 
-    /// Phase 5.4 — semantic recall via sqlite-vec nearest-neighbor.
+    /// Semantic recall via sqlite-vec nearest-neighbor.
     /// Returns `Err` if no embedding provider is configured.
     pub async fn recall_vector(
         &self,
@@ -811,7 +811,7 @@ impl LongTermMemory {
         Ok(out)
     }
 
-    /// Phase 5.4 — reciprocal-rank-fused FTS + vector recall. If no
+    /// Reciprocal-rank-fused FTS + vector recall. If no
     /// embedding provider is configured OR the vector branch errors at
     /// runtime, gracefully falls back to FTS-only.
     pub async fn recall_hybrid(
@@ -852,7 +852,7 @@ impl LongTermMemory {
         Ok(ranked.into_iter().take(limit).map(|(_, m)| m).collect())
     }
 
-    /// Phase 77.6 — find relevant memories with composite scoring:
+    /// Find relevant memories with composite scoring:
     /// similarity × recency (per-type half-life) × log1p(frequency),
     /// filtered by already-surfaced dedup and annotated with staleness
     /// warnings.
@@ -912,7 +912,7 @@ impl LongTermMemory {
         Ok(results)
     }
 
-    /// Phase 77.6 — fetch recall-event counts for a set of memory entries.
+    /// Fetch recall-event counts for a set of memory entries.
     async fn frequency_counts_for(
         &self,
         agent_id: &str,
@@ -1002,7 +1002,7 @@ impl LongTermMemory {
 
         tx.commit().await?;
 
-        // Phase 36.2 — best-effort mutation event after commit.
+        // Best-effort mutation event after commit.
         if rows > 0 {
             if let (Some(hook), Some((agent_id,))) = (&self.mutation_hook, agent_id) {
                 hook.on_mutation(
@@ -1518,7 +1518,7 @@ impl LongTermMemory {
         Ok(updated > 0)
     }
 
-    // ── Recall signal tracking (Phase 10.5) ──────────────────────────────────
+    // ── Recall signal tracking ──────────────────────────────────
 
     /// Record that a memory was surfaced by a search query. Called once per
     /// hit, typically right after `recall()` returns. Score is caller-chosen
@@ -1576,7 +1576,7 @@ impl LongTermMemory {
         Ok(aggregate_signals(&rows, now_ms, half_life))
     }
 
-    /// Phase 77.6 — look up the memory_type for a single memory entry.
+    /// Look up the memory_type for a single memory entry.
     async fn memory_type_for(&self, memory_id: Uuid) -> anyhow::Result<Option<MemoryType>> {
         let row: Option<(Option<String>,)> =
             sqlx::query_as("SELECT memory_type FROM memories WHERE id = ?")
@@ -1690,7 +1690,7 @@ impl LongTermMemory {
         Ok(by_id
             .into_iter()
             .map(|(mid, events)| {
-                // Phase 77.6 — default Project half-life for bulk path.
+                // Default Project half-life for bulk path.
                 // Per-memory type lookup deferred to avoid N+1 queries.
                 (
                     mid,
@@ -1880,7 +1880,7 @@ fn aggregate_signals(
 
     let latest_ts = events.iter().map(|(_, _, ts)| *ts).max().unwrap_or(now_ms);
     let days_since = ((now_ms - latest_ts).max(0) as f64) / (1000.0 * 60.0 * 60.0 * 24.0);
-    // Phase 77.6 — per-type half-life from MemoryType instead of hardcoded 7.0.
+    // Per-type half-life from MemoryType instead of hardcoded 7.0.
     // half_life_days = 0 → instant decay (recency = 0.0).
     let recency = if half_life_days <= 0.0 {
         0.0

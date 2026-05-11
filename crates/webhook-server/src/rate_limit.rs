@@ -1,6 +1,6 @@
 //! Token-bucket rate limiter keyed on `(source_id, client_ip)`.
 //!
-//! Reuses the same algorithm as Phase 80.9.g `TokenBucket` in
+//! Reuses the same algorithm as the `TokenBucket` in
 //! `nexo-mcp::channel` — single source of truth across the
 //! framework's rate-limit surface (channels + webhooks). Lazy
 //! refill on each call keeps the data structure free of background

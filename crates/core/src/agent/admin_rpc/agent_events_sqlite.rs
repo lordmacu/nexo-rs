@@ -1,4 +1,4 @@
-//! Phase 82.11.log — SQLite-backed durable agent event log.
+//! SQLite-backed durable agent event log.
 //!
 //! v0 firehose ([`crate::agent::agent_events::BroadcastAgentEventEmitter`])
 //! is in-process broadcast — subscribers that miss a window

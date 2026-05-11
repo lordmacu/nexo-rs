@@ -1,11 +1,11 @@
-//! Phase 79.10 — `config_changes_tail` tool.
+//! `config_changes_tail` tool.
 //!
 //! Read-only LLM tool that surfaces the latest entries in the
 //! `ConfigChangesStore` audit table. Always available regardless
 //! of the `config-self-edit` Cargo feature flag; reads only.
 //!
 //! Pattern lift: `crates/core/src/agent/agent_turns_tail_tool.rs`
-//! (Phase 72) — same shape, different store.
+//! — same shape, different store.
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;

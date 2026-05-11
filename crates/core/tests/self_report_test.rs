@@ -1,4 +1,4 @@
-//! Phase 10.8 — end-to-end test of self-report tools against a seeded
+//! End-to-end test of self-report tools against a seeded
 //! LongTermMemory + a temp workspace with IDENTITY/SOUL/MEMORY fixtures.
 
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-//! Phase 81.26 — `VectorBackendRegistry` per-name registry of
+//! `VectorBackendRegistry` per-name registry of
 //! `VectorBackend` implementations.
 //!
 //! Subprocess plugins declaring

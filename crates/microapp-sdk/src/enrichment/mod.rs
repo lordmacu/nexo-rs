@@ -1,8 +1,7 @@
 // Enrichment primitives for microapps that build per-sender
 // profiles (CRM-shaped, vendor onboarding, partner portals).
-// Lifted from `nexo-rs-extension-marketing` per M15.5 + 5.b +
-// 5.c so any microapp resolving "who is this email/domain"
-// reuses the contract.
+// Lifted from `nexo-rs-extension-marketing` so any microapp
+// resolving "who is this email/domain" reuses the contract.
 //
 // Three pillars in one feature:
 //   - domain_classifier: 200+ public providers + 30 disposable

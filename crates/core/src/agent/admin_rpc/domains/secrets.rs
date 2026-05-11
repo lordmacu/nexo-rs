@@ -1,4 +1,4 @@
-//! Phase 82.10.k — `nexo/admin/secrets/write` handler.
+//! `nexo/admin/secrets/write` handler.
 //!
 //! Validates the input shape (regex-bounded `name`, byte-bounded
 //! `value`) then delegates to a [`SecretsStore`] implementation.
@@ -34,7 +34,7 @@ const MAX_VALUE_BYTES: usize = 8192;
 
 /// Dispatcher entry point. Validates the input, then forwards to
 /// the configured `SecretsStore` impl. Audit redaction of the
-/// `value` field is handled by the audit writer (Phase 82.10.h),
+/// `value` field is handled by the audit writer,
 /// not here — the cleartext flows through this handler so the
 /// store impl can persist it, but never lands in the audit DB.
 pub async fn write(store: &dyn SecretsStore, raw_params: Value) -> AdminRpcResult {

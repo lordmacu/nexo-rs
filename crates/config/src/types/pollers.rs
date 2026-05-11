@@ -49,7 +49,7 @@ pub struct PollerJob {
     pub id: String,
     /// Discriminator matching `Poller::kind()`.
     pub kind: String,
-    /// Agent whose Phase 17 credentials this job uses.
+    /// Agent whose credentials this job uses.
     pub agent: String,
     /// `Every`, `Cron`, or `At` — parsed by `nexo-poller`.
     pub schedule: serde_yaml::Value,

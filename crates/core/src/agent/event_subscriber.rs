@@ -1,8 +1,8 @@
-//! Phase 82.4.b — runtime task that subscribes to a NATS subject
-//! pattern, renders the operator's mustache-lite template (or
-//! builds a `<event/>` tick marker), and re-publishes a
-//! synthesised [`InboundEvent::Message`] so the existing inbound
-//! pipeline drives the agent turn.
+//! Runtime task that subscribes to a NATS subject pattern,
+//! renders the operator's mustache-lite template (or builds a
+//! `<event/>` tick marker), and re-publishes a synthesised
+//! [`InboundEvent::Message`] so the existing inbound pipeline
+//! drives the agent turn.
 //!
 //! Spawned by the boot supervisor — one task per `(agent, binding)`
 //! pair. Lifecycle:
@@ -10,9 +10,6 @@
 //! ```text
 //! spawn → subscribe → mpsc<buffer> → consumer worker → cancel.cancelled() → drain → exit
 //! ```
-//!
-//! The wire shape, validation rules, and `BindingContext.event_source`
-//! field were shipped in the Phase 82.4 foundations slice.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -99,7 +96,7 @@ pub fn build_synthesised_payload(binding: &EventSubscriberBinding, event: &Event
         "synthesis_mode": binding.synthesize_inbound.as_str(),
     });
 
-    // Phase 82.5 — surface the operator-declared
+    // Surface the operator-declared
     // [`InboundKind`] so `runtime::extract_inbound_meta` stamps
     // `_meta.nexo.inbound.kind` accordingly. Default
     // `external_user` matches synthesised webhook / event sources;
@@ -302,8 +299,8 @@ pub async fn run_event_subscriber(
                 // Defensive hot-loop guard: if this binding's
                 // pattern accidentally matches its own re-publish
                 // topic, drop the self-event to prevent runaway
-                // recursion. Phase 82.4 schema validate is the
-                // primary guard; this is belt-and-suspenders for
+                // recursion. Schema validation is the primary
+                // guard; this is belt-and-suspenders for
                 // the "operator force-bypassed validate" path.
                 let republish_topic = event_inbound_topic(&sub.binding.id);
                 if event.topic == republish_topic {

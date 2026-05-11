@@ -1,4 +1,4 @@
-//! Phase 31.6 — `nexo plugin new <id> --lang <lang>` scaffolder.
+//! `nexo plugin new <id> --lang <lang>` scaffolder.
 //!
 //! Compiles in the four `extensions/template-plugin-{rust,python,
 //! typescript,php}/` directories via `include_dir!`, then on

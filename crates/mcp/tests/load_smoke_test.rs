@@ -1,5 +1,5 @@
-//! Phase 76.12 — load smoke test: 50 sessions × 200 requests = 10 000
-//! total tool calls against a loopback HTTP server with no caps.
+//! Load smoke test: 50 sessions × 200 requests = 10 000 total
+//! tool calls against a loopback HTTP server with no caps.
 //!
 //! Measures p99 request latency and fails if it exceeds 500 ms.
 //! 500 ms is intentionally generous for CI environments; local
@@ -96,7 +96,7 @@ async fn load_smoke_p99_under_500ms() {
     const SESSIONS: usize = 50;
     const REQUESTS_PER_SESSION: usize = 200;
 
-    // Phase 1 — initialize SESSIONS sessions in parallel.
+    // Initialize SESSIONS sessions in parallel.
     let mut session_tasks = Vec::with_capacity(SESSIONS);
     for _ in 0..SESSIONS {
         let client = Arc::clone(&client);
@@ -128,7 +128,7 @@ async fn load_smoke_p99_under_500ms() {
     }
     assert_eq!(sessions.len(), SESSIONS);
 
-    // Phase 2 — each session fires REQUESTS_PER_SESSION sequential calls.
+    // Each session fires REQUESTS_PER_SESSION sequential calls.
     // Collect all durations.
     let all_durations: Arc<std::sync::Mutex<Vec<Duration>>> = Arc::new(std::sync::Mutex::new(
         Vec::with_capacity(SESSIONS * REQUESTS_PER_SESSION),
@@ -168,7 +168,7 @@ async fn load_smoke_p99_under_500ms() {
         t.await.expect("session task");
     }
 
-    // Phase 3 — compute p99 and assert.
+    // Compute p99 and assert.
     let mut durations = Arc::try_unwrap(all_durations)
         .unwrap()
         .into_inner()

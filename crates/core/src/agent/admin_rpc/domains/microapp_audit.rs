@@ -1,4 +1,4 @@
-//! Phase 83.12.audit-page — `nexo/admin/microapp_audit/tail`
+//! `nexo/admin/microapp_audit/tail`
 //! handler. Backs the agent-creator-microapp's audit log page.
 //!
 //! Read-only. The matching write path lives in

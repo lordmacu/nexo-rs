@@ -1,4 +1,4 @@
-//! Phase 82.10.o — `nexo/admin/auth/rotate_token` handler.
+//! `nexo/admin/auth/rotate_token` handler.
 //!
 //! Validates the input shape (`new_token` length when supplied;
 //! `reason` truncation deferred to the adapter) then delegates

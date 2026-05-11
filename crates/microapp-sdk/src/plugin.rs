@@ -1,6 +1,5 @@
-//! Phase 81.15.a — Child-side helper for out-of-tree subprocess
-//! plugins. Pairs with `nexo-core`'s `SubprocessNexoPlugin`
-//! host-side adapter (Phase 81.14 + 81.14.b).
+//! Child-side helper for out-of-tree subprocess plugins. Pairs
+//! with `nexo-core`'s `SubprocessNexoPlugin` host-side adapter.
 //!
 //! Plugin authors avoid hand-rolling the JSON-RPC parser, manifest
 //! handshake, and broker-publish framing by using
@@ -50,18 +49,13 @@
 //!   `broker.publish` notification on stdout
 //! - `shutdown` request → `{ ok: true }` reply, then loop exits
 //!
-//! # IRROMPIBLE refs
+//! # Related code
 //!
-//! - Internal: `crates/microapp-sdk/src/runtime.rs:87-264` —
-//!   existing JSON-RPC dispatch loop pattern reused structurally
-//!   (different methods, but same line/parse/dispatch shape).
-//! - Internal: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`
+//! - `crates/microapp-sdk/src/runtime.rs` — the JSON-RPC
+//!   dispatch loop pattern reused structurally here (different
+//!   methods, same line/parse/dispatch shape).
+//! - `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`
 //!   — host-side wire spec the SDK must match.
-//! - claude-code-leak `src/utils/computerUse/mcpServer.ts` — MCP
-//!   child-side server pattern (initialize, notifications without
-//!   `id`).
-//! - OpenClaw absence: their channel plugins ran in-process Node,
-//!   no separate child-side SDK.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -130,7 +124,7 @@ where
     }
 }
 
-/// Phase 81.15.c — child-side request-response correlation map.
+/// Child-side request-response correlation map.
 /// Each outbound request (memory.recall, llm.complete, ...) is
 /// keyed by an integer id; the dispatch loop's reader looks up
 /// the matching pending entry and resolves it when the host
@@ -139,15 +133,14 @@ where
 /// they never collide with the child's outbound id space (which
 /// starts at 100).
 ///
-/// 81.15.c.b — pending value type changed from a single oneshot
-/// to an enum [`PendingKind`] so streaming requests
-/// (`complete_llm_stream`) can register both a `mpsc` receiver
-/// for delta chunks AND a final oneshot for the
+/// The pending value is an enum [`PendingKind`] so streaming
+/// requests (`complete_llm_stream`) can register both a `mpsc`
+/// receiver for delta chunks AND a final oneshot for the
 /// `LlmCompleteResult` reply.
 type ChildPending = Arc<DashMap<u64, PendingKind>>;
 
-/// Phase 81.15.c.b — variant of pending entry kept alive while a
-/// child request is in flight. The dispatch loop's response
+/// Variant of pending entry kept alive while a child request is
+/// in flight. The dispatch loop's response
 /// path resolves `Single` / `Streaming.final_tx`; the
 /// notification path pushes chunks into `Streaming.delta_tx`.
 #[doc(hidden)]
@@ -182,7 +175,7 @@ fn next_request_id(counter: &AtomicU64) -> u64 {
     counter.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Phase 81.15.c — error returned by child-issued RPC requests.
+/// Error returned by child-issued RPC requests.
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
     /// Host returned a JSON-RPC error response. `code` is the
@@ -219,12 +212,12 @@ pub enum RpcError {
 /// - `publish(topic, event)` — emits a `broker.publish`
 ///   notification. Host validates the topic against its allowlist.
 ///
-/// **Requests (request-response, Phase 81.15.c):**
+/// **Requests (request-response):**
 /// - `recall_memory(agent_id, query, limit)` —
 ///   long-term memory FTS recall.
 /// - `complete_llm(params)` — LLM chat completion (non-streaming
-///   today; streaming via `params.stream = true` ships in
-///   Phase 81.15.c.b SDK).
+///   today; streaming via `params.stream = true` is also
+///   available).
 ///
 /// Cheap to clone (`Arc` internals). Plugin authors typically
 /// receive one inside their `BrokerEventHandler` and clone for
@@ -236,7 +229,7 @@ pub struct BrokerSender {
     next_id: Arc<AtomicU64>,
 }
 
-/// Phase 81.15.c — typed params for `complete_llm`. Mirrors the
+/// Typed params for `complete_llm`. Mirrors the
 /// wire shape in `nexo-plugin-contract.md` §5.2.
 #[derive(Debug, Clone, Default)]
 pub struct LlmCompleteParams {
@@ -256,7 +249,7 @@ pub struct LlmCompleteParams {
     pub system_prompt: Option<String>,
 }
 
-/// Phase 81.15.c — typed result from `complete_llm`. Mirrors the
+/// Typed result from `complete_llm`. Mirrors the
 /// host-side `handle_llm_complete` response shape. Local
 /// `TokenCount` shape (instead of `nexo_llm::TokenUsage`) keeps
 /// the SDK independent of any serde-derive quirks upstream.
@@ -274,7 +267,7 @@ pub struct LlmCompleteResult {
     pub usage: TokenCount,
 }
 
-/// Phase 81.15.c — token usage count returned in
+/// Token usage count returned in
 /// `LlmCompleteResult.usage`. Same shape as the host emits.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TokenCount {
@@ -287,8 +280,8 @@ pub struct TokenCount {
 }
 
 impl BrokerSender {
-    /// Phase 81.15.c — issue an RPC request to the daemon and
-    /// await the response. Allocates a fresh id, registers a
+    /// Issue an RPC request to the daemon and await the response.
+    /// Allocates a fresh id, registers a
     /// oneshot in the pending map, writes the request frame,
     /// then awaits the response with a 30 s timeout. On timeout
     /// the pending entry is removed; a delayed reply is dropped
@@ -351,7 +344,7 @@ impl BrokerSender {
         }
     }
 
-    /// Phase 81.15.c — typed wrapper for `memory.recall`. Asks
+    /// Typed wrapper for `memory.recall`. Asks
     /// the daemon's long-term memory for entries matching `query`
     /// for `agent_id`, capped at `limit` results. Returns the
     /// deserialized `Vec<MemoryEntry>` from the response payload.
@@ -378,7 +371,7 @@ impl BrokerSender {
             .map_err(|e| RpcError::Decode(format!("memory.recall entries: {e}")))
     }
 
-    /// Phase 81.15.c.b — streaming variant of `complete_llm`.
+    /// Streaming variant of `complete_llm`.
     /// Issues the request with `stream: true` and returns an
     /// [`LlmStream`] handle the caller drives via
     /// [`LlmStream::next_chunk`] (delta chunks as they arrive)
@@ -448,7 +441,7 @@ impl BrokerSender {
         })
     }
 
-    /// Phase 81.15.c — typed wrapper for `llm.complete`
+    /// Typed wrapper for `llm.complete`
     /// (non-streaming). Builds the JSON-RPC params from
     /// [`LlmCompleteParams`], issues the request, deserializes
     /// the response into [`LlmCompleteResult`].
@@ -501,7 +494,7 @@ impl BrokerSender {
 }
 
 // ────────────────────────────────────────────────────────────────
-// Phase 81.17.c / 81.29.b — child-side tool dispatch
+// Child-side tool dispatch
 //
 // Wire shape (contract v1.10.0 §5.t):
 //   host  → child   `tool.invoke { plugin_id, tool_name, args, agent_id }`
@@ -529,7 +522,7 @@ impl BrokerSender {
 /// authorise).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolDef {
-    /// LLM-facing tool name. Per 81.3 namespace policy must match
+    /// LLM-facing tool name. Per namespace policy must match
     /// `<plugin_id>_*` or `ext_<plugin_id>_*`.
     pub name: String,
     /// One-sentence description shown to the LLM in the tool
@@ -587,7 +580,7 @@ pub enum ToolInvocationError {
     #[error("unavailable: {0}")]
     Unavailable(String),
     /// `-33405` — tool exists but the caller is not authorised.
-    /// Reserved for future capability-aware ACLs (81.28.b).
+    /// Reserved for future capability-aware ACLs.
     #[error("denied: {0}")]
     Denied(String),
 }
@@ -659,7 +652,7 @@ where
     }
 }
 
-/// Phase 81.17.c.ctx — tool dispatch context bundling host
+/// tool dispatch context bundling host
 /// resources the handler can reach. Designed to grow without
 /// breaking the [`ToolHandlerWithContext`] signature: caller
 /// pattern-matches the fields they need, ignores the rest.
@@ -700,7 +693,7 @@ impl std::fmt::Debug for ToolContext {
     }
 }
 
-/// Phase 81.17.c.ctx — like [`ToolHandler`] but receives a
+/// like [`ToolHandler`] but receives a
 /// [`ToolContext`] alongside the [`ToolInvocation`]. Use this
 /// variant when the tool body needs to publish / request /
 /// LLM-call from the host. Register via
@@ -769,27 +762,27 @@ pub struct PluginAdapter {
     server_version: String,
     on_broker_event: Option<Arc<dyn BrokerEventHandler>>,
     on_shutdown: Option<Arc<dyn ShutdownHandler>>,
-    /// Phase 81.17.c — tool defs advertised in the `initialize`
+    /// Tool defs advertised in the `initialize`
     /// reply's `tools: [...]` field. The host's decoder
     /// (`nexo_core::agent::tool_remote::RemoteToolDef`) consumes
     /// this list to register `RemoteToolHandler`s in the agent's
     /// scoped registry. Empty when the plugin doesn't expose
     /// tools — initialize-reply omits the field.
     declared_tools: Vec<ToolDef>,
-    /// Phase 81.17.c — single dispatch closure invoked on every
+    /// Single dispatch closure invoked on every
     /// `tool.invoke` request. `None` when the plugin doesn't
     /// expose tools — `tool.invoke` requests reply `-32601 method
     /// not found` so the host's RemoteToolHandler surfaces a
     /// clear error.
     tool_handler: Option<Arc<dyn ToolHandler>>,
-    /// Phase 81.17.c.ctx — like [`tool_handler`] but the
+    /// Like [`tool_handler`] but the
     /// closure also receives a [`ToolContext`] (broker access,
     /// plugin id). Mutually exclusive with `tool_handler`;
     /// when both are set the with-context handler wins
     /// (operator likely migrated incrementally + forgot to
     /// drop the old call).
     tool_handler_with_context: Option<Arc<dyn ToolHandlerWithContext>>,
-    /// Phase 92 — outbound drain channel populated by
+    /// Outbound drain channel populated by
     /// [`PluginAdapter::with_stdio_bridge_broker`]. The dispatch
     /// loop spawns a task at startup that forwards each
     /// drained `Value` onto the same stdout writer the rest of
@@ -799,7 +792,7 @@ pub struct PluginAdapter {
     outbound_drain: Option<mpsc::Receiver<Value>>,
 }
 
-/// Phase 81.15.c.b — handle returned by
+/// Handle returned by
 /// [`BrokerSender::complete_llm_stream`]. Yields text chunks as
 /// the host streams them, then a final [`LlmCompleteResult`] with
 /// usage + finish reason after the stream closes.
@@ -918,7 +911,7 @@ impl PluginAdapter {
         self
     }
 
-    /// Phase 92 — wire a [`StdioBridgeBroker`] into the adapter.
+    /// Wire a [`StdioBridgeBroker`] into the adapter.
     /// Returns the adapter (chainable) plus an `Arc<StdioBridgeBroker>`
     /// the plugin can wrap in `nexo_broker::AnyBroker::stdio_bridge`
     /// and use through the [`nexo_broker::BrokerHandle`] trait.
@@ -967,7 +960,7 @@ impl PluginAdapter {
         (self, broker_arc)
     }
 
-    /// Phase 81.17.c — declare the tools this plugin will expose
+    /// Declare the tools this plugin will expose
     /// in its `initialize` reply. Each [`ToolDef::name`] MUST
     /// appear in the manifest's `[plugin.extends] tools = [...]`
     /// allowlist or the host kills the subprocess at handshake.
@@ -978,7 +971,7 @@ impl PluginAdapter {
         self
     }
 
-    /// Phase 81.17.c — register the dispatch handler for
+    /// Register the dispatch handler for
     /// incoming `tool.invoke` requests. The handler matches on
     /// [`ToolInvocation::tool_name`] and routes to per-tool
     /// logic; returning `Ok(value)` becomes the JSON-RPC
@@ -992,7 +985,7 @@ impl PluginAdapter {
         self
     }
 
-    /// Phase 81.17.c.ctx — same as [`Self::on_tool`] but the
+    /// Same as [`Self::on_tool`] but the
     /// handler closure receives a [`ToolContext`] alongside
     /// the [`ToolInvocation`]. Use this when the tool body
     /// needs to publish to the broker, request via JSON-RPC,
@@ -1051,7 +1044,7 @@ async fn dispatch_loop<R>(
 where
     R: AsyncBufRead + Unpin + Send + 'static,
 {
-    // Phase 92 — if the operator wired a StdioBridgeBroker via
+    // if the operator wired a StdioBridgeBroker via
     // `with_stdio_bridge_broker`, the outbound mpsc Receiver lives
     // on `adapter.outbound_drain`. Spawn a forwarder task that
     // drains each `Value` into the same writer the rest of the
@@ -1090,7 +1083,7 @@ where
     let mut lines = reader.lines();
     let manifest_value = serde_json::to_value(&adapter.cached_manifest)
         .map_err(|e| SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
-    // Phase 81.15.c — child-side request-response correlation.
+    // Child-side request-response correlation.
     // Each outbound request (memory.recall / llm.complete / ...)
     // registers a oneshot here under its allocated id; the reader
     // demuxes response frames (id + result/error, no method) back
@@ -1113,7 +1106,7 @@ where
         let method = frame.get("method").and_then(Value::as_str).unwrap_or("");
         let params = frame.get("params").cloned().unwrap_or(Value::Null);
 
-        // Phase 81.15.c — RESPONSE to one of OUR outbound
+        // Response to one of OUR outbound
         // requests: frame has `id` AND no `method` AND has
         // `result` or `error`. Look up in pending map; resolve
         // the oneshot. Out-of-order responses (id we don't
@@ -1143,7 +1136,7 @@ where
                                 let _ = sender.send(payload);
                             }
                             PendingKind::Streaming { final_tx, .. } => {
-                                // Phase 81.15.c.b — final response
+                                // Final response
                                 // for a streaming request. delta_tx
                                 // drops with the enum, closing the
                                 // chunks channel cleanly so the
@@ -1207,7 +1200,7 @@ where
                         pending: pending.clone(),
                         next_id: next_id.clone(),
                     };
-                    // Phase 81.15.c — spawn the handler so the
+                    // Spawn the handler so the
                     // dispatch loop keeps reading the next line
                     // while the handler awaits any RPC responses.
                     // Without spawn, a handler that calls
@@ -1222,7 +1215,7 @@ where
                     });
                 }
             } else if method == "llm.complete.delta" {
-                // Phase 81.15.c.b — streaming chunk for an
+                // Streaming chunk for an
                 // outstanding `complete_llm_stream` request. Look
                 // up the pending entry by request_id; if it's
                 // Streaming, push the chunk into delta_tx. If the
@@ -1256,7 +1249,7 @@ where
 
         match method {
             "initialize" => {
-                // Phase 81.17.c — when the plugin declared tools,
+                // When the plugin declared tools,
                 // emit them as `tools: [...]` so the host's
                 // `Inner.declared_tools` (subprocess.rs:1052)
                 // populates and `register_remote_tool_handlers_after_init`
@@ -1295,12 +1288,12 @@ where
                 break;
             }
             "tool.invoke" => {
-                // Phase 81.17.c — host-initiated tool dispatch. No
+                // Host-initiated tool dispatch. No
                 // registered handler ⇒ reply with -32601 so the
                 // host's `RemoteToolHandler` surfaces a typed
                 // ToolError to the agent.
                 //
-                // Phase 81.17.c.ctx — the context-aware handler
+                // The context-aware handler
                 // (`on_tool_with_context`) is preferred when both
                 // are registered; falls back to the plain
                 // `on_tool` handler. No handler at all → -32601.
@@ -1416,7 +1409,7 @@ description = "fixture"
 min_nexo_version = ">=0.1.0"
 "#;
 
-    // ── Phase 81.17.c — tool dispatch types ────────────────────
+    // ── tool dispatch types ────────────────────
 
     #[test]
     fn tool_def_serde_round_trip() {
@@ -1571,7 +1564,7 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(reply["result"]["server_version"], "test_plugin-0.1.0");
     }
 
-    // ── Phase 81.17.c — initialize-reply tools + tool.invoke routing ──
+    // ── initialize-reply tools + tool.invoke routing ──
 
     #[tokio::test]
     async fn initialize_reply_omits_tools_when_none_declared() {
@@ -1688,7 +1681,7 @@ min_nexo_version = ">=0.1.0"
 
     #[tokio::test]
     async fn tool_invoke_with_context_handler_receives_broker_and_plugin_id() {
-        // Phase 81.17.c.ctx — context-aware handler should
+        // context-aware handler should
         // receive the manifest's plugin_id + a working
         // BrokerSender. Asserts the plugin_id surfaces in the
         // reply so the dispatch path is correct.
@@ -1877,7 +1870,7 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(reply["error"]["code"], -32700);
     }
 
-    /// Phase 81.15.c — `BrokerSender::request` issues a JSON-RPC
+    /// `BrokerSender::request` issues a JSON-RPC
     /// request with an allocated id, then awaits the response on
     /// the dispatch loop's pending map. We drive the adapter from
     /// inside a `broker.event` handler that calls `request()`,
@@ -1964,7 +1957,7 @@ min_nexo_version = ">=0.1.0"
         );
     }
 
-    /// Phase 81.15.c — when the host returns a JSON-RPC error
+    /// When the host returns a JSON-RPC error
     /// response, `request()` propagates as `RpcError::Server`
     /// with the code + message preserved.
     #[tokio::test]
@@ -2036,7 +2029,7 @@ min_nexo_version = ">=0.1.0"
         );
     }
 
-    /// Phase 81.15.c — when no response arrives within the
+    /// When no response arrives within the
     /// timeout, `request()` returns `RpcError::Timeout` and
     /// the pending entry is removed (so a delayed reply is
     /// dropped silently rather than leaking memory).
@@ -2099,7 +2092,7 @@ min_nexo_version = ">=0.1.0"
         );
     }
 
-    /// Phase 81.15.c — `recall_memory()` typed wrapper deserializes
+    /// `recall_memory()` typed wrapper deserializes
     /// the `entries` array from the response into `Vec<MemoryEntry>`.
     /// Bad shape surfaces as `RpcError::Decode`.
     #[tokio::test]
@@ -2180,7 +2173,7 @@ min_nexo_version = ">=0.1.0"
         );
     }
 
-    /// Phase 81.15.c.b — `complete_llm_stream` returns an
+    /// `complete_llm_stream` returns an
     /// `LlmStream` yielding text chunks via `next_chunk()` and
     /// resolving `await_final()` once the host sends the final
     /// response frame. Test fabricates 3 deltas + a final

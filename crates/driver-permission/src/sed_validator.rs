@@ -1,6 +1,5 @@
-//! Phase 77.9 — sed command validation.
+//! sed command validation.
 //!
-//! Ported from `claude-code-leak/src/tools/BashTool/sedValidation.ts`.
 //! Validates sed commands against an allowlist (line-printing, substitution)
 //! and a denylist (write/execute commands, backslash tricks, etc.).
 
@@ -11,8 +10,6 @@ use crate::path_extractor::parse_command_args;
 
 /// Check if a sed expression is a valid print command.
 /// STRICT ALLOWLIST: only `p`, `Np`, or `N,Mp` where N, M are digits.
-///
-/// Ported from `sedValidation.ts:128-133`.
 fn is_print_command(cmd: &str) -> bool {
     let re = LazyLock::new(|| Regex::new(r"^(?:\d+|\d+,\d+)?p$").unwrap());
     re.is_match(cmd)
@@ -20,8 +17,6 @@ fn is_print_command(cmd: &str) -> bool {
 
 /// Validate flags against an allowlist. Handles both single flags and
 /// combined flags (e.g., -nE).
-///
-/// Ported from `sedValidation.ts:13-35`.
 fn validate_flags_against_allowlist(flags: &[String], allowed: &[&str]) -> bool {
     for flag in flags {
         if flag.starts_with('-') && !flag.starts_with("--") && flag.len() > 2 {
@@ -42,8 +37,6 @@ fn validate_flags_against_allowlist(flags: &[String], allowed: &[&str]) -> bool 
 /// Pattern 1: Check if this is a line-printing command with -n flag.
 /// Allows: sed -n 'N' | sed -n 'N,M' with optional -E, -r, -z flags.
 /// File arguments are ALLOWED for this pattern.
-///
-/// Ported from `sedValidation.ts:44-117`.
 fn is_line_printing_command(command: &str, expressions: &[String]) -> bool {
     let args = parse_command_args(command);
     // Find "sed" and take args after it
@@ -108,8 +101,6 @@ fn is_line_printing_command(command: &str, expressions: &[String]) -> bool {
 
 /// Pattern 2: Check if this is a substitution command.
 /// Allows: sed 's/pattern/replacement/flags' with safe flags only.
-///
-/// Ported from `sedValidation.ts:142-238`.
 fn is_substitution_command(
     command: &str,
     expressions: &[String],
@@ -197,7 +188,6 @@ fn is_substitution_command(
 // ── Denylist: contains_dangerous_operations ──
 
 /// Denylist patterns for dangerous sed operations.
-/// Ported from `sedValidation.ts:473-629`.
 fn contains_dangerous_operations(expression: &str) -> bool {
     let cmd = expression.trim();
     if cmd.is_empty() {
@@ -409,7 +399,6 @@ fn has_execute_command(cmd: &str) -> bool {
 // ── Public API ──
 
 /// Extract sed expressions from a command string.
-/// Ported from `sedValidation.ts:388-466`.
 pub fn extract_sed_expressions(command: &str) -> Vec<String> {
     let mut expressions: Vec<String> = Vec::new();
     let args = parse_command_args(command);
@@ -481,7 +470,6 @@ pub fn extract_sed_expressions(command: &str) -> Vec<String> {
 }
 
 /// Check if a sed command has file arguments (not just stdin).
-/// Ported from `sedValidation.ts:307-379`.
 pub fn has_sed_file_args(command: &str) -> bool {
     let args = parse_command_args(command);
     let sed_pos = match args.iter().position(|a| a == "sed") {
@@ -523,8 +511,6 @@ pub fn has_sed_file_args(command: &str) -> bool {
 
 /// Main entry point: checks if a sed command is allowed by the allowlist
 /// and does NOT contain dangerous operations.
-///
-/// Ported from `sedValidation.ts:247-301`.
 pub fn sed_command_is_allowed(command: &str, allow_file_writes: bool) -> bool {
     let expressions = extract_sed_expressions(command);
     let has_files = has_sed_file_args(command);

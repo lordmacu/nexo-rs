@@ -94,7 +94,7 @@ pub struct DiscoveryDiagnostic {
     pub message: String,
 }
 
-/// Phase 12.7 — extension-declared MCP servers ready to merge into
+/// Extension-declared MCP servers ready to merge into
 /// `McpRuntimeConfig::from_yaml_with_extensions`. Empty if the candidate
 /// didn't declare anything under `[mcp_servers.*]`.
 #[derive(Debug, Clone)]

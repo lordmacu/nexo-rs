@@ -1,4 +1,4 @@
-//! Phase 81.24 — `ChannelAdapter` impl backed by a subprocess
+//! `ChannelAdapter` impl backed by a subprocess
 //! plugin's stdio bridge. Each method serializes its args into a
 //! JSON-RPC 2.0 request, registers a oneshot in the shared
 //! `pending` map, fires the frame to `stdin_tx`, and awaits the
@@ -42,7 +42,7 @@ const DEFAULT_START_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SEND_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Phase 81.24 — `ChannelAdapter` impl backed by a subprocess
+/// `ChannelAdapter` impl backed by a subprocess
 /// plugin. Constructed once per kind by the boot helper after a
 /// `SubprocessNexoPlugin::init()` succeeds.
 pub struct RemoteChannelAdapter {
@@ -249,7 +249,7 @@ impl ChannelAdapter for RemoteChannelAdapter {
     ) -> Result<(), ChannelAdapterError> {
         // `_broker` is unused for remote adapters — the subprocess
         // already has its own broker handle from the bridge wired
-        // up by Phase 81.14.b.
+        // up by the plugin bridge.
         let params = serde_json::json!({
             "kind": &self.kind,
             "instance": instance,

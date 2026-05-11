@@ -78,7 +78,7 @@ pub struct PollContext {
     pub job_id: String,
     pub agent_id: String,
     pub kind: &'static str,
-    /// Phase 17 resolver — modules use it to find the agent's
+    /// Credential resolver — modules use it to find the agent's
     /// credential handle for whichever channel they need (typically
     /// `GOOGLE` for inbound fetch, then `WHATSAPP`/`TELEGRAM` for
     /// outbound, but the trait is channel-agnostic).
@@ -108,7 +108,7 @@ pub struct PollContext {
     /// pagination) should `tokio::select!` on this so reload doesn't
     /// hang behind a stuck request.
     pub cancel: CancellationToken,
-    /// Phase 20 — LLM access for the `agent_turn` built-in (and any
+    /// LLM access for the `agent_turn` built-in (and any
     /// future module that needs to call a model). `None` when the
     /// runner was not wired with `with_llm` at boot — modules MUST
     /// surface a clean `PollerError::Config` in that case rather than

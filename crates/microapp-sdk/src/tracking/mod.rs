@@ -1,4 +1,4 @@
-//! Engagement tracking primitives (M15.23.a.1).
+//! Engagement tracking primitives.
 //!
 //! Reusable building blocks for any microapp / extension that
 //! needs **open + click tracking** on outbound channel content

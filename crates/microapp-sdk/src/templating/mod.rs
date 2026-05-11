@@ -1,4 +1,4 @@
-//! Operator template library + snippets (M15.23.b).
+//! Operator template library + snippets.
 //!
 //! Two layers on top of the workspace's `render_template`:
 //!

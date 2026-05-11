@@ -1,4 +1,4 @@
-//! Phase 90.x.plugins — `nexo/admin/plugins/*` handlers.
+//! `nexo/admin/plugins/*` handlers.
 //!
 //! Operator-facing snapshot of plugin discovery + spawn status.
 //! Reads through a [`PluginDoctorReader`] trait so the production

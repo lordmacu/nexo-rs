@@ -1,4 +1,4 @@
-//! Phase 79.M — telemetry counters for the boot dispatcher.
+//! Telemetry counters for the boot dispatcher.
 //!
 //! Three labels carry the operator-facing signal:
 //! - `name` — exposable tool name (high cardinality, ≤ ~30).

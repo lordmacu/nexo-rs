@@ -1,4 +1,4 @@
-//! Phase 82.10 — admin RPC client for microapps.
+//! Admin RPC client for microapps.
 //!
 //! Inverse-direction JSON-RPC: microapp invokes admin methods on
 //! the daemon (`nexo/admin/<domain>/<method>`). Reuses the same
@@ -13,8 +13,7 @@
 //!
 //! Sub-modules layer ergonomic helpers on top of the generic
 //! [`AdminClient`]:
-//! - [`takeover`] — Phase 83.8.6 `HumanTakeover` engage / send /
-//!   release.
+//! - [`takeover`] — `HumanTakeover` engage / send / release.
 
 #[cfg(feature = "test-harness")]
 pub mod mock;
@@ -47,7 +46,7 @@ use uuid::Uuid;
 pub type OperatorHashSource = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// Default timeout for admin RPC round-trips. Mirrors the daemon
-/// pending-request timeout from the Phase 82.10 spec.
+/// pending-request timeout.
 pub const DEFAULT_ADMIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Typed errors a microapp sees when calling admin methods.
@@ -184,8 +183,8 @@ impl AdminClient {
         }
     }
 
-    /// Phase 82.10.m — register a closure that produces the
-    /// current operator token hash on demand. After registration,
+    /// Register a closure that produces the current operator token
+    /// hash on demand. After registration,
     /// every outbound [`call`](Self::call) whose method is in
     /// [`nexo_tool_meta::admin::operator_stamping::OPERATOR_STAMPED_METHODS`]
     /// has its `params.operator_token_hash` field overwritten by
@@ -266,7 +265,7 @@ impl AdminClient {
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id.clone(), tx);
 
-        // Phase 82.10.m — transparent operator-hash stamping.
+        // Transparent operator-hash stamping.
         let mut params = params;
         self.maybe_stamp_operator(method, &mut params);
 
@@ -511,8 +510,8 @@ mod tests {
         serde_json::from_str(&line).unwrap()
     }
 
-    /// Phase 82.10.m — without a registered source, params pass
-    /// through untouched even for stamped methods.
+    /// Without a registered source, params pass through untouched
+    /// even for stamped methods.
     #[tokio::test]
     async fn client_without_source_passes_params_through() {
         let sender = Arc::new(CaptureSender::default());
@@ -532,7 +531,7 @@ mod tests {
             .is_none());
     }
 
-    /// Phase 82.10.m — registered source stamps the field.
+    /// A registered source stamps the field.
     #[tokio::test]
     async fn client_with_source_stamps_processing_pause() {
         let sender = Arc::new(CaptureSender::default());
@@ -549,8 +548,8 @@ mod tests {
         assert_eq!(frame["params"]["operator_token_hash"], "abc123");
     }
 
-    /// Phase 82.10.m — caller-supplied value is overridden by
-    /// the registered source (defense-in-depth).
+    /// A caller-supplied value is overridden by the registered
+    /// source (defense-in-depth).
     #[tokio::test]
     async fn client_with_source_overrides_caller_value() {
         let sender = Arc::new(CaptureSender::default());
@@ -570,7 +569,7 @@ mod tests {
         assert_eq!(frame["params"]["operator_token_hash"], "trusted");
     }
 
-    /// Phase 82.10.m — non-stamped methods are not modified.
+    /// Non-stamped methods are not modified.
     #[tokio::test]
     async fn client_with_source_skips_non_stamped_methods() {
         let sender = Arc::new(CaptureSender::default());
@@ -591,8 +590,8 @@ mod tests {
             .is_none());
     }
 
-    /// Phase 82.10.m — closure invoked once per outbound stamped
-    /// call. Counter increments verify hot-swap support.
+    /// The closure is invoked once per outbound stamped call;
+    /// counter increments verify hot-swap support.
     #[tokio::test]
     async fn client_source_called_per_request_supports_hot_swap() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -645,9 +644,8 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
-    /// Phase 82.10.m — non-object params don't panic; stamping
-    /// no-ops. Daemon serde will reject the malformed frame
-    /// downstream (existing behavior, not ours to fix here).
+    /// Non-object params don't panic; stamping no-ops. Daemon
+    /// serde will reject the malformed frame downstream.
     #[tokio::test]
     async fn client_with_source_skips_when_params_not_object() {
         let sender = Arc::new(CaptureSender::default());

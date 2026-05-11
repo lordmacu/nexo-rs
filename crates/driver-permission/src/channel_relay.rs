@@ -1,4 +1,4 @@
-//! Phase 80.9.b.b — channel-relayed permission decider.
+//! Channel-relayed permission decider.
 //!
 //! When a tool requires approval AND the binding has a registered
 //! MCP channel server with `nexo/channel/permission` capability,

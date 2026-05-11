@@ -10,7 +10,7 @@
 //!
 //! Microapps `record` every inbound and consult `evaluate` BEFORE
 //! dispatching to the LLM. Returning a `LoopVerdict::Loop` from a
-//! Phase 83.3 hook short-circuits dispatch with
+//! dispatch hook short-circuits dispatch with
 //! `do_not_reply_again: true`.
 
 use std::collections::VecDeque;

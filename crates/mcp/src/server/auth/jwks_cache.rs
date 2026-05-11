@@ -1,4 +1,4 @@
-//! Phase 76.3 — JWKS cache for `BearerJwtAuthenticator`.
+//! JWKS cache for `BearerJwtAuthenticator`.
 //!
 //! Behaviour:
 //!   * **Cache hit + fresh** → return key, no network.

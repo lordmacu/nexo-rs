@@ -1,5 +1,5 @@
-//! Phase 81.5 — re-export of the operator-facing config from
-//! `nexo-config` plus the env-var expansion helper consumed by
+//! Re-export of the operator-facing config from `nexo-config`
+//! plus the env-var expansion helper consumed by
 //! [`super::discover`].
 
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKin
 /// Only those two vars are honored — supporting arbitrary `$VAR`
 /// expansion would let the operator silently leak environment state
 /// into the discovery contract. Two well-known vars cover the cases
-/// surfaced by Phase 81 design.
+/// surfaced by the plugin discovery design.
 pub fn resolve_search_paths(
     cfg: &PluginDiscoveryConfig,
 ) -> (Vec<PathBuf>, Vec<DiscoveryDiagnostic>) {

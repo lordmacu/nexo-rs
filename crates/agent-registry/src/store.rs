@@ -2,7 +2,7 @@
 //!
 //! Two implementations: an in-memory map for dev / tests, and a
 //! SQLite-backed store that survives daemon restart so reattach
-//! (Phase 67.B.4) can rehydrate Running goals.
+//! can rehydrate Running goals.
 
 use std::path::Path;
 
@@ -183,10 +183,10 @@ impl SqliteAgentRegistryStore {
         add_column_if_missing(pool, "sleep_wake_at INTEGER").await?;
         add_column_if_missing(pool, "sleep_duration_ms INTEGER").await?;
         add_column_if_missing(pool, "sleep_reason TEXT").await?;
-        // Phase 80.10 — provenance posture column. Default
-        // 'interactive' applies to all pre-80.10 rows during the
-        // ALTER pass; new rows write through `kind = ?` in the
-        // upsert path. Idempotent: `add_column_if_missing` swallows
+        // Provenance posture column. Default 'interactive' applies to
+        // all pre-existing rows during the ALTER pass; new rows write
+        // through `kind = ?` in the upsert path. Idempotent:
+        // `add_column_if_missing` swallows
         // "duplicate column" errors so re-opening the DB is safe.
         add_column_if_missing(pool, "kind TEXT NOT NULL DEFAULT 'interactive'").await?;
         sqlx::query(
@@ -263,9 +263,9 @@ fn row_to_handle(row: &sqlx::sqlite::SqliteRow) -> Result<AgentHandle, AgentRegi
     handle.started_at = from_unix(started);
     let finished: Option<i64> = row.try_get("finished_at")?;
     handle.finished_at = finished.map(from_unix);
-    // Phase 79.1 — plan_mode column wins over the handle_json copy so
-    // a hot update via `set_plan_mode` is observable without rewriting
-    // the whole handle blob.
+    // The plan_mode column wins over the handle_json copy so a hot
+    // update via `set_plan_mode` is observable without rewriting the
+    // whole handle blob.
     let plan_mode: Option<String> = row.try_get("plan_mode").unwrap_or(None);
     handle.plan_mode = plan_mode;
     let sleep_wake_at: Option<i64> = row.try_get("sleep_wake_at").unwrap_or(None);
@@ -281,9 +281,9 @@ fn row_to_handle(row: &sqlx::sqlite::SqliteRow) -> Result<AgentHandle, AgentRegi
         }
         _ => None,
     };
-    // Phase 80.10 — kind column wins over the handle_json copy. Falls
-    // back to `Interactive` when the column is missing (rows persisted
-    // before the migration ran) or when the JSON blob lacks the field.
+    // The kind column wins over the handle_json copy. Falls back to
+    // `Interactive` when the column is missing (rows persisted before
+    // the migration ran) or when the JSON blob lacks the field.
     let kind_str: Option<String> = row.try_get("kind").unwrap_or(None);
     if let Some(s) = kind_str {
         handle.kind = crate::types::SessionKind::from_db_str(&s)?;
@@ -396,8 +396,8 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 }
 
 impl SqliteAgentRegistryStore {
-    /// Phase 80.10 — list handles filtered by `SessionKind`. Newest
-    /// first by `started_at`. Used by `nexo agent ps --kind=...`.
+    /// List handles filtered by `SessionKind`. Newest first by
+    /// `started_at`. Used by `nexo agent ps --kind=...`.
     pub async fn list_by_kind(
         &self,
         kind: crate::types::SessionKind,
@@ -416,7 +416,7 @@ impl SqliteAgentRegistryStore {
         Ok(out)
     }
 
-    /// Phase 80.10 — kind-aware reattach. Flips `Running` rows to
+    /// Kind-aware reattach. Flips `Running` rows to
     /// `LostOnRestart` only for `kind == 'interactive'` — the user is
     /// gone, no caller waiting. Bg / Daemon / DaemonWorker rows keep
     /// `Running` because the operator expects them to survive across
@@ -514,7 +514,7 @@ mod plan_mode_persistence_tests {
         assert_eq!(h.plan_mode.as_deref(), Some("\"hotpatched\""));
     }
 
-    // ── Phase 80.10 — SessionKind ──
+    // ── SessionKind ──
 
     fn handle_with_kind(kind: crate::types::SessionKind) -> AgentHandle {
         let mut h = handle_with_plan_mode(None);

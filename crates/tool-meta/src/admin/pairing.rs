@@ -1,4 +1,4 @@
-//! Phase 82.10.e — `nexo/admin/pairing/*` wire types.
+//! `nexo/admin/pairing/*` wire types.
 //!
 //! Async pairing flow (e.g. WhatsApp QR scan):
 //! 1. Microapp calls `pairing/start` → returns `challenge_id`.
@@ -18,8 +18,8 @@ use uuid::Uuid;
 ///  "params": <PairingStatus>}`.
 ///
 /// Microapps register a listener via
-/// `Microapp::with_notification_listener(PAIRING_STATUS_NOTIFY_METHOD, …)`
-/// (Phase 83.4.c). Mirrors the
+/// `Microapp::with_notification_listener(PAIRING_STATUS_NOTIFY_METHOD, …)`.
+/// Mirrors the
 /// `http_server::TOKEN_ROTATED_NOTIFY_METHOD` shape so consumers
 /// don't string-literal the method name.
 pub const PAIRING_STATUS_NOTIFY_METHOD: &str = "nexo/notify/pairing_status_changed";

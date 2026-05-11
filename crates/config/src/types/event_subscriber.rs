@@ -1,4 +1,4 @@
-//! Phase 82.4 — schema for per-agent NATS event subscribers.
+//! Schema for per-agent NATS event subscribers.
 //!
 //! An `EventSubscriberBinding` declares one subject pattern that
 //! the runtime subscribes to; matching events are translated into
@@ -83,7 +83,7 @@ pub struct EventSubscriberBinding {
     /// Stable identifier within the agent's `event_subscribers`
     /// list. Used as the `<source_id>` in
     /// `plugin.inbound.event.<source_id>` republish topics + the
-    /// Phase 72 turn-log marker.
+    /// turn-log marker.
     pub id: String,
 
     /// NATS subject pattern (`*` matches one segment, `>` matches
@@ -114,7 +114,7 @@ pub struct EventSubscriberBinding {
     #[serde(default)]
     pub overflow_policy: OverflowPolicy,
 
-    /// Phase 82.5 — discriminator stamped on the synthesised
+    /// Discriminator stamped on the synthesised
     /// inbound's `_meta.nexo.inbound.kind`. Defaults to
     /// `external_user` (a NATS subject re-published on behalf of
     /// an external user). Operators set `internal_system` for

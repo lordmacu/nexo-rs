@@ -1,10 +1,10 @@
-//! Delegation mode — Sync vs ForkAndForget. Step 80.19 / 2.
+//! Delegation mode — Sync vs ForkAndForget.
 //!
-//! Mirrors KAIROS's two distinct call patterns:
-//! - `Sync` matches `runForkedAgent` awaited inline (used by sync
+//! Two distinct call patterns:
+//! - `Sync` matches a forked agent awaited inline (used by sync
 //!   delegation tools).
-//! - `ForkAndForget` matches `runForkedAgent` spawned without await
-//!   (used by autoDream Phase 80.1, AWAY_SUMMARY 80.14, eval harness).
+//! - `ForkAndForget` matches a forked agent spawned without await
+//!   (used by autoDream, AWAY_SUMMARY digests, the eval harness).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DelegateMode {

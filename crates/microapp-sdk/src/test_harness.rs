@@ -34,7 +34,7 @@ pub enum MicroappTestError {
 /// In-process driver for unit tests.
 pub struct MicroappTestHarness {
     app: Mutex<Option<Microapp>>,
-    /// Phase 83.15.b — optional admin RPC mock. When `Some`, the
+    /// Optional admin RPC mock. When `Some`, the
     /// dispatch loop's `Handlers` get this mock's `AdminClient`
     /// installed so tools that call `ctx.admin()` see programmable
     /// canned responses instead of `None`.
@@ -52,7 +52,7 @@ impl MicroappTestHarness {
         }
     }
 
-    /// Phase 83.15.b — install a [`crate::admin::MockAdminRpc`]
+    /// Install a [`crate::admin::MockAdminRpc`]
     /// so tools that call `ctx.admin()` receive programmable
     /// responses. Without this call, `ctx.admin()` returns
     /// `None` (matching the no-admin-feature production path).
@@ -202,7 +202,7 @@ impl MicroappTestHarness {
         let writer_for_run = std::sync::Arc::clone(&writer_arc);
         #[allow(unused_mut)]
         let mut handlers = app.into_handlers();
-        // Phase 83.15.b — inject the optional MockAdminRpc client
+        // Inject the optional MockAdminRpc client
         // so tools that call `ctx.admin()` see canned responses.
         // Without this, `Handlers.admin = None` and the tool path
         // matches the no-admin-feature production behaviour.
@@ -234,9 +234,9 @@ impl MicroappTestHarness {
     }
 }
 
-// ── Phase 83.15 — MockBindingContext builder ─────────────────────
+// ── MockBindingContext builder ─────────────────────
 
-/// Phase 83.15 — fluent builder for [`BindingContext`] in tests.
+/// Fluent builder for [`BindingContext`] in tests.
 ///
 /// `BindingContext` ships with `agent_only(...)` for the no-binding
 /// case. Multi-binding microapp tests need a richer builder so each
@@ -338,7 +338,7 @@ mod tests {
     #[cfg(feature = "admin")]
     #[tokio::test]
     async fn call_tool_with_admin_mock_routes_admin_calls() {
-        // Phase 83.15.b — tool that exercises the admin RPC
+        // Tool that exercises the admin RPC
         // surface; the harness's MockAdminRpc supplies the
         // canned response without a daemon in the loop.
         async fn list_agents_tool(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(out["sender"], "+5491100");
     }
 
-    // ── Phase 83.15 — MockBindingContext tests ───────────────
+    // ── MockBindingContext tests ───────────────
 
     #[test]
     fn mock_binding_minimal_agent_only() {

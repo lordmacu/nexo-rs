@@ -1,17 +1,15 @@
-//! Phase 80.18 — DreamTask audit-log row.
+//! DreamTask audit-log row.
 //!
-//! Verbatim port of
-//! `claude-code-leak/src/tasks/DreamTask/DreamTask.ts:1-158`.
-//! Mirrors the Phase 72 turn-log pattern (`crates/agent-registry/src/turn_log.rs`).
+//! Follows the same shape as the per-turn audit log
+//! (`crates/agent-registry/src/turn_log.rs`).
 //!
 //! # What it tracks
 //!
-//! One row per forked memory-consolidation subagent: autoDream
-//! (Phase 80.1), AWAY_SUMMARY (Phase 80.14), eval harness
-//! (Phase 51 future). Survives daemon restart so a forked goal
-//! that never finished is observable post-mortem.
+//! One row per forked memory-consolidation subagent: autoDream,
+//! AWAY_SUMMARY, eval harness. Survives daemon restart so a forked
+//! goal that never finished is observable post-mortem.
 //!
-//! Distinct from Phase 72 `goal_turns`: that table records normal
+//! Distinct from the `goal_turns` table: that one records normal
 //! agent turns; `dream_runs` records SHORT-LIVED forked subagent
 //! lifecycles where each fork has its own task lifecycle (start →
 //! turns → complete | fail | killed) AND `prior_mtime_ms` for
@@ -30,7 +28,7 @@
 //!   transactional append_turn (BEGIN IMMEDIATE serializes
 //!   concurrent writers); MAX_TURNS=30 enforced server-side;
 //!   TAIL_HARD_CAP=1000 defends `tail(usize::MAX)` OOM.
-//! - **Óptimo**: mirror Phase 72 patterns; shared `SqlitePool`;
+//! - **Óptimo**: follows the turn-log patterns; shared `SqlitePool`;
 //!   3 indexes per query path; JSON columns avoid 2 join tables.
 //! - **Transversal**: no `LlmClient` coupling; `fork_label`
 //!   generic; admin-ui reads same JSON shape as CLI.
@@ -49,15 +47,15 @@ use uuid::Uuid;
 
 use crate::store::AgentRegistryStoreError;
 
-/// Cap on the `turns` JSON column. Mirror leak `DreamTask.ts:11-12`.
+/// Cap on the `turns` JSON column.
 pub const MAX_TURNS: usize = 30;
 
-/// Hard ceiling for any `tail(n)` query — mirror Phase 72
+/// Hard ceiling for any `tail(n)` query — matches
 /// `turn_log.rs::TAIL_HARD_CAP`.
 pub const TAIL_HARD_CAP: usize = 1000;
 
-/// Lifecycle status. Five variants — mirrors leak `:64,116,124,144`
-/// plus a Phase 71 reattach state.
+/// Lifecycle status. Five variants: the four task states plus a
+/// reattach state for rows that were Running across a restart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DreamRunStatus {
@@ -65,7 +63,7 @@ pub enum DreamRunStatus {
     Completed,
     Failed,
     Killed,
-    /// Phase 71 reattach: row was Running before a daemon restart.
+    /// Reattach marker: row was Running before a daemon restart.
     LostOnRestart,
 }
 
@@ -95,7 +93,7 @@ impl DreamRunStatus {
 }
 
 /// Two-state phase. Flips from `Starting` to `Updating` on the first
-/// observed Edit/Write tool_use. Mirror leak `:23,96`.
+/// observed Edit/Write tool_use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DreamPhase {
@@ -124,7 +122,6 @@ impl DreamPhase {
 
 /// One assistant turn from the forked dream agent. Tool uses are
 /// collapsed to a count; the prompt is NOT included (private).
-/// Mirror leak `:15-18`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DreamTurn {
     pub text: String,
@@ -140,15 +137,14 @@ pub struct DreamRunRow {
     pub phase: DreamPhase,
     pub sessions_reviewing: i32,
     /// Pre-acquire mtime of the consolidation lock; passed to
-    /// `rollback_consolidation_lock` on kill (Phase 80.1).
+    /// `rollback_consolidation_lock` on kill.
     /// `None` for forks that don't hold a consolidation lock.
     /// `Some(0)` is distinct from `None` and is preserved through
     /// the round-trip — `0` is a meaningful "no prior file" marker
     /// for autoDream.
     pub prior_mtime_ms: Option<i64>,
     /// Paths observed in Edit/Write tool_use blocks. Deduplicated
-    /// on append. Per leak `:30-34`: INCOMPLETE — misses
-    /// bash-mediated writes.
+    /// on append. INCOMPLETE — misses bash-mediated writes.
     pub files_touched: Vec<PathBuf>,
     /// Last `MAX_TURNS=30` assistant turns. Trimmed server-side.
     pub turns: Vec<DreamTurn>,
@@ -166,12 +162,12 @@ pub struct DreamRunRow {
 #[async_trait]
 pub trait DreamRunStore: Send + Sync + 'static {
     /// Insert a new run row. Idempotent on `(goal_id, started_at)` —
-    /// re-insert returns Ok(()) without overwriting (matches Phase 72
+    /// re-insert returns Ok(()) without overwriting (matches the
     /// turn-log behavior).
     async fn insert(&self, row: &DreamRunRow) -> Result<(), AgentRegistryStoreError>;
 
     /// Update the lifecycle status. Silent Ok(()) when id is missing
-    /// (defensive — mirrors Phase 72).
+    /// (defensive).
     async fn update_status(
         &self,
         id: Uuid,
@@ -195,8 +191,8 @@ pub trait DreamRunStore: Send + Sync + 'static {
 
     /// Append one turn. Trims to `MAX_TURNS=30` in same transaction
     /// (drops oldest). Skip empty no-op turns (text empty AND
-    /// tool_use_count == 0) per leak `:87-92`. Returns true if the
-    /// turn was appended; false if skipped.
+    /// tool_use_count == 0). Returns true if the turn was appended;
+    /// false if skipped.
     async fn append_turn(
         &self,
         id: Uuid,
@@ -225,14 +221,13 @@ pub trait DreamRunStore: Send + Sync + 'static {
         n: usize,
     ) -> Result<Vec<DreamRunRow>, AgentRegistryStoreError>;
 
-    /// Phase 71 reattach: flip `Running` → `LostOnRestart` for any
-    /// row that survived a daemon restart. Sets `ended_at = now()`
-    /// for the flipped rows. Returns count flipped.
-    /// Caller (`crates/agent-registry::reattach`) wires this in
-    /// 80.18.b follow-up.
+    /// Reattach: flip `Running` → `LostOnRestart` for any row that
+    /// survived a daemon restart. Sets `ended_at = now()` for the
+    /// flipped rows. Returns count flipped. Wired by
+    /// `crates/agent-registry::reattach`.
     async fn reattach_running(&self) -> Result<u64, AgentRegistryStoreError>;
 
-    /// Cascade-delete on agent_handles drop. Matches Phase 72
+    /// Cascade-delete on agent_handles drop. Matches the turn-log
     /// pattern. Returns count deleted.
     async fn drop_for_goal(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError>;
 }
@@ -243,7 +238,7 @@ pub struct SqliteDreamRunStore {
 }
 
 impl SqliteDreamRunStore {
-    /// Open a store rooted at `path`. Mirror Phase 72
+    /// Open a store rooted at `path`. Same setup as
     /// `SqliteTurnLogStore::open` (WAL mode + synchronous=NORMAL +
     /// max_connections heuristic).
     pub async fn open(path: &str) -> Result<Self, AgentRegistryStoreError> {
@@ -508,7 +503,7 @@ impl DreamRunStore for SqliteDreamRunStore {
         id: Uuid,
         turn: &DreamTurn,
     ) -> Result<bool, AgentRegistryStoreError> {
-        // Skip empty no-op (mirror leak DreamTask.ts:87-92).
+        // Skip empty no-op.
         if turn.text.is_empty() && turn.tool_use_count == 0 {
             trace!(target: "dream_run.append_turn", id = %id, "skipped");
             return Ok(false);
@@ -1017,7 +1012,7 @@ mod tests {
         // We don't fire concurrent writers here because sqlx 0.8 +
         // SQLite's `BEGIN IMMEDIATE` returns SQLITE_BUSY on contention
         // even with a configured `busy_timeout` — a known sqlx-sqlite
-        // limitation. Phase 72 turn_log.rs sidesteps the same way.
+        // limitation. turn_log.rs sidesteps the same way.
         // Should production patterns ever evolve to contend on the
         // same row id, an in-process `tokio::sync::Mutex<Uuid>` map
         // is the right fix at the call site (driver-loop spawns one

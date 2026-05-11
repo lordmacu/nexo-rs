@@ -1,18 +1,18 @@
-//! Phase 92 — `StdioBridgeBroker` ships broker traffic over the
+//! `StdioBridgeBroker` ships broker traffic over the
 //! parent daemon's JSON-RPC stdio channel.
 //!
-//! Subprocess plugins extracted under Phase 81.19.a / 81.18 run in
-//! a separate OS process and lose direct access to the daemon's
-//! in-process `Local` broker (`tokio::mpsc`, a memory-only
-//! abstraction without a network endpoint). Before this phase the
-//! only escape hatch was NATS — which forces operators to install
-//! and run a separate broker server even for single-host deploys.
+//! Subprocess plugins run in a separate OS process and lose direct
+//! access to the daemon's in-process `Local` broker
+//! (`tokio::mpsc`, a memory-only abstraction without a network
+//! endpoint). The alternative is NATS — which forces operators to
+//! install and run a separate broker server even for single-host
+//! deploys.
 //!
 //! `StdioBridgeBroker` reuses the existing JSON-RPC channel the
 //! daemon already opens for `tool.invoke`. The wire shape is the
-//! one the daemon-side host (Phase 81.14.b in
-//! `proyecto/crates/core/src/agent/nexo_plugin_registry/
-//! subprocess.rs`) already speaks:
+//! one the daemon-side host (in
+//! `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`)
+//! already speaks:
 //!
 //! - `broker.publish { topic, event }` — subprocess → daemon
 //!   notification (no `id`, fire-and-forget). Daemon validates

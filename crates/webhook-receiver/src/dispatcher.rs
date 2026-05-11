@@ -1,4 +1,4 @@
-//! Phase 82.2 — webhook dispatch trait + envelope builder.
+//! Webhook dispatch trait + envelope builder.
 //!
 //! The data-shape (`WebhookEnvelope`, schema constant) lives in
 //! `nexo-tool-meta` so a third-party microapp can `cargo add
@@ -33,7 +33,7 @@ pub const FORWARD_HEADERS: &[&str] = &[
     "user-agent",
 ];
 
-/// Build a [`WebhookEnvelope`] from a Phase 80.12
+/// Build a [`WebhookEnvelope`] from a
 /// [`HandledEvent`](crate::HandledEvent) plus the wire-level
 /// metadata the HTTP handler observed.
 ///

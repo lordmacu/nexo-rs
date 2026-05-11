@@ -1,4 +1,4 @@
-//! Phase 84.4 — worker persona system prompt builder.
+//! Worker persona system prompt builder.
 //!
 //! Complement to [`super::coordinator`]. When the binding's
 //! resolved `BindingRole` is `Worker`, the runtime prepends this
@@ -25,7 +25,7 @@ pub struct WorkerPromptCtx<'a> {
     /// Binding's resolved allowed-tool list. The persona's tool
     /// list reflects what the worker can actually call.
     pub allowed_tools: &'a [String],
-    /// `true` when Phase 79.4 TodoWrite scratchpad is enabled —
+    /// `true` when the TodoWrite scratchpad is enabled —
     /// adds a short note that the scratchpad is the worker's
     /// state across its own turns (not for cross-team coordination,
     /// which the worker doesn't do).

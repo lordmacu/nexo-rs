@@ -1,13 +1,12 @@
 //! Sample tools for the MCP server template.
 //!
 //! Reference patterns:
-//! * `crates/mcp/src/server/builder.rs:340-398` — the canonical
+//! * `crates/mcp/src/server/builder.rs` — the canonical
 //!   `Greet` tool used in unit tests; this file is the same
 //!   pattern wired into a binary.
-//! * `claude-code-leak/src/entrypoints/mcp.ts:35-78` — the leak's
-//!   minimal stdio server pattern. Our equivalent is even shorter
-//!   because `McpServerBuilder` derives the JSON Schema for us;
-//!   the leak hand-rolls the schema in each `setRequestHandler`.
+//! * `McpServerBuilder` derives the JSON Schema for us, so the
+//!   stdio server pattern stays minimal compared to hand-rolling
+//!   the schema in each request handler.
 
 use async_trait::async_trait;
 use nexo_mcp::server::builder::{Tool, ToolCtx};
@@ -27,8 +26,8 @@ pub struct EchoArgs {
 }
 
 /// Typed output. `Serialize` lets the dispatcher emit it in the
-/// `tools/call` response's `structuredContent` field, which Claude
-/// Code 2.1 (Phase 74) consumes for richer rendering. The plain
+/// `tools/call` response's `structuredContent` field, which MCP
+/// clients consume for richer rendering. The plain
 /// text content is auto-derived from the structured JSON.
 #[derive(Serialize, JsonSchema)]
 pub struct EchoOut {

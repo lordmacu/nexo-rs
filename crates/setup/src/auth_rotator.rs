@@ -1,4 +1,4 @@
-//! Phase 82.10.o — production `AuthRotator` adapter.
+//! Production `AuthRotator` adapter.
 //!
 //! Persists the rotated bearer to
 //! `<state_root>/secrets/operator_token.txt` (atomic rename
@@ -15,8 +15,7 @@
 //! 3. Daemon dispatches to this adapter.
 //! 4. Adapter writes new value, broadcasts notify, emits audit.
 //! 5. Microapp's `LiveTokenState` listener swaps in-place.
-//! 6. SPA receives 401 on next call → toast → re-login screen
-//!    (M2.b.notify-spa).
+//! 6. SPA receives 401 on next call → toast → re-login screen.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

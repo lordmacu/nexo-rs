@@ -1,4 +1,4 @@
-//! Phase 31.1.c — `nexo plugin install <coords>` CLI integration.
+//! `nexo plugin install <coords>` CLI integration.
 //!
 //! Wraps the `nexo-ext-installer` resolve / download / verify /
 //! extract pipeline into a single operator-facing command.
@@ -422,7 +422,7 @@ pub async fn run_plugin_install(
         eprintln!("✓ sha256 verified");
     }
 
-    // ── Phase 31.3 — cosign signature verification hook ───────
+    // ── cosign signature verification hook ───────
     let mut signature_verified = false;
     let mut signature_identity: Option<String> = None;
     let mut signature_issuer: Option<String> = None;
@@ -559,7 +559,7 @@ pub async fn run_plugin_install(
         }
     }
 
-    // Phase 31.8 — persist .nexo-install.json so future
+    // Persist .nexo-install.json so future
     // `plugin upgrade` knows how to re-resolve. Skipped on
     // `was_already_present` to avoid bumping `installed_at`
     // on a no-op call. Soft-fail: plugin works either way,

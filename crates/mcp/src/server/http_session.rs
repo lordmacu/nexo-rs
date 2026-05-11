@@ -1,4 +1,4 @@
-//! Phase 76.1 — HTTP session manager.
+//! HTTP session manager.
 //!
 //! Owns the per-session state shared between `POST /mcp`,
 //! `GET /mcp` (SSE), and `DELETE /mcp`. Sessions live in a
@@ -7,8 +7,8 @@
 //! broadcasts a `Shutdown` event to every active SSE consumer
 //! before tearing down listeners.
 //!
-//! Phase 76.8 — when an [`SessionEventStore`] is wired in, every
-//! emit() call assigns a per-session monotonic `seq`, persists the
+//! When an [`SessionEventStore`] is wired in, every emit() call
+//! assigns a per-session monotonic `seq`, persists the
 //! frame, and ships [`SessionEvent::IndexedMessage`] over the
 //! broadcast so SSE handlers can label the wire frame with `id:`
 //! and reconnecting clients can replay the gap via `Last-Event-ID`.
@@ -31,7 +31,7 @@ use super::http_config::HttpTransportConfig;
 /// `resources/updated`, …); the others are transport-level
 /// lifecycle signals consumed by SSE handlers.
 ///
-/// Phase 76.7 promoted this to `pub` so the dispatcher
+/// This is `pub` so the dispatcher
 /// (`DispatchContext.session_sink`) can carry a
 /// `broadcast::Sender<SessionEvent>` across the public API
 /// boundary. External pattern matches should use a wildcard arm
@@ -44,8 +44,8 @@ pub enum SessionEvent {
     /// per-call progress is by-design ephemeral. SSE frames built
     /// from `Message` carry no `id:` line.
     Message(serde_json::Value),
-    /// Phase 76.8 — JSON-RPC envelope tagged with the per-session
-    /// monotonic event-id. SSE frames built from `IndexedMessage`
+    /// JSON-RPC envelope tagged with the per-session monotonic
+    /// event-id. SSE frames built from `IndexedMessage`
     /// carry `id: <seq>` so reconnecting clients can resume via
     /// `Last-Event-ID`.
     IndexedMessage { seq: u64, body: serde_json::Value },
@@ -62,14 +62,14 @@ pub(crate) struct HttpSession {
     pub(crate) notif_tx: broadcast::Sender<SessionEvent>,
     pub(crate) sse_active: AtomicUsize,
     pub(crate) cancel: CancellationToken,
-    /// Phase 76.7 — set of resource URIs this session subscribed
-    /// to via `resources/subscribe`. Mutated under the
+    /// Set of resource URIs this session subscribed to via
+    /// `resources/subscribe`. Mutated under the
     /// `DashSet` shard lock; read by the notification fan-out
     /// without taking the session lock. Cleared when the session
     /// is removed from the manager.
     pub(crate) subscriptions: DashSet<String>,
-    /// Phase 76.8 — per-session monotonic event-id counter. Bumped
-    /// once per `emit()`. Starts at 1 (seq 0 is reserved as "no
+    /// Per-session monotonic event-id counter. Bumped once per
+    /// `emit()`. Starts at 1 (seq 0 is reserved as "no
     /// events yet"; clients send `Last-Event-ID: 0` for full
     /// stream).
     pub(crate) next_seq: AtomicU64,
@@ -129,20 +129,19 @@ struct Inner {
     max_lifetime: Duration,
     sse_buffer_size: usize,
     parent_cancel: CancellationToken,
-    /// Phase 76.8 — when set, every `emit()` persists the frame to
-    /// the store + assigns a per-session monotonic seq.
+    /// When set, every `emit()` persists the frame to the store +
+    /// assigns a per-session monotonic seq.
     event_store: Option<Arc<dyn SessionEventStore>>,
-    /// Phase 76.8 — per-session ring cap. Triggers
+    /// Per-session ring cap. Triggers
     /// `purge_oldest_for_session(keep)` when `seq % cap_check_every == 0`.
     max_events_per_session: u64,
-    /// Phase 76.8 — replay batch ceiling — passed through to
-    /// `replay()`.
+    /// Replay batch ceiling — passed through to `replay()`.
     max_replay_batch: usize,
 }
 
 impl HttpSessionManager {
-    /// Phase 76.8 — construct with an optional event store + caps
-    /// pulled from the runtime config block.
+    /// Construct with an optional event store + caps pulled from
+    /// the runtime config block.
     pub(crate) fn with_event_store(
         cfg: &HttpTransportConfig,
         parent_cancel: CancellationToken,
@@ -254,10 +253,10 @@ impl HttpSessionManager {
         }
     }
 
-    /// Phase 76.7 — broadcast a JSON-RPC notification to every
-    /// active session. Phase 76.8 — when an event store is wired,
-    /// each per-session emission goes through `emit()` so the
-    /// frame is persisted + tagged with a monotonic seq.
+    /// Broadcast a JSON-RPC notification to every active session.
+    /// When an event store is wired, each per-session emission goes
+    /// through `emit()` so the frame is persisted + tagged with a
+    /// monotonic seq.
     pub(crate) fn broadcast_to_all(&self, body: serde_json::Value) -> usize {
         let mut reached = 0;
         for entry in self.inner.sessions.iter() {
@@ -268,8 +267,8 @@ impl HttpSessionManager {
         reached
     }
 
-    /// Phase 76.7 — fan-out for `notifications/resources/updated`.
-    /// Only sessions whose `subscriptions` set contains `uri`
+    /// Fan-out for `notifications/resources/updated`. Only sessions
+    /// whose `subscriptions` set contains `uri`
     /// receive the event.
     pub(crate) fn notify_resource_updated(&self, uri: &str, body: serde_json::Value) -> usize {
         let mut reached = 0;
@@ -285,7 +284,7 @@ impl HttpSessionManager {
         reached
     }
 
-    /// Phase 76.8 — assign seq, persist (best-effort), broadcast
+    /// Assign seq, persist (best-effort), broadcast
     /// `IndexedMessage`. Returns true if the broadcast had a live
     /// receiver. Persist failures are logged but do NOT abort the
     /// emission — the in-memory broadcast is the primary path.
@@ -323,8 +322,8 @@ impl HttpSessionManager {
             .is_ok()
     }
 
-    /// Phase 76.8 — surface for the SSE handler. Returns persisted
-    /// frames with `seq > min_seq`, capped at `max_replay_batch`.
+    /// Surface for the SSE handler. Returns persisted frames with
+    /// `seq > min_seq`, capped at `max_replay_batch`.
     /// Empty when no store is configured or no gap exists.
     pub(crate) async fn replay(
         &self,
@@ -351,8 +350,8 @@ impl HttpSessionManager {
         }
     }
 
-    /// Phase 76.8 — background purge tick. Drops events older than
-    /// the session max-lifetime cutoff.
+    /// Background purge tick. Drops events older than the session
+    /// max-lifetime cutoff.
     pub(crate) async fn purge_expired_events(&self) {
         let Some(store) = self.inner.event_store.as_ref() else {
             return;
@@ -367,15 +366,15 @@ impl HttpSessionManager {
         }
     }
 
-    /// Phase 76.7 — public accessor for `SessionLookup`
-    /// implementations and tests.
+    /// Public accessor for `SessionLookup` implementations and
+    /// tests.
     pub(crate) fn session_by_id(&self, id: &str) -> Option<Arc<HttpSession>> {
         self.inner.sessions.get(id).map(|s| Arc::clone(s.value()))
     }
 }
 
-/// Phase 76.7 — abstract session lookup so the dispatcher can
-/// mutate `subscriptions` without depending on the concrete
+/// Abstract session lookup so the dispatcher can mutate
+/// `subscriptions` without depending on the concrete
 /// `HttpSessionManager`. Stdio passes `None` for this trait
 /// object, so `resources/subscribe` over stdio is a no-op (the
 /// dispatcher returns an empty `Reply`).
@@ -407,8 +406,8 @@ impl SessionLookup for HttpSessionManager {
 }
 
 impl HttpSessionManager {
-    /// Phase 76.8 — fire-and-forget snapshot of the in-mem
-    /// subscription set into the event store. Async write off the
+    /// Fire-and-forget snapshot of the in-mem subscription set
+    /// into the event store. Async write off the
     /// hot path; failures are logged.
     fn persist_subscriptions(&self, session: &Arc<HttpSession>) {
         let Some(store) = self.inner.event_store.as_ref() else {

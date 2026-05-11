@@ -1,8 +1,8 @@
 // Identity primitives for microapps that resolve "who sent this
 // message" against a persistent store. Lifted from the
-// `nexo-rs-extension-marketing` extension as part of M15.3 so
-// any future microapp (lead gen, support routing, partner
-// portal) reuses the contract instead of re-implementing it.
+// `nexo-rs-extension-marketing` extension so any microapp (lead
+// gen, support routing, partner portal) reuses the contract
+// instead of re-implementing it.
 //
 // Tenant-keyed from day 1 — every method takes a `tenant_id`
 // and the default sqlite impl uses composite indexes

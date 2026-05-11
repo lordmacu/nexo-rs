@@ -81,8 +81,8 @@ impl OpenAiClient {
         if status == 429 {
             let headers = response.headers().clone();
             let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
-            // Phase C4.c — extract OpenAI-compat headers to
-            // promote `Rejected` quotas to `LlmError::QuotaExceeded`.
+            // Extract OpenAI-compat headers to promote `Rejected`
+            // quotas to `LlmError::QuotaExceeded`.
             // `extract_openai_compat_headers` covers OpenAI / xAI /
             // DeepSeek / Mistral via the shared `x-ratelimit-*`
             // shape.
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(c.model_id(), "gpt-4o-mini");
     }
 
-    // ---- Phase A.3 cache_usage parsing ----
+    // ---- cache_usage parsing ----
 
     #[test]
     fn parse_response_with_cached_tokens_emits_cache_usage() {
@@ -558,7 +558,7 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         completion_tokens: raw.usage.completion_tokens,
     };
 
-    // Phase A.3 — OpenAI-style automatic prefix caching reports hits
+    // OpenAI-style automatic prefix caching reports hits
     // through `prompt_tokens_details.cached_tokens`. Only emit a
     // `CacheUsage` when at least one cached token came back so
     // dashboards don't accumulate denominator-only entries on every

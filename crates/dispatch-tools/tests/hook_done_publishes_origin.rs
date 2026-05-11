@@ -1,4 +1,4 @@
-//! Phase 67.F.1 — completion hook fires NotifyOrigin via the
+//! Completion hook fires NotifyOrigin via the
 //! pairing adapter registered for the origin's plugin id, plus
 //! failure isolation between hooks in a list.
 

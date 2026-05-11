@@ -1,4 +1,4 @@
-//! Phase 12.2 — HTTP transport (streamable-http + SSE legacy).
+//! HTTP transport (streamable-http + SSE legacy).
 
 pub mod client;
 pub mod redact;

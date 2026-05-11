@@ -1,4 +1,4 @@
-//! Phase 12.6 — `mcp_server.yaml` schema.
+//! `mcp_server.yaml` schema.
 //!
 //! Opt-in feature: expose this agent as an MCP server so Claude Desktop /
 //! Cursor / Zed can invoke its tools over stdio.
@@ -33,11 +33,11 @@ pub struct McpServerConfig {
     /// (`auth_token` or `_meta.auth_token`).
     #[serde(default)]
     pub auth_token_env: Option<String>,
-    /// Phase 76.16 — Phase 79 tools to expose via MCP server.
+    /// Extra tools to expose via MCP server.
     /// Empty = legacy behaviour (5 built-in tools only).
     /// Valid names: EnterPlanMode, ExitPlanMode, ToolSearch, TodoWrite,
     /// SyntheticOutput, NotebookEdit, RemoteTrigger.
-    /// Config and Lsp require additional infrastructure (see FOLLOWUPS).
+    /// Config and Lsp require additional infrastructure.
     #[serde(default)]
     pub expose_tools: Vec<String>,
     /// Advanced override: expose tools that the static MCP catalog marks as
@@ -65,16 +65,16 @@ pub struct McpServerConfig {
     /// daemon.
     #[serde(default)]
     pub autonomous_worker: McpAutonomousWorkerConfig,
-    /// Phase 76.1 — optional HTTP+SSE transport. Stdio is unaffected.
+    /// Optional HTTP+SSE transport. Stdio is unaffected.
     #[serde(default)]
     pub http: Option<HttpTransportConfigYaml>,
-    /// Phase M1.b.c — daemon-embed mode. When `enabled`,
+    /// Daemon-embed mode. When `enabled`,
     /// `Mode::Run` (daemon) starts an MCP HTTP server in-process
     /// alongside the agent runtime, exposing the primary agent's
     /// tools over the same `mcp_server.http` transport. The
     /// `ConfigReloadCoordinator` post-hook automatically swaps
     /// the allowlist + emits `notifications/tools/list_changed`
-    /// on every Phase 18 reload — no SIGHUP required. Eliminates
+    /// on every reload — no SIGHUP required. Eliminates
     /// the need to run `nexo mcp-server` as a separate process.
     /// Boot-immutable: toggling `enabled` requires a daemon
     /// restart.
@@ -82,7 +82,7 @@ pub struct McpServerConfig {
     pub daemon_embed: McpServerDaemonEmbedConfig,
 }
 
-/// Phase M1.b.c — daemon-embed configuration block.
+/// Daemon-embed configuration block.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct McpServerDaemonEmbedConfig {
@@ -210,27 +210,27 @@ pub struct HttpTransportConfigYaml {
     pub sse_buffer_size: usize,
     #[serde(default)]
     pub enable_legacy_sse: bool,
-    /// Phase 76.3 — pluggable authentication. Mutually exclusive with
+    /// Pluggable authentication. Mutually exclusive with
     /// `auth_token_env` (legacy field). When both are set the loader
     /// fails fast.
     #[serde(default)]
     pub auth: Option<AuthConfigYaml>,
-    /// Phase 76.5 — per-(tenant, tool) token-bucket rate-limit.
+    /// Per-(tenant, tool) token-bucket rate-limit.
     /// `None` (i.e. block omitted) disables the limiter entirely;
     /// `enabled: true` (default when block present) turns it on.
     #[serde(default)]
     pub per_principal_rate_limit: Option<PerPrincipalRateLimitYaml>,
-    /// Phase 76.6 — per-(tenant, tool) in-flight concurrency cap +
+    /// Per-(tenant, tool) in-flight concurrency cap +
     /// per-call timeout. `None` (block omitted) disables.
     #[serde(default)]
     pub per_principal_concurrency: Option<PerPrincipalConcurrencyYaml>,
-    /// Phase 76.11 — durable per-call audit log. `None` (block
+    /// Durable per-call audit log. `None` (block
     /// omitted) disables; otherwise the runtime opens a
     /// `SqliteAuditLogStore(db_path)` and wires it into the
     /// dispatcher.
     #[serde(default)]
     pub audit_log: Option<AuditLogYaml>,
-    /// Phase 76.8 — durable session event store for SSE
+    /// Durable session event store for SSE
     /// `Last-Event-ID` reconnect. `None` keeps the in-memory
     /// behavior; `Some(_)` with `enabled: true` opens a
     /// `SqliteSessionEventStore(db_path)`.
@@ -415,7 +415,7 @@ pub enum AuthConfigYaml {
     /// Refuses non-loopback bind at boot. For dev only.
     None,
     /// Constant-time-compared bearer token. `token_env` resolves to a
-    /// non-empty string at boot. `tenant` (Phase 76.4) pins the
+    /// non-empty string at boot. `tenant` pins the
     /// principal's tenant; defaults to `"default"`.
     StaticToken {
         token_env: String,
@@ -459,7 +459,7 @@ pub enum MutualTlsConfigYaml {
         #[serde(default = "default_mtls_header")]
         header_name: String,
         cn_allowlist: Vec<String>,
-        /// Phase 76.4 — optional CN → tenant remap. When absent, the
+        /// Optional CN → tenant remap. When absent, the
         /// CN itself must parse as a `TenantId` (so dotted CNs require
         /// a remap or are rejected with `TenantClaimMissing`).
         #[serde(default, skip_serializing_if = "Option::is_none")]

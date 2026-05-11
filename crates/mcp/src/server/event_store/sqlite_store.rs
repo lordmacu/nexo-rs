@@ -1,8 +1,8 @@
-//! Phase 76.8 — SQLite-backed `SessionEventStore`.
+//! SQLite-backed `SessionEventStore`.
 //!
-//! Mirrors `crates/mcp/src/server/audit_log/sqlite_store.rs` (Phase
-//! 76.11) — WAL + synchronous=NORMAL, idempotent INSERT OR IGNORE
-//! on the `(session_id, seq)` composite key.
+//! Mirrors `crates/mcp/src/server/audit_log/sqlite_store.rs` — WAL
+//! + synchronous=NORMAL, idempotent INSERT OR IGNORE on the
+//! `(session_id, seq)` composite key.
 
 use async_trait::async_trait;
 use serde_json::Value;

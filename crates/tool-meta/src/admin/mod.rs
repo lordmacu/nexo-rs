@@ -1,4 +1,4 @@
-//! Phase 82.10 — admin RPC wire-shape types.
+//! Admin RPC wire-shape types.
 //!
 //! Shared between the daemon's [`nexo_core::agent::admin_rpc`]
 //! handlers and the microapp SDK's `AdminClient`. Living here
@@ -6,9 +6,8 @@
 //! `nexo-core` while still letting both sides agree on the
 //! params + result shapes.
 //!
-//! Each sub-module corresponds to one admin domain. v1 ships
-//! `agents`; subsequent phases land `credentials`, `pairing`,
-//! `llm_providers`, `channels` (82.10.d-f).
+//! Each sub-module corresponds to one admin domain: `agents`,
+//! `credentials`, `pairing`, `llm_providers`, `channels`, and so on.
 
 pub mod agent_events;
 pub mod agents;

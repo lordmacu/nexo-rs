@@ -1,4 +1,4 @@
-//! Phase 10.9 — local git repo around the agent workspace.
+//! Local git repo around the agent workspace.
 //!
 //! Provides forensics (`git log`), rollback (`git revert` on disk), and
 //! blame without any remote. The caller commits at natural boundaries:
@@ -37,9 +37,9 @@ pub struct MemoryGitRepo {
     /// libgit2 `Repository` is not `Sync`. Serialize access with a mutex so
     /// this struct is safe behind `Arc<..>` across threads.
     inner: Mutex<Repository>,
-    /// Phase 77.7 — secret guard for scanning staged content before commit.
+    /// Secret guard for scanning staged content before commit.
     guard: Option<nexo_memory::SecretGuard>,
-    /// Phase 36.2 (MS-1.b) — optional mutation observer. Fires once
+    /// Optional mutation observer. Fires once
     /// per successful commit (skipped on a clean tree). Best-effort:
     /// the hook is dispatched via `tokio::spawn` from inside the
     /// sync `commit_all`, so a hook failure cannot poison the
@@ -87,14 +87,14 @@ impl MemoryGitRepo {
         })
     }
 
-    /// Phase 77.7 — attach a secret guard for scanning staged content
+    /// Attach a secret guard for scanning staged content
     /// before commit. On Block, the commit is aborted.
     pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
         self.guard = Some(guard);
         self
     }
 
-    /// Phase 36.2 (MS-1.b) — attach a mutation observer + the
+    /// Attach a mutation observer + the
     /// `(agent_id, tenant)` pair the event carries. The hook is
     /// fired post-successful-commit via `tokio::spawn` so it never
     /// blocks the libgit2 thread.
@@ -147,7 +147,7 @@ impl MemoryGitRepo {
         if !oversized.is_empty() {
             index.write()?;
         }
-        // Phase 77.7 — scan staged files for secrets before committing.
+        // Scan staged files for secrets before committing.
         if let Some(ref guard) = self.guard {
             if guard.is_enabled() {
                 let mut blocked: Vec<String> = Vec::new();
@@ -224,7 +224,7 @@ impl MemoryGitRepo {
         let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
         let oid = repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parent_refs)?;
 
-        // Phase 36.2 (MS-1.b) — best-effort fire of the mutation
+        // Best-effort fire of the mutation
         // observer post-success. Spawn from a tokio handle if one
         // is available; otherwise silently skip so this method
         // stays usable from non-async test contexts.
@@ -387,7 +387,7 @@ fn split_subject_body(message: &str) -> (String, String) {
     }
 }
 
-/// Phase 80.1.g — adapter wrapping `Arc<MemoryGitRepo>` as a
+/// Adapter wrapping `Arc<MemoryGitRepo>` as a
 /// `MemoryCheckpointer` so nexo-dream's `AutoDreamRunner` can record
 /// fork-pass output as a git commit on a successful Completed run.
 ///
@@ -586,7 +586,7 @@ mod tests {
         );
     }
 
-    // ── Phase 80.1.g — MemoryGitCheckpointer adapter ──
+    // ── MemoryGitCheckpointer adapter ──
 
     #[tokio::test]
     async fn checkpointer_async_calls_commit_all() {

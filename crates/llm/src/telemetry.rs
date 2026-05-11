@@ -92,7 +92,7 @@ pub fn render_prometheus() -> String {
 /// Pure renderer — takes the telemetry maps explicitly so tests can
 /// pass their own isolated `DashMap`s and never touch the global
 /// static. Production callers go through `render_prometheus()` which
-/// reads the global. Phase 38.x.1 fix.
+/// reads the global.
 fn render_into(ttft: &DashMap<String, Histogram>, chunks: &DashMap<ChunkKey, AtomicU64>) -> String {
     let mut out = String::new();
 
@@ -211,8 +211,8 @@ mod tests {
         ));
     }
 
-    // Phase 38.x.1 fix: render against a local registry instead of
-    // the shared global. No `TEST_LOCK`, no `reset_for_test`, no race
+    // Render against a local registry instead of the shared global.
+    // No `TEST_LOCK`, no `reset_for_test`, no race
     // with sibling crate tests under `cargo test --workspace`.
     #[test]
     fn render_empty_series_when_no_samples() {

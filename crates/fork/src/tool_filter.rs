@@ -1,15 +1,12 @@
 //! `ToolFilter` trait — per-fork tool whitelist policy.
-//! Step 80.19 / 5.
 //!
 //! Implementations consumed by [`crate::run_turn_loop`]:
 //! - [`AllowAllFilter`] — default, accepts every tool. Right for sync
 //!   delegation tools that already enforce the parent's binding-level
 //!   `allowed_tools` upstream.
-//! - `AutoMemFilter` — Phase 80.20, restricts the autoDream forked
-//!   subagent to read-only filesystem + Edit/Write inside the memory
-//!   directory. Mirror of `createAutoMemCanUseTool` (leak
-//!   `services/extractMemories/extractMemories.ts:171-222`).
-//! - Other filters (away_summary, eval) land in their own sub-phases.
+//! - `AutoMemFilter` — restricts the autoDream forked subagent to
+//!   read-only filesystem + Edit/Write inside the memory directory.
+//! - Other filters (away_summary, eval) live in their own modules.
 
 use serde_json::Value;
 use std::fmt::Debug;

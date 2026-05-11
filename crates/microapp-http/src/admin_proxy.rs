@@ -13,7 +13,7 @@
 //! `nexo/admin/*` methods (future framework phases) work
 //! immediately without HTTP-side code.
 //!
-//! ## Operator identity stamping (Phase 82.10.m)
+//! ## Operator identity stamping
 //!
 //! Stamping moved from per-microapp middleware (path B) to the
 //! SDK's `AdminClient` (path A). Microapps register a closure-

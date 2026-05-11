@@ -1,4 +1,4 @@
-//! Phase 83.8.12 — `nexo/admin/tenants/*` wire types.
+//! `nexo/admin/tenants/*` wire types.
 //!
 //! An *tenant* (company / tenant) is the top-level multi-tenant
 //! key for the SaaS deployment of `agent-creator`. One daemon

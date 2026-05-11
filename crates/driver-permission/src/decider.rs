@@ -1,5 +1,5 @@
-//! `PermissionDecider` trait + the test impls 67.3 ships.
-//! 67.4 will add `LlmDecider` consulting MiniMax + memory.
+//! `PermissionDecider` trait + the bundled test impls.
+//! A future `LlmDecider` will consult MiniMax + memory.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -40,7 +40,7 @@ impl PermissionDecider for AllowAllDecider {
 }
 
 /// Denies every request with `reason`. Useful for shadow-mode
-/// (Phase 67.11) where Claude proposes but never acts.
+/// where Claude proposes but never acts.
 pub struct DenyAllDecider {
     pub reason: String,
 }

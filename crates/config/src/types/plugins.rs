@@ -15,7 +15,7 @@ pub struct PluginsConfig {
     pub telegram: Vec<TelegramPluginConfig>,
     pub email: Option<EmailPluginConfig>,
     pub browser: Option<BrowserConfig>,
-    /// Phase 81.5 — operator-configured plugin discovery walk knobs.
+    /// Operator-configured plugin discovery walk knobs.
     /// Loaded from `<config_dir>/plugins/discovery.yaml` (optional —
     /// missing file means defaults: empty search_paths so nothing is
     /// scanned; legacy plugins continue to register through the
@@ -151,7 +151,7 @@ pub struct WhatsappPluginConfig {
     pub session_dir: String,
     #[serde(default = "default_media_dir")]
     pub media_dir: String,
-    /// Kept for backward compatibility with the pre-Phase 6 minimal config;
+    /// Kept for backward compatibility with the early minimal config;
     /// unused by the plugin runtime — credentials live under
     /// `session_dir/.whatsapp-rs/creds.json`.
     pub credentials_file: Option<String>,
@@ -167,7 +167,7 @@ pub struct WhatsappPluginConfig {
     pub transcriber: WhatsappTranscriberConfig,
     #[serde(default)]
     pub daemon: WhatsappDaemonConfig,
-    /// Phase 6.10 follow-up — on boot, spawn a Cloudflare Tunnel to
+    /// On boot, spawn a Cloudflare Tunnel to
     /// expose `/whatsapp/pair` on a public `*.trycloudflare.com` URL
     /// so operators can scan the pairing QR from a phone without VPN /
     /// SSH / port forwarding. Off by default.
@@ -180,7 +180,7 @@ pub struct WhatsappPluginConfig {
     /// each other's Signal keys). Empty / absent = legacy single-account.
     #[serde(default)]
     pub instance: Option<String>,
-    /// Phase 17 — agents permitted to publish from this instance.
+    /// Agents permitted to publish from this instance.
     /// Enforced by the plugin before broker dispatch as a second layer
     /// on top of the resolver's per-agent `credentials.whatsapp`
     /// binding. Empty = accept any agent that holds a valid resolver
@@ -260,7 +260,7 @@ pub struct WhatsappBehaviorConfig {
     /// are allowed unless the chat-meta flag excludes them.
     #[serde(default)]
     pub ignore_groups: bool,
-    /// Phase 82.10.q.b — skip messages older than `N` seconds. The
+    /// Skip messages older than `N` seconds. The
     /// WhatsApp Multi-Device protocol re-delivers buffered offline
     /// messages on every reconnect (the per-device ACK isn't always
     /// honored server-side), so without this gate the agent replies
@@ -462,7 +462,7 @@ pub struct TelegramPluginConfig {
     /// Empty / absent = legacy single-bot topic.
     #[serde(default)]
     pub instance: Option<String>,
-    /// Phase 17 — agents permitted to publish from this bot.
+    /// Agents permitted to publish from this bot.
     /// Enforced by the plugin before broker dispatch on top of the
     /// resolver's `credentials.telegram` binding. Empty = accept any
     /// agent holding a valid resolver handle (back-compat).
@@ -531,9 +531,9 @@ pub struct TelegramAllowlistConfig {
     pub chat_ids: Vec<i64>,
 }
 
-// ── Email plugin config (Phase 48) ────────────────────────────────────────────
+// ── Email plugin config ───────────────────────────────────────────────────────
 //
-// Multi-account IMAP/SMTP. Credentials live in `nexo-auth` (Phase 17),
+// Multi-account IMAP/SMTP. Credentials live in `nexo-auth`,
 // not in this YAML — only transport endpoints + per-account behavior
 // flags belong here. The `instance` label threads into
 // `plugin.inbound.email.<instance>` so agent bindings can target a
@@ -554,7 +554,7 @@ pub struct EmailPluginConfig {
     pub max_body_bytes: usize,
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: usize,
-    /// Phase 48 follow-up #10. Days to keep an attachment file under
+    /// Days to keep an attachment file under
     /// `attachments_dir` after the most recent message that
     /// referenced it. `0` disables GC entirely (legacy behaviour —
     /// attachments accumulate forever). Default 90.

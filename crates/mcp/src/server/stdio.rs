@@ -3,13 +3,11 @@
 //! writes responses to stdout. Exits on stdin EOF or
 //! `shutdown_token` cancel.
 //!
-//! Phase 76.2 — protocol logic moved to
-//! [`super::dispatch::Dispatcher`]; framing logic moved to
-//! [`super::stdio_transport::StdioTransport`]. The four public
-//! entry points below preserve their pre-refactor signature and
-//! behaviour byte-for-byte; they exist as thin wrappers that build
-//! the dispatcher + transport and delegate to the shared
-//! `server_loop` driver.
+//! Protocol logic lives in [`super::dispatch::Dispatcher`]; framing
+//! logic lives in [`super::stdio_transport::StdioTransport`]. The
+//! four public entry points below are thin wrappers that build the
+//! dispatcher + transport and delegate to the shared `server_loop`
+//! driver.
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;

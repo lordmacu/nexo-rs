@@ -1,8 +1,8 @@
-//! Phase 82.10.h.b.b — surface `[capabilities.admin]` and
+//! Surface `[capabilities.admin]` and
 //! `[capabilities.http_server]` declared by plugins into the
 //! maps `AdminRpcBootstrap` consumes.
 //!
-//! Phase 81.13: walks BOTH `plugin.toml` (canonical) and
+//! Walks BOTH `plugin.toml` (canonical) and
 //! `nexo-plugin.toml` (legacy modern-schema sidecar) via
 //! [`nexo_plugin_manifest::discover_in_root`]. The shared
 //! parser auto-detects v1 vs v2 shape and emits a one-shot
@@ -58,7 +58,7 @@ pub fn collect_admin_capabilities(
 }
 
 /// Same shape as [`collect_admin_capabilities`] but returns the
-/// HTTP server capability (Phase 82.12) for plugins that declare
+/// HTTP server capability for plugins that declare
 /// one. Plugins without the section omit; boot's bind-policy
 /// validator skips checks for omitted plugins.
 pub fn collect_http_server_capabilities(
@@ -257,7 +257,7 @@ token_env = "TOKEN"
 
     #[test]
     fn collect_admin_picks_up_admin_block_from_legacy_v1_plugin_toml() {
-        // Phase 81.13: a legacy `plugin.toml` with the new
+        // A legacy `plugin.toml` with the new
         // `[capabilities.admin]` block (top-level under
         // `[capabilities]`) is auto-translated by `compat_v1` to
         // the v2 shape, and the admin caps surface in the

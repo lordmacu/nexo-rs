@@ -1,4 +1,4 @@
-//! Phase 81.12.0 — verify `wire_plugin_registry(..., Some(&factory))`
+//! Verify `wire_plugin_registry(..., Some(&factory))`
 //! consults the factory registry for each discovered plugin and
 //! records `Failed` (factory closure errors) instead of `NoHandle`.
 //! We force the factory to error so the helper short-circuits

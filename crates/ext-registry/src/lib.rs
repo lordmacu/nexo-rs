@@ -1,5 +1,4 @@
-//! Phase 31.0 — `ext-registry` index format types + parser +
-//! validation.
+//! `ext-registry` index format types + parser + validation.
 //!
 //! The ext-registry is the catalog of installable nexo plugins
 //! (out-of-tree subprocess plugins authored against
@@ -7,9 +6,9 @@
 //! well-known URL (e.g. `https://nexo-rs.dev/ext-index.json`)
 //! lists every plugin available for `nexo ext install <id>`.
 //!
-//! This crate ships ONLY the data types + parser + validation.
-//! Phase 31.1 (`nexo ext install`), 31.2 (CI publish workflow),
-//! 31.3 (cosign signing + trusted keys) consume these types.
+//! This crate ships ONLY the data types + parser + validation;
+//! the install command, CI publish workflow, and cosign signing
+//! consume these types.
 //!
 //! # Wire shape (schema_version = 1.0.0)
 //!
@@ -45,19 +44,12 @@
 //! }
 //! ```
 //!
-//! # IRROMPIBLE refs
-//!
-//! - Internal precedent: `crates/plugin-manifest/` — per-plugin
-//!   manifest schema; the registry index is a CATALOG OF those.
-//!   Distinct shape, distinct crate.
-//! - OpenClaw absence: `research/extensions/<id>/openclaw.plugin.json`
-//!   are individual plugin manifests; OpenClaw has no remote
-//!   index, all plugins live in the same repo.
-//! - claude-code-leak: no remote plugin index — `src/plugins/`
-//!   builtins ship inline with the binary.
-//! - Real-world references for the format design: `crates.io`
-//!   index (per-crate JSON files in a git repo), npm registry
-//!   (single doc per package), brew taps (Ruby formulae).
+//! Related: `crates/plugin-manifest/` holds the per-plugin
+//! manifest schema; the registry index is a CATALOG OF those —
+//! a distinct shape in a distinct crate. The format design
+//! borrows from `crates.io` index (per-crate JSON files in a git
+//! repo), the npm registry (single doc per package), and brew
+//! taps (Ruby formulae).
 //!   We chose a single-document layout because nexo's plugin
 //!   count starts small (~10s, not millions like crates.io).
 
@@ -87,7 +79,7 @@ pub struct ExtRegistryIndex {
     /// rules — additive fields = minor; removal/rename = major.
     pub schema_version: Version,
     /// UTC timestamp when this index was last regenerated. CI
-    /// pipelines (Phase 31.2) write this on every publish.
+    /// pipelines write this on every publish.
     pub generated_at: DateTime<Utc>,
     /// Catalog of plugins available for installation.
     pub entries: Vec<ExtEntry>,
@@ -117,7 +109,7 @@ pub struct ExtEntry {
     /// Trust tier — `Verified` (signed by nexo-rs maintainers)
     /// vs `Community` (third-party signed). Operator's
     /// `config/extensions/trusted_keys.toml` decides which
-    /// tier(s) to accept (Phase 31.3).
+    /// tier(s) to accept.
     pub tier: ExtTier,
     /// Minimum daemon version that supports this plugin.
     /// `nexo ext install` rejects entries whose
@@ -153,7 +145,7 @@ pub enum ExtTier {
     Verified,
     /// Signed by a third-party cosign key. Operator must add
     /// the key to `config/extensions/trusted_keys.toml`
-    /// (Phase 31.3) before `nexo ext install` accepts.
+    /// before `nexo ext install` accepts.
     Community,
 }
 

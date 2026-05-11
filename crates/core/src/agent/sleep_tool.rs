@@ -36,7 +36,7 @@ pub const SLEEP_MAX_MS: u64 = 86_400_000;
 pub const CACHE_WARM_MAX_MS: u64 = 270_000;
 pub const CACHE_COLD_MIN_MS: u64 = 1_200_000;
 
-/// Phase 77.20 — Sleep tool.
+/// Sleep tool.
 ///
 /// When the model calls `Sleep { duration_ms, reason }` the driver-loop:
 /// 1. Intercepts the sentinel result (does NOT pass it back to the LLM).

@@ -1,5 +1,4 @@
-//! Phase 82.13 — operator processing pause + intervention
-//! wire shapes.
+//! Operator processing pause + intervention wire shapes.
 //!
 //! `ProcessingScope` + `InterventionAction` are discriminated
 //! `#[non_exhaustive]` enums so future agent shapes (batch,
@@ -33,7 +32,7 @@ pub enum ProcessingScope {
         account_id: String,
         /// Counterparty id (e.g. WA jid).
         contact_id: String,
-        /// Phase 80.9 — populated when the conversation
+        /// Populated when the conversation
         /// arrived via an MCP channel server (e.g. `slack`).
         /// `None` for native-channel inbounds.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,8 +78,8 @@ pub enum ProcessingScope {
 }
 
 impl ProcessingScope {
-    /// `true` when v0 routes this scope through the inbound
-    /// dispatcher hook (deferred to 82.13.b). Today only
+    /// `true` when this scope routes through the inbound
+    /// dispatcher hook. Today only
     /// `Conversation` returns true; reserved slots return
     /// false so callers can short-circuit with
     /// `not_implemented` without exposing the variant matrix.
@@ -183,8 +182,8 @@ pub enum ProcessingControlState {
         scope: ProcessingScope,
         /// Epoch ms when the pause was set.
         paused_at_ms: u64,
-        /// `token_hash` of the operator's bearer (Phase 82.12
-        /// helper) so audits can correlate without storing the
+        /// `token_hash` of the operator's bearer so audits can
+        /// correlate without storing the
         /// cleartext token.
         operator_token_hash: String,
         /// Free-form reason. Optional.
@@ -201,8 +200,8 @@ pub struct ProcessingPauseParams {
     /// Free-form reason to log alongside the audit row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Operator bearer hash (matches Phase 82.12
-    /// `token_hash` shape — sha256-hex truncated to 16 chars).
+    /// Operator bearer hash (`token_hash` shape —
+    /// sha256-hex truncated to 16 chars).
     /// Daemon stamps this onto the persisted state for audit
     /// correlation.
     pub operator_token_hash: String,
@@ -217,7 +216,7 @@ pub struct ProcessingAck {
     pub changed: bool,
     /// `correlation_id` for log / audit lookups.
     pub correlation_id: Uuid,
-    /// Phase 82.13.b.1 — `Some(true)` when the daemon appended
+    /// `Some(true)` when the daemon appended
     /// the operator reply (or summary, or replayed inbound) to
     /// the agent transcript; `Some(false)` when the call
     /// provided no `session_id`, no transcript appender was
@@ -226,7 +225,7 @@ pub struct ProcessingAck {
     /// intervention with a non-Reply action).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_stamped: Option<bool>,
-    /// Phase 82.13.b.3 — populated only on resume. Reports how
+    /// Populated only on resume. Reports how
     /// many inbounds were drained from the pending queue (those
     /// captured during the pause). `Some(0)` when the queue was
     /// empty; `Some(N)` when N inbounds were stamped as
@@ -243,14 +242,14 @@ pub struct ProcessingResumeParams {
     pub scope: ProcessingScope,
     /// Operator bearer hash.
     pub operator_token_hash: String,
-    /// Phase 82.13.b.2 — session in which to inject the
+    /// Session in which to inject the
     /// optional summary. MUST be set whenever
     /// `summary_for_agent` is `Some`; daemon returns
     /// `-32602 invalid_params session_id_required_with_summary`
     /// otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<Uuid>,
-    /// Phase 82.13.b.2 — optional operator-supplied free text
+    /// Optional operator-supplied free text
     /// the agent sees as a `System` entry on its next turn.
     /// Daemon prefixes with `[operator_summary] ` server-side,
     /// runs through the redactor, and persists alongside the
@@ -263,24 +262,24 @@ pub struct ProcessingResumeParams {
     pub summary_for_agent: Option<String>,
 }
 
-/// Phase 82.13.b.2 — operator summary length cap. Mirrors the
+/// Operator summary length cap. Mirrors the
 /// FTS5 doc cap in `TranscriptsIndex` so a stamped summary
 /// always indexes cleanly.
 pub const PROCESSING_SUMMARY_MAX_LEN: usize = 4096;
 
-/// Phase 82.13.b.3 — default per-scope inbound buffer cap.
+/// Default per-scope inbound buffer cap.
 /// Inbounds arriving while a scope is `PausedByOperator` are
 /// buffered server-side instead of dropped; on resume they are
 /// stamped onto the transcript as `User` entries so the agent
 /// sees what the customer said during the takeover. The cap
 /// bounds memory: when exceeded, the oldest entry is dropped
 /// and a `PendingInboundsDropped` firehose event is emitted so
-/// operators can surface the drop in the UI. v0 in-memory store
-/// uses this as the only cap; durable SQLite store (82.13.c)
+/// operators can surface the drop in the UI. The in-memory store
+/// uses this as the only cap; a durable SQLite store
 /// can re-tune.
 pub const DEFAULT_PENDING_INBOUNDS_CAP: usize = 50;
 
-/// Phase 82.13.b.3 — one inbound captured during a pause.
+/// One inbound captured during a pause.
 /// Persisted on the `ProcessingControlStore` keyed by scope;
 /// drained back on resume.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -316,7 +315,7 @@ pub struct ProcessingInterventionParams {
     pub action: InterventionAction,
     /// Operator bearer hash.
     pub operator_token_hash: String,
-    /// Phase 82.13.b.1 — session in which to stamp the operator
+    /// Session in which to stamp the operator
     /// reply on the agent transcript. When set together with a
     /// `Reply` action, the daemon appends a synthetic entry
     /// (`role: Assistant`, `source_plugin:
@@ -477,7 +476,7 @@ mod tests {
 
     #[test]
     fn intervention_params_legacy_payload_without_session_id_deserializes() {
-        // Pre-Phase 82.13.b microapps emit no `session_id` field.
+        // Older microapps emit no `session_id` field.
         // Wire shape MUST keep deserialising those payloads to
         // `session_id: None` so existing operator UIs keep
         // working unchanged.
@@ -523,7 +522,7 @@ mod tests {
 
     #[test]
     fn resume_params_legacy_payload_without_new_fields_deserializes() {
-        // Pre-Phase 82.13.b.2 microapps emit no `session_id` or
+        // Older microapps emit no `session_id` or
         // `summary_for_agent` fields. Wire shape MUST keep
         // deserialising those payloads to None for both fields.
         let raw = serde_json::json!({

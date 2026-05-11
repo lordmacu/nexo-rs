@@ -1,4 +1,4 @@
-//! Phase 5.4 — integration tests for `open_with_vector`, `remember`,
+//! Integration tests for `open_with_vector`, `remember`,
 //! `recall_vector`, `recall_hybrid` with a mock embedding provider.
 
 use std::collections::HashMap;

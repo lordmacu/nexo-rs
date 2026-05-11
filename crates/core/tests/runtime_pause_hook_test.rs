@@ -1,4 +1,4 @@
-//! Phase 82.13.c — runtime intake pause hook integration tests.
+//! Runtime intake pause hook integration tests.
 //!
 //! Verifies that the inbound dispatcher buffers messages onto the
 //! per-scope pending queue when a scope is `PausedByOperator`, and

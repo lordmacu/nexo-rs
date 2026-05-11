@@ -1,4 +1,4 @@
-//! Phase 31.1.b — error variants returned by [`crate::extract::extract_verified_tarball`].
+//! Error variants returned by [`crate::extract::extract_verified_tarball`].
 
 use std::path::PathBuf;
 

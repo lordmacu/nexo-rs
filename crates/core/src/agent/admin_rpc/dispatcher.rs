@@ -1,4 +1,4 @@
-//! Phase 82.10.a — admin RPC dispatcher core.
+//! Admin RPC dispatcher core.
 //!
 //! Single entry point `AdminRpcDispatcher::dispatch(microapp_id,
 //! method, params) -> AdminRpcResult` invoked by the microapp
@@ -6,15 +6,11 @@
 //! arrives. Returns the typed result/error pair; caller frames +
 //! writes the response.
 //!
-//! Sub-phase scope:
-//! - **82.10.a** (now): single mock `nexo/admin/echo` handler. No
-//!   capability gate (always allow), no audit log. Validates
-//!   wire-shape end-to-end before adding domain logic.
-//! - **82.10.b**: capability gate + audit log writer. `echo` will
-//!   require `agents_crud` (any granted capability suffices for
-//!   echo testing).
-//! - **82.10.c-f**: register actual domain handlers
-//!   (agents/credentials/pairing/llm_providers/channels).
+//! Every dispatch consults the capability gate and writes one
+//! audit row. Domain handlers
+//! (agents/credentials/pairing/llm_providers/channels/...) are
+//! registered via the `install_*` methods; an unconfigured domain
+//! returns `-32601`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -48,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Reload signal callback — invoked by domain handlers after
-/// successful yaml mutations to trigger Phase 18 hot-reload.
+/// successful yaml mutations to trigger config hot-reload.
 /// Production wiring passes a closure that calls
 /// `ConfigReloadCoordinator::trigger_reload`.
 pub type ReloadSignal = Arc<dyn Fn() + Send + Sync>;
@@ -78,7 +74,6 @@ pub enum AdminRpcError {
     },
     /// `-32004` — operator did not grant `capability` to this
     /// microapp via `extensions.yaml.<id>.capabilities_grant`.
-    /// Wired in 82.10.b.
     #[error("capability_not_granted: {capability} for method {method}")]
     CapabilityNotGranted {
         /// Required capability name.
@@ -151,7 +146,7 @@ impl AdminRpcResult {
     }
 }
 
-/// Phase 82.10 admin RPC dispatcher.
+/// Admin RPC dispatcher.
 ///
 /// Routes `nexo/admin/<domain>/<method>` requests to handlers,
 /// consults [`CapabilitySet`] for the operator-granted capability
@@ -160,50 +155,50 @@ impl AdminRpcResult {
 pub struct AdminRpcDispatcher {
     capabilities: Arc<CapabilitySet>,
     audit: Arc<dyn AdminAuditWriter>,
-    /// Phase 82.10.c — yaml mutation surface used by the
+    /// Yaml mutation surface used by the
     /// `agents` domain handlers. `None` = domain unavailable
     /// (returns -32601 for `nexo/admin/agents/*`). Production
     /// wiring constructs the adapter from `nexo_setup::yaml_patch`.
     agents_yaml: Option<Arc<dyn YamlPatcher>>,
-    /// Phase 82.10.c — Phase 18 reload trigger called after
+    /// Config reload trigger called after
     /// successful yaml mutations. `None` = no-op (for early-boot
     /// tests).
     reload_signal: Option<ReloadSignal>,
-    /// Phase 82.10.d — credential filesystem store. `None`
+    /// Credential filesystem store. `None`
     /// disables `nexo/admin/credentials/*`.
     credential_store: Option<Arc<dyn CredentialStore>>,
-    /// Phase 82.10.n — per-channel credential persisters keyed
+    /// Per-channel credential persisters keyed
     /// by channel id. Empty by default. Channel plugins register
     /// themselves at boot via [`Self::register_persister`].
     /// `credentials/register` looks up by `input.channel`; absent
     /// = opaque-only path (back-compat).
     persisters: PersisterRegistry,
-    /// Phase 82.10.e — pairing challenge store. `None` disables
+    /// Pairing challenge store. `None` disables
     /// `nexo/admin/pairing/*`.
     pairing_store: Option<Arc<dyn PairingChallengeStore>>,
     /// WhatsApp bot channel handle. `None` disables
     /// `nexo/admin/whatsapp/bot/*`.
     wa_bot_handle: super::wa_bot::WaBotHandleArc,
-    /// Phase 82.10.e — push channel for
+    /// Push channel for
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
     pairing_notifier: Option<Arc<dyn PairingNotifier>>,
-    /// Phase 82.10.p — per-channel pairing trigger registry. Empty
+    /// Per-channel pairing trigger registry. Empty
     /// map = `pairing/start` returns `channel not supported` for
     /// any channel (no garbage Pending row). Production wires
     /// `WhatsappPairingTrigger` (and future telegram-link, etc).
     pairing_triggers: PairingChannelTriggers,
-    /// Phase 82.10.p — registry of in-flight pairing tasks
+    /// Registry of in-flight pairing tasks
     /// keyed by `challenge_id`. `pairing/cancel` (and TTL
     /// eviction) call `handle.abort()` to stop the underlying
     /// trigger task cleanly.
     pairing_handles: Arc<DashMap<Uuid, PairingHandle>>,
-    /// Phase 82.10.p — root cancel token. Per-trigger handles
+    /// Root cancel token. Per-trigger handles
     /// derive their own children via `child_token`. Aborting
     /// the root cancels every in-flight pairing (used at
     /// shutdown).
     pairing_cancel_root: CancellationToken,
-    /// Phase 82.10.f — `llm.yaml` mutator. `None` disables
+    /// `llm.yaml` mutator. `None` disables
     /// `nexo/admin/llm_providers/*`.
     llm_yaml: Option<Arc<dyn LlmYamlPatcher>>,
     /// Snapshot of every LLM provider factory the daemon has
@@ -212,75 +207,75 @@ pub struct AdminRpcDispatcher {
     /// the RPC.
     llm_provider_catalog:
         Option<Arc<Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>>>,
-    /// Phase 82.10.u — schema-driven `upsert` lookup. `None` keeps
+    /// Schema-driven `upsert` lookup. `None` keeps
     /// the legacy `api_key_env` / `api_key_secret_value` path
     /// active; with a lookup wired the handler also accepts the
     /// new `fields: BTreeMap` payload validated against the
     /// factory's declared `credential_schema`.
     llm_factory_schema: Option<Arc<dyn super::domains::llm_providers::FactorySchemaLookup>>,
-    /// Phase 82.10.u — OAuth verifier store. `None` disables
+    /// OAuth verifier store. `None` disables
     /// `nexo/admin/llm_providers/oauth_*` (the SPA falls back to
     /// the manual `oauth_bundle_import` paste path).
     oauth_verifier_store: Option<Arc<dyn nexo_llm_auth::VerifierStore>>,
-    /// Phase 82.11 — transcripts read surface. `None` disables
+    /// Transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
-    /// Phase 83.12.audit-page — audit-log read surface. `None`
+    /// Audit-log read surface. `None`
     /// disables `nexo/admin/microapp_audit/*`. Production wires
     /// the same `SqliteAdminAuditWriter` that handles writes
     /// (the type implements both `AdminAuditWriter` and
     /// `AdminAuditReader`).
     audit_reader: Option<Arc<dyn AdminAuditReader>>,
-    /// Phase 82.13 — processing control store. `None` disables
+    /// Processing control store. `None` disables
     /// `nexo/admin/processing/*`.
     processing_store: Option<Arc<dyn ProcessingControlStore>>,
-    /// Phase 82.14 — escalation store. `None` disables
+    /// Escalation store. `None` disables
     /// `nexo/admin/escalations/*`. When BOTH this and
     /// `processing_store` are configured, a `pause` call
     /// auto-flips any matching `Pending` escalation to
     /// `Resolved { OperatorTakeover }`.
     escalation_store: Option<Arc<dyn EscalationStore>>,
-    /// Phase 83.8 — skills CRUD store. `None` disables
+    /// Skills CRUD store. `None` disables
     /// `nexo/admin/skills/*`. Production wires
     /// `nexo_setup::admin_adapters::FsSkillsStore` against the
     /// existing `SkillLoader` filesystem layout.
     skills_store: Option<Arc<dyn SkillsStore>>,
-    /// Phase 83.8.4.a — channel-outbound dispatcher used by
+    /// Channel-outbound dispatcher used by
     /// `processing/intervention` when the action is `Reply`.
     /// `None` keeps the wire surface alive (`-32601` style
     /// rejection) but operator replies fail with
     /// `channel_unavailable`. Production wires the multi-channel
     /// router adapter living in `nexo-setup`.
     channel_outbound: Option<Arc<dyn ChannelOutboundDispatcher>>,
-    /// Phase 83.8.12 — multi-tenant SaaS registry. `None`
+    /// Multi-tenant SaaS registry. `None`
     /// disables `nexo/admin/tenants/*` (single-tenant
     /// deployments where there is no operator-level tenant
     /// management). Production wires
     /// `nexo_setup::admin_adapters::TenantsYamlPatcher`.
     tenant_store: Option<Arc<dyn TenantStore>>,
-    /// Phase 90.x.mcp — MCP server registry CRUD. `None`
+    /// MCP server registry CRUD. `None`
     /// disables `nexo/admin/mcp/*` (mcp.yaml management via
     /// CLI / direct edit only). Production wires
     /// `nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore`.
     mcp_store: Option<Arc<dyn McpServerStore>>,
-    /// Phase 90.x.plugins — plugin doctor snapshot reader.
+    /// Plugin doctor snapshot reader.
     /// `None` keeps `nexo/admin/plugins/doctor` returning a typed
     /// `plugins domain not configured` -32603.
     plugin_doctor: Option<Arc<dyn PluginDoctorReader>>,
-    /// Phase 81.21.b.b follow-up — manual plugin restart adapter.
+    /// Manual plugin restart adapter.
     /// `None` keeps `nexo/admin/plugins/restart` returning a typed
     /// `plugin restart domain not configured` -32603. Production
     /// wires `nexo_setup::admin_adapters::LivePluginRestarter`.
     plugin_restarter: Option<Arc<dyn PluginRestarter>>,
-    /// Phase 90.x.memory — long-term memory query reader.
+    /// Long-term memory query reader.
     /// `None` keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603.
     memory_reader: Option<Arc<dyn MemoryReader>>,
-    /// Phase 90.x.memory-snapshot — snapshot list reader. `None`
+    /// Snapshot list reader. `None`
     /// keeps `nexo/admin/memory/list_snapshots` returning the
     /// typed `memory snapshot domain not configured` -32603.
     memory_snapshot_reader: Option<Arc<dyn MemorySnapshotReader>>,
-    /// Phase 82.13.b.1 — transcript appender used by
+    /// Transcript appender used by
     /// `processing/intervention` (and later `processing/resume`)
     /// to stamp operator replies / summary / replayed inbounds
     /// onto the agent transcript. `None` keeps the wire surface
@@ -289,7 +284,7 @@ pub struct AdminRpcDispatcher {
     /// Production wires
     /// `nexo_setup::admin_adapters::TranscriptWriterAppender`.
     transcript_appender: Option<Arc<dyn TranscriptAppender>>,
-    /// Phase 82.14.b — firehose emitter shared with the
+    /// Firehose emitter shared with the
     /// transcripts subsystem. `None` keeps the wire surface
     /// alive but `escalations/resolve` (and the auto-resolve on
     /// `processing/pause`) skip the
@@ -297,30 +292,28 @@ pub struct AdminRpcDispatcher {
     /// fall back to polling. Production threads
     /// `AdminRpcBootstrap.event_emitter()` here.
     event_emitter: Option<Arc<dyn crate::agent::agent_events::AgentEventEmitter>>,
-    /// Phase 82.10.k — secrets store. `None` disables
+    /// Secrets store. `None` disables
     /// `nexo/admin/secrets/write` (returns `Internal` for that
     /// method). Production wires
     /// `nexo_setup::secrets_store::FsSecretsStore` rooted at
     /// `<state_root>/secrets/` (mode 0600 file write +
     /// `std::env::set_var` so existing LLM clients see the
-    /// new value without a daemon restart). Resolves M9.frame.a
-    /// (microapp follow-up).
+    /// new value without a daemon restart).
     secrets_store: Option<Arc<dyn super::domains::secrets::SecretsStore>>,
-    /// Phase 82.10.l — daemon-side LLM provider probe. `None`
+    /// Daemon-side LLM provider probe. `None`
     /// disables `nexo/admin/llm_providers/probe` (returns
     /// `Internal`). Production wires
     /// `nexo_setup::llm_provider_probe::HttpLlmProviderProbe`
     /// against the existing `LlmYamlPatcher` so the probe
     /// reflects the same config agent traffic would resolve.
-    /// Resolves M9.frame.b (microapp follow-up).
     llm_provider_probe: Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
-    /// Phase 82.10.t.x — runtime LLM completer. Pluggable so the
+    /// Runtime LLM completer. Pluggable so the
     /// binary can wire `nexo_setup::llm_completer::RegistryLlmCompleter`
     /// (production) and tests can swap in a mock that captures
     /// inputs without touching the network. `None` disables
     /// `nexo/admin/llm/complete` (returns `Internal`).
     llm_completer: Option<Arc<dyn super::domains::llm::LlmCompleter>>,
-    /// Phase 82.10.o — operator bearer rotator. `None` disables
+    /// Operator bearer rotator. `None` disables
     /// `nexo/admin/auth/rotate_token` (returns `Internal`).
     /// Production wires `nexo_setup::auth_rotator::FsAuthRotator`
     /// rooted at `<state_root>/secrets/operator_token.txt`,
@@ -328,8 +321,6 @@ pub struct AdminRpcDispatcher {
     /// audit emitter so a successful rotation lands the live
     /// `nexo/notify/token_rotated` AND the durable
     /// `AgentEventKind::SecurityEvent::TokenRotated` audit row.
-    /// Resolves the M2.b.frame.emit blocker + unblocks
-    /// M2.b.audit (microapp follow-ups).
     auth_rotator: Option<Arc<dyn super::domains::auth::AuthRotator>>,
 }
 
@@ -391,7 +382,7 @@ impl AdminRpcDispatcher {
         }
     }
 
-    /// Phase 82.10.k — install the secrets domain. Production
+    /// Install the secrets domain. Production
     /// passes `nexo_setup::secrets_store::FsSecretsStore::new(&state_root)`.
     /// Without one, `nexo/admin/secrets/write` returns
     /// `Internal("secrets domain not configured")`.
@@ -403,7 +394,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.l — install the LLM provider probe.
+    /// Install the LLM provider probe.
     /// Production passes
     /// `nexo_setup::llm_provider_probe::HttpLlmProviderProbe::new(...)`.
     /// Without one, `nexo/admin/llm_providers/probe` returns
@@ -416,7 +407,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.t.x — runtime LLM completer. Wire at boot
+    /// Runtime LLM completer. Wire at boot
     /// from `nexo_setup::llm_completer::RegistryLlmCompleter::new(
     /// registry, llm_cfg)`. Without one,
     /// `nexo/admin/llm/complete` returns
@@ -429,7 +420,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.o — install the operator-bearer rotator.
+    /// Install the operator-bearer rotator.
     /// Production passes
     /// `nexo_setup::auth_rotator::FsAuthRotator::new(...)`.
     /// Without one, `nexo/admin/auth/rotate_token` returns
@@ -442,7 +433,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.14.b — install the firehose emitter shared with
+    /// Install the firehose emitter shared with
     /// the transcripts subsystem so escalation resolve
     /// transitions also reach `nexo/notify/agent_event`
     /// subscribers in real time. Without one, the resolve
@@ -464,13 +455,13 @@ impl AdminRpcDispatcher {
     }
 
     /// Replace the audit writer. Tests inject in-memory; SQLite
-    /// writer lands in 82.10.g.
+    /// writer is wired in production.
     pub fn with_audit_writer(mut self, writer: Arc<dyn AdminAuditWriter>) -> Self {
         self.audit = writer;
         self
     }
 
-    /// Phase 82.10.c — install the agents domain. Production
+    /// Install the agents domain. Production
     /// passes a `YamlPatcher` adapter wrapping
     /// `nexo_setup::yaml_patch::*`.
     pub fn with_agents_domain(mut self, yaml: Arc<dyn YamlPatcher>, reload: ReloadSignal) -> Self {
@@ -479,7 +470,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.d — install the credentials domain. Reuses
+    /// Install the credentials domain. Reuses
     /// the agents-domain `YamlPatcher` + `ReloadSignal` (must be
     /// installed first via `with_agents_domain`).
     pub fn with_credentials_domain(mut self, store: Arc<dyn CredentialStore>) -> Self {
@@ -487,7 +478,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.n — register a per-channel credential
+    /// Register a per-channel credential
     /// persister. Channel plugins (telegram, email, whatsapp,
     /// future slack/discord) call this at boot to bridge
     /// `credentials/register` from the opaque payload to their
@@ -510,7 +501,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.n — read-only accessor for the persister
+    /// Read-only accessor for the persister
     /// registered against `channel`. Used by the
     /// `credentials/register` + `credentials/revoke` handlers to
     /// route to the per-channel bridge. `None` = opaque-only
@@ -519,7 +510,7 @@ impl AdminRpcDispatcher {
         self.persisters.get(channel).cloned()
     }
 
-    /// Phase 82.10.e — install the pairing domain. `notifier`
+    /// Install the pairing domain. `notifier`
     /// is optional; `None` keeps polling functional but skips
     /// `nexo/notify/pairing_status_changed` pushes.
     pub fn with_pairing_domain(
@@ -541,7 +532,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.p — install per-channel pairing triggers.
+    /// Install per-channel pairing triggers.
     /// Empty map (default) = `pairing/start` rejects every
     /// `channel` with `channel not supported` (no garbage row).
     /// Production passes one entry per channel that has a
@@ -551,13 +542,13 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.p — observability hook: count of in-flight
+    /// Observability hook: count of in-flight
     /// pairing handles. Used by health probes / TTL sweep.
     pub fn pairing_handles_len(&self) -> usize {
         self.pairing_handles.len()
     }
 
-    /// Phase 82.10.f — install the llm_providers domain.
+    /// Install the llm_providers domain.
     /// Production passes an `LlmYamlPatcher` adapter pointed at
     /// `llm.yaml`.
     pub fn with_llm_providers_domain(mut self, llm_yaml: Arc<dyn LlmYamlPatcher>) -> Self {
@@ -578,11 +569,11 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.u — install the schema lookup the upsert handler
+    /// Install the schema lookup the upsert handler
     /// uses to validate operator payloads against the factory's
     /// declared `credential_schema`. `None` (default) keeps
     /// `llm_providers/upsert` on the legacy `api_key_env` path so
-    /// pre-82.10.u microapps don't break.
+    /// older microapps don't break.
     pub fn with_llm_factory_schema(
         mut self,
         schema: Arc<dyn super::domains::llm_providers::FactorySchemaLookup>,
@@ -591,7 +582,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.u — install the OAuth verifier store the
+    /// Install the OAuth verifier store the
     /// `oauth_start` / `oauth_finish` handlers use to suspend
     /// PKCE state across the two RPC calls. Production wires
     /// `nexo_llm_auth::InMemoryVerifierStore::new(100)`.
@@ -603,7 +594,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.11 — install the agent_events domain. Production
+    /// Install the agent_events domain. Production
     /// passes a `TranscriptReader` adapter wrapping
     /// `TranscriptWriter` + `TranscriptsIndex`.
     pub fn with_agent_events_domain(mut self, reader: Arc<dyn TranscriptReader>) -> Self {
@@ -611,7 +602,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 83.12.audit-page — install the microapp_audit
+    /// Install the microapp_audit
     /// domain. Production passes the same
     /// `Arc<SqliteAdminAuditWriter>` already wired as the
     /// audit writer (the type implements both reader + writer
@@ -621,7 +612,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.13 — install the processing domain. Production
+    /// Install the processing domain. Production
     /// passes a `ProcessingControlStore` adapter (in-memory
     /// DashMap variant in v0). `None` keeps the four
     /// `nexo/admin/processing/*` methods disabled.
@@ -630,16 +621,16 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.14 — install the escalations domain.
+    /// Install the escalations domain.
     /// Production wires the in-memory adapter; SQLite-backed
-    /// durable variant is a 82.14.b follow-up. `None` disables
+    /// durable variant is a follow-up. `None` disables
     /// `nexo/admin/escalations/*`.
     pub fn with_escalations_domain(mut self, store: Arc<dyn EscalationStore>) -> Self {
         self.escalation_store = Some(store);
         self
     }
 
-    /// Phase 83.8 — install the skills domain. Production passes
+    /// Install the skills domain. Production passes
     /// an `FsSkillsStore` adapter pointed at the same skills root
     /// the `SkillLoader` reads from. `None` disables
     /// `nexo/admin/skills/*`.
@@ -648,7 +639,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 83.8.12.2 — install the tenants domain. Production
+    /// Install the tenants domain. Production
     /// passes a `TenantsYamlPatcher` adapter wrapping
     /// `config/tenants.yaml`. `None` disables
     /// `nexo/admin/tenants/*` (single-tenant deployments where
@@ -658,7 +649,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 90.x.mcp — install the MCP servers domain.
+    /// Install the MCP servers domain.
     /// Production passes [`super::domains::mcp::McpYamlStore`]
     /// pointed at `<config_dir>/mcp.yaml`. `None` disables
     /// `nexo/admin/mcp/*` (operator manages mcp.yaml via CLI /
@@ -668,12 +659,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 90.x.plugins — install the plugin doctor reader.
-    /// Production wires the live `wire_plugin_registry` +
-    /// `doctor_render::render_json` pipeline. `None` disables
-    /// `nexo/admin/plugins/doctor` (operator falls back to the
-    /// `agent doctor plugins` CLI).
-    /// Phase 81.21.b.b follow-up — install the plugin restart
+    /// Install the plugin restart
     /// adapter. Production wires
     /// `nexo_setup::admin_adapters::LivePluginRestarter`. `None`
     /// disables `nexo/admin/plugins/restart` (operator falls back
@@ -683,12 +669,17 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Install the plugin doctor reader.
+    /// Production wires the live `wire_plugin_registry` +
+    /// `doctor_render::render_json` pipeline. `None` disables
+    /// `nexo/admin/plugins/doctor` (operator falls back to the
+    /// `agent doctor plugins` CLI).
     pub fn with_plugin_doctor(mut self, reader: Arc<dyn PluginDoctorReader>) -> Self {
         self.plugin_doctor = Some(reader);
         self
     }
 
-    /// Phase 90.x.memory — install the long-term memory query
+    /// Install the long-term memory query
     /// reader. Production wires
     /// `nexo_setup::admin_adapters::LiveMemoryReader` around the
     /// daemon's `LongTermMemory` instance. `None` disables
@@ -699,7 +690,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 90.x.memory-snapshot — install the snapshot list
+    /// Install the snapshot list
     /// reader. Production wires
     /// `nexo_setup::admin_adapters::LiveMemorySnapshotReader`
     /// around the daemon's `MemorySnapshotter`. `None` disables
@@ -710,7 +701,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 83.8.4.a — install the channel-outbound dispatcher
+    /// Install the channel-outbound dispatcher
     /// used by `processing/intervention` when the action is
     /// `Reply`. Without one wired the handler returns
     /// `-32004 channel_unavailable`. Production passes a
@@ -720,7 +711,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.13.b.1 — install the transcript appender used by
+    /// Install the transcript appender used by
     /// `processing/intervention` to stamp operator replies onto
     /// the agent transcript. Without one wired, replies still go
     /// out through the channel but the transcript is not
@@ -733,7 +724,7 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Phase 82.10.f — install the channels domain. Reuses the
+    /// Install the channels domain. Reuses the
     /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
     /// live in `agents.yaml.<id>.channels.approved`).
     pub fn with_channels_domain(self) -> Self {
@@ -767,7 +758,7 @@ impl AdminRpcDispatcher {
             | "nexo/admin/llm_providers/oauth_start"
             | "nexo/admin/llm_providers/oauth_finish"
             | "nexo/admin/llm_providers/catalog" => Some("llm_keys_crud"),
-            // Phase 82.10.t.x — runtime LLM completion. Distinct
+            // Runtime LLM completion. Distinct
             // capability from llm_keys_crud: an extension can
             // *use* the LLM (drafts, classification) without the
             // ability to mutate provider configs.
@@ -776,7 +767,7 @@ impl AdminRpcDispatcher {
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
             | "nexo/admin/channels/doctor" => Some("channels_crud"),
-            // Phase 82.11 — agent events backfill domain. The
+            // Agent events backfill domain. The
             // live notification stream uses the
             // `transcripts_subscribe` / `agent_events_subscribe_all`
             // capabilities checked at boot wire-up; the RPC
@@ -784,32 +775,32 @@ impl AdminRpcDispatcher {
             "nexo/admin/agent_events/list"
             | "nexo/admin/agent_events/read"
             | "nexo/admin/agent_events/search" => Some("transcripts_read"),
-            // Phase 83.12.audit-page — microapp_admin_audit table
+            // The microapp_admin_audit table
             // tail. Distinct capability from `transcripts_read`
             // because audit logs are operator-tier ops history
             // (when did each admin call happen, by whom), not
             // user-content transcripts.
             "nexo/admin/microapp_audit/tail" => Some("audit_read"),
-            // Phase 82.13 — processing pause + intervention.
+            // Processing pause + intervention.
             // Single combined gate; per-scope sub-gates are a
-            // 82.13.b follow-up.
+            // follow-up.
             "nexo/admin/processing/pause"
             | "nexo/admin/processing/resume"
             | "nexo/admin/processing/intervention"
             | "nexo/admin/processing/state" => Some("operator_intervention"),
-            // Phase 82.14 — escalations: `list` is read-only,
+            // Escalations: `list` is read-only,
             // `resolve` mutates. Two granular caps so
             // operator-readonly UIs (dashboards) hold the
             // weaker grant.
             "nexo/admin/escalations/list" => Some("escalations_read"),
             "nexo/admin/escalations/resolve" => Some("escalations_resolve"),
-            // Phase 83.8 — skills CRUD. Single combined gate;
+            // Skills CRUD. Single combined gate;
             // microapps that hold this can list/get/upsert/delete.
             "nexo/admin/skills/list"
             | "nexo/admin/skills/get"
             | "nexo/admin/skills/upsert"
             | "nexo/admin/skills/delete" => Some("skills_crud"),
-            // Phase 83.8.12.2 — tenants CRUD. Same combined-gate
+            // Tenants CRUD. Same combined-gate
             // pattern as skills: any microapp that holds
             // `tenants_crud` can list/get/upsert/delete the
             // operator's tenants registry.
@@ -817,7 +808,7 @@ impl AdminRpcDispatcher {
             | "nexo/admin/tenants/get"
             | "nexo/admin/tenants/upsert"
             | "nexo/admin/tenants/delete" => Some("tenants_crud"),
-            // Phase 90.x.mcp — admin/mcp/* CRUD over
+            // admin/mcp/* CRUD over
             // `<config_dir>/mcp.yaml.mcp.servers`. Gated on
             // `mcp_crud`; nexo-plugin-admin declares it as
             // required so the daemon refuses to spawn the
@@ -826,24 +817,22 @@ impl AdminRpcDispatcher {
             | "nexo/admin/mcp/get"
             | "nexo/admin/mcp/upsert"
             | "nexo/admin/mcp/delete" => Some("mcp_crud"),
-            // Phase 90.x.plugins — admin/plugins/doctor — live
+            // admin/plugins/doctor — live
             // snapshot of plugin discovery + spawn status. Gated
             // on `plugin_doctor`; nexo-plugin-admin declares it
             // required.
             "nexo/admin/plugins/doctor" => Some("plugin_doctor"),
-            // Phase 81.21.b.b follow-up — manual plugin restart
+            // Manual plugin restart
             // is write+destructive; distinct capability from the
             // read-only `plugin_doctor` so security review can
             // grant them independently.
             "nexo/admin/plugins/restart" => Some("plugin_restart"),
-            // Phase 90.x.memory — long-term memory query.
+            // Long-term memory query.
             // Capability `memory_query` so an operator can grant
             // read-only memory inspection independently of broader
             // capabilities.
             "nexo/admin/memory/query" => Some("memory_query"),
-            // Phase 90.x.memory-snapshot — list/delete snapshots
-            // (Phase 90.x.memory-snapshot list+delete) and
-            // create/restore (Phase 90.x.memory-snapshot.create-restore).
+            // List/delete snapshots and create/restore.
             // All four verbs share the `memory_snapshot` capability:
             // operators that already grant list+delete don't need
             // a fresh grant for create+restore — both are gated by
@@ -852,13 +841,13 @@ impl AdminRpcDispatcher {
             | "nexo/admin/memory/delete_snapshot"
             | "nexo/admin/memory/create_snapshot"
             | "nexo/admin/memory/restore_snapshot" => Some("memory_snapshot"),
-            // Phase 82.10.k — secrets/write persists operator-
+            // secrets/write persists operator-
             // supplied secrets to `<state_root>/secrets/<NAME>.txt`
             // and `std::env::set_var` so existing LLM clients
             // pick up the value without a daemon restart.
             // Critical capability; INVENTORY-gated.
             "nexo/admin/secrets/write" => Some("secrets_write"),
-            // Phase 82.10.o — operator bearer rotation. Critical
+            // Operator bearer rotation. Critical
             // capability; operator who holds it can lock out the
             // microapp from its own daemon. Granted only to UIs
             // that expose a deliberate "rotate token" action.
@@ -884,11 +873,11 @@ impl AdminRpcDispatcher {
     pub async fn dispatch(&self, microapp_id: &str, method: &str, params: Value) -> AdminRpcResult {
         let started = Instant::now();
         let started_at_ms = now_epoch_ms();
-        // Phase 82.10.k — redact sensitive fields per-method
+        // Redact sensitive fields per-method
         // BEFORE hashing so low-entropy values can't be
         // brute-forced from the audit DB hash.
         let args_hash = hash_params(&super::audit::redact_for_audit(method, &params));
-        // Phase 83.8.12.7 — sniff tenant scope from params so the
+        // Sniff tenant scope from params so the
         // audit row is filterable per tenant. Method routing /
         // capability gate / handler dispatch all see the same
         // value.
@@ -1008,7 +997,7 @@ impl AdminRpcDispatcher {
                 ) {
                     (Some(store), Some(yaml), Some(reload)) => {
                         let trigger = reload.clone();
-                        // Phase 82.10.n — peek at the channel
+                        // Peek at the channel
                         // field to look up the registered
                         // persister BEFORE handing the params off
                         // to the handler. Bad shapes still get
@@ -1172,7 +1161,7 @@ impl AdminRpcDispatcher {
             "nexo/admin/llm_providers/upsert" => match (&self.llm_yaml, &self.reload_signal) {
                 (Some(llm), Some(reload)) => {
                     let trigger = reload.clone();
-                    // Phase 82.10.s.3.b — secrets_store passed
+                    // secrets_store passed
                     // through so api_key_secret_value can stamp
                     // the value before yaml write. None falls
                     // through to legacy api_key_env / pre-staged
@@ -1254,7 +1243,7 @@ impl AdminRpcDispatcher {
                     "agent_events domain not configured".into(),
                 )),
             },
-            // Phase 83.12.audit-page — paginated audit-row tail.
+            // Paginated audit-row tail.
             "nexo/admin/microapp_audit/tail" => match &self.audit_reader {
                 Some(reader) => super::domains::microapp_audit::tail(reader.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
@@ -1263,7 +1252,7 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/processing/pause" => match &self.processing_store {
                 Some(store) => {
-                    // Phase 82.14 cross-cut: auto-resolve any
+                    // Cross-cut into escalations: auto-resolve any
                     // pending escalation matching the same
                     // scope before flipping the pause state.
                     // Best-effort — failures here are logged
@@ -1624,7 +1613,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_tenants_list_returns_internal_when_store_unwired() {
-        // Phase 83.8.12.2 close-out — capability gate + handler
+        // Capability gate + handler
         // routing both exist. Without `with_tenants_domain`, the
         // handler arm returns a typed `tenants domain not
         // configured` Internal error so microapps surface a
@@ -1837,7 +1826,7 @@ mod tests {
         assert_eq!(AdminRpcError::Internal("x".into()).code(), -32603);
     }
 
-    /// Phase 82.10.k — `secrets/write` requires `secrets_write`
+    /// `secrets/write` requires `secrets_write`
     /// capability + an installed `SecretsStore`. Test the
     /// happy-path routing.
     #[tokio::test]
@@ -1918,7 +1907,7 @@ mod tests {
         }
     }
 
-    /// Phase 82.10.l — `llm_providers/probe` requires
+    /// `llm_providers/probe` requires
     /// `llm_keys_crud` capability + an installed
     /// `LlmProvidersProbe`. Test the happy-path routing.
     #[tokio::test]
@@ -2003,7 +1992,7 @@ mod tests {
         }
     }
 
-    // ── Phase 90 audit fix — capability-gate denial coverage ──
+    // ── Capability-gate denial coverage ──
     //
     // Mirrors `dispatch_tenants_list_denies_when_capability_not_granted`
     // for every admin verb shipped in the 2026-05-10 wave. Each
@@ -2107,7 +2096,7 @@ mod tests {
         .await;
     }
 
-    // ── Phase 90 audit fix — slot-not-wired contract tests ────
+    // ── Slot-not-wired contract tests ────
     //
     // Mirror `dispatch_tenants_list_returns_internal_when_store_unwired`
     // for every admin verb shipped in the 2026-05-10 wave. With

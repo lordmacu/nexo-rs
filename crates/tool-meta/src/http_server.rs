@@ -1,4 +1,4 @@
-//! Phase 82.12 — HTTP server capability wire shapes.
+//! HTTP server capability wire shapes.
 //!
 //! Microapps that declare `[capabilities.http_server]` in
 //! `plugin.toml` get an operator-provided shared bearer token

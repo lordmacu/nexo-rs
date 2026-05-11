@@ -20,9 +20,9 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 ///              tools/call).
 /// 2025-06-18 — pre-release used briefly by Claude Code 2.0.x;
 ///              listed for parity, no behaviour difference.
-/// 2025-11-25 — version Claude Code 2.1+ negotiates. Phase 73
-///              exposed the bug where echoing 2024-11-05 to a
-///              2025-11-25 client made Claude register the
+/// 2025-11-25 — version Claude Code 2.1+ negotiates. Echoing
+///              2024-11-05 to a 2025-11-25 client made Claude
+///              register the
 ///              server but silently drop every tool from its
 ///              permission registry, surfacing as "Available MCP
 ///              tools: none" on the first permission check.

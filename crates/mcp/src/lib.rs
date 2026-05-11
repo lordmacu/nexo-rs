@@ -1,7 +1,7 @@
-//! Phase 12 — MCP (Model Context Protocol) client.
+//! MCP (Model Context Protocol) client.
 //!
-//! 12.1 ships the stdio transport. Later sub-phases add HTTP/SSE (12.2),
-//! tool catalog (12.3), session-scoped runtime (12.4), and more.
+//! Provides the stdio transport, HTTP/SSE transport, tool catalog,
+//! and a session-scoped runtime.
 
 pub mod channel;
 pub mod channel_boot;
@@ -39,7 +39,7 @@ pub use runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
 pub use server::{
     run_stdio_server, run_stdio_server_with_auth, run_with_io, run_with_io_auth, McpServerHandler,
 };
-// Phase 76.1 — HTTP transport top-level re-exports.
+// HTTP transport top-level re-exports.
 pub use server::http_config::HttpTransportConfig;
 pub use server::http_transport::{start_http_server, HttpNotifyHandle, HttpServerHandle};
 pub use session::{RuntimeCallError, SessionMcpRuntime};

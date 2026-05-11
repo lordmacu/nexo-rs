@@ -1,7 +1,7 @@
-//! Phase 80.9.d — agent-side channel bridge.
+//! Agent-side channel bridge.
 //!
-//! The dispatcher (Phase 80.9 + 80.9.c) publishes
-//! [`ChannelEnvelope`] payloads on `mcp.channel.>`. This module
+//! The dispatcher publishes [`ChannelEnvelope`] payloads on
+//! `mcp.channel.>`. This module
 //! ships the *consumer* side: a [`ChannelBridge`] that subscribes
 //! to the broker subject, resolves the envelope's
 //! [`ChannelSessionKey`] into a stable agent session uuid, and
@@ -16,8 +16,8 @@
 //! Slack threads / Telegram chats / iMessage conversations into
 //! distinct keys, so a `(server, thread_ts)` pair maps to one
 //! stable agent session even across daemon restarts (when paired
-//! with a persistent registry — 80.9.d.b extends
-//! [`InMemorySessionRegistry`] to SQLite-backed storage).
+//! with a persistent registry — see the SQLite-backed
+//! `SessionRegistry` for the durable variant).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -42,10 +42,9 @@ use crate::channel::{ChannelEnvelope, ChannelSessionKey, CHANNEL_INBOX_WILDCARD}
 
 /// Resolves a [`ChannelSessionKey`] into a stable agent session
 /// uuid. The trait is async to leave room for a SQLite-backed
-/// implementation (80.9.d.b) that persists across daemon
-/// restarts. The in-memory impl below is the MVP — it only
-/// remembers mappings while the process is alive but is good
-/// enough for single-process operators.
+/// implementation that persists across daemon restarts. The
+/// in-memory impl below only remembers mappings while the process
+/// is alive but is good enough for single-process operators.
 #[async_trait]
 #[allow(clippy::len_without_is_empty)] // diagnostics-only counter
 pub trait SessionRegistry: Send + Sync {

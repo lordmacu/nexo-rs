@@ -64,7 +64,7 @@ impl WorkspaceManager {
         tokio::fs::create_dir_all(&self.root).await?;
         let canonical_root = tokio::fs::canonicalize(&self.root).await?;
 
-        // Phase 76 — per-goal source repo override. When
+        // Per-goal source repo override. When
         // `program_phase_dispatch` detects the active tracker is a
         // standalone git repo (typical after `init_project`), it
         // stamps `goal.metadata["worktree.source_repo"]` with that

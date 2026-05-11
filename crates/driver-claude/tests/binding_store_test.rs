@@ -18,7 +18,7 @@ async fn upsert_then_get_returns_binding() {
     s.upsert(binding(g, "S1")).await.unwrap();
     let got = s.get(g).await.unwrap().unwrap();
     assert_eq!(got.session_id, "S1");
-    // 67.2 — `upsert` must seed `last_active_at` so future idle-TTL
+    // `upsert` must seed `last_active_at` so future idle-TTL
     // filters compare against a real timestamp, not epoch.
     assert!(got.last_active_at >= got.created_at);
 }
@@ -56,7 +56,7 @@ async fn double_upsert_preserves_created_at_and_updates_updated_at() {
 
 #[tokio::test]
 async fn default_mark_invalid_on_memory_store_clears_via_default_impl() {
-    // 67.2 — the trait default for `mark_invalid` delegates to
+    // The trait default for `mark_invalid` delegates to
     // `clear`. `MemoryBindingStore` keeps that default; this test
     // pins it.
     let s = MemoryBindingStore::new();

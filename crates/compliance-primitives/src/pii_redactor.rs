@@ -6,8 +6,8 @@
 //! microapps need without further config.
 //!
 //! Each match is replaced with a placeholder (`[PHONE]`,
-//! `[CARD]`, `[EMAIL]`). Microapps wire this into a Phase 83.3
-//! `Transform` hook to swap the redacted body in place.
+//! `[CARD]`, `[EMAIL]`). Microapps wire this into a `Transform`
+//! dispatch hook to swap the redacted body in place.
 
 use regex::Regex;
 

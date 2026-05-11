@@ -1,4 +1,4 @@
-//! Phase 76.12 — property-based fuzz over `parse_jsonrpc_frame`.
+//! Property-based fuzz over `parse_jsonrpc_frame`.
 //!
 //! Invariant: for ANY byte sequence, `parse_jsonrpc_frame` never
 //! panics. It may return `Ok(Value)` or any `Err(JsonRpcParseError)`

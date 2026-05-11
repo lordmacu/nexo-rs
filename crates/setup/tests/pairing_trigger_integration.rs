@@ -1,4 +1,4 @@
-//! Phase 82.10.p integration test — wire a `MockTrigger`
+//! Integration test — wire a `MockTrigger`
 //! through the dispatcher's `PairingChannelTriggers` map and
 //! verify a `nexo/admin/pairing/start` end-to-end:
 //!

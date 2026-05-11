@@ -1,4 +1,4 @@
-//! Phase 82.10.c — `nexo/admin/agents/*` handlers.
+//! `nexo/admin/agents/*` handlers.
 //!
 //! Yaml mutation is delegated to a [`YamlPatcher`] trait so this
 //! crate stays cycle-free vs `nexo-setup` (which holds the
@@ -7,7 +7,7 @@
 //! forwards each method to `nexo_setup::yaml_patch::*`.
 //!
 //! After successful mutation the handler calls the dispatcher's
-//! reload signal to trigger Phase 18 hot-reload so the running
+//! reload signal to trigger config hot-reload so the running
 //! runtime picks up the change without restart.
 
 use serde_json::Value;
@@ -19,7 +19,7 @@ use nexo_tool_meta::admin::agents::{
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 
-/// Phase 82.10.c — yaml mutation surface the agents domain
+/// Yaml mutation surface the agents domain
 /// handlers consume. Production impl wraps
 /// `nexo_setup::yaml_patch`. Tests provide an in-memory mock.
 pub trait YamlPatcher: Send + Sync {
@@ -54,7 +54,7 @@ pub fn list(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
             None => true,
         })
         .filter(|s| match &filter.tenant_id {
-            // Phase 83.8.12 — multi-tenant filter. Defense-in-
+            // Multi-tenant filter. Defense-in-
             // depth: an agent without `tenant_id` is treated
             // as `None` and filtered out when caller requests
             // a specific tenant. Cross-tenant returns empty
@@ -162,7 +162,7 @@ fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> 
     serde_json::from_value(v).unwrap_or_default()
 }
 
-/// Phase 83.8.12 — read `agents.yaml.<id>.tenant_id`. Returns
+/// Read `agents.yaml.<id>.tenant_id`. Returns
 /// `None` for legacy agents (no field) and on any read error
 /// (defense-in-depth: fail closed for cross-tenant filters).
 pub(crate) fn agent_tenant_id(patcher: &dyn YamlPatcher, agent_id: &str) -> Option<String> {
@@ -266,7 +266,7 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
             _ => Vec::new(),
         };
 
-    // M15.18.d — heartbeat is `Some(..)` whenever the operator has
+    // Heartbeat is `Some(..)` whenever the operator has
     // authored the block at least once. Absent yaml → None so the
     // microapp distinguishes "framework default" from "explicitly
     // configured but disabled".
@@ -350,7 +350,7 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
         );
         patcher.upsert_agent_field(&input.id, "extra_docs", arr)?;
     }
-    // M15.18.d — heartbeat is replace-whole. `Some` writes both
+    // Heartbeat is replace-whole. `Some` writes both
     // `heartbeat.enabled` + `heartbeat.interval`; `None` leaves
     // the existing yaml block untouched. The empty-string
     // interval guard mirrors the `model.*` no-op semantic above —
@@ -596,7 +596,7 @@ mod tests {
         assert_eq!(count.load(Ordering::Relaxed), 0);
     }
 
-    /// M15.18.d — agent without `heartbeat.*` fields surfaces
+    /// Agent without `heartbeat.*` fields surfaces
     /// `heartbeat: None` so the microapp shows the framework
     /// default (disabled, 5m).
     #[test]
@@ -607,7 +607,7 @@ mod tests {
         assert!(detail.heartbeat.is_none());
     }
 
-    /// M15.18.d — upsert with `Some(HeartbeatWire { enabled: true,
+    /// Upsert with `Some(HeartbeatWire { enabled: true,
     /// interval: "30m" })` writes both yaml fields and the next
     /// `get` returns them on the wire.
     #[test]
@@ -640,7 +640,7 @@ mod tests {
         assert_eq!(hb.interval, "30m");
     }
 
-    /// M15.18.d — empty-string interval is a no-op write so the
+    /// Empty-string interval is a no-op write so the
     /// daemon doesn't brick on next boot. The toggle still flips.
     #[test]
     fn agents_upsert_heartbeat_with_empty_interval_keeps_existing() {

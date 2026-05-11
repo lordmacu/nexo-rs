@@ -1,6 +1,5 @@
-//! Phase 76.2 — adversarial tests for the new `Dispatcher`. Verify
-//! the three robustness invariants that 76.1 (HTTP transport) will
-//! depend on:
+//! Adversarial tests for the `Dispatcher`. Verify the three
+//! robustness invariants the HTTP transport depends on:
 //!
 //!   1. Handler panics are caught and converted to JSON-RPC -32603;
 //!      the server keeps processing subsequent requests.
@@ -9,7 +8,7 @@
 //!      future without leaking spawned tasks.
 //!
 //! These tests drive `Dispatcher` directly (no transport) so the
-//! same fixtures parametrize over stdio + HTTP once 76.1 lands.
+//! same fixtures parametrize over stdio + HTTP.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

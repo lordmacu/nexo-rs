@@ -14,7 +14,7 @@ use crate::gemini::GeminiFactory;
 use crate::minimax::MiniMaxClient;
 use crate::openai_compat::OpenAiClient;
 
-/// Phase 82.10.u — reusable [`CredentialFieldDescriptor`]
+/// Reusable [`CredentialFieldDescriptor`]
 /// constructors so each factory's schema stays declarative + DRY.
 pub mod schema {
     use super::*;
@@ -194,7 +194,7 @@ pub trait LlmProviderFactory: Send + Sync {
         &[]
     }
 
-    /// Phase 82.10.u — declarative credential schema. Each
+    /// Declarative credential schema. Each
     /// descriptor renders as one input in the SPA wizard and is
     /// validated server-side by the admin RPC handler. Default
     /// returns the legacy single-`api_key` shape so factories
@@ -203,7 +203,7 @@ pub trait LlmProviderFactory: Send + Sync {
         vec![schema::api_key("API key", None)]
     }
 
-    /// Phase 82.10.u — auth modes this factory supports. The SPA
+    /// Auth modes this factory supports. The SPA
     /// renders an `auth_mode` dropdown when this returns more than
     /// one value; the admin RPC handler rejects upsert /
     /// oauth_start with an unsupported mode. Default
@@ -212,7 +212,7 @@ pub trait LlmProviderFactory: Send + Sync {
         vec![AuthMode::ApiKey]
     }
 
-    /// Phase 82.10.u — `true` when the factory exposes an
+    /// `true` when the factory exposes an
     /// OpenAI-compat `/v1/models` endpoint that `probe_draft` can
     /// hit to enumerate live models. `false` for Anthropic +
     /// Gemini (their model lists are static); the SPA then skips
@@ -226,7 +226,7 @@ pub trait LlmProviderFactory: Send + Sync {
 
 /// Catalogue entry surfaced by [`LlmRegistry::catalog`]. Aggregates
 /// per-factory metadata (default base URL, env var, known models +
-/// Phase 82.10.u schema fields) so SPA wizards can render a strict
+/// credential schema fields) so SPA wizards can render a strict
 /// provider/model dropdown without keeping their own hardcoded
 /// list in sync.
 #[derive(Debug, Clone)]
@@ -239,11 +239,11 @@ pub struct LlmProviderCatalogEntry {
     pub default_env_var: String,
     /// Curated static model id list.
     pub models: Vec<String>,
-    /// Phase 82.10.u — declarative credential field schema.
+    /// Declarative credential field schema.
     pub credential_schema: Vec<CredentialFieldDescriptor>,
-    /// Phase 82.10.u — auth modes supported by this factory.
+    /// Auth modes supported by this factory.
     pub supported_auth_modes: Vec<AuthMode>,
-    /// Phase 82.10.u — whether `/v1/models` is exposed.
+    /// Whether `/v1/models` is exposed.
     pub supports_models_probe: bool,
 }
 
@@ -254,7 +254,7 @@ pub struct LlmProviderCatalogEntry {
 /// 2. Implement `LlmProviderFactory` next to it.
 /// 3. Register it in `with_builtins` (or via `register` from a downstream binary).
 ///
-/// Phase 81.25 — `factories` lives behind an internal `RwLock` so
+/// `factories` lives behind an internal `RwLock` so
 /// post-Arc registration works (subprocess plugins declaring
 /// `extends.llm_providers = [...]` register during init via the
 /// shared `Arc<LlmRegistry>`). Read paths (`build` / `names`)
@@ -288,9 +288,9 @@ impl LlmRegistry {
         r
     }
 
-    /// Register a factory. Phase 81.25 — `&self` (was `&mut self`)
-    /// so callers holding `Arc<LlmRegistry>` can register
-    /// post-construction. Internal `RwLock` write-locks briefly.
+    /// Register a factory. Takes `&self` so callers holding
+    /// `Arc<LlmRegistry>` can register post-construction. Internal
+    /// `RwLock` write-locks briefly.
     pub fn register(&self, factory: Box<dyn LlmProviderFactory>) -> anyhow::Result<()> {
         let name = factory.name().to_string();
         let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
@@ -301,7 +301,7 @@ impl LlmRegistry {
         Ok(())
     }
 
-    /// Phase 81.25 — remove a factory by provider name. Used by
+    /// Remove a factory by provider name. Used by
     /// the remote-LLM rollback path on partial registration
     /// failure. Returns `true` when removed; `false` when absent.
     pub fn unregister(&self, name: &str) -> bool {
@@ -320,7 +320,7 @@ impl LlmRegistry {
     /// by provider id for deterministic RPC payloads. Returns the
     /// providers the daemon can actually instantiate at runtime —
     /// builtins shipped in this crate plus any subprocess plugin
-    /// that called `register` post-Arc (Phase 81.25). Operator UIs
+    /// that called `register` post-Arc. Operator UIs
     /// use this to render a "no custom" provider dropdown.
     pub fn catalog(&self) -> Vec<LlmProviderCatalogEntry> {
         let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
@@ -348,15 +348,14 @@ impl LlmRegistry {
         llm_cfg: &LlmConfig,
         agent_model: &ModelConfig,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
-        // Phase 83.8.12.5 — back-compat shim. Single-tenant
-        // deployments (and tests) keep calling the 2-arg form;
-        // it now resolves with `tenant_id: None` which matches
-        // pre-Phase 83.8.12.5 semantics exactly (only the
-        // global `providers` table is consulted).
+        // Back-compat shim. Single-tenant deployments (and tests)
+        // keep calling the 2-arg form; it resolves with
+        // `tenant_id: None`, so only the global `providers` table
+        // is consulted.
         self.build_for_tenant(llm_cfg, agent_model, None)
     }
 
-    /// Phase 83.8.12.5 — tenant-aware sister of `build`. When
+    /// Tenant-aware sister of `build`. When
     /// `tenant_id` is `Some`, the registry looks up the
     /// provider via `LlmConfig::resolve_provider(tenant_id,
     /// name)` first — that prefers the tenant-scoped definition
@@ -369,8 +368,8 @@ impl LlmRegistry {
         agent_model: &ModelConfig,
         tenant_id: Option<&str>,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
-        // Phase 82.10.s — split provider INSTANCE id (yaml key,
-        // also `agent_model.provider`) from FACTORY id (the
+        // Split provider INSTANCE id (yaml key, also
+        // `agent_model.provider`) from FACTORY id (the
         // `LlmProviderFactory::name()` we dispatch against). The
         // yaml's `factory_type` field is the explicit binding;
         // when absent, the instance id IS the factory id —
@@ -416,7 +415,7 @@ impl LlmRegistry {
         names
     }
 
-    /// Phase 82.10.s — boot-time sanity check across every yaml
+    /// Boot-time sanity check across every yaml
     /// provider instance (global + tenant-scoped). Each instance's
     /// resolved factory id (explicit `factory_type` or fallback to
     /// instance id) MUST be a registered factory; otherwise the
@@ -632,9 +631,9 @@ mod tests {
 
     #[test]
     fn build_unknown_provider_errors() {
-        // Phase 82.10.s.2 — message moved from "not registered"
-        // (factory-side) to "not present in config.providers"
-        // (yaml-side) since the build flow now checks yaml first.
+        // Message moved from "not registered" (factory-side) to
+        // "not present in config.providers" (yaml-side) since the
+        // build flow now checks yaml first.
         let r = LlmRegistry::with_builtins();
         let cfg = llm_cfg("minimax");
         let model = ModelConfig {
@@ -672,7 +671,7 @@ mod tests {
         assert_eq!(client.provider(), "minimax");
     }
 
-    /// Phase 83.8.12.5 — `build_for_tenant` resolves the
+    /// `build_for_tenant` resolves the
     /// provider via tenant-first / global-fallback semantics.
     /// Sanity test: with a tenant-scoped override present,
     /// the call still returns a valid client (the tenant's
@@ -723,7 +722,7 @@ mod tests {
     }
 
     // ────────────────────────────────────────────────────────────
-    // Phase 82.10.s.2 — factory_type ↔ instance_id split
+    // factory_type ↔ instance_id split
     // ────────────────────────────────────────────────────────────
 
     /// Build an `LlmConfig` with a single instance whose YAML key
@@ -894,7 +893,7 @@ mod tests {
         assert!(errs[0].contains("ghost"));
     }
 
-    // ── Phase 82.10.u — schema declarations per factory ──
+    // ── schema declarations per factory ──
 
     #[test]
     fn minimax_factory_declares_full_credential_schema() {

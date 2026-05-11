@@ -1,4 +1,4 @@
-//! Phase 83.16 — `nexo/notify/microapp_error` wire shape.
+//! `nexo/notify/microapp_error` wire shape.
 //!
 //! When a microapp subprocess misbehaves, the daemon's stdio
 //! supervisor emits a structured notification on the broker so
@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 pub const MICROAPP_ERROR_NOTIFY_METHOD: &str = "nexo/notify/microapp_error";
 
 /// Kind discriminator. `#[non_exhaustive]` so future kinds
-/// (e.g. `RateLimitTripped` once 83.16's respawn-throttle
-/// follow-up ships) can land non-major.
+/// (e.g. a `RateLimitTripped` once a respawn-throttle ships)
+/// can land non-major.
 #[non_exhaustive]
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

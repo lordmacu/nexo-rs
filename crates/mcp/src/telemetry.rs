@@ -1,4 +1,4 @@
-//! Phase 9.2 follow-up — Prometheus metrics for MCP session lifecycle.
+//! Prometheus metrics for MCP session lifecycle.
 //!
 //! Lives in `nexo-mcp` (not `nexo-core::telemetry`) because
 //! `nexo-mcp` is deliberately kept free of an `nexo-core` dep to
@@ -75,7 +75,7 @@ static SESSIONS_CREATED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0
 static SESSIONS_ACTIVE: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 static SESSIONS_DISPOSED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 static SESSION_LIFETIME: LazyLock<Histogram> = LazyLock::new(Histogram::new);
-/// Phase 12.5 follow-up — resource cache hit/miss counters, keyed by server.
+/// Resource cache hit/miss counters, keyed by server.
 static RESOURCE_CACHE_HITS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 static RESOURCE_CACHE_MISSES: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 static RESOURCE_URI_ALLOWLIST_VIOLATIONS: LazyLock<DashMap<String, AtomicU64>> =

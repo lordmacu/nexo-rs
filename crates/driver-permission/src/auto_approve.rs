@@ -1,4 +1,4 @@
-//! Phase 80.17 — curated auto-approve decision table.
+//! Curated auto-approve decision table.
 //!
 //! When `auto_approve == true` on a binding's effective policy, the
 //! approval pipeline calls [`is_curated_auto_approve`] before
@@ -8,8 +8,8 @@
 //! default arm is deny so newly-introduced tools never auto-allow
 //! until they are explicitly listed).
 //!
-//! Composes with the binding policy `allowed_tools` filter (Phase
-//! 16) and the existing approval pipeline: this fn never widens the
+//! Composes with the binding policy `allowed_tools` filter
+//! and the existing approval pipeline: this fn never widens the
 //! tool surface, only skips the prompt for tools that are already
 //! on the binding's surface AND fall in the curated subset.
 //!
@@ -431,7 +431,7 @@ mod tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.17.b — `AutoApproveDecider` decorator wiring
+// `AutoApproveDecider` decorator wiring
 //
 // Wraps any `PermissionDecider`. Reads the resolved `auto_approve`
 // flag + `workspace_path` from the request `metadata` map (populated
@@ -439,12 +439,12 @@ mod tests {
 // `AllowOnce` when `is_curated_auto_approve` says yes. Otherwise
 // delegates to the inner decider with the original request.
 //
-// Caller-side metadata population is the deferred 80.17.b.c
-// follow-up: when the wire that constructs `PermissionRequest`
-// resolves the binding's policy, it must insert the two fields
-// into `metadata` before invoking the decider. Until that ships,
-// `auto_approve` reads `false` from missing metadata and the
-// decorator becomes a transparent pass-through.
+// Caller-side metadata population is a deferred follow-up: when the
+// wire that constructs `PermissionRequest` resolves the binding's
+// policy, it must insert the two fields into `metadata` before
+// invoking the decider. Until that ships, `auto_approve` reads
+// `false` from missing metadata and the decorator becomes a
+// transparent pass-through.
 // ─────────────────────────────────────────────────────────────────────
 
 use std::sync::Arc;

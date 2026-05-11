@@ -1,4 +1,4 @@
-//! Phase 11.2 follow-up — integration: plugin.toml watcher logs changes.
+//! Integration: plugin.toml watcher logs changes.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};

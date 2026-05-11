@@ -45,7 +45,7 @@ pub struct SubPhase {
     pub acceptance: Option<Vec<String>>,
 }
 
-/// One top-level phase grouping (`## Phase 67`) with its sub-phases.
+/// One top-level phase grouping (`## Phase N`) with its sub-phases.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Phase {
     pub id: String,

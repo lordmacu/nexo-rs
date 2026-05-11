@@ -1,6 +1,5 @@
 //! `AuditLogConfig` — runtime config for the per-call audit log.
-//! YAML mirror lives in `crates/config/src/types/mcp_server.rs`
-//! (Phase 76.11 step 8).
+//! YAML mirror lives in `crates/config/src/types/mcp_server.rs`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -10,8 +9,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct AuditLogConfig {
-    /// Defaults to `true` so an operator who reaches Phase 76.11
-    /// gets audit by default. Opt out with `enabled: false`.
+    /// Defaults to `true` so audit is on by default. Opt out with
+    /// `enabled: false`.
     #[serde(default = "default_audit_enabled")]
     pub enabled: bool,
     /// Path to the SQLite file. Resolved relative to the process

@@ -63,7 +63,7 @@ pub struct AgentRuntime {
     /// of the runtime so we allocate each one exactly once at `new()`
     /// time — the hot intake path just clones an `Arc`.
     effective_policies: Arc<DashMap<Option<usize>, Arc<EffectiveBindingPolicy>>>,
-    /// Phase 18 — hot-reloadable snapshot. Holds the same
+    /// Hot-reloadable snapshot. Holds the same
     /// `effective_policies` + `tool_cache` data as the legacy fields
     /// above, plus the optional per-agent `LlmClient`. The intake
     /// hot path still reads the legacy fields in this commit; those
@@ -76,11 +76,11 @@ pub struct AgentRuntime {
     /// tools. `None` for runtimes spun up without tool wiring (tests,
     /// no-LLM behaviors). See [`AgentRuntime::with_tool_base`].
     tool_base: Option<Arc<super::tool_registry::ToolRegistry>>,
-    /// Phase 17 — per-agent credential resolver attached to every
+    /// Per-agent credential resolver attached to every
     /// AgentContext the runtime builds. `None` in tests / no-credential
     /// boot paths; consumers fall back to legacy topics in that case.
     credentials: Option<Arc<nexo_auth::AgentCredentialResolver>>,
-    /// Phase 17 — per-(channel, instance) breaker registry; cloned
+    /// Per-(channel, instance) breaker registry; cloned
     /// onto every AgentContext alongside `credentials`.
     breakers: Option<Arc<nexo_auth::BreakerRegistry>>,
     /// Optional pre-persistence redactor cloned onto every
@@ -90,14 +90,14 @@ pub struct AgentRuntime {
     /// `None` keeps `session_logs` action `search` on the JSONL
     /// substring fallback.
     transcripts_index: Option<Arc<super::transcripts_index::TranscriptsIndex>>,
-    /// Phase 21 — shared link extractor (HTTP client + LRU cache).
+    /// Shared link extractor (HTTP client + LRU cache).
     /// `None` keeps link understanding off regardless of YAML.
     link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
-    /// Phase 25 — shared web-search router (one per process, every
+    /// Shared web-search router (one per process, every
     /// runtime gets the same Arc). `None` disables the `web_search`
     /// tool regardless of YAML.
     web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
-    /// Phase 26 — shared pairing gate. Consulted in the intake hot
+    /// Shared pairing gate. Consulted in the intake hot
     /// path before sender_rate_limit; when the resolved
     /// `EffectiveBindingPolicy::pairing.auto_challenge` is true and
     /// the sender is not in `pairing_allow_from`, the message is
@@ -113,14 +113,14 @@ pub struct AgentRuntime {
     /// path: senders pass through verbatim and challenges are published
     /// raw on `plugin.outbound.{channel}`.
     pairing_adapters: nexo_pairing::PairingAdapterRegistry,
-    /// Phase 67 — shared DispatchToolContext for the tracker /
+    /// Shared DispatchToolContext for the tracker /
     /// dispatch tool family. `None` keeps the dispatch tools
     /// in their friendly-error mode (handlers return
     /// "AgentContext.dispatch is not set"). Wire one in at boot
     /// when the in-process orchestrator + agent-registry are
     /// available.
     dispatch_ctx: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
-    /// Phase 79.1 — process-shared plan-mode approval registry.
+    /// Process-shared plan-mode approval registry.
     /// Defaults to a fresh instance per runtime so tests stay
     /// isolated; main.rs overrides with a single shared instance
     /// so the broker subscriber can resolve pending approvals from
@@ -130,14 +130,14 @@ pub struct AgentRuntime {
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
     tool_cache: Arc<super::tool_registry_cache::ToolRegistryCache>,
-    /// Phase 18 — reload control channel. The coordinator sends
+    /// Reload control channel. The coordinator sends
     /// `Apply(snapshot)` to atomically swap; the runtime reads the
     /// new snapshot from the next event onwards (apply-on-next).
     reload_tx: mpsc::Sender<ReloadCommand>,
     /// Receiver owned by the runtime until `start()` moves it into
     /// the select loop. `Option` because it can only be taken once.
     reload_rx: Arc<Mutex<Option<mpsc::Receiver<ReloadCommand>>>>,
-    /// Phase 82.13.c — operator pause check. When `Some`, the
+    /// Operator pause check. When `Some`, the
     /// inbound intake loop calls `get(scope)` on every inbound;
     /// `PausedByOperator` triggers `push_pending` instead of
     /// firing the agent turn. `None` keeps the legacy
@@ -146,7 +146,7 @@ pub struct AgentRuntime {
     /// shared with the admin RPC dispatcher so a pause RPC
     /// reaches the inbound loop on the next message.
     processing_store: Option<Arc<dyn ProcessingControlStore>>,
-    /// Phase 82.13.c — agent event firehose (Phase 82.11). When
+    /// Agent event firehose. When
     /// `Some` AND `processing_store` evicts an inbound from a
     /// full pending queue, runtime emits
     /// `AgentEventKind::PendingInboundsDropped` so the operator
@@ -231,7 +231,7 @@ impl AgentRuntime {
         self
     }
 
-    /// Phase 82.13.c — install the operator pause-check store.
+    /// Install the operator pause-check store.
     /// Pass the SAME `Arc` boot wired into the admin RPC
     /// dispatcher so a pause RPC reaches the inbound loop on
     /// the very next message. Without this builder, the
@@ -242,10 +242,10 @@ impl AgentRuntime {
         self
     }
 
-    /// Phase 82.13.c — install the agent event emitter for
+    /// Install the agent event emitter for
     /// firehose drop notifications when the per-scope pending
     /// queue evicts an oldest entry. Production wires the same
-    /// `BroadcastAgentEventEmitter` Phase 82.11 already plumbs
+    /// `BroadcastAgentEventEmitter` already plumbed
     /// to `TranscriptWriter`. `None` keeps eviction silent
     /// (tracing only).
     pub fn with_event_emitter(mut self, emitter: Arc<dyn AgentEventEmitter>) -> Self {
@@ -291,7 +291,7 @@ impl AgentRuntime {
         self.pairing_adapters = registry;
         self
     }
-    /// Phase 67 — install the DispatchToolContext shared by every
+    /// Install the DispatchToolContext shared by every
     /// AgentContext this runtime builds. Without this the dispatch
     /// tool handlers return a friendly error.
     pub fn with_dispatch_ctx(
@@ -301,7 +301,7 @@ impl AgentRuntime {
         self.dispatch_ctx = Some(ctx);
         self
     }
-    /// Phase 79.1 — install a process-shared plan-mode approval
+    /// Install a process-shared plan-mode approval
     /// registry. Production wiring creates one per process and passes
     /// it here so the broker subscriber can resolve pending approvals
     /// from inbound `[plan-mode]` chat messages.
@@ -365,7 +365,7 @@ impl AgentRuntime {
     pub async fn start(&self) -> anyhow::Result<()> {
         let plugin_topic = "plugin.inbound.>";
         let mut plugin_sub = self.broker.subscribe(plugin_topic).await?;
-        // Phase 18 — take the reload receiver exactly once. Subsequent
+        // Take the reload receiver exactly once. Subsequent
         // start() calls on the same runtime would starve reload; the
         // None branch logs a warn instead of panicking to keep test
         // code that re-starts runtimes honest.
@@ -396,7 +396,7 @@ impl AgentRuntime {
         let pairing_gate = self.pairing_gate.clone();
         let pairing_adapters = self.pairing_adapters.clone();
         let dispatch_ctx = self.dispatch_ctx.clone();
-        // Phase 82.13.c — clone into the spawn closure. Both
+        // Clone into the spawn closure. Both
         // are `Option<Arc<dyn _>>`, so cloning is cheap and
         // `None` defaults preserve legacy behaviour.
         let processing_store = self.processing_store.clone();
@@ -407,7 +407,7 @@ impl AgentRuntime {
         let queue_cap = self.queue_cap;
         let sender_rate_limiters = Arc::clone(&self.sender_rate_limiters);
         let effective_policies = Arc::clone(&self.effective_policies);
-        // Phase 18 — every event reads the current snapshot so hot-
+        // Every event reads the current snapshot so hot-
         // reload takes effect immediately on the next message without
         // touching the legacy per-runtime caches (kept around during
         // the migration so tests that construct runtimes without a
@@ -453,7 +453,7 @@ impl AgentRuntime {
             if let Some(ref dc) = dispatch_ctx {
                 ctx = ctx.with_dispatch(Arc::clone(dc));
             }
-            // Phase 82.11.c — thread the firehose emitter so
+            // Thread the firehose emitter so
             // `llm_behavior` can chain `.with_emitter()` on the
             // per-turn `TranscriptWriter` and broadcast
             // `TranscriptAppended` to live subscribers.
@@ -466,7 +466,7 @@ impl AgentRuntime {
             loop {
                 tokio::select! {
                     biased;
-                    // Phase 18 — reload command drains first so a
+                    // Reload command drains first so a
                     // burst of inbound events can't starve a pending
                     // config swap. `biased` keeps arm ordering stable.
                     cmd = async {
@@ -578,7 +578,7 @@ impl AgentRuntime {
                                     .and_then(|v| v.as_str())
                             })
                             .map(|s| s.to_string());
-                        // Phase 77.16 — AskUserQuestion reply routing.
+                        // AskUserQuestion reply routing.
                         // If this inbound message comes from a sender that has
                         // a paused goal waiting on a question, resume that goal
                         // and inject the text as an operator interrupt.
@@ -637,7 +637,7 @@ impl AgentRuntime {
                                 continue;
                             }
                         }
-                        // Phase 26 — pairing gate. Runs before the
+                        // Pairing gate. Runs before the
                         // rate limiter so unknown senders cannot
                         // exhaust their bucket. Only active when the
                         // binding's effective `pairing.auto_challenge`
@@ -766,7 +766,7 @@ impl AgentRuntime {
                         msg.media = media;
                         msg.priority = parse_inbound_priority(&event.payload);
                         msg.sender_trusted = sender_trusted;
-                        // Phase 82.5 — provider-agnostic inbound meta
+                        // Provider-agnostic inbound meta
                         // built from the raw payload (works for whatsapp
                         // today; same shape extends to telegram/email/
                         // future channels without code change).
@@ -776,14 +776,14 @@ impl AgentRuntime {
                             msg.media.is_some(),
                         );
                         let message_id = msg.id;
-                        // Phase 82.13.c — operator pause check.
+                        // Operator pause check.
                         // When the admin RPC dispatcher has marked
                         // this conversation as `PausedByOperator`,
                         // buffer the inbound onto the per-scope
                         // pending queue instead of firing an agent
                         // turn. `resume()` later drains the queue
                         // onto the transcript as `User` entries
-                        // (Phase 82.13.b.3.2).
+                        // on resume.
                         if let Some(ps) = processing_store.as_ref() {
                             let scope = ProcessingScope::Conversation {
                                 agent_id: agent.id.clone(),
@@ -866,8 +866,8 @@ impl AgentRuntime {
                                         }
                                         // Skip session-spawn +
                                         // try_send when the push
-                                        // succeeded. Resume drain
-                                        // (Phase 82.13.b.3.2) will
+                                        // succeeded. The resume
+                                        // drain will
                                         // stamp this onto the
                                         // transcript as a `User`
                                         // entry preserving the
@@ -915,7 +915,7 @@ impl AgentRuntime {
                         // stays with its in-flight sessions). `None`
                         // base registry (tests) → llm_behavior falls
                         // back to its own tool set.
-                        // PT-2 — use the dispatch-aware variant so the
+                        // Use the dispatch-aware variant so the
                         // per-binding registry also drops dispatch
                         // tools the resolved DispatchPolicy does not
                         // allow. is_admin defaults to false until the
@@ -942,7 +942,7 @@ impl AgentRuntime {
                                 Arc::clone(&sessions),
                             );
                             ctx = ctx.with_effective(Arc::clone(&effective_for_session));
-                            // Phase 82.4.b.b — populate
+                            // Populate
                             // `BindingContext.event_source` when the
                             // inbound was synthesised by an
                             // EventSubscriber. Gate on the topic
@@ -986,13 +986,13 @@ impl AgentRuntime {
                             if let Some(ref ws) = web_search_router {
                                 ctx = ctx.with_web_search_router(Arc::clone(ws));
                             }
-                            // Phase 67 — share the DispatchToolContext
+                            // Share the DispatchToolContext
                             // so program_phase / list_agents / etc.
                             // see the runtime services on every session.
                             if let Some(ref dc) = dispatch_ctx {
                                 ctx = ctx.with_dispatch(Arc::clone(dc));
                             }
-                            // Phase 82.11.c — same firehose-emitter
+                            // Same firehose-emitter
                             // thread on the per-session ctx as the
                             // primary spawn site, so the second
                             // intake path (event-bus subscriber)
@@ -1118,7 +1118,7 @@ impl AgentRuntime {
                                 inbound.trigger = RunTrigger::Manual;
                                 inbound.source_plugin = "agent".to_string();
                                 inbound.sender_id = Some(msg.from.clone());
-                                // Phase 82.5 — delegation receive surfaces as
+                                // Delegation receive surfaces as
                                 // `InboundKind::InterSession` so a microapp
                                 // can branch on origin (peer agent vs end
                                 // user). `correlation_id` is the per-request
@@ -1405,7 +1405,7 @@ async fn session_debounce_task(
                     tick.source_plugin = "proactive".to_string();
                     tick.sender_id = None;
                     tick.priority = MessagePriority::Later;
-                    // Phase 82.5 — proactive ticks are
+                    // Proactive ticks are
                     // system-injected turns. Microapps branch on
                     // `ctx.inbound().kind == InternalSystem` to
                     // skip per-user rate-limits and avoid
@@ -1562,7 +1562,7 @@ async fn flush(
                 sender_id.clone().unwrap_or_default(),
             );
         }
-        // Phase 82.5 — layer the per-turn inbound meta built at the
+        // Layer the per-turn inbound meta built at the
         // intake site so `AgentContext::build_meta_value` (called by
         // extension_tool / mcp_tool) stamps `_meta.nexo.inbound` on
         // outgoing tool calls with the *current* turn's data, not
@@ -1689,7 +1689,7 @@ fn parse_session_id_from_context(context: &Value) -> Option<Uuid> {
         .and_then(|v| v.as_str())
         .and_then(|s| Uuid::parse_str(s).ok())
 }
-/// Phase 82.5 — build an [`InboundMessageMeta`] from a raw plugin
+/// Build an [`InboundMessageMeta`] from a raw plugin
 /// payload. Provider-agnostic: works for any inbound shape that
 /// exposes the standard fields (`from`, `msg_id`, `timestamp`,
 /// optional `reply_to`).
@@ -1728,7 +1728,7 @@ fn extract_inbound_meta(
         }
         (None, None) => unreachable!(),
     };
-    // Phase 82.5 — honor payload-supplied `inbound_kind` when
+    // Honor payload-supplied `inbound_kind` when
     // present. Event-subscriber synthesizer stamps it from the
     // operator-declared yaml field so `cron.daily` etc. surface
     // as `internal_system`. Unknown / missing falls back to
@@ -1868,7 +1868,7 @@ fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&
     match_binding_index(bindings, plugin, instance).is_some()
 }
 
-/// Phase 26.x — deliver the pairing challenge to the sender. When a
+/// Deliver the pairing challenge to the sender. When a
 /// channel adapter is registered we use it for both sender-id
 /// normalisation and channel-correct formatting (e.g. Telegram
 /// MarkdownV2). For unregistered channels we fall back to the legacy

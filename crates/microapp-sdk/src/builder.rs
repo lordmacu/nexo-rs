@@ -12,8 +12,8 @@ use crate::errors::Result as SdkResult;
 use crate::hook::HookHandler;
 use crate::runtime::{dispatch_loop, Handlers, ToolHandler};
 
-/// Phase 83.4.c — registered notification handler. Type-erased
-/// closure that receives the JSON-RPC `params` value.
+/// Registered notification handler. Type-erased closure that
+/// receives the JSON-RPC `params` value.
 type NotificationHandler = Arc<dyn Fn(Value) + Send + Sync>;
 
 /// Type alias for the registry of `(tool_name → handler)` and
@@ -25,15 +25,15 @@ pub type HandlerRegistry = Handlers;
 type InitCallback =
     Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = SdkResult<()>> + Send>> + Send>>;
 type ShutdownCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>>;
-/// Phase 83.4.b.handle — fires once with the live `AdminClient`
-/// right before the dispatch loop enters its read loop. Microapp
+/// Fires once with the live `AdminClient` right before the
+/// dispatch loop enters its read loop. Microapp
 /// authors capture the handle to reach `nexo/admin/*` from
 /// parallel tasks (HTTP server, background workers, etc.) that
 /// run alongside the stdio loop.
 #[cfg(feature = "admin")]
 type AdminReadyCallback = Box<dyn FnOnce(Arc<crate::admin::AdminClient>) + Send>;
 
-/// Builder for a Phase 11 stdio microapp.
+/// Builder for a stdio microapp.
 ///
 /// Chained API — each `with_*` consumes `self` and returns the
 /// updated builder. Final `run_stdio` (or `run_with`) consumes
@@ -45,7 +45,7 @@ pub struct Microapp {
     hooks: BTreeMap<String, Arc<dyn HookHandler>>,
     on_initialize: Option<InitCallback>,
     on_shutdown: Option<ShutdownCallback>,
-    /// Phase 83.8.8.a — when set, the runtime constructs an
+    /// When set, the runtime constructs an
     /// [`crate::admin::AdminClient`] sharing the same line writer
     /// as the daemon-reply path and exposes it through
     /// [`crate::ctx::ToolCtx::admin`] / [`crate::ctx::HookCtx::admin`].
@@ -53,7 +53,7 @@ pub struct Microapp {
     /// (microapps that do not need admin RPC pay zero).
     #[cfg(feature = "admin")]
     pub(crate) admin_enabled: bool,
-    /// Phase 83.4.b.handle — optional callback fired once with
+    /// Optional callback fired once with
     /// the live `AdminClient` right before dispatch_loop starts.
     /// Lets microapps share the client with parallel tasks (HTTP
     /// server, background workers) that run alongside the stdio
@@ -61,7 +61,7 @@ pub struct Microapp {
     /// only consume the client through `ctx.admin()`).
     #[cfg(feature = "admin")]
     on_admin_ready: Option<AdminReadyCallback>,
-    /// Phase 83.4.c — JSON-RPC notification listeners keyed by
+    /// JSON-RPC notification listeners keyed by
     /// method name. Populated by [`Self::with_notification_listener`].
     /// The dispatch loop invokes the matching handler for any
     /// inbound frame whose `id` is absent (notification per
@@ -90,7 +90,7 @@ impl Microapp {
         }
     }
 
-    /// Phase 83.8.8.a — opt the microapp into the admin RPC
+    /// Opt the microapp into the admin RPC
     /// surface. The runtime constructs an
     /// [`crate::admin::AdminClient`] sharing the dispatch loop's
     /// line writer, exposes it through
@@ -106,7 +106,7 @@ impl Microapp {
         self
     }
 
-    /// Phase 83.4.b.handle — register a callback that fires once
+    /// Register a callback that fires once
     /// with the live `AdminClient` right before the dispatch loop
     /// enters its read loop. Microapp authors capture the handle
     /// to reach `nexo/admin/*` from parallel tasks (HTTP server,
@@ -138,7 +138,7 @@ impl Microapp {
         self
     }
 
-    /// Phase 83.4.c — register a JSON-RPC notification listener.
+    /// Register a JSON-RPC notification listener.
     ///
     /// `method` is the literal frame method (e.g.
     /// `"nexo/notify/agent_event"`, `"nexo/notify/token_rotated"`,
@@ -216,7 +216,7 @@ impl Microapp {
 
     /// Run the JSON-RPC stdio loop until EOF or `shutdown`.
     ///
-    /// Phase 91.x.wasm.phase-3 — wasm32 has no
+    /// wasm32 has no
     /// `tokio::io::stdin` / `stdout` (the `io-std` feature is
     /// rejected on that target). The browser-targeted SDK
     /// build uses `run_with` against caller-supplied transports
@@ -246,13 +246,13 @@ impl Microapp {
             notification_listeners: self.notification_listeners,
         };
         // `on_initialize` / `on_shutdown` callbacks are reserved
-        // for a future micro-extension (post-83.4); v0 ignores
+        // for a future micro-extension; v0 ignores
         // them so the field exists for the migration story but
         // doesn't change loop semantics.
         let _ = self.on_initialize;
         let _ = self.on_shutdown;
         let writer = std::sync::Arc::new(tokio::sync::Mutex::new(writer));
-        // Phase 83.8.8.a — when admin is enabled, build the client
+        // When admin is enabled, build the client
         // that shares this writer so daemon replies + microapp
         // requests do not interleave.
         #[cfg(feature = "admin")]
@@ -262,7 +262,7 @@ impl Microapp {
                 let sender =
                     std::sync::Arc::new(crate::admin::WriterAdminSender::new(writer.clone()));
                 let client = std::sync::Arc::new(crate::admin::AdminClient::new(sender));
-                // Phase 83.4.b.handle — hand a clone to any
+                // Hand a clone to any
                 // registered listener BEFORE entering the
                 // dispatch loop so parallel tasks (HTTP servers,
                 // background workers) start with the live client

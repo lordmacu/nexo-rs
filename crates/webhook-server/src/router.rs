@@ -2,7 +2,7 @@
 //!
 //! `build_router(cfg, dispatcher)` returns a fully wired
 //! `axum::Router` plus a `RouterState` snapshot the caller can
-//! later swap (Step 7 hot-reload). Each route is built per-source
+//! later swap on hot-reload. Each route is built per-source
 //! with its own concurrency semaphore and rate-limit bucket map.
 //!
 //! Pipeline (in order):
@@ -60,7 +60,7 @@ pub struct SourceState {
     pub source_id: String,
     /// HTTP path the route is mounted at.
     pub path: String,
-    /// Phase 80.12 verifier shared with the request handler.
+    /// Signature verifier shared with the request handler.
     pub handler: Arc<WebhookHandler>,
     /// `None` when `concurrency_cap == 0` — semaphore acquisition
     /// skipped (unbounded).

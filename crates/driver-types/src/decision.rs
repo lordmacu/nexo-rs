@@ -46,7 +46,7 @@ pub enum DecisionChoice {
     /// Tool must NOT proceed; `message` is fed back as a permission-
     /// tool error so the CLI can reformulate.
     Deny { message: String },
-    /// Pass-through with operator note. Reserved for shadow-mode
-    /// (Phase 67.11) — logs without enforcing.
+    /// Pass-through with operator note. Reserved for shadow-mode —
+    /// logs without enforcing.
     Observe { note: String },
 }

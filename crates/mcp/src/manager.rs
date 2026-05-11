@@ -1,6 +1,6 @@
-//! Phase 12.4 — `McpRuntimeManager`: one `SessionMcpRuntime` per
-//! `session_id` with in-flight dedup, lazy fingerprint-based invalidation,
-//! and a background idle reap task.
+//! `McpRuntimeManager`: one `SessionMcpRuntime` per `session_id`
+//! with in-flight dedup, lazy fingerprint-based invalidation, and a
+//! background idle reap task.
 
 use std::collections::HashMap;
 use std::sync::Arc;

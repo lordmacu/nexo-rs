@@ -1,4 +1,4 @@
-//! Phase 76.9 — minimal MCP server in <50 LOC of operator code.
+//! Minimal MCP server in <50 LOC of operator code.
 //!
 //! Demonstrates the new ergonomic surface:
 //!   * `#[derive(Deserialize, JsonSchema)]` on the args struct
@@ -8,10 +8,9 @@
 //!   * `McpServerBuilder::new(...).tool(...).build_handler()` —
 //!     fluent registration, ready to plug into stdio.
 //!
-//! Compare with the pre-76.9 path
-//! (`crates/core/src/agent/web_search_tool.rs:26-42`) where the
-//! schema was a `serde_json::json!(...)` literal hand-maintained
-//! parallel to the args struct — drift was guaranteed.
+//! Compare with the older style where the schema was a
+//! `serde_json::json!(...)` literal hand-maintained parallel to
+//! the args struct — drift was guaranteed.
 
 use async_trait::async_trait;
 use nexo_mcp::server::builder::{McpServerBuilder, Tool, ToolCtx};

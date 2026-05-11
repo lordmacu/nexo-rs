@@ -1,4 +1,4 @@
-// Phase 27.1 — emit build-time stamps consumed by `nexo version`
+// Emit build-time stamps consumed by `nexo version`
 // (verbose `--version`). Keeps cost cheap on incremental builds via
 // `rerun-if-changed=.git/HEAD`.
 

@@ -9,8 +9,8 @@ use crate::error::DriverError;
 /// Write `<workspace>/.nexo-mcp.json` pointing Claude at our
 /// permission server. Returns the absolute path of the file written.
 ///
-/// Phase 73 — both `bin_path` and `socket_path` are canonicalised
-/// to absolute form before serialisation. Claude CLI launches the
+/// Both `bin_path` and `socket_path` are canonicalised to absolute
+/// form before serialisation. Claude CLI launches the
 /// MCP server inside the worktree (the `--mcp-config` file is read
 /// with cwd = worktree), so any relative path defined in
 /// `config/driver/claude.yaml` (`./data/driver.sock`) would resolve
@@ -24,7 +24,7 @@ pub fn write_mcp_config(
 ) -> Result<PathBuf, DriverError> {
     let bin_abs = absolute_path(bin_path);
     let sock_abs = absolute_path(socket_path);
-    // Phase 73 — config-key MUST match `serverInfo.name`
+    // config-key MUST match `serverInfo.name`
     // returned by the MCP server (`nexo-driver-permission`).
     // Claude Code 2.1 namespaces tools by
     // `mcp__<serverInfo.name>__<tool>` and resolves

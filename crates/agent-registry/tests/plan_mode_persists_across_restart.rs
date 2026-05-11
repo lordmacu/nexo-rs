@@ -1,4 +1,4 @@
-//! Phase 79.1 — verify the plan-mode JSON survives a simulated daemon
+//! Verify the plan-mode JSON survives a simulated daemon
 //! restart: write the row → close the SQLite pool → reopen the same
 //! file → reattach → expect the same `plan_mode` JSON to come back on
 //! the resumed AgentHandle.

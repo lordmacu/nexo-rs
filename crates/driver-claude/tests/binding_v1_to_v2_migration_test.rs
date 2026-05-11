@@ -1,4 +1,4 @@
-//! Phase 67.B.1 — schema v1 -> v2 migration adds
+//! Schema v1 -> v2 migration adds
 //! `origin_channel_json` and `dispatcher_json` nullable columns.
 //! Bindings written by older daemons must keep deserialising into
 //! `SessionBinding { origin_channel: None, dispatcher: None }` after
@@ -123,7 +123,7 @@ async fn v1_db_migrates_in_place_and_reads_keep_working() {
 
 #[tokio::test]
 async fn upsert_without_origin_does_not_clobber_existing_origin() {
-    // Phase 67.B.1 — touch / mid-turn upserts must preserve origin.
+    // Touch / mid-turn upserts must preserve origin.
     let db = tmp_db_path();
     let path = db.to_string_lossy().into_owned();
     let store = SqliteBindingStore::open(&path).await.unwrap();

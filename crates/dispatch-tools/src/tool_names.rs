@@ -4,12 +4,12 @@
 //!
 //! Lists live here (not in `nexo-core`) so the `register_dispatch_tools`
 //! wiring in core depends on the same single source of truth that the
-//! per-tool implementations (67.E.x) will pull in. A YAML registry
-//! would diverge silently the moment somebody renamed a constant.
+//! per-tool implementations pull in. A YAML registry would diverge
+//! silently the moment somebody renamed a constant.
 
 use nexo_config::{DispatchCapability, DispatchPolicy};
 
-/// Phase 79.1 — canonical names of the plan-mode tools. Exported as
+/// Canonical names of the plan-mode tools. Exported as
 /// consts so other modules (the dispatcher gate, the LLM provider
 /// shims, the deferred-schema registry) reference one source of
 /// truth instead of stringly-typed literals scattered across the
@@ -37,7 +37,7 @@ pub const READ_TOOL_NAMES: &[&str] = &[
 ];
 
 /// Tools that mutate state. Registered only when capability is `Full`.
-/// The `DispatchGate` (67.D.2) is the second line of defense at
+/// The `DispatchGate` is the second line of defense at
 /// invocation time.
 pub const WRITE_TOOL_NAMES: &[&str] = &[
     "program_phase",
@@ -56,8 +56,8 @@ pub const WRITE_TOOL_NAMES: &[&str] = &[
 /// Operator-only tools. Registered behind a separate flag (admin)
 /// rather than the per-binding `DispatchPolicy` because they affect
 /// the entire orchestrator, not just the calling agent's surface.
-/// 67.G.4 will land the actual registration; the names are listed
-/// here so the registry can prune them out of non-admin sessions.
+/// The names are listed here so the registry can prune them out of
+/// non-admin sessions.
 pub const ADMIN_TOOL_NAMES: &[&str] = &[
     "set_concurrency_cap",
     "flush_agent_queue",
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn plan_mode_tool_name_consts_match_canonical_strings() {
-        // Phase 79.1 — these must literally equal the strings listed
+        // These must literally equal the strings listed
         // in `nexo_core::plan_mode::READ_ONLY_TOOLS` (a no-cycle
         // verification — the round-trip through `classify_tool`
         // lives in `nexo-core` itself).

@@ -1,4 +1,4 @@
-//! Phase 11.5 — bridge an extension's JSON-RPC tools into the agent's
+//! Bridge an extension's JSON-RPC tools into the agent's
 //! `ToolRegistry`. The LLM sees the tool (prefixed + attributed in the
 //! description); calls are routed to the owning `StdioRuntime`.
 use super::context::AgentContext;
@@ -49,8 +49,8 @@ impl ExtensionTool {
         self.input_schema = Some(input_schema);
         self
     }
-    /// Phase 11.5 follow-up — builder to opt this tool into context
-    /// propagation. When true, `call` injects `_meta.agent_id` and
+    /// Builder to opt this tool into context propagation. When
+    /// true, `call` injects `_meta.agent_id` and
     /// `_meta.session_id` into the args object before forwarding.
     pub fn with_context_passthrough(mut self, enabled: bool) -> Self {
         self.context_passthrough = enabled;
@@ -96,7 +96,7 @@ impl ExtensionTool {
 /// `args` is a JSON object. No-op otherwise (non-object payloads
 /// pass through unchanged).
 ///
-/// Phase 82.1 Step 5 — wire shape:
+/// Wire shape:
 /// ```jsonc
 /// {
 ///   "...": "tool args as the LLM produced them",
@@ -116,7 +116,7 @@ impl ExtensionTool {
 ///         "channel": "whatsapp",
 ///         "account_id": "personal",
 ///         "binding_id": "whatsapp:personal",
-///         "mcp_channel_source": "slack" // optional, Phase 80.9
+///         "mcp_channel_source": "slack" // optional
 ///       }
 ///     }
 ///   }
@@ -144,8 +144,8 @@ pub(crate) fn inject_context_meta(
     match args.as_object_mut() {
         Some(obj) => {
             // Single source of truth for `_meta` lives on
-            // AgentContext — same shape feeds Phase 11 stdio
-            // and Phase 12 MCP tools/call (Step 6).
+            // AgentContext — same shape feeds the extension stdio
+            // wire and MCP tools/call.
             obj.insert("_meta".into(), ctx.build_meta_value());
         }
         None => tracing::debug!(
@@ -349,7 +349,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------
-    // Phase 82.1 Step 5 — dual-write `_meta.nexo.binding`
+    // dual-write `_meta.nexo.binding`
     // ----------------------------------------------------------
 
     use crate::agent::context::BindingContext;

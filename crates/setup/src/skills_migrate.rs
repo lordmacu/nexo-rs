@@ -1,19 +1,19 @@
-//! Phase 83.8.12.6.b — on-disk skills migration helper.
+//! On-disk skills migration helper.
 //!
-//! Phase 83.8.12.6 changed the skills layout from
+//! The skills layout changed from
 //! `<root>/<name>/SKILL.md` to
 //! `<root>/{__global__,<tenant_id>}/<name>/SKILL.md`. This helper
-//! rewrites a pre-83.8.12.6 skills directory into the new layout
+//! rewrites a legacy skills directory into the new layout
 //! by moving every legacy skill (a top-level dir with `SKILL.md`
 //! inside) into the `__global__` namespace.
 //!
-//! The runtime `SkillLoader` (Phase 83.8.12.6.runtime) keeps the
+//! The runtime `SkillLoader` keeps the
 //! legacy path as a fallback, so this migration is OPTIONAL —
 //! existing deployments keep working without it. Operators run
 //! it once when they want to clean up the layout (and silence
 //! the deprecation warning the loader logs on legacy hits).
 //!
-//! The function is idempotent: if `<root>/__global__/<name>/`
+//! It is idempotent: if `<root>/__global__/<name>/`
 //! already exists for a candidate, the source is left in place
 //! and the conflict is reported in the result. Re-running on an
 //! already-migrated tree returns `0` moves and no errors.

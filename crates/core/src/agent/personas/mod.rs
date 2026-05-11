@@ -1,10 +1,8 @@
-//! Phase 84 — role-aware persona system prompts.
+//! Role-aware persona system prompts.
 //!
-//! Phase 77.18 introduced `BindingRole::{Coordinator, Worker, …}` and
-//! restricted the team-coordination tool surface to coordinator
-//! bindings. The role flag was purely a tool-gate signal — the
-//! coordinator agent itself ran the standard system prompt and had
-//! no awareness that it was orchestrating workers.
+//! `BindingRole::{Coordinator, Worker, …}` originally only restricted
+//! the team-coordination tool surface to coordinator bindings — a
+//! pure tool-gate signal, with no effect on the system prompt itself.
 //!
 //! This module closes that gap. Each persona builder returns a single
 //! prompt block (Markdown-formatted) that the boot path prepends to

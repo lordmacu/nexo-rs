@@ -1,5 +1,5 @@
 //! JID parsing + canonicalisation helpers for the WhatsApp /
-//! SMS identity surface (M15.23.e).
+//! SMS identity surface.
 //!
 //! Mirrors the conventions used by Baileys
 //! (`jidNormalizedUser`) + whatsmeow (`ParseJID`):

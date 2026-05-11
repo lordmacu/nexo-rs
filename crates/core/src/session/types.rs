@@ -38,13 +38,13 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub last_access: DateTime<Utc>,
     max_history_turns: usize,
-    /// Phase B — when set, the rolling summary of turns that were
+    /// When set, the rolling summary of turns that were
     /// compacted out of `history`. The agent loop prepends it as a
     /// system framing to every subsequent request so the model can
     /// continue without losing the history that was folded away.
     /// Cleared only when the session is reset.
     pub compacted_summary: Option<String>,
-    /// Phase 77.6 — memory IDs already surfaced this session, so the
+    /// Memory IDs already surfaced this session, so the
     /// relevance scorer can skip them. Cleared on daemon restart.
     already_surfaced: HashSet<Uuid>,
 }
@@ -69,7 +69,7 @@ impl Session {
         }
     }
 
-    /// Phase B — apply a compaction result. Drops `history[..tail_start]`
+    /// Apply a compaction result. Drops `history[..tail_start]`
     /// and stores the summary so subsequent turns prepend it as
     /// system framing. The replaced range is gone from in-memory
     /// history; the audit row in `compactions_v1` is the only
@@ -91,17 +91,17 @@ impl Session {
         }
     }
 
-    /// Phase 77.6 — record that a memory was surfaced to the agent.
+    /// Record that a memory was surfaced to the agent.
     pub fn mark_surfaced(&mut self, memory_id: Uuid) {
         self.already_surfaced.insert(memory_id);
     }
 
-    /// Phase 77.6 — check whether a memory was already shown this session.
+    /// Check whether a memory was already shown this session.
     pub fn is_surfaced(&self, memory_id: &Uuid) -> bool {
         self.already_surfaced.contains(memory_id)
     }
 
-    /// Phase 77.6 — borrow the surfaced set for batch filtering.
+    /// Borrow the surfaced set for batch filtering.
     pub fn surfaced_set(&self) -> &HashSet<Uuid> {
         &self.already_surfaced
     }

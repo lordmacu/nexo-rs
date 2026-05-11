@@ -1,16 +1,15 @@
-// Phase 76 server modules are still in flux (8/15 sub-phases shipped).
-// Silence clippy across the scaffolding so CI doesn't fail on style
-// nits while the surface settles. Re-enable per-file once 76.x is
-// fully shipped.
+// The server modules are still in flux. Silence clippy across the
+// scaffolding so CI doesn't fail on style nits while the surface
+// settles. Re-enable per-file once the module set is stable.
 #![allow(clippy::all)]
 
-//! Phase 12.6 — expose this agent as an MCP server.
+//! Expose this agent as an MCP server.
 //!
-//! The trait here is symmetric to `McpClient` (12.1) but in the
-//! opposite direction: implementors receive JSON-RPC requests and
-//! produce responses.
+//! The trait here is symmetric to `McpClient` but in the opposite
+//! direction: implementors receive JSON-RPC requests and produce
+//! responses.
 //!
-//! Phase 76.2 — internal split:
+//! Internal split:
 //!   * `transport` — `McpTransport` trait + `Frame` / `TransportError`.
 //!   * `dispatch` — `Dispatcher`, `DispatchContext`, `DispatchOutcome`
 //!     (transport-agnostic JSON-RPC handling, panic-safe, cancel-aware).
@@ -30,9 +29,8 @@ pub mod per_principal_concurrency;
 pub mod per_principal_rate_limit;
 pub mod progress;
 pub mod telemetry;
-// Phase 76.7 — promoted to `pub` so external integration tests
-// can import `SessionEvent` for asserting on broadcast traffic.
-// (Originally `pub(crate)` from Phase 76.1.)
+// `pub` so external integration tests can import `SessionEvent` for
+// asserting on broadcast traffic.
 pub mod http_transport;
 pub mod parse;
 pub mod stdio;
@@ -53,8 +51,8 @@ pub trait McpServerHandler: Send + Sync {
     /// Published as `serverInfo` in the `initialize` response.
     fn server_info(&self) -> McpServerInfo;
 
-    /// Flat capability flags. Phase 76.7 — the in-tree dispatcher
-    /// supports `notifications/tools/list_changed`,
+    /// Flat capability flags. The in-tree dispatcher supports
+    /// `notifications/tools/list_changed`,
     /// `notifications/resources/list_changed`,
     /// `notifications/resources/updated` (via
     /// `HttpServerHandle::notify_*`) and `resources/subscribe`,
@@ -72,8 +70,8 @@ pub trait McpServerHandler: Send + Sync {
 
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError>;
 
-    /// Phase 79.M — context-aware tool call variant. Default keeps
-    /// backward compatibility by delegating to [`call_tool`].
+    /// Context-aware tool call variant. Default keeps backward
+    /// compatibility by delegating to [`call_tool`].
     async fn call_tool_with_context(
         &self,
         name: &str,
@@ -83,8 +81,8 @@ pub trait McpServerHandler: Send + Sync {
         self.call_tool(name, arguments).await
     }
 
-    /// Phase 76.7 — streaming-aware variant. Default delegates
-    /// to [`call_tool`] and ignores the reporter, so existing
+    /// Streaming-aware variant. Default delegates to [`call_tool`]
+    /// and ignores the reporter, so existing
     /// handlers compile unchanged. Tools that want to emit
     /// `notifications/progress` override this method and call
     /// `progress.report(..)` periodically.
@@ -103,8 +101,8 @@ pub trait McpServerHandler: Send + Sync {
         self.call_tool(name, arguments).await
     }
 
-    /// Phase 79.M — context-aware streaming tool call variant.
-    /// Default delegates to [`call_tool_streaming`] so existing
+    /// Context-aware streaming tool call variant. Default delegates
+    /// to [`call_tool_streaming`] so existing
     /// handlers compile unchanged.
     async fn call_tool_streaming_with_context(
         &self,

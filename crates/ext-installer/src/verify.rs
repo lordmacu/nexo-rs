@@ -2,7 +2,7 @@
 //!
 //! Originally a `cosign verify-blob` subprocess; replaced in
 //! May 2026 by an in-process pipeline so the installer
-//! cross-compiles cleanly to Android (Phase 90 prerequisite) and
+//! cross-compiles cleanly to Android and
 //! drops the runtime dependency on the Go `cosign` binary.
 //!
 //! Pipeline (called from the install orchestration after the
@@ -25,7 +25,7 @@
 //! identity policy alone, which matches what `cosign verify-blob`
 //! does without `--bundle`. Re-enable Rekor proof checking by
 //! gating an opt-in feature that pulls the `sigstore` crate's
-//! bundle path; tracked in `FOLLOWUPS.md`.
+//! bundle path.
 
 use std::path::{Path, PathBuf};
 

@@ -1,7 +1,7 @@
-//! Phase 82.11 — admin RPC wire shapes for the agent event
+//! Admin RPC wire shapes for the agent event
 //! firehose + backfill surface.
 //!
-//! Use-case agnostic by construction (Cross-cutting #6). Chat
+//! Use-case agnostic by construction. Chat
 //! is ONE variant — `TranscriptAppended` — among N. Today only
 //! that variant is emitted, but [`AgentEventKind`] is enum-typed
 //! with `#[non_exhaustive]` + `#[serde(tag = "kind")]` so future
@@ -59,13 +59,13 @@ pub enum AgentEventKind {
         /// Channel/plugin that produced or received the entry
         /// (e.g. `whatsapp`, `telegram`, `internal`).
         source_plugin: String,
-        /// Phase 83.8.12 — owning tenant. `None` for agents
+        /// Owning tenant. `None` for agents
         /// predating multi-tenant. Firehose subscribers filter
         /// on this without re-querying agents.yaml.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
-    /// Phase 82.13.b.3 — fired when the inbound dispatcher
+    /// Fired when the inbound dispatcher
     /// captures an inbound during pause but the per-scope
     /// pending queue is at the cap and the oldest entry had
     /// to be evicted. Operator UIs can render a "history
@@ -87,7 +87,7 @@ pub enum AgentEventKind {
         /// Epoch ms when the eviction happened.
         at_ms: u64,
     },
-    /// Phase 82.14.b — fired when an agent flags a scope for
+    /// Fired when an agent flags a scope for
     /// human review via the escalations admin RPC. Operator UIs
     /// render a badge / notification so the operator picks it up
     /// without polling `nexo/admin/escalations/list`.
@@ -105,13 +105,13 @@ pub enum AgentEventKind {
         urgency: crate::admin::escalations::EscalationUrgency,
         /// Epoch ms when the agent raised the request.
         requested_at_ms: u64,
-        /// Phase 83.8.12 — owning tenant; `None` for legacy /
+        /// Owning tenant; `None` for legacy /
         /// single-tenant deployments. Firehose subscribers route
         /// per-tenant without re-querying `agents.yaml`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
-    /// Phase 82.14.b — fired when an escalation transitions out
+    /// Fired when an escalation transitions out
     /// of `Pending`. Carries the same `agent_id` + `scope` keys
     /// as the matching `EscalationRequested` so subscribers can
     /// pair the two via `(agent_id, scope)` regardless of the
@@ -126,13 +126,13 @@ pub enum AgentEventKind {
         resolved_at_ms: u64,
         /// How the escalation was settled.
         by: crate::admin::escalations::ResolvedBy,
-        /// Phase 83.8.12 — owning tenant. Mirrors the
+        /// Owning tenant. Mirrors the
         /// `Requested` shape so the pair stays
         /// shape-symmetrical.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
-    /// Phase 82.13.b.firehose — fired when an admin RPC handler
+    /// Fired when an admin RPC handler
     /// flips the [`crate::admin::processing::ProcessingControlState`]
     /// for a scope (operator pause / resume / intervention reply).
     /// Operator UIs render a real-time pause indicator without
@@ -158,12 +158,12 @@ pub enum AgentEventKind {
         new_state: crate::admin::processing::ProcessingControlState,
         /// Epoch ms when the transition happened.
         at_ms: u64,
-        /// Phase 83.8.12 — owning tenant. `None` for legacy /
+        /// Owning tenant. `None` for legacy /
         /// single-tenant deployments.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
-    /// Phase 82.10.o — security-domain audit event. Carries a
+    /// Security-domain audit event. Carries a
     /// nested [`SecurityEventKind`] discriminator so future
     /// security events (operator login, capability grant, …)
     /// extend the shape without proliferating top-level
@@ -174,7 +174,7 @@ pub enum AgentEventKind {
         #[serde(flatten)]
         event: SecurityEventKind,
     },
-    /// Phase 82.10.r — peer-side typing presence. Fired by the
+    /// Peer-side typing presence. Fired by the
     /// channel plugin when wa-agent (or any other plugin that
     /// surfaces composing/paused presence) reports that the
     /// remote peer is typing into the chat. Operator dashboards
@@ -205,7 +205,7 @@ pub enum AgentEventKind {
         /// sender_id)` against every conversation.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         agent_id: Option<String>,
-        /// Phase 83.8.12 — owning tenant. `None` for legacy /
+        /// Owning tenant. `None` for legacy /
         /// single-tenant deployments.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
@@ -236,7 +236,7 @@ pub enum AgentEventKind {
     },
 }
 
-/// Phase 82.10.o — security-domain audit events. Nested under
+/// Security-domain audit events. Nested under
 /// [`AgentEventKind::SecurityEvent`] so subscribers persist
 /// every variant alongside transcript / escalation events for
 /// a unified audit log.
@@ -301,7 +301,7 @@ pub struct AgentEventsListFilter {
     /// default (500).
     #[serde(default)]
     pub limit: usize,
-    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` requires
+    /// Multi-tenant filter. `Some(id)` requires
     /// the inbound that produced the event was bound to an
     /// agent with `agents.yaml.<agent_id>.tenant_id` matching.
     /// Defense-in-depth: cross-tenant queries return empty
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(back, evt);
     }
 
-    /// Phase 82.10.o — token-rotation security event round-trips
+    /// Token-rotation security event round-trips
     /// through the firehose envelope with all four fields
     /// (timestamp + two hashes + reason).
     #[test]
@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(back, evt);
     }
 
-    /// Phase 82.10.o — `reason: None` is skipped on the wire so
+    /// `reason: None` is skipped on the wire so
     /// audit firehose payloads stay tight when the operator
     /// didn't supply one.
     #[test]

@@ -1,8 +1,8 @@
 //! Tenant + agent id validation and bundle path resolution.
 //!
 //! The validators are a tightened subset of the multi-tenant path
-//! canonicalization shipped in Phase 76.4 (`crates/mcp/src/server/auth/
-//! tenant.rs`). We keep the rules local to avoid pulling `nexo-mcp` in
+//! canonicalization in `crates/mcp/src/server/auth/tenant.rs`. We keep
+//! the rules local to avoid pulling `nexo-mcp` in
 //! as a dependency — bundle paths never originate from network input,
 //! so the lighter validator is sufficient. The variant set
 //! intentionally mirrors the production rule (`[a-z0-9_-]{1,64}`,

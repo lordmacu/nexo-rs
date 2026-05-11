@@ -1,4 +1,4 @@
-//! Phase 82.11 — agent event emitter + in-process broadcast.
+//! Agent event emitter + in-process broadcast.
 //!
 //! `AgentEventEmitter` is the single hook point the rest of the
 //! daemon calls when something interesting happens that microapps
@@ -121,7 +121,7 @@ impl AgentEventEmitter for BroadcastAgentEventEmitter {
 /// the emitter through trait objects.
 pub type SharedAgentEventEmitter = Arc<dyn AgentEventEmitter>;
 
-/// Phase 82.11.tee — fan-out emitter that delivers each event to
+/// Fan-out emitter that delivers each event to
 /// every wrapped sink in registration order. Lets boot compose
 /// the in-process [`BroadcastAgentEventEmitter`] (live
 /// subscribers) with a future durable SQLite log and / or a
@@ -193,7 +193,7 @@ impl AgentEventEmitter for TeeAgentEventEmitter {
     }
 }
 
-/// Phase 82.11.bridge — NATS-backed `AgentEventEmitter` for
+/// NATS-backed `AgentEventEmitter` for
 /// multi-host SaaS deployments. Single-daemon installs run
 /// happily on the in-process [`BroadcastAgentEventEmitter`];
 /// once the operator UI lives on a different node from the
@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(b.seen.lock().await.len(), 1);
     }
 
-    // ── Phase 82.11.bridge — `agent_event_subject` ──────────────
+    // ── `agent_event_subject` ──────────────
 
     use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};
     use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
