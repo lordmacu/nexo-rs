@@ -278,7 +278,7 @@ install_plugins() {
 
     # Channel plugins + the admin web UI. Each one: prebuilt tarball
     # (fast) → crates.io build (any arch, needs Rust) → warn.
-    for p in $PLUGINS nexo-plugin-admin; do
+    for p in $PLUGINS nexo-rs-plugin-admin; do
         install_one_plugin "$nexo" "$p"
     done
 
