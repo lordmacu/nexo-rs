@@ -787,8 +787,30 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 /// Defense-in-depth — `Command::env_clear().envs(&map)` in
 /// `SubprocessNexoPlugin::spawn_and_handshake` enforces this.
 #[allow(dead_code)] // Wired in the telegram-loop flip step (81.18.b.1 step 5).
+/// Phase 92 — map the daemon's own broker config to the wire
+/// string a subprocess plugin should use when constructing its
+/// own broker:
+///
+/// - daemon `Nats` → child connects to the same NATS server.
+/// - daemon `Local` → child uses the stdio bridge (the local
+///   broker is in-process tokio::mpsc, unreachable from another
+///   process; the bridge forwards through the parent's
+///   stdin/stdout JSON-RPC channel).
+/// - daemon `StdioBridge` → invalid for an operator-set config;
+///   the kind is daemon-derived only. Fall back to
+///   `stdio_bridge` defensively so a misconfiguration doesn't
+///   crash boot.
+fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &'static str {
+    match kind {
+        nexo_config::types::broker::BrokerKind::Nats => "nats",
+        nexo_config::types::broker::BrokerKind::Local
+        | nexo_config::types::broker::BrokerKind::StdioBridge => "stdio_bridge",
+    }
+}
+
 fn seed_telegram_subprocess_env_for(
     cfg: &nexo_config::types::plugins::TelegramPluginConfig,
+    broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -801,7 +823,17 @@ fn seed_telegram_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    // Phase 92 — explicit broker transport selector. `nats` keeps
+    // the historical NATS connect path; `local` is logically the
+    // same on the subprocess side (treated as a fallback URL);
+    // `stdio_bridge` tells the plugin to construct a
+    // `nexo_broker::StdioBridgeBroker` and skip the network. The
+    // URL is omitted for `stdio_bridge` because the transport is
+    // the parent process's stdin/stdout.
+    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
+    if broker_kind != "stdio_bridge" {
+        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    }
     env.insert("NEXO_PLUGIN_TELEGRAM_TOKEN".into(), cfg.token.clone());
     if let Some(ref instance) = cfg.instance {
         if !instance.trim().is_empty() {
@@ -1033,6 +1065,7 @@ fn spawn_whatsapp_typing_presence_subscriber(
 #[allow(dead_code)] // Wired in the whatsapp-loop flip below.
 fn seed_whatsapp_subprocess_env_for(
     cfg: &nexo_config::WhatsappPluginConfig,
+    broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -1041,7 +1074,12 @@ fn seed_whatsapp_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    // Phase 92 — explicit broker transport selector. See the
+    // matching comment block in `seed_telegram_subprocess_env_for`.
+    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
+    if broker_kind != "stdio_bridge" {
+        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    }
     env.insert(
         "NEXO_PLUGIN_WHATSAPP_SESSION_DIR".into(),
         cfg.session_dir.clone(),
@@ -2965,6 +3003,14 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                // Phase 92 — derive the subprocess-side broker
+                // transport from the daemon's own broker config.
+                // `Local` daemons stamp `stdio_bridge` because
+                // their in-process broker is unreachable from
+                // another OS process; the bridge is what gets
+                // the subprocess back to the host broker.
+                let broker_kind =
+                    subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for tg_cfg in cfg.plugins.telegram.clone() {
                     let instance_label = tg_cfg.instance.clone().unwrap_or_default();
                     let trimmed = instance_label.trim();
@@ -2973,7 +3019,7 @@ async fn main() -> Result<()> {
                     } else {
                         format!("telegram.{trimmed}")
                     };
-                    let env = seed_telegram_subprocess_env_for(&tg_cfg, &broker_url);
+                    let env = seed_telegram_subprocess_env_for(&tg_cfg, broker_kind, &broker_url);
                     let synthetic =
                         nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
                             &base, trimmed,
@@ -3035,6 +3081,11 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                // Phase 92 — see telegram mirror for the rationale
+                // behind mapping daemon broker kind → subprocess
+                // transport selector.
+                let broker_kind =
+                    subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for wa_cfg in cfg.plugins.whatsapp.clone() {
                     if !wa_cfg.enabled {
                         continue;
@@ -3046,7 +3097,7 @@ async fn main() -> Result<()> {
                     } else {
                         format!("whatsapp.{trimmed}")
                     };
-                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, &broker_url);
+                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, broker_kind, &broker_url);
                     let synthetic =
                         nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
                             &base, trimmed,
@@ -13947,7 +13998,7 @@ mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
         route_cron_subcommand, seed_email_subprocess_env_for, seed_telegram_subprocess_env_for,
-        seed_whatsapp_subprocess_env_for, Mode,
+        seed_whatsapp_subprocess_env_for, subprocess_broker_kind_str, Mode,
     };
     use nexo_config::types::plugins::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
@@ -13986,7 +14037,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_happy_path() {
         let cfg = telegram_cfg("123:abcdef", Some("bot1"));
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_TELEGRAM_TOKEN").map(String::as_str),
@@ -14030,12 +14081,12 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_omits_empty_instance() {
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
 
         let mut cfg2 = telegram_cfg("tok", Some(""));
         cfg2.instance = Some("   ".into());
-        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats://x");
+        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
     }
 
@@ -14044,7 +14095,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_transcribe_toggle() {
         let mut cfg = telegram_cfg("tok", None);
-        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE"));
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND"));
 
@@ -14054,7 +14105,7 @@ mod tests {
             timeout_ms: 45_000,
             language: Some("es".into()),
         };
-        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE")
@@ -14090,9 +14141,49 @@ mod tests {
     fn seed_telegram_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_TG_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
+    }
+
+    // Phase 92 — daemon broker = Local means the subprocess can't
+    // reach the in-process broker; the env seeder stamps
+    // `NEXO_BROKER_KIND=stdio_bridge` and OMITS the URL because
+    // the transport is the parent's stdin/stdout, not a network
+    // endpoint.
+    #[test]
+    fn seed_telegram_env_stdio_bridge_omits_url() {
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "stdio_bridge", "nats://ignored");
+        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("stdio_bridge"));
+        assert!(
+            !env.contains_key("NEXO_BROKER_URL"),
+            "stdio_bridge must omit NEXO_BROKER_URL; got env={env:?}"
+        );
+    }
+
+    #[test]
+    fn seed_telegram_env_nats_keeps_url() {
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://central:4222");
+        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("nats"));
+        assert_eq!(env.get("NEXO_BROKER_URL").map(String::as_str), Some("nats://central:4222"));
+    }
+
+    #[test]
+    fn subprocess_broker_kind_str_maps_daemon_to_child() {
+        use nexo_config::types::broker::BrokerKind;
+        assert_eq!(subprocess_broker_kind_str(BrokerKind::Nats), "nats");
+        // Daemon `Local` triggers the stdio bridge on the child
+        // because the in-process broker is unreachable across
+        // process boundaries.
+        assert_eq!(subprocess_broker_kind_str(BrokerKind::Local), "stdio_bridge");
+        // `StdioBridge` is daemon-derived; should never appear in
+        // operator YAML, but the mapper handles it defensively.
+        assert_eq!(
+            subprocess_broker_kind_str(BrokerKind::StdioBridge),
+            "stdio_bridge"
+        );
     }
 
     fn whatsapp_cfg(session_dir: &str, instance: Option<&str>) -> WhatsappPluginConfig {
@@ -14132,7 +14223,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_happy_path() {
         let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_WHATSAPP_SESSION_DIR")
@@ -14171,11 +14262,11 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
 
         let cfg2 = whatsapp_cfg("/tmp/x", Some("   "));
-        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats://x");
+        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
     }
 
@@ -14184,7 +14275,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
         let mut cfg = whatsapp_cfg("/tmp/x", None);
-        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
 
         cfg.transcriber = WhatsappTranscriberConfig {
@@ -14192,7 +14283,7 @@ mod tests {
             skill: "whisper".into(),
             timeout_ms: 30_000,
         };
-        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED")
@@ -14281,7 +14372,7 @@ mod tests {
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_WA_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_WA_TEST_LEAK_SENTINEL__");
     }
