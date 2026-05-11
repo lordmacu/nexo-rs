@@ -18,10 +18,22 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
+
+/// Process-global per-session locks around the header-creation block:
+/// exactly one writer writes the `Session` line, and every other
+/// writer waits for that header to be flushed before opening the file
+/// in append mode. Keyed by absolute session path so independent
+/// `TranscriptWriter` instances that happen to target the same file
+/// (rare in production — one runtime per agent — but exercised by the
+/// concurrency tests) still serialize. A per-instance map would let
+/// two writers race `create_new` and the loser's appended entry could
+/// be clobbered by the winner's `write(true)` header at offset 0.
+static SESSION_HEADER_LOCKS: LazyLock<DashMap<PathBuf, Arc<TokioMutex<()>>>> =
+    LazyLock::new(DashMap::new);
 
 use super::agent_events::{AgentEventEmitter, NoopAgentEventEmitter};
 use super::redaction::Redactor;
@@ -82,10 +94,6 @@ pub struct TranscriptWriter {
     /// [`NoopAgentEventEmitter`] so existing callers stay
     /// byte-identical until they opt in via [`Self::with_emitter`].
     event_emitter: Arc<dyn AgentEventEmitter>,
-    /// Per-session locks around the header-creation block so only one
-    /// writer writes the Session line, and every other writer waits
-    /// for the header to be flushed before opening in append mode.
-    header_locks: DashMap<PathBuf, Arc<TokioMutex<()>>>,
     /// Per-session monotonic counter handed to the
     /// firehose as `seq`. Counts only `TranscriptLine::Entry`
     /// records — must stay in lockstep with `TranscriptReaderFs`'s
@@ -107,7 +115,6 @@ impl TranscriptWriter {
             redactor: Arc::new(Redactor::disabled()),
             index: None,
             event_emitter: Arc::new(NoopAgentEventEmitter),
-            header_locks: DashMap::new(),
             entry_seq: DashMap::new(),
             tenant_id: None,
         }
@@ -136,7 +143,6 @@ impl TranscriptWriter {
             redactor,
             index,
             event_emitter: Arc::new(NoopAgentEventEmitter),
-            header_locks: DashMap::new(),
             entry_seq: DashMap::new(),
             tenant_id: None,
         }
@@ -190,14 +196,15 @@ impl TranscriptWriter {
         tokio::fs::create_dir_all(&self.root).await?;
         let path = self.session_path(session_id);
 
-        // Per-session mutex so only one writer enters the header-creation
-        // block. The winner writes the header and flushes; every other
-        // writer blocks until the header is committed, then skips to the
-        // append path. Without this lock, a writer that sees
+        // Process-global per-session mutex so only one writer enters the
+        // header-creation block. The winner writes the header and flushes;
+        // every other writer blocks until the header is committed, then
+        // skips to the append path. Without this lock, a writer that sees
         // AlreadyExists can open the file in append mode before the
-        // winner's header hits disk, producing an entry-then-header file.
-        let lock = self
-            .header_locks
+        // winner's header hits disk — producing an entry-before-header
+        // file, or, worse, the winner's offset-0 `write(true)` header
+        // clobbering a loser's already-appended entry.
+        let lock = SESSION_HEADER_LOCKS
             .entry(path.clone())
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone();
