@@ -1,0 +1,55 @@
+# agents.yaml — agent definitions
+#
+# Each agent gets its own runtime + transcript directory +
+# inbound bindings. The daemon spawns one tokio task per agent at
+# boot. Add agents here OR via the admin RPC
+# `nexo/admin/agents/upsert` from the operator UI.
+#
+# Default (Phase 93 zero-config): `agents: []` — no agents
+# spawned. The daemon stays up serving admin RPCs and an
+# operator can `upsert` agents at runtime.
+
+agents:
+  # Example: a single agent named `ana` bound to WhatsApp.
+  # Uncomment + edit, or replace with your own.
+  #
+  # - id: ana
+  #   model:
+  #     provider: minimax          # provider name (matches llm.yaml > providers.<name>)
+  #     model: MiniMax-M2.5        # provider-specific model id
+  #   # plugins this agent uses (must match installed plugins
+  #   # under `plugins.discovery.search_paths`).
+  #   plugins:
+  #     - whatsapp
+  #   # inbound bindings: per-plugin override of routing rules.
+  #   # An empty list means the agent listens to every inbound
+  #   # event from each declared plugin.
+  #   inbound_bindings:
+  #     - plugin: whatsapp
+  #       instance: smoketest      # matches plugins/whatsapp.yaml > instance
+  #   # pairing_policy: whether the agent answers a Companion
+  #   # WS pairing challenge automatically (true) or requires
+  #   # operator approval (false, default).
+  #   pairing_policy:
+  #     auto_challenge: false
+  #   # heartbeat: if enabled, on_heartbeat fires every
+  #   # interval to drive proactive messages.
+  #   heartbeat:
+  #     enabled: false
+  #     interval: 5m               # humantime (e.g. 30s, 5m, 1h)
+  #   # config: per-agent runtime knobs.
+  #   config:
+  #     debounce_ms: 2000          # min ms between inbound msgs
+  #     queue_cap: 5               # max queued inbounds before drop
+  #   # transcripts_dir: where TranscriptsLog writes JSONL.
+  #   # Relative paths resolve against the config dir.
+  #   transcripts_dir: data/transcripts
+  #   # system_prompt: the agent's persona. Markdown allowed.
+  #   system_prompt: |
+  #     You are a friendly WhatsApp support agent. Greet warmly,
+  #     ask before assuming, keep replies short (2-3 sentences).
+  #     Always respond in Spanish.
+
+# Schema version pinned for migration auto-apply. Don't edit by
+# hand; `nexo setup migrate --apply` handles bumps.
+schema_version: 11

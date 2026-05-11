@@ -1,0 +1,10 @@
+# pollers.yaml — generic poller subsystem (Phase 19)
+# Cron-style triggers that publish to broker on schedule.
+# Absent file → subsystem off.
+pollers: []
+# Example:
+# - id: daily-reminder
+#   schedule: "0 9 * * *"   # cron
+#   topic: agent.reminder.daily
+#   payload: { kind: "ping" }
+schema_version: 11

@@ -1,0 +1,11 @@
+# transcripts.yaml — FTS index + redaction (Phase 82.11)
+# Conversation transcripts subsystem. Always populated.
+transcripts:
+  # fts: full-text search index over per-agent transcripts dir.
+  fts:
+    enabled: true
+    debounce_ms: 1000
+  # redaction: scrub PII / secrets at write-time.
+  redaction:
+    enabled: false
+schema_version: 11

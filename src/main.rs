@@ -1,5 +1,6 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
+mod init_cli;
 mod persona_cli;
 mod plugin_admin;
 mod plugin_install;
@@ -64,6 +65,22 @@ enum Mode {
         kind: String,
         url: Option<String>,
         no_signal: bool,
+    },
+    /// Phase 95 — `nexo init [--yaml <names>] [--output <dir>]
+    /// [--force] [--stdout]` scaffolds the 19 sample YAML files
+    /// the daemon's `AppConfig::load` knows about, each densely
+    /// commented with field semantics + sane defaults. Operators
+    /// edit in place to customize. `--yaml` filters by name
+    /// (csv: `--yaml broker,llm` or shorthand `--yaml plugins`
+    /// for every plugins/*.yaml). `--output` overrides the
+    /// resolved config dir. `--force` overwrites existing files.
+    /// `--stdout` emits a concatenated stream to stdout instead
+    /// of writing files.
+    Init {
+        yaml_filter: Option<String>,
+        output_dir: Option<PathBuf>,
+        force: bool,
+        stdout: bool,
     },
     ExtList {
         json: bool,
@@ -621,6 +638,11 @@ struct CliArgs {
     /// loaded `AppConfig` (prepend the local plugin's path to
     /// discovery search_paths; optionally clear agents).
     plugin_run_override: Option<plugin_run::PluginRunOverride>,
+    /// Phase F6.b — set when `Mode::PersonaRun` falls through to
+    /// daemon boot. The boot path applies the override to the
+    /// loaded `AppConfig` (prepends the local persona pack's
+    /// parent dir to `cfg.personas.discovery.search_paths`).
+    persona_run_override: Option<persona_cli::PersonaRunOverride>,
 }
 
 /// Shared state for the companion WebSocket pairing handshake.
@@ -1524,6 +1546,15 @@ async fn main() -> Result<()> {
         } => {
             return run_set_broker(&args.config_dir, &kind, url.as_deref(), no_signal);
         }
+        Mode::Init {
+            yaml_filter,
+            output_dir,
+            force,
+            stdout,
+        } => {
+            let target = output_dir.as_deref().unwrap_or(&args.config_dir);
+            return init_cli::run_init(target, yaml_filter.as_deref(), force, stdout);
+        }
         Mode::ExtHelp => return run_ext_help(),
         Mode::ExtList { json } => return run_ext_cli(&args.config_dir, ExtCmd::List { json }),
         Mode::ExtInfo { id, json } => {
@@ -1899,16 +1930,25 @@ async fn main() -> Result<()> {
             std::process::exit(code);
         }
         Mode::PersonaGet { id, json } => {
-            let code = persona_cli::run_persona_get_stub(id, json).await?;
+            let code = persona_cli::run_persona_get(&args.config_dir, id, json).await?;
             std::process::exit(code);
         }
         Mode::PersonaUpgrade { id, json } => {
-            let code = persona_cli::run_persona_upgrade_stub(id, json).await?;
+            let code = persona_cli::run_persona_upgrade(&args.config_dir, id, json).await?;
             std::process::exit(code);
         }
         Mode::PersonaRun { path, json } => {
-            let code = persona_cli::run_persona_run_stub(path, json).await?;
-            std::process::exit(code);
+            let override_ = match persona_cli::resolve_local_persona(&path) {
+                Ok(o) => o,
+                Err(e) => std::process::exit(persona_cli::emit_persona_run_error(
+                    &e,
+                    json,
+                    Some(path),
+                )),
+            };
+            persona_cli::print_persona_run_banner(&override_, json);
+            args.persona_run_override = Some(override_);
+            // Fall through to the daemon boot path below.
         }
         Mode::PersonaHelp => {
             persona_cli::print_persona_help();
@@ -1938,6 +1978,13 @@ async fn main() -> Result<()> {
     // boot path with a side-channel override. Apply it here, AFTER
     // load and BEFORE any consumer reads `cfg.plugins.discovery` or
     // `cfg.agents.agents`.
+    // Phase F6.b — `nexo persona run <path>` mirror of plugin
+    // run; prepends the persona pack's parent dir to
+    // cfg.personas.discovery.search_paths so the boot-time F5
+    // discovery picks it up without a real install.
+    if let Some(ref override_) = args.persona_run_override {
+        persona_cli::apply_persona_run_override(&mut cfg, override_);
+    }
     if let Some(ref override_) = args.plugin_run_override {
         plugin_run::apply_override(&mut cfg, override_);
         tracing::info!(
@@ -8975,6 +9022,7 @@ fn parse_args() -> CliArgs {
                     override_from,
                     mode: Mode::Help,
                     plugin_run_override: None,
+            persona_run_override: None,
                 }
             }
             other => positional.push(other.to_string()),
@@ -8991,6 +9039,7 @@ fn parse_args() -> CliArgs {
             mode: Mode::Version { verbose },
             override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -9010,6 +9059,7 @@ fn parse_args() -> CliArgs {
             mode: Mode::CheckConfig { strict },
             override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -9025,6 +9075,7 @@ fn parse_args() -> CliArgs {
             },
             override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -9039,6 +9090,7 @@ fn parse_args() -> CliArgs {
                 mode,
                 override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -9050,6 +9102,7 @@ fn parse_args() -> CliArgs {
                 mode,
                 override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -9082,6 +9135,7 @@ fn parse_args() -> CliArgs {
             },
             override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -9092,6 +9146,7 @@ fn parse_args() -> CliArgs {
                 mode,
                 override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -9122,6 +9177,22 @@ fn parse_args() -> CliArgs {
                 kind: kind.clone(),
                 url,
                 no_signal: positional.iter().any(|a| a == "--no-signal"),
+            }
+        }
+        // Phase 95 — `nexo init [...]` scaffolds sample YAMLs.
+        // Match `init` plus any rest (flag values like the path
+        // after `--output` survive in `pos_no_flags`; the actual
+        // flags themselves are stripped). `parse_init_args`
+        // walks the outer `positional` directly so it sees flags
+        // and their values together.
+        [cmd, ..] if cmd == "init" => {
+            let (yaml_filter, output_dir, force, stdout) =
+                init_cli::parse_init_args(&positional);
+            Mode::Init {
+                yaml_filter,
+                output_dir,
+                force,
+                stdout,
             }
         }
         [cmd] if cmd == "ext" => Mode::ExtHelp,
@@ -9464,6 +9535,7 @@ fn parse_args() -> CliArgs {
         mode,
         override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
     }
 }
 
