@@ -58,6 +58,32 @@ Cross-cutting reference: [Plugin contract](./contract.md) is
 the wire spec all four SDKs implement. Read it once and you
 understand every SDK.
 
+### SDK packages
+
+`nexo plugin new --lang <lang>` vendors the SDK for you, so you
+don't normally install it by hand — but if you're wiring the SDK
+into an *existing* project, the published packages are:
+
+| Language | Package (registry) | Add to a project |
+|----------|--------------------|------------------|
+| Rust | [`nexo-microapp-sdk`](https://crates.io/crates/nexo-microapp-sdk) (feature `plugin`) + [`nexo-broker`](https://crates.io/crates/nexo-broker) | `cargo add nexo-microapp-sdk -F plugin && cargo add nexo-broker` |
+| Python | [`nexoai`](https://pypi.org/project/nexoai/) — import name stays `nexo_plugin_sdk` | `pip install nexoai` |
+| TypeScript | [`nexo-plugin-sdk`](https://www.npmjs.com/package/nexo-plugin-sdk) | `npm install nexo-plugin-sdk` |
+| PHP | [`nexo/plugin-sdk`](https://packagist.org/packages/nexo/plugin-sdk) | `composer require nexo/plugin-sdk` |
+
+The Python / TypeScript / PHP SDKs live in one mono-repo —
+[`lordmacu/nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks)
+(per-language release tags `python-v*` / `ts-v*` / `php-v*`). The Rust
+SDK ships from this repo (`crates/microapp-sdk`, feature `plugin`).
+
+> **Microapp, not plugin?** The product layer uses the same
+> `nexo-microapp-sdk` crate without the `plugin` feature (its `admin`
+> / `voice` / `stt` / `wizard` / `events` modules instead), plus the
+> [`@lordmacu/nexo-microapp-ui-react`](https://www.npmjs.com/package/@lordmacu/nexo-microapp-ui-react)
+> React kit for the frontend. See
+> [Microapps · getting started](../microapps/getting-started.md) and
+> the [`agent-creator` reference microapp](../microapps/agent-creator.md).
+
 ## 5-min quickstart
 
 The shortest path from zero to a running plugin uses Rust
