@@ -27,15 +27,20 @@ the discovery walker logs a clear warning and the plugin never
 boots:
 
 ```bash
-# Build + install from source
-cargo install --git https://github.com/lordmacu/nexo-plugin-whatsapp \
-    --tag v0.1.2
+# Recommended — download the pre-built tarball from the plugin's
+# GitHub Releases into the daemon's plugin dir:
+nexo plugin install lordmacu/nexo-plugin-whatsapp
+nexo plugin list
 
-# Or download a release tarball (linux-x64 / macos-arm64) from
-#   https://github.com/lordmacu/nexo-plugin-whatsapp/releases
+# Or build from source:
+cargo install --git https://github.com/lordmacu/nexo-plugin-whatsapp
 ```
 
-Then in `agents.yaml`:
+`nexo plugin install` lands the binary + `plugin.toml` under
+`<state_dir>/plugins/whatsapp/`, which the daemon's discovery
+walker scans by default — no `search_paths` edit needed. If you
+build with `cargo install --git` instead, point discovery at the
+install dir in `agents.yaml`:
 
 ```yaml
 plugins:

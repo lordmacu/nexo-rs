@@ -6,30 +6,55 @@ gets onto your machine and which dependencies come bundled.
 
 ## Channel matrix
 
-| Channel | When to pick it | Time to first run | Bundled runtime tools |
+| Channel | When to pick it | Time to first run | Needs Rust? |
 |---|---|---|---|
-| **[Docker (GHCR)](../ops/docker.md)** | Production, CI, "just works" | ~30 s | Chrome, Chromium, cloudflared, ffmpeg, tesseract, yt-dlp |
-| **[Nix flake](./install-nix.md)** | NixOS, reproducible dev shell | ~3-5 min cold | None (system-level) |
-| **[Native (no Docker)](./install-native.md)** | Bare-metal Linux / macOS, full control | ~10-15 min | None (apt / brew / pacman) |
-| **[Termux](./install-termux.md)** | Phone-hosted personal agent | ~15-20 min | None (`pkg install`) |
-| **From source** | Contributors | ~5 min after toolchain | None |
+| **Pre-built binary (`install.sh`)** | Just want `nexo` on PATH, fast | ~10 s | No |
+| **crates.io (`cargo install nexo-rs`)** | You already have a Rust toolchain | ~3-5 min build | Yes |
+| **[Debian / Ubuntu (`.deb`)](./install-deb.md)** | systemd host, `apt` integration | ~10 s | No |
+| **[Fedora / RHEL / Rocky (`.rpm`)](./install-rpm.md)** | systemd host, `dnf` integration | ~10 s | No |
+| **[Termux (`.deb`, aarch64)](./install-termux.md)** | Phone-hosted personal agent | ~10 s | No |
+| **[Docker (GHCR)](../ops/docker.md)** | Production, CI, "just works" + bundled Chrome/ffmpeg/… | ~30 s | No |
+| **[Nix flake](./install-nix.md)** | NixOS, reproducible dev shell | ~3-5 min cold | (Nix) |
+| **[Native (no Docker), from source](./install-native.md)** | Track `main`, full control | ~10-15 min | Yes |
 
-## Quickest path — Docker
+## Quickest path — pre-built binary
 
 ```bash
-docker pull ghcr.io/lordmacu/nexo-rs:latest
-docker run --rm \
-  -v $(pwd)/config:/app/config:ro \
-  -v $(pwd)/data:/app/data \
-  -p 8080:8080 -p 9090:9090 \
-  ghcr.io/lordmacu/nexo-rs:latest --help
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 ```
 
-The image is multi-arch (`linux/amd64` + `linux/arm64`), built
-fresh on every push to `main` and every `v*` tag, with SBOM and
-SLSA provenance attestations. Full guide: [Docker](../ops/docker.md).
+Detects your OS + arch (Linux x86_64 / aarch64 static-musl,
+macOS Intel / Apple Silicon), downloads the matching release
+tarball from [GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest),
+verifies its sha256, and drops `nexo` into `$CARGO_HOME/bin` (or
+`~/.local/bin`; override with `--install-dir`). Falls back to
+`cargo install nexo-rs` → `cargo install --git` if there's no
+pre-built binary for your platform. Every release artifact is
+cosign-signed.
 
-## Build from source
+Then:
+
+```bash
+nexo                 # boots the daemon — zero config required
+```
+
+Windows users: download the `.zip` from
+[Releases](https://github.com/lordmacu/nexo-rs/releases/latest), or
+run the installer under WSL (it then sees Linux).
+
+## From crates.io
+
+If you already have a Rust toolchain:
+
+```bash
+cargo install nexo-rs
+```
+
+Builds + installs the `nexo` binary into `$CARGO_HOME/bin`. The
+whole `nexo-*` workspace ships to crates.io, so this resolves
+cleanly without a git checkout.
+
+## From source
 
 For contributors and operators who want to track `main` directly:
 
@@ -40,21 +65,25 @@ cargo build --release --bin nexo
 ./target/release/nexo --help
 ```
 
-The workspace compiles 22 crates and produces the `nexo` binary
-plus a few smoke-test bins (`browser-test`,
-`integration-browser-check`, `llm_smoke`). Toolchain is pinned to
-Rust 1.80 (MSRV) via `rust-toolchain.toml` — no manual channel
-selection needed.
+The workspace compiles ~45 crates and produces the `nexo` binary
+plus two example smoke-test bins (`integration-browser-check`,
+`llm_smoke`). Toolchain is pinned to Rust 1.80 (MSRV) via
+`rust-toolchain.toml` — no manual channel selection needed. For
+faster iterative builds use `cargo build --profile release-fast`
+(same opt-level, no LTO, ~50 % quicker).
 
 ### Prerequisites
 
 - **Rust** 1.80+ (`rustup` recommended)
-- **NATS** running locally or reachable over the network — for
-  development:
+- **NATS** is *optional* — the daemon defaults to `broker.type:
+  local` (an in-process stdio bridge, no external server). Run a
+  NATS server only for multi-host clusters:
   ```bash
   docker run -p 4222:4222 nats:2.10-alpine
+  nexo set-broker nats --url nats://localhost:4222
   ```
-  Production setup: see [broker.yaml](../config/broker.md).
+  See [broker shapes](../architecture/broker-shapes.md) /
+  [broker.yaml](../config/broker.md).
 - **Git** (the memory subsystem uses per-agent workspace-git)
 - **Chrome / Chromium** (only if you plan to use the browser plugin)
 

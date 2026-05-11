@@ -14,28 +14,27 @@ libsqlite is required at runtime.
 
 | Platform | Arch | Daemon | How to install |
 |---|---|---|---|
-| Linux (any glibc / musl distro) | x86_64 | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` |
-| Linux (any glibc / musl distro) | aarch64 | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` |
-| macOS | x86_64 (Intel) | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` |
-| macOS | aarch64 (Apple Silicon) | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` |
-| Windows | x86_64 | ✅ | `cargo install --git https://github.com/lordmacu/nexo-rs nexo-rs` (PowerShell / cmd; the bash installer doesn't run natively) |
+| Linux (any glibc / musl distro) | x86_64 | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` · or `.deb` / `.rpm` · or `cargo install nexo-rs` |
+| Linux (any glibc / musl distro) | aarch64 | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` · or `.deb` / `.rpm` · or `cargo install nexo-rs` |
+| macOS | x86_64 (Intel) | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` · or `cargo install nexo-rs` |
+| macOS | aarch64 (Apple Silicon) | ✅ | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` · or `cargo install nexo-rs` |
+| Windows | x86_64 | ✅ | Download the `.zip` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest), or `cargo install nexo-rs` (the bash installer doesn't run natively) |
 | Windows (WSL) | x86_64 | ✅ | Same `install.sh` one-liner as the Linux rows |
 | **Docker** (any host) | amd64 + arm64 | ✅ | `docker pull ghcr.io/lordmacu/nexo-rs:latest` |
-| Android (Termux) | aarch64 | ⚠️ build locally | `pkg install rust && curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` (CI .deb temporarily disabled — see [FOLLOWUPS](https://github.com/lordmacu/nexo-rs/blob/main/FOLLOWUPS.md)) |
+| Android (Termux) | aarch64 | ✅ | `pkg install ./nexo-rs_<ver>_aarch64.deb` (download from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest)) — or `pkg install rust && curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` to build from source |
 
-> **Installer status.** The one-liner above is a thin wrapper that
-> currently delegates to `cargo install --git` because the Phase 27.2
-> multi-platform release pipeline (`.deb`, `.rpm`, `.tar.gz`, MSI,
-> Termux `.deb`) is wired but ships zero attached assets to date
-> (rc1/rc2/rc3). Once the first GA release lands real binaries, the
-> installer at `https://lordmacu.github.io/nexo-rs/install.sh` will
-> auto-detect platform + arch and pull the matching pre-built tarball
-> instead of compiling from source. Tracked at
-> [Phase 27.2 resume point](https://github.com/lordmacu/nexo-rs/blob/main/FOLLOWUPS.md).
+> **Installer.** The `install.sh` one-liner detects your OS + arch
+> and downloads the matching pre-built tarball from the latest
+> GitHub release (Linux x86_64 / aarch64 static-musl, macOS Intel /
+> Apple Silicon), verifies its sha256, and drops `nexo` on your
+> PATH — no Rust toolchain needed. It falls back to
+> `cargo install nexo-rs` → `cargo install --git` for platforms
+> with no pre-built binary. Every release artifact (tarball, `.deb`,
+> `.rpm`) carries a `.sha256` sidecar and a cosign signature.
 
-Native Windows (cmd.exe / PowerShell, no WSL) installs via the
-direct `cargo install --git` invocation since `bash` isn't on PATH.
-The shell installer is bash-only by design.
+Native Windows (cmd.exe / PowerShell, no WSL): grab the release
+`.zip` or `cargo install nexo-rs`. The shell installer is bash-only
+by design — use it under WSL if you prefer the one-liner.
 
 ## Optional features — what compiles per OS
 
