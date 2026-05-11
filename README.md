@@ -174,9 +174,12 @@ reconnect. No events lost.
 ## Quick start
 
 ```bash
-# 1. Install the binary (Linux x86_64 / aarch64, no Rust toolchain needed)
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs-installer.sh | sh
+# 1. Install (one-liner; needs Rust toolchain — installer
+#    delegates to `cargo install --git` until Phase 27.2
+#    ships pre-built binaries):
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
+# OR Docker:
+#   docker pull ghcr.io/lordmacu/nexo-rs:latest
 
 # 2. Run — Phase 92-95: zero config, no NATS server needed
 nexo
