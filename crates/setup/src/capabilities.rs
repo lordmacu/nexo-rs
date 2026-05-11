@@ -496,6 +496,29 @@ const INVENTORY: &[CapabilityToggle] = &[
                  unless this flag is set.",
         hint: "export NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1",
     },
+    // ── Phase F7 of `cody-cli-install` — persona discovery kill switch.
+    // Default OFF: persona discovery runs at boot and registers any
+    // persona pack found under cfg.personas.discovery.search_paths.
+    // Set to 1 to skip discovery entirely (admin RPC `persona list`
+    // returns empty; agent_configs from packs are NOT merged into
+    // the agents directory). Useful for hardened deployments that
+    // want to refuse all out-of-tree persona packs at the daemon
+    // level even if the search_paths config still references dirs.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_DISABLE_BUNDLED_PERSONAS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Phase F7 of cody-cli-install — kill switch for \
+                 boot-time persona discovery. When set to 1/true/on, \
+                 the daemon skips the `discover_personas` walk + \
+                 leaves the InMemoryPersonaAdmin cell empty regardless \
+                 of `cfg.personas.discovery.search_paths`. \
+                 `nexo persona install/list/remove` still work against \
+                 the on-disk dirs (the CLI re-runs discovery itself); \
+                 only the daemon's in-memory catalog is suppressed.",
+        hint: "export NEXO_DISABLE_BUNDLED_PERSONAS=1  # to disable",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {
