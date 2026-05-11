@@ -1,4 +1,4 @@
-//! Phase 83.8.2 — `nexo/admin/skills/*` handlers.
+//! `nexo/admin/skills/*` handlers.
 //!
 //! CRUD surface for markdown skills (`<root>/<name>/SKILL.md`).
 //! The runtime side
@@ -49,7 +49,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
     /// an error).
     async fn delete(&self, name: &str) -> anyhow::Result<bool>;
 
-    /// Phase 83.8.12.6 — list under a tenant scope. Default impl
+    /// List under a tenant scope. Default impl
     /// returns empty, so legacy stores compile without changes
     /// while behaving as if no tenant skills existed.
     async fn list_for_tenant(
@@ -60,7 +60,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
         Ok(Vec::new())
     }
 
-    /// Phase 83.8.12.6 — read under a tenant scope.
+    /// Read under a tenant scope.
     async fn get_for_tenant(
         &self,
         _tenant_id: &str,
@@ -69,7 +69,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
         Ok(None)
     }
 
-    /// Phase 83.8.12.6 — upsert under a tenant scope. Default
+    /// Upsert under a tenant scope. Default
     /// errors so unimplemented adapters surface the gap rather
     /// than silently no-op.
     async fn upsert_for_tenant(
@@ -82,7 +82,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
         ))
     }
 
-    /// Phase 83.8.12.6 — delete under a tenant scope.
+    /// Delete under a tenant scope.
     async fn delete_for_tenant(&self, _tenant_id: &str, _name: &str) -> anyhow::Result<bool> {
         Err(anyhow::anyhow!(
             "delete_for_tenant not implemented for this SkillsStore"
@@ -90,7 +90,7 @@ pub trait SkillsStore: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// Phase 83.8.12.6 — defense-in-depth tenant id validation.
+/// Defense-in-depth tenant id validation.
 /// Same charset as agent ids and skill names so tenant_id can
 /// safely become a path segment.
 pub fn validate_skill_tenant_id(tenant_id: &str) -> Result<(), &'static str> {
@@ -161,7 +161,7 @@ pub async fn list(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
-    // Phase 83.8.12.6 — dispatch on tenant_id. None → global slot
+    // Dispatch on tenant_id. None → global slot
     // (legacy path). Validation: "" treated as None.
     let tenant_id = p
         .tenant_id

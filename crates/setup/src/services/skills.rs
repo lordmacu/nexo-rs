@@ -840,7 +840,7 @@ pub fn defs() -> Vec<ServiceDef> {
             ),
             fields: vec![],
         },
-        // FOLLOWUPS W-3 — Phase 25 in-process `web_search` router.
+        // In-process `web_search` router.
         // Distinct from the `brave-search` ServiceDef above, which
         // configures the *MCP-based* brave skill. The runtime
         // `web_search` tool (in `crates/web-search/`) reads its

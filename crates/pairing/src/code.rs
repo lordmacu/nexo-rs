@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn alphabet_excludes_ambiguous_chars() {
-        // Mirrors OpenClaw's choice (research/src/pairing/pairing-store.ts:32).
+        // Mirrors OpenClaw's choice.
         // 0/O/1/I dropped; L stays — empirically distinguishable in
         // the fixed-width fonts the operator sees.
         for c in [b'0', b'O', b'1', b'I'] {

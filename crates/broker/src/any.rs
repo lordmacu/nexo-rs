@@ -15,7 +15,7 @@ use crate::types::{BrokerError, Event, Message};
 pub enum AnyBroker {
     Local(LocalBroker),
     Nats(Arc<NatsBroker>),
-    /// Phase 92 — subprocess-side broker that pipes through the
+    /// Subprocess-side broker that pipes through the
     /// parent daemon's stdio JSON-RPC channel. Constructed via
     /// [`AnyBroker::stdio_bridge`] rather than `from_config`
     /// because building one requires a writer handle (typically

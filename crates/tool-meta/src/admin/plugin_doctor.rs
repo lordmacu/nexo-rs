@@ -1,4 +1,4 @@
-//! Phase 90.x.plugins — `nexo/admin/plugins/*` wire types.
+//! `nexo/admin/plugins/*` wire types.
 //!
 //! Operator-facing snapshot of plugin discovery + spawn status.
 //! v1 returns the full `PluginDiscoveryReport` from the daemon's
@@ -8,8 +8,8 @@
 //! type hierarchy. Frontend parses the known fields it cares about
 //! and renders the rest as a tree view.
 //!
-//! Future v2 (Phase 90.x.plugins.b): mirror the typed shape here
-//! once the field set stabilises — gives the frontend ts-rs
+//! A future v2 could mirror the typed shape here
+//! once the field set stabilises — that gives the frontend ts-rs
 //! codegen for free.
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use serde_json::Value;
 pub struct PluginsDoctorResponse {
     /// Full `PluginDiscoveryReport` JSON. Identical to what the
     /// `agent doctor plugins --json` CLI emits — a stable wire
-    /// shape since Phase 81.11 (`doctor_render::render_json`).
+    /// shape (`doctor_render::render_json`).
     pub report: Value,
     /// Server-side wall-clock when the report was built (ms
     /// since epoch). Operators see this as a "as of …" hint.

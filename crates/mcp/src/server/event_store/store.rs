@@ -1,7 +1,7 @@
-//! Phase 76.8 — `SessionEventStore` trait + `MemorySessionEventStore`.
+//! `SessionEventStore` trait + `MemorySessionEventStore`.
 //!
-//! Trait shape mirrors `crates/agent-registry/src/turn_log.rs:64-89`
-//! (Phase 72). The in-memory impl is for tests only — production
+//! Trait shape mirrors `crates/agent-registry/src/turn_log.rs`'s
+//! turn-log store. The in-memory impl is for tests only — production
 //! deployments configure [`super::SqliteSessionEventStore`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

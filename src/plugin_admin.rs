@@ -1,6 +1,6 @@
-//! Phase 31.8 — `nexo plugin {list,upgrade,remove}` operator UI.
+//! `nexo plugin {list,upgrade,remove}` operator UI.
 //!
-//! Shipping CRUD for installed plugins on top of the Phase 31.1.c
+//! CRUD for installed plugins on top of the
 //! install pipeline:
 //!
 //! - `list` walks `cfg.plugins.discovery.search_paths`, decodes
@@ -17,8 +17,8 @@
 //!   deletes them.
 //!
 //! Metadata schema in `<plugin_dir>/.nexo-install.json` (v1.0)
-//! is written by the install pipeline (Phase 31.8 also patched
-//! `plugin_install.rs` to emit it). Plugins missing the file are
+//! is written by the install pipeline (`plugin_install.rs`
+//! emits it). Plugins missing the file are
 //! "orphans" — `list` hides them by default and `upgrade` refuses
 //! to operate on them (operator must reinstall via `plugin
 //! install` to seed metadata).

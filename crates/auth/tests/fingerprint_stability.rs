@@ -1,4 +1,4 @@
-//! Step 22: fingerprint stability across boots. `Fingerprint::of` is
+//! Fingerprint stability across boots. `Fingerprint::of` is
 //! pinned to `sha256(account_id)[..8]` — two `Fingerprint` values for
 //! the same account id must always compare equal, and a known-value
 //! vector prevents an accidental algorithm switch from silently

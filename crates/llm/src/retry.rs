@@ -43,7 +43,7 @@ pub enum LlmError {
         rate_limit_info: Option<crate::rate_limit_info::RateLimitInfo>,
     },
 
-    /// Phase C4.c — hard quota rejection. Distinct from
+    /// Hard quota rejection. Distinct from
     /// `RateLimit` (transient burst, retry will succeed) because
     /// retry will NOT help: the operator must wait until reset
     /// or upgrade their plan / switch model.
@@ -55,14 +55,9 @@ pub enum LlmError {
     /// this variant — no retry attempts, no backoff, propagated
     /// to the caller immediately.
     ///
-    /// IRROMPIBLE refs:
-    /// - claude-code-leak `services/api/errors.ts:465-548` —
-    ///   3-tier 429 classification (rateLimitType +
-    ///   overageStatus → hard quota; entitlement reject;
-    ///   plain infra-capacity 429).
-    /// - claude-code-leak `services/rateLimitMessages.ts:45-104`
-    ///   `getRateLimitMessage` — already ported as
-    ///   `format_rate_limit_message`.
+    /// 3-tier 429 classification: rateLimitType + overageStatus →
+    /// hard quota; entitlement reject; plain infra-capacity 429.
+    /// `format_rate_limit_message` renders the human-readable text.
     ///
     /// Provider-agnostic: `provider` field carries the source
     /// (Anthropic / OpenAI / Gemini / MiniMax / Generic for
@@ -81,7 +76,7 @@ pub enum LlmError {
     #[error("server error {status}: {body}")]
     ServerError { status: u16, body: String },
 
-    /// Phase 85.1 — provider rejected the prompt as too long
+    /// Provider rejected the prompt as too long
     /// (`413 prompt_too_long` for Anthropic; equivalent
     /// `context_length_exceeded` / `payload_too_large` for other
     /// providers). Distinct from `ServerError { status: 413 }`
@@ -215,7 +210,7 @@ where
     loop {
         match f().await {
             Ok(v) => return Ok(v),
-            // Phase C4.c — hard quota rejection. Retry will not
+            // Hard quota rejection. Retry will not
             // help; propagate immediately so the operator-facing
             // surface (notify_origin / setup doctor / admin-ui)
             // can render the plan_hint without delay.
@@ -301,7 +296,7 @@ mod tests {
         assert!((100..=5_000).contains(&b), "got {b}");
     }
 
-    // ── Phase C4.c — QuotaExceeded promotion ──
+    // ── QuotaExceeded promotion ──
 
     fn rejected_anthropic_info() -> RateLimitInfo {
         RateLimitInfo {

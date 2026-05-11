@@ -1,4 +1,4 @@
-//! PT-8 — multi-agent dispatch end-to-end.
+//! Multi-agent dispatch end-to-end.
 //!
 //! Wires AgentContext.dispatch with a real AgentRegistry, a real
 //! DriverOrchestrator (cap=0 so admit lands as Queued without
@@ -12,9 +12,9 @@
 //! 3. The capturing telemetry observed two `dispatch_spawned`
 //!    events, no `dispatch_denied`.
 //!
-//! This validates that the PT-1 (handler) + PT-2 (registry filter
-//! migration) + PT-3 (telemetry threaded) wiring composes
-//! correctly without requiring a real Claude subprocess.
+//! This validates that the handler + registry filter + threaded
+//! telemetry wiring composes correctly without requiring a real
+//! Claude subprocess.
 
 #![cfg(unix)]
 
@@ -297,7 +297,7 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
     assert!(telemetry.spawned.lock().unwrap().is_empty());
 }
 
-// ── Phase 90 audit fix (Cody A.1) — add_hook + remove_hook ────
+// ── add_hook + remove_hook ────
 
 /// Helper: build a DispatchToolContext with a fresh HookRegistry
 /// so the add/remove tests don't share state.

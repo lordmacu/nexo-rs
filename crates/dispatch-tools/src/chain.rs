@@ -1,4 +1,4 @@
-//! Phase 67.G.1 — `program_phase_chain` and `program_phase_parallel`
+//! `program_phase_chain` and `program_phase_parallel`
 //! orchestration helpers.
 //!
 //! Both build on `program_phase_dispatch` so the gate / registry /
@@ -141,7 +141,7 @@ pub struct ProgramPhaseChainOutput {
 /// `dispatch_phase` hooks the caller attaches to the spawned goal
 /// so each subsequent phase fires when the previous one finishes.
 /// We keep hook-attachment out of this helper because the tool
-/// surface for that lives in `add_hook` (67.G.2) and the runtime
+/// surface for that lives in `add_hook` and the runtime
 /// is the right place to bind hook identity to the registered
 /// goal.
 #[allow(clippy::too_many_arguments)]

@@ -1,4 +1,4 @@
-//! Phase 81.24 — end-to-end smoke for `RemoteChannelAdapter`.
+//! End-to-end smoke for `RemoteChannelAdapter`.
 //! Builds a tempdir with a `nexo-plugin.toml` declaring
 //! `[plugin.extends].channels = ["mock_chan"]` and points
 //! `[plugin.entrypoint] command` at a small bash mock that:

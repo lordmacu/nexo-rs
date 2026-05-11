@@ -1,22 +1,9 @@
-//! Phase 79.8 — `RemoteTrigger` tool: webhook + NATS publisher
-//! gated by a per-session allowlist (agent-level or per-binding override).
+//! `RemoteTrigger` tool: webhook + NATS publisher gated by a
+//! per-session allowlist (agent-level or per-binding override).
 //!
-//! Diff vs leak: the leak's `RemoteTriggerTool` is a CRUD client
-//! for claude.ai's hosted scheduled-agent API
-//! (`/v1/code/triggers`). Different concept entirely. We adopt the
-//! *name* and ship a generic outbound publisher per our PHASES.md
-//! spec — webhook with HMAC sign + NATS publish, both gated by a
-//! YAML allowlist so URLs never travel through the model.
-//!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/RemoteTriggerTool/RemoteTriggerTool.ts:1-161`
-//!     (inputSchema name + the dispatcher pattern), but the core
-//!     behaviour is our own design.
-//!   * Spec: `proyecto/PHASES.md::79.8`.
-//!
-//! Reference (secondary):
-//!   * OpenClaw `research/` — no equivalent. Single-process TS
-//!     reference uses plugin outbound paths directly.
+//! A generic outbound publisher — webhook with HMAC sign + NATS
+//! publish, both gated by a YAML allowlist so URLs never travel
+//! through the model.
 //!
 //! Security model:
 //!   * The model never sees the URL or NATS subject — it refers to

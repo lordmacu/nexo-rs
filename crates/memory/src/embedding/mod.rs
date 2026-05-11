@@ -1,4 +1,4 @@
-//! Phase 5.4 — embedding provider abstraction.
+//! Embedding provider abstraction.
 //!
 //! The trait is the public surface; `HttpEmbeddingProvider` is the one
 //! implementation we ship in 5.4 (OpenAI-compatible `/embeddings`). Local

@@ -1,4 +1,4 @@
-//! Phase 95 — `nexo init` subcommand.
+//! `nexo init` subcommand.
 //!
 //! Generates the 19 sample YAML files an operator might want to
 //! customize, each densely commented with the field semantics +
@@ -23,7 +23,7 @@ use anyhow::Result;
 /// relative to the config dir; subdirs (`plugins/`,
 /// `personas/`) are written when needed.
 pub const TEMPLATES: &[(&str, &str)] = &[
-    // Required-but-defaulted (Phase 93).
+    // Required-but-defaulted.
     ("agents.yaml", include_str!("init_templates/agents.yaml")),
     ("broker.yaml", include_str!("init_templates/broker.yaml")),
     ("llm.yaml", include_str!("init_templates/llm.yaml")),
@@ -128,7 +128,7 @@ fn select_templates(filter: Option<&str>) -> Vec<(&'static str, &'static str)> {
 ///
 /// - `output_dir`: target dir for the YAML files. Defaults to the
 ///   `args.config_dir` if `None` — `parse_args` always supplies
-///   one (XDG fallback per Phase 92.9).
+///   one (XDG fallback).
 /// - `yaml_filter`: comma-list `--yaml broker,llm`. `None` → all
 ///   19 templates.
 /// - `force`: when true, overwrite existing files (default skips).
@@ -184,7 +184,7 @@ pub fn run_init(
     Ok(())
 }
 
-/// Phase 95 — helper used by `parse_args` to convert the
+/// Helper used by `parse_args` to convert the
 /// positional args after `init` into the filter / output / flags
 /// triplet.
 pub fn parse_init_args(positional: &[String]) -> (Option<String>, Option<PathBuf>, bool, bool) {

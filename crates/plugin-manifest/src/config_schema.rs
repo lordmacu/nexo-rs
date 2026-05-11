@@ -1,4 +1,4 @@
-//! Phase 83.17 — install-time config schema validation.
+//! Install-time config schema validation.
 //!
 //! A microapp ships `extensions/<id>/config.schema.json`
 //! alongside `plugin.toml`. At install (or boot pre-flight)

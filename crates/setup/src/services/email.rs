@@ -1,4 +1,4 @@
-//! Phase 48 follow-up — interactive email setup wizard.
+//! Interactive email setup wizard.
 //!
 //! Operators previously had to hand-edit `config/plugins/email.yaml`
 //! and `secrets/email/<inst>.toml` (the latter at mode `0o600`).
@@ -6,7 +6,7 @@
 //! enter the address, accept the auto-detected provider preset (or
 //! override), pick an auth kind, persist both files atomically.
 //!
-//! Phase 48 UX polish — `run_email_wizard` is now a menu loop
+//! `run_email_wizard` is a menu loop
 //! (List / Add / Edit / Delete / Probe). The single-shot add flow
 //! lives in `run_add_or_edit_account` and is reused by both Add and
 //! Edit. Probe runs IMAP login + SMTP test_connection against the

@@ -1,4 +1,4 @@
-//! Phase 21 — end-to-end fetch test.
+//! End-to-end fetch test.
 //!
 //! Spins a tiny tokio TCP listener that speaks just enough HTTP/1.1
 //! to satisfy reqwest, then drives `LinkExtractor::fetch` against it

@@ -1,4 +1,4 @@
-//! Phase 11.7 follow-up — `agent ext install <path>` and `agent ext uninstall <id>`.
+//! `agent ext install <path>` and `agent ext uninstall <id>`.
 //!
 //! Install copies (or symlinks) a local extension directory into the first
 //! configured `search_paths[0]`. Everything is validated before any bytes

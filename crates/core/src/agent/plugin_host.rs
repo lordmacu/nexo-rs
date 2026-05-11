@@ -1,15 +1,14 @@
-//! Phase 81.2 — `NexoPlugin` trait + `PluginInitContext` + lifecycle
-//! errors. The runtime contract every native Rust plugin
-//! implements.
+//! `NexoPlugin` trait + `PluginInitContext` + lifecycle errors. The
+//! runtime contract every native Rust plugin implements.
 //!
 //! A plugin ships as a Rust crate that:
 //! 1. Includes a `nexo-plugin.toml` manifest at its crate root
-//!    (Phase 81.1 schema, parsed by `nexo-plugin-manifest`).
+//!    (parsed by `nexo-plugin-manifest`).
 //! 2. Implements [`NexoPlugin`] in its public surface.
 //! 3. Exports an `Arc<dyn NexoPlugin>` constructor (e.g.
 //!    `pub fn new() -> Arc<dyn NexoPlugin>`).
 //!
-//! [`PluginRegistry`] (Phase 81.5) walks the workspace + user
+//! [`PluginRegistry`] walks the workspace + user
 //! plugin dirs at boot, parses manifests, instantiates plugin
 //! handles, and calls `init` in deterministic order.
 //! [`PluginInitContext`] gives plugins typed handles to every
@@ -30,25 +29,10 @@
 //! lifecycle** trait — the plug-and-play registration contract.
 //! Distinct concept, distinct file, distinct trait name.
 //!
-//! ## IRROMPIBLE refs
-//!
-//! - claude-code-leak `src/tools/*` — **absence** of plugin
-//!   trait. The leak hardcodes every tool as a TS module with a
-//!   `buildTool({...})` factory call; lifecycle is "module
-//!   exists". Internal nexo split between core tools and
-//!   plugin-shippable tools is what 81.x delivers — leak has no
-//!   architectural precedent for this.
-//! - `research/src/plugins/runtime/types-channel.ts:56-71` —
-//!   `register: (params) => { dispose: () => void }` pattern.
-//!   Adapted via Rust `Drop` semantics — plugin's resources
-//!   clean up when its `Arc<dyn NexoPlugin>` is dropped or via
-//!   explicit `shutdown()`.
-//! - `research/src/plugins/activation-context.ts:27-44` —
-//!   `PluginActivationInputs` activation metadata pattern. We
-//!   adopt the spirit (manifest + ctx) without the JS-specific
-//!   surface.
-//! - Internal precedent: `crates/core/src/agent/plugin.rs`
-//!   (Channel `Plugin` trait, distinct concept).
+//! A plugin's resources clean up when its `Arc<dyn NexoPlugin>` is
+//! dropped (via Rust `Drop` semantics) or via an explicit
+//! `shutdown()` call. The activation surface is just the manifest +
+//! the [`PluginInitContext`].
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,7 +89,7 @@ pub trait NexoPlugin: Send + Sync + 'static {
         Ok(())
     }
 
-    /// Phase 81.24 — downcast hook so the boot helper can detect
+    /// Downcast hook so the boot helper can detect
     /// `SubprocessNexoPlugin` instances and register their declared
     /// `extends.channels` adapters into the channel registry.
     /// Concrete types return `&self`; required (no default impl)
@@ -132,8 +116,7 @@ pub struct PluginInitContext<'a> {
     /// `<plugin_id>_*` tools here. Names MUST match
     /// `manifest.tools.expose` and respect the reserved-prefix
     /// denylist; collisions are always rejected. See
-    /// [`ScopedToolRegistry`] (Phase 81.3) for the enforcement
-    /// model.
+    /// [`ScopedToolRegistry`] for the enforcement model.
     pub tool_registry: Arc<ScopedToolRegistry>,
 
     /// Advisor registry (advisory_hook). `RwLock` so multiple
@@ -142,7 +125,7 @@ pub struct PluginInitContext<'a> {
     /// `ctx.advisor_registry.write().await.register(...)`.
     pub advisor_registry: Arc<RwLock<AdvisorRegistry>>,
 
-    /// Hook registry (Phase 11.6). For per-message lifecycle
+    /// Hook registry. For per-message lifecycle
     /// extensions (`before_message` / `after_message`).
     pub hook_registry: Arc<HookRegistry>,
 
@@ -154,7 +137,7 @@ pub struct PluginInitContext<'a> {
     /// `llm_registry.build(&cfg.llm, &model_cfg)?`.
     pub llm_registry: Arc<LlmRegistry>,
 
-    /// Phase 81.20.b.b — LLM config the registry needs at build
+    /// LLM config the registry needs at build
     /// time (provider table with API keys, retry knobs, tenant
     /// overrides). Subprocess plugins (`SubprocessNexoPlugin`)
     /// pair this with `llm_registry` to construct `LlmServices`
@@ -162,7 +145,7 @@ pub struct PluginInitContext<'a> {
     /// that build their own clients also use it.
     pub llm_config: Arc<LlmConfig>,
 
-    /// Phase 18 reload coordinator. Plugin registers post-hooks
+    /// Reload coordinator. Plugin registers post-hooks
     /// via `reload_coord.register_post_hook(Box::new(...)).await`
     /// for hot-reload-aware behavior.
     pub reload_coord: Arc<ConfigReloadCoordinator>,
@@ -181,7 +164,7 @@ pub struct PluginInitContext<'a> {
     /// should `tokio::select!` on this to exit cleanly.
     pub shutdown: CancellationToken,
 
-    /// Phase 81.8 — extension point for plugins shipping new
+    /// Extension point for plugins shipping new
     /// channel kinds (SMS, Discord, IRC, Matrix, custom webhooks).
     /// Plugin's `init()` calls
     /// `ctx.channel_adapter_registry.register(Arc::new(MyAdapter), self.manifest().plugin.id.clone())?;`
@@ -189,7 +172,7 @@ pub struct PluginInitContext<'a> {
     /// [`crate::agent::channel_adapter::ChannelAdapterRegistrationError`].
     pub channel_adapter_registry: Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
 
-    /// Phase 81.4 — pre-loaded + pre-validated plugin config
+    /// Pre-loaded + pre-validated plugin config
     /// from `<config_dir>/plugins/<plugin_id>/*.yaml`. Always at
     /// least an empty mapping. Plugin treats it as read-only;
     /// typed views via `serde_yaml::from_value(cfg.clone())`.
@@ -197,7 +180,7 @@ pub struct PluginInitContext<'a> {
     /// `InitOutcome::Failed` BEFORE the plugin runs.
     pub plugin_config: Arc<serde_yaml::Value>,
 
-    /// Phase 81.22 — shared sandbox runner. Subprocess plugin
+    /// Shared sandbox runner. Subprocess plugin
     /// adapters consume this at spawn time to wrap the child
     /// `Command` with bwrap argv when the plugin's manifest
     /// declares `[plugin.sandbox] enabled = true`. In-tree
@@ -208,7 +191,7 @@ pub struct PluginInitContext<'a> {
 
 impl PluginInitContext<'_> {
     /// `<config_dir>/plugins/<plugin_id>/`. Plugin-scoped config
-    /// namespace (Phase 81.4 loader will read this dir).
+    /// namespace (the config loader reads this dir).
     pub fn plugin_config_dir(&self, plugin_id: &str) -> PathBuf {
         self.config_dir.join("plugins").join(plugin_id)
     }
@@ -260,7 +243,7 @@ pub enum PluginInitError {
         source: anyhow::Error,
     },
 
-    /// Phase 81.3 — plugin attempted to register tools outside its
+    /// Plugin attempted to register tools outside its
     /// declared namespace, in a reserved namespace, or colliding
     /// with existing tools. Surfaced when
     /// `NEXO_PLUGIN_NAMESPACE_STRICT=1` or when the per-call
@@ -406,16 +389,15 @@ min_nexo_version = ">=0.1.0"
     #[tokio::test]
     async fn mock_plugin_init_recorded() {
         // Mock plugin is invoked directly without a full ctx —
-        // we exercise the trait dispatch path. Phase 81.5 will
-        // wire a real ctx; the lifecycle contract is verified
-        // here independently.
+        // we exercise the trait dispatch path. The lifecycle
+        // contract is verified here independently.
         let plugin = MockPlugin::ok();
         // The test cannot easily build a full PluginInitContext
         // (requires SessionManager + ConfigReloadCoordinator +
         // every subsystem). We verify the trait shape via the
         // type-level _OBJECT_SAFE_CHECK static and the
-        // init_outcome plumbing. Phase 81.5 integration tests
-        // exercise the full init path with a real ctx.
+        // init_outcome plumbing. Integration tests exercise the
+        // full init path with a real ctx.
         assert_eq!(plugin.manifest().id(), "test_plugin");
         assert!(!plugin.init_called.load(Ordering::SeqCst));
     }

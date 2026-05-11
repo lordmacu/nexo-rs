@@ -1,4 +1,4 @@
-//! Phase 81.18.b.e2e-mock-binary — tiny synthetic subprocess plugin
+//! Tiny synthetic subprocess plugin
 //! that speaks the JSON-RPC newline-delimited protocol the daemon's
 //! `SubprocessNexoPlugin` expects, but with NO Telegram / WhatsApp
 //! / wa-agent dependencies. Used by `tests/subprocess_flip_e2e.rs`

@@ -57,9 +57,9 @@ pub const INBOUND_KEY: &str = "inbound";
 
 /// Build the `_meta` payload sent on every tool call.
 ///
-/// Single source of truth used by both Phase 11 stdio extensions
-/// and Phase 12 MCP `tools/call`. The shape is dual-write so a
-/// pre-Phase-82 consumer reading only `agent_id` keeps working
+/// Single source of truth used by both stdio extensions
+/// and MCP `tools/call`. The shape is dual-write so an older
+/// consumer reading only `agent_id` keeps working
 /// even when the same call carries the full nested binding.
 ///
 /// - `binding == None` (delegation receive, heartbeat bootstrap,

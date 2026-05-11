@@ -57,9 +57,8 @@ impl ToolCtx {
     }
 
     /// Borrow the parsed [`InboundMessageMeta`] when the producer
-    /// populated it. Returns `None` for legacy producers not yet
-    /// migrated to Phase 82.5 and for tests that didn't inject
-    /// one.
+    /// populated it. Returns `None` for legacy producers that
+    /// don't populate it and for tests that didn't inject one.
     pub fn inbound(&self) -> Option<&InboundMessageMeta> {
         self.inbound.as_ref()
     }

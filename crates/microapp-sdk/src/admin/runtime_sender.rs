@@ -1,4 +1,4 @@
-//! Phase 83.8.8.a — `WriterAdminSender` bridges the SDK runtime's
+//! `WriterAdminSender` bridges the SDK runtime's
 //! shared `Arc<Mutex<W>>` stdout writer to the
 //! [`AdminSender`] trait the [`AdminClient`] consumes.
 //!

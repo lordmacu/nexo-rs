@@ -1,11 +1,11 @@
 //! Read tools that the agent loop can call. Each tool takes a
 //! self-describing input and returns markdown ≤ `DEFAULT_BYTE_CAP`.
 //!
-//! The actual `nexo_core::ToolHandler` registration happens later in
-//! Phase 67.D.3 — keeping the wiring out of this crate avoids a
-//! circular dep against `nexo-core` at the parser layer. For now the
-//! tools are exposed as plain async methods on `ProjectTracking`,
-//! which any future ToolHandler impl can adapt.
+//! The actual `nexo_core::ToolHandler` registration happens elsewhere
+//! — keeping the wiring out of this crate avoids a circular dep
+//! against `nexo-core` at the parser layer. For now the tools are
+//! exposed as plain async methods on `ProjectTracking`, which any
+//! future ToolHandler impl can adapt.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -83,8 +83,8 @@ pub struct GitLogInput {
 }
 
 /// Bundle of read tools sharing a tracker, an optional git reader,
-/// and lightweight in-process counters that Phase 67.13 will graduate
-/// to Prometheus.
+/// and lightweight in-process counters (a future change will graduate
+/// these to Prometheus).
 pub struct ProjectTracking {
     pub tracker: Arc<dyn ProjectTracker>,
     pub git: Option<Arc<GitLogReader>>,

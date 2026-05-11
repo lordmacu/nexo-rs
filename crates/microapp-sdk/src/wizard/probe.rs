@@ -16,8 +16,8 @@
 //!   Rust.
 //!
 //! Lifted verbatim from `agent-creator-microapp::onboarding::llm_probe`
-//! (Phase 83.4) so any microapp wiring its own first-run flow
-//! reuses the same redaction + url-builder semantics.
+//! so any microapp wiring its own first-run flow reuses the same
+//! redaction + url-builder semantics.
 
 use std::time::{Duration, Instant};
 

@@ -4,23 +4,16 @@
 //! routes responses to per-request `oneshot` channels, caches
 //! `publishDiagnostics` notifications.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPClient.ts:51-200` —
-//!     spawn + spawn-event wait, `vscode-jsonrpc` connection, lazy
-//!     handler queue. We mirror the spawn-await behaviour because
-//!     `tokio::process::Command::spawn()` returns immediately and
-//!     ENOENT (binary missing) shows up as a process-exit event,
-//!     not as a spawn error.
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:165-200`
-//!     — `InitializeParams` shape: `processId`, `workspaceFolders`,
-//!     `rootUri` (deprecated but tsserver still needs it),
-//!     `capabilities.workspace.configuration: false` so servers do
-//!     not back-ask us for config.
-//!
-//! Reference (secondary):
-//!   * `research/src/agents/pi-bundle-lsp-runtime.ts:88-157` —
-//!     pending-request `Map<id, {resolve, reject}>` pattern. We use
-//!     `tokio::sync::oneshot` per pending entry instead.
+//! We mirror the spawn-await behaviour of a `vscode-jsonrpc`-based
+//! client because `tokio::process::Command::spawn()` returns
+//! immediately and ENOENT (binary missing) shows up as a
+//! process-exit event, not a spawn error. The `InitializeParams`
+//! shape keeps `processId`, `workspaceFolders`, and the deprecated
+//! `rootUri` (tsserver still needs it), with
+//! `capabilities.workspace.configuration: false` so servers do not
+//! back-ask us for config. Where the prior art tracks pending
+//! requests in a `Map<id, {resolve, reject}>`, we use a
+//! `tokio::sync::oneshot` per pending entry instead.
 
 use crate::codec::LspCodec;
 use crate::error::LspError;
@@ -271,8 +264,7 @@ impl LspClient {
                 ))
             })?
             .to_string();
-        // Lift from `claude-code-leak/src/services/lsp/LSPServerInstance.ts:165-200`
-        // — keep both the deprecated rootUri/rootPath fields and
+        // Keep both the deprecated rootUri/rootPath fields and
         // the modern workspaceFolders field; servers vary in which
         // they actually use.
         let init_params = serde_json::json!({
@@ -385,8 +377,8 @@ async fn reader_loop<R>(
         //   * Notification: has `method` and no `id`.
         //   * Server-to-client request: has `method` and an `id`.
         //     We only ack `workspace/configuration` (returning
-        //     `null`s) per the leak's behaviour — anything else
-        //     is logged.
+        //     `null`s), matching common server behaviour — anything
+        //     else is logged.
         if let Some(id) = value.get("id").and_then(|v| v.as_i64()) {
             if value.get("method").is_some() {
                 // Server-to-client request — minimal ack.
@@ -460,10 +452,9 @@ async fn handle_server_request(_value: &serde_json::Value, _diagnostics: &Arc<Di
     // an explicit ack here because we declared
     // `capabilities.workspace.configuration = false` in
     // `initialize`, which spec-compliant servers respect.
-    // If a non-conforming server still asks, the leak's pattern
-    // returns an array of nulls (`LSPServerManager.ts:124-135`);
-    // we currently log + ignore. Follow-up when we see real
-    // breakage.
+    // If a non-conforming server still asks, the common pattern
+    // returns an array of nulls; we currently log + ignore.
+    // Revisit when we see real breakage.
 }
 
 /// Convert raw `initialize` response into our normalised flag set.

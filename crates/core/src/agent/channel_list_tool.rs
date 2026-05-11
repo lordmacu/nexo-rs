@@ -1,4 +1,4 @@
-//! Phase 80.9 — `channel_list` LLM tool.
+//! `channel_list` LLM tool.
 //!
 //! Lets the agent introspect which MCP channel servers are
 //! currently registered for its binding. Read-only, idempotent
@@ -22,7 +22,7 @@ use super::AgentContext;
 
 pub const TOOL_NAME: &str = "channel_list";
 
-/// Phase 80.9.j — resolve the binding id from the agent context.
+/// Resolve the binding id from the agent context.
 /// Returns the active binding's `<plugin>:<instance>` when
 /// `ctx.effective.binding_index` points to a valid entry; falls
 /// back to the agent id for paths without a binding match
@@ -46,7 +46,7 @@ pub fn resolve_binding_id(ctx: &AgentContext) -> String {
 #[derive(Clone)]
 pub struct ChannelListTool {
     registry: SharedChannelRegistry,
-    /// Phase 80.9.j — when `Some`, force this binding id (used by
+    /// When `Some`, force this binding id (used by
     /// callers that own a specific binding context). When `None`
     /// the tool resolves from `ctx` at call time.
     binding_id: Option<String>,
@@ -62,7 +62,7 @@ impl ChannelListTool {
         }
     }
 
-    /// Phase 80.9.j — dynamic-binding constructor. The tool reads
+    /// Dynamic-binding constructor. The tool reads
     /// `ctx.effective` at call time so the same registration
     /// serves every binding for an agent. Operators that want
     /// agent-scoped registration (the slim MVP shipped at
@@ -173,7 +173,7 @@ mod tests {
         assert!(def.parameters["properties"].as_object().unwrap().is_empty());
     }
 
-    // ---- Phase 80.9.j resolver ----
+    // ---- binding-id resolver ----
 
     #[tokio::test]
     async fn dynamic_constructor_uses_static_when_set() {

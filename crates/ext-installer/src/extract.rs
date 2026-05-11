@@ -1,4 +1,4 @@
-//! Phase 31.1.b — extract a sha-verified plugin tarball into the
+//! Extract a sha-verified plugin tarball into the
 //! daemon's plugin discovery directory.
 //!
 //! Pipeline:

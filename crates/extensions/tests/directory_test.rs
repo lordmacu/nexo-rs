@@ -1,4 +1,4 @@
-//! Integration tests for Phase 11.4 — `ExtensionDirectory` discovers
+//! Integration tests: `ExtensionDirectory` discovers
 //! extensions via NATS announces, tracks them by heartbeat, and removes
 //! them on shutdown beacon or heartbeat-lost.
 

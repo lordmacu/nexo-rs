@@ -1,4 +1,4 @@
-//! Phase 81.26 — end-to-end smoke for `RemoteVectorBackend`.
+//! End-to-end smoke for `RemoteVectorBackend`.
 //! Builds a tempdir with a `nexo-plugin.toml` declaring
 //! `[plugin.extends].memory_backends = ["mock_backend"]` and a
 //! bash mock that:

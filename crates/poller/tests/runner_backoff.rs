@@ -1,6 +1,6 @@
-//! Step 9 verification: PollerError variants drive the right runner
-//! reaction — backoff bookkeeping for Transient, auto-pause for
-//! Permanent, breaker open after threshold.
+//! Verifies PollerError variants drive the right runner reaction —
+//! backoff bookkeeping for Transient, auto-pause for Permanent,
+//! breaker open after threshold.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;

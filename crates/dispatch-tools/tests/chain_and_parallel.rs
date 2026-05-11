@@ -1,4 +1,4 @@
-//! Phase 67.G.1 — chain + parallel orchestration helpers.
+//! Chain + parallel orchestration helpers.
 
 #![cfg(unix)]
 

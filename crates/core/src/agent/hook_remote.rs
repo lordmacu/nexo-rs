@@ -1,5 +1,4 @@
-//! Phase 81.27 — `HookHandler` impl backed by a subprocess
-//! plugin's stdio bridge.
+//! `HookHandler` impl backed by a subprocess plugin's stdio bridge.
 //!
 //! Subprocess plugins declaring `[plugin.extends].hooks =
 //! ["before_message", "after_message"]` get one

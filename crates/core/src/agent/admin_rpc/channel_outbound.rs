@@ -1,7 +1,6 @@
-//! Phase 83.8.4.a — outbound channel dispatch surface for admin
-//! RPC handlers.
+//! Outbound channel dispatch surface for admin RPC handlers.
 //!
-//! `processing::intervention` (Phase 82.13) and any future admin
+//! `processing::intervention` and any future admin
 //! handler that needs to send a message *out* through a channel
 //! plugin (whatsapp / telegram / email / future) does so against
 //! [`ChannelOutboundDispatcher`]. Production wiring lives in
@@ -11,9 +10,9 @@
 //! The trait is intentionally agnostic over channel kind — the
 //! caller passes the channel name (`"whatsapp"`, `"telegram"`,
 //! …) so this surface stays usable from microapps targeting any
-//! channel. `Phase 82.3` outbound dispatch from extensions
-//! addresses the *inbound side of microapp authoring*; this
-//! addresses the *operator-driven outbound side*.
+//! channel. The extensions outbound-dispatch surface addresses the
+//! *inbound side of microapp authoring*; this addresses the
+//! *operator-driven outbound side*.
 
 use async_trait::async_trait;
 use serde_json::Value;

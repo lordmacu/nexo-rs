@@ -1,4 +1,4 @@
-//! Phase 9.2 follow-up — non-blocking per-tool rate limiter.
+//! Non-blocking per-tool rate limiter.
 //!
 //! Token bucket keyed by `(agent, tool)`. The LLM loop calls
 //! `try_acquire` before invoking a handler; denial surfaces as an
@@ -6,10 +6,10 @@
 //! different tool. No sleep-based backpressure here — the agent loop
 //! must stay live.
 //!
-//! Phase 82.7 — config types unified with the yaml-side `nexo-config`
+//! Config types are unified with the yaml-side `nexo-config`
 //! (`ToolRateLimitsConfig` + `ToolRateLimitSpec`) so a single shape
 //! crosses operator → runtime without translation. Re-exported as
-//! `ToolRateLimitConfig` for back-compat with pre-82.7 callers.
+//! `ToolRateLimitConfig` for back-compat with older callers.
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -17,10 +17,10 @@ use tokio::sync::Mutex;
 
 pub use nexo_config::types::agents::{ToolRateLimitSpec, ToolRateLimitsConfig};
 
-/// Phase 9.2 alias — `ToolRateLimitSpec` is the canonical name in
-/// `nexo-config` (yaml shape); this alias preserves the older
-/// `ToolRateLimitConfig` symbol for downstream re-exports without
-/// duplicating the definition.
+/// `ToolRateLimitSpec` is the canonical name in `nexo-config` (yaml
+/// shape); this alias preserves the older `ToolRateLimitConfig`
+/// symbol for downstream re-exports without duplicating the
+/// definition.
 pub type ToolRateLimitConfig = ToolRateLimitSpec;
 
 /// Default cap on concurrent buckets. With a triple key
@@ -31,7 +31,7 @@ pub const DEFAULT_MAX_BUCKETS: usize = 10_000;
 
 /// Bucket key triple: `(agent, Option<binding_id>, tool)`.
 /// `None` binding_id encodes the legacy single-tenant path so
-/// pre-Phase-82.7 callers see identical semantics.
+/// older callers see identical semantics.
 type BucketKey = (String, Option<String>, String);
 
 pub struct ToolRateLimiter {
@@ -39,11 +39,10 @@ pub struct ToolRateLimiter {
     patterns: Vec<(String, ToolRateLimitConfig)>,
     default: Option<ToolRateLimitConfig>,
     buckets: DashMap<BucketKey, TokenBucket>,
-    /// Phase 82.7 — keys evicted by LRU whose config had
+    /// Keys evicted by LRU whose config had
     /// `essential_deny_on_miss=true`. The next allocation for
     /// such a key consumes the entry and returns false ONCE,
-    /// then proceeds normally. Mirrors claude-code-leak's
-    /// `policyLimits::isPolicyAllowed` ESSENTIAL deny-on-miss
+    /// then proceeds normally — a fail-closed deny-on-miss
     /// pattern adapted to LRU eviction.
     evicted_essential: DashMap<BucketKey, ()>,
     max_buckets: usize,
@@ -55,7 +54,7 @@ pub struct ToolRateLimiter {
 struct TokenBucket {
     capacity: u64,
     rate_per_sec: f64,
-    /// Phase 82.7 — `true` when config opts in to fail-closed on
+    /// `true` when config opts in to fail-closed on
     /// LRU eviction. Pinned in the bucket so `enforce_cap` can
     /// flag the key for `evicted_essential` insertion before
     /// removing.
@@ -154,7 +153,7 @@ impl ToolRateLimiter {
         self.default.as_ref()
     }
 
-    /// Resolve from a per-binding override map (Phase 82.7). First
+    /// Resolve from a per-binding override map. First
     /// glob match wins, then `_default`, else `None` (= unlimited
     /// for this tool on this binding — does NOT fall back to
     /// global, per spec semantic "per-binding fully replaces").
@@ -179,14 +178,14 @@ impl ToolRateLimiter {
         over.patterns.get("_default").cloned()
     }
 
-    /// Phase 9.2 back-compat — single-tenant entry point with no
+    /// Back-compat single-tenant entry point with no
     /// binding scope. Equivalent to
     /// `try_acquire_with_binding(agent, None, tool, None)`.
     pub async fn try_acquire(&self, agent: &str, tool: &str) -> bool {
         self.try_acquire_with_binding(agent, None, tool, None).await
     }
 
-    /// Phase 82.7 — canonical entry point.
+    /// Canonical entry point.
     ///
     /// Resolution priority:
     /// 1. `per_binding_override` is `Some` → look up tool in that
@@ -219,7 +218,7 @@ impl ToolRateLimiter {
         let key: BucketKey = (agent.to_string(), scoped_binding, tool.to_string());
         let touch = self.clock.fetch_add(1, Ordering::Relaxed);
 
-        // Phase 82.7 — fail-closed deny-on-miss for keys that
+        // Fail-closed deny-on-miss for keys that
         // were LRU-evicted while their config had
         // essential_deny_on_miss. Consume the entry and deny
         // ONCE; the next call allocates a fresh bucket.
@@ -279,8 +278,8 @@ impl ToolRateLimiter {
         self.buckets.len()
     }
 
-    /// Phase 82.7 — drop every bucket belonging to `agent`. Used
-    /// by admin RPC delete-agent path (Phase 82.10) so
+    /// Drop every bucket belonging to `agent`. Used
+    /// by the admin RPC delete-agent path so
     /// `(agent, *, *)` cells don't leak after an operator removes
     /// the agent. Iteration is O(N) — only fires on admin ops, not
     /// in the hot path.
@@ -418,7 +417,7 @@ mod tests {
         assert!(!rl.try_acquire("a", "mcp_fs_read").await);
     }
 
-    /// Phase 82.7 — per-binding override allocates an independent
+    /// Per-binding override allocates an independent
     /// bucket so binding A's tight cap does not affect binding B
     /// (which falls back to "no override → unlimited" because its
     /// `per_binding_override` is `None`).
@@ -458,7 +457,7 @@ mod tests {
         }
     }
 
-    /// Phase 82.7 — per-binding override fully replaces global
+    /// Per-binding override fully replaces global
     /// (no fall-through). Tool not in override map → unlimited
     /// even if global pattern would catch it.
     #[tokio::test]
@@ -499,7 +498,7 @@ mod tests {
         }
     }
 
-    /// Phase 82.7 — `drop_buckets_for_agent` removes only the
+    /// `drop_buckets_for_agent` removes only the
     /// target agent's entries, leaving other agents intact.
     #[tokio::test]
     async fn drop_buckets_for_agent_clears_only_target() {
@@ -525,7 +524,7 @@ mod tests {
         assert!(rl.try_acquire("ana", "tool_a").await);
     }
 
-    /// Phase 82.7 — LRU eviction drops the stalest bucket once
+    /// LRU eviction drops the stalest bucket once
     /// `max_buckets` is reached.
     #[tokio::test]
     async fn lru_eviction_drops_stalest_bucket_at_cap() {
@@ -553,7 +552,7 @@ mod tests {
         assert!(rl.try_acquire("a1", "tool_a").await);
     }
 
-    /// Phase 82.7 — `essential_deny_on_miss` makes the next
+    /// `essential_deny_on_miss` makes the next
     /// allocation fail-closed when the bucket was evicted under
     /// LRU pressure. After consuming the deny token, subsequent
     /// allocations proceed normally.
@@ -583,7 +582,7 @@ mod tests {
         assert!(rl.try_acquire("a1", "marketing_send").await);
     }
 
-    /// Phase 82.7 — back-compat wrapper preserves pre-82.7
+    /// The back-compat wrapper preserves legacy
     /// `try_acquire(agent, tool)` semantics: bucket key uses
     /// `None` binding scope (legacy single-tenant cell).
     #[tokio::test]

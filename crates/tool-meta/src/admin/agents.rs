@@ -1,4 +1,4 @@
-//! Phase 82.10.c — `nexo/admin/agents/*` wire types.
+//! `nexo/admin/agents/*` wire types.
 //!
 //! Daemon side handlers in `nexo_core::agent::admin_rpc::domains
 //! ::agents` consume these as params / produce as results.
@@ -18,7 +18,7 @@ pub struct AgentsListFilter {
     /// returns every plugin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_filter: Option<String>,
-    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` returns
+    /// Multi-tenant filter. `Some(id)` returns
     /// only agents whose `agents.yaml.<id>.tenant_id` matches.
     /// `None` returns every agent regardless of tenant
     /// (operator scope).
@@ -85,7 +85,7 @@ pub struct AgentDetail {
     /// knowledge is wired.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_docs: Vec<String>,
-    /// M15.18.d — proactive tick-loop config. `None` when the
+    /// Proactive tick-loop config. `None` when the
     /// yaml omits the `heartbeat` block (back-compat — pre-existing
     /// agents keep the framework default of disabled). When
     /// `Some`, the operator UI renders the on/off toggle + interval
@@ -180,7 +180,7 @@ pub struct AgentUpsertInput {
     /// the existing list; empty vec clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_docs: Option<Vec<String>>,
-    /// M15.18.d — proactive tick-loop. `None` keeps the existing
+    /// Proactive tick-loop. `None` keeps the existing
     /// yaml block (or default-disabled for new agents). `Some`
     /// replaces the whole `heartbeat` block on disk so flipping
     /// the toggle off explicitly persists `enabled: false`.
@@ -251,11 +251,11 @@ mod tests {
         let v = serde_json::to_value(&d).unwrap();
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("language"));
-        // M15.18.d — heartbeat skips when None.
+        // heartbeat skips when None.
         assert!(!obj.contains_key("heartbeat"));
     }
 
-    /// M15.18.d — `Some(HeartbeatWire)` round-trips through serde.
+    /// `Some(HeartbeatWire)` round-trips through serde.
     #[test]
     fn agent_detail_heartbeat_round_trip() {
         let d = AgentDetail {

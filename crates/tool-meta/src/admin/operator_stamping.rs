@@ -1,4 +1,4 @@
-//! Phase 82.10.m — operator identity stamping registry.
+//! Operator identity stamping registry.
 //!
 //! Canonical list of admin RPC methods whose `params` carry an
 //! `operator_token_hash: String` field (defined by the

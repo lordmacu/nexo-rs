@@ -1,16 +1,13 @@
 //! SQLite-backed team registry + audit log.
 //!
 //! Three tables (`teams`, `team_members`, `team_events`) with
-//! idempotent CREATE. Pattern lift from `crates/agent-registry/src/
-//! turn_log.rs` (Phase 72) — same shape (composite PK +
-//! `INSERT … ON CONFLICT DO NOTHING` for idempotency on replays).
+//! idempotent CREATE. Same shape as `crates/agent-registry/src/
+//! turn_log.rs` — composite PK +
+//! `INSERT … ON CONFLICT DO NOTHING` for idempotency on replays.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/utils/swarm/teamHelpers.ts:131-176`
-//!     — JSON file shape (sync + async readers + writers). We
-//!     reject the JSON-file pattern (race-prone, no FK, no
-//!     query-by-secondary-index) and store the same data in
-//!     normalised SQL.
+//! The data is stored in normalised SQL rather than a JSON file
+//! per team (which would be race-prone, with no foreign keys and
+//! no query-by-secondary-index).
 
 use crate::types::{TeamEventRow, TeamMemberRow, TeamRow, TeamStoreError, TEAM_MAX_MEMBERS};
 use async_trait::async_trait;

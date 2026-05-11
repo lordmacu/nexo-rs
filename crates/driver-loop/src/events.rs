@@ -25,11 +25,11 @@ pub enum ExtractSkipReason {
     MainAgentWrote,
 }
 
-// Phase 80.1.b — `AutoDreamOutcomeKind` lives in `nexo-driver-types`
-// (re-exported here as the events.rs natural home). The trait
-// `AutoDreamHook` likewise — see `nexo_driver_types::auto_dream`.
-// Conversion `RunOutcome → AutoDreamOutcomeKind` lives in `nexo-dream`
-// inside the `impl AutoDreamHook for AutoDreamRunner` body.
+// `AutoDreamOutcomeKind` lives in `nexo-driver-types` (re-exported
+// here as the events.rs natural home). The trait `AutoDreamHook`
+// likewise — see `nexo_driver_types::auto_dream`. Conversion
+// `RunOutcome → AutoDreamOutcomeKind` lives in `nexo-dream` inside the
+// `impl AutoDreamHook for AutoDreamRunner` body.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -64,61 +64,61 @@ pub enum DriverEvent {
         goal_id: GoalId,
         reason: String,
     },
-    /// Phase 67.8 — replay-policy classified a mid-turn error.
+    /// Replay-policy classified a mid-turn error.
     ReplayDecision {
         goal_id: GoalId,
         turn_index: u32,
         decision: ReplayDecision,
         error_message: String,
     },
-    /// Phase 67.9 + 77.2 — orchestrator scheduled a `/compact` turn.
+    /// Orchestrator scheduled a `/compact` turn.
     CompactRequested {
         goal_id: GoalId,
         turn_index: u32,
         focus: String,
         token_pressure: f64,
-        /// Phase 77.2 — token estimate before compaction.
+        /// Token estimate before compaction.
         before_tokens: u64,
-        /// Phase 77.2 — session age in minutes when trigger fired.
+        /// Session age in minutes when trigger fired.
         age_minutes: u64,
-        /// Phase 77.2 — what caused the trigger.
+        /// What caused the trigger.
         trigger: CompactTrigger,
     },
-    /// Phase 77.2 — compaction completed. Emitted on the turn after the
+    /// Compaction completed. Emitted on the turn after the
     /// compact turn, once `after_tokens` is known.
     CompactCompleted {
         goal_id: GoalId,
         turn_index: u32,
         after_tokens: u64,
     },
-    /// Phase 77.3 — compact summary persisted to long-term memory.
+    /// Compact summary persisted to long-term memory.
     CompactSummaryStored {
         goal_id: GoalId,
         turn_index: u32,
         before_tokens: u64,
         after_tokens: u64,
     },
-    /// Phase 77.5 — memory extraction completed.
+    /// Memory extraction completed.
     ExtractMemoriesCompleted {
         goal_id: GoalId,
         turn_index: u32,
         memories_saved: u32,
         duration_ms: u64,
     },
-    /// Phase 77.5 — memory extraction skipped (disabled, throttled, etc.).
+    /// Memory extraction skipped (disabled, throttled, etc.).
     ExtractMemoriesSkipped {
         goal_id: GoalId,
         reason: ExtractSkipReason,
     },
-    /// Phase 80.1.b — autoDream consolidation pass outcome. Emitted
-    /// per turn when the runner is wired. Detailed run state lives
-    /// in `dream_runs` (Phase 80.18) — this event is the lightweight
-    /// signal for admin-ui / chat hooks.
+    /// autoDream consolidation pass outcome. Emitted per turn when the
+    /// runner is wired. Detailed run state lives in the `dream_runs`
+    /// ledger — this event is the lightweight signal for admin-ui /
+    /// chat hooks.
     AutoDreamOutcome {
         goal_id: GoalId,
         outcome_kind: AutoDreamOutcomeKind,
     },
-    /// Phase 67.C.1 — periodic mid-run progress beacon. Fires every
+    /// Periodic mid-run progress beacon. Fires every
     /// `progress_every_turns` after an `AttemptCompleted`, so chat
     /// hooks (`on: progress`) and admin-ui can show 'still going'
     /// without waiting for the goal to finish.

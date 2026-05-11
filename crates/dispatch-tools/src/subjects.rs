@@ -1,5 +1,5 @@
-//! Phase 67.H.2 — canonical NATS subjects emitted by the dispatch
-//! subsystem. Centralised so subscribers (admin-ui A4 tile,
+//! Canonical NATS subjects emitted by the dispatch
+//! subsystem. Centralised so subscribers (admin-ui tile,
 //! external auditors, future replay tools) can match against the
 //! exact strings the producer publishes.
 //!
@@ -83,7 +83,7 @@ pub trait DispatchTelemetry: Send + Sync + 'static {
 #[derive(Default, Clone, Copy)]
 pub struct NoopTelemetry;
 
-/// PT-7 — NATS-backed implementation. Holds an `async_nats::Client`
+/// NATS-backed implementation. Holds an `async_nats::Client`
 /// and publishes each event to its canonical subject as JSON.
 /// Failures are logged via `tracing` but never bubble up — telemetry
 /// must never crash the dispatch hot path.

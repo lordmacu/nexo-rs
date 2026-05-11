@@ -1,4 +1,4 @@
-//! Phase 81.1 — 4-tier defensive validation for `PluginManifest`.
+//! 4-tier defensive validation for `PluginManifest`.
 //!
 //! Validators collect every error (do NOT bail on first) so the
 //! operator sees the full diagnostic in one pass. Each validator
@@ -26,7 +26,7 @@ use crate::sandbox::{
     SandboxSection, SANDBOX_DENYLIST_HOST_PATHS, SANDBOX_STATE_DIR_TOKEN,
 };
 
-// Phase 81.13 — id regex bumped from 32 to 64 chars in 82.15.bx
+// The id regex allows up to 64 chars
 // to admit longer multi-segment tool names that legitimate plugins
 // use (e.g. `marketing_lead_detect_meeting_intent`, 36 chars).
 // `^[a-z][a-z0-9_]{0,63}$` matches the plugin-id regex in
@@ -59,7 +59,7 @@ pub fn run_all(
     run_all_with_sandbox_env(manifest, current_nexo_version, false, errors);
 }
 
-/// Phase 81.22 — env-aware variant. `host_net_allowed` is the
+/// Env-aware variant. `host_net_allowed` is the
 /// boot-time read of `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`. The
 /// daemon's `wire_plugin_registry` calls this; CLI tools and
 /// tests call [`run_all`] which assumes the strict default.
@@ -78,7 +78,7 @@ pub fn run_all_with_sandbox_env(
         errors,
     );
     validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.tools.expose, errors);
-    // Phase 81.29 — extends.tools entries must satisfy the same
+    // extends.tools entries must satisfy the same
     // per-plugin namespace policy as tools.expose.
     validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.extends.tools, errors);
     validate_extends(&manifest.plugin.extends, errors);
@@ -109,7 +109,7 @@ pub fn run_all_with_sandbox_env(
     validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
 }
 
-/// Phase 81.21.b — guard against a manifest requesting an
+/// Guard against a manifest requesting an
 /// unbounded stderr tail buffer. The cap is hard-coded in
 /// `manifest::SUPERVISOR_STDERR_TAIL_MAX` (today: 512 lines per
 /// running plugin) — generous enough for realistic debug needs,
@@ -126,7 +126,7 @@ fn validate_supervisor(
         });
     }
 
-    // Phase 90 audit fix — supervisor knob bounds. Only enforced
+    // Supervisor knob bounds. Only enforced
     // when `respawn = true`; if the operator explicitly disabled
     // auto-respawn, max_attempts/backoff_ms are inert and a
     // historical 0 default in the manifest is harmless.
@@ -149,7 +149,7 @@ fn validate_supervisor(
     }
 }
 
-/// Phase 81.22 — sandbox section validator. Skips entirely when
+/// Sandbox section validator. Skips entirely when
 /// `enabled = false` (the section is descriptive but inactive).
 /// Otherwise checks: path absoluteness, denylist match,
 /// `${state_dir}` placement, host-network capability gate.
@@ -273,12 +273,12 @@ fn validate_min_nexo_version(
     }
 }
 
-/// Phase 81.28 — validate `[plugin.extends]` lists. Collects
+/// Validate `[plugin.extends]` lists. Collects
 /// every offense (invalid id, within-list dup, cross-list dup)
 /// without bailing on the first.
 fn validate_extends(extends: &ExtendsSection, errors: &mut Vec<ManifestError>) {
     let regex = id_regex();
-    // Phase 81.29 — `tools` joins channels/llm_providers/
+    // `tools` joins channels/llm_providers/
     // memory_backends/hooks as the 5th list.
     let lists: [(&'static str, &Vec<String>); 5] = [
         ("channels", &extends.channels),
@@ -413,9 +413,9 @@ fn validate_capability_impl(manifest: &PluginManifest, errors: &mut Vec<Manifest
                 !p.channels.register.is_empty(),
                 "set `[[plugin.channels.register]] kind = \"...\" adapter = \"...\"`",
             ),
-            // The 4 below are declarative-only in 81.1; runtime
-            // sections defer to later sub-phases. We don't fail
-            // them here so plugin authors can declare them early.
+            // The 4 below are declarative-only for now; their
+            // runtime sections land later. We don't fail them
+            // here so plugin authors can declare them early.
             Capability::Hooks
             | Capability::McpServers
             | Capability::Webhooks
@@ -716,7 +716,7 @@ expose = ["wrong_prefix"]
         assert!(errs.len() >= 3, "expected multiple errors, got {errs:?}");
     }
 
-    // ── Phase 81.28 — [plugin.extends] validator ───────────────
+    // ── [plugin.extends] validator ─────────────────────────────
 
     fn manifest_with_extends(extends_block: &str) -> PluginManifest {
         let toml = format!(
@@ -778,7 +778,7 @@ expose = ["wrong_prefix"]
         );
     }
 
-    // ── Phase 81.29 — extends.tools validator ─────────────────
+    // ── extends.tools validator ───────────────────────────────
 
     #[test]
     fn validate_extends_tools_rejects_invalid_id() {
@@ -872,7 +872,7 @@ expose = ["wrong_prefix"]
         );
     }
 
-    // ── Phase 81.22 sandbox validator ─────────────────────────
+    // ── sandbox validator ─────────────────────────────────────
 
     fn manifest_with_sandbox(body: &str) -> PluginManifest {
         let toml = format!("{}\n[plugin.sandbox]\n{}\n", base_manifest_toml(), body);
@@ -981,7 +981,7 @@ expose = ["wrong_prefix"]
             .any(|e| matches!(e, ManifestError::SandboxHostNetworkWithoutCapability)));
     }
 
-    // ── Phase 90 audit fix — supervisor knob bounds ───────────
+    // ── supervisor knob bounds ────────────────────────────────
 
     fn manifest_with_supervisor_block(body: &str) -> PluginManifest {
         let toml = format!("{}\n[plugin.supervisor]\n{}\n", base_manifest_toml(), body);

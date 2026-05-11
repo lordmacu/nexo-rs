@@ -1,4 +1,4 @@
-//! Phase 76.3 — `NoneAuthenticator`. Dev-only loopback bypass; the
+//! `NoneAuthenticator`. Dev-only loopback bypass; the
 //! constructor refuses non-loopback binds so a misconfigured public
 //! deployment never accepts unauthenticated traffic.
 
@@ -15,8 +15,7 @@ impl NoneAuthenticator {
     /// Boot fails when the bind is non-loopback. There is no
     /// runtime escape hatch — operators wanting unauthenticated
     /// access on a non-loopback bind must also (a) use a reverse
-    /// proxy that performs auth and (b) keep the agent on
-    /// loopback. 76.13 will introduce more nuanced TLS modes.
+    /// proxy that performs auth and (b) keep the agent on loopback.
     pub fn new(bind: std::net::SocketAddr) -> Result<Self, String> {
         if !is_loopback(&bind.ip()) {
             return Err(format!(

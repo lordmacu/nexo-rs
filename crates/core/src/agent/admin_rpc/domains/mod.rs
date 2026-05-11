@@ -1,4 +1,4 @@
-//! Phase 82.10 — admin RPC domain handlers.
+//! Admin RPC domain handlers.
 //!
 //! Each sub-module owns one of the 5 admin domains:
 //! - `agents` — CRUD agents.yaml (82.10.c)

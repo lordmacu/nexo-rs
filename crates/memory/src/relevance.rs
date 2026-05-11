@@ -1,4 +1,4 @@
-//! Phase 77.6 — memdir findRelevantMemories + memoryAge decay.
+//! Relevance ranking + memory-age decay.
 //!
 //! Composite scoring: similarity × recency(per-type half-life) × log1p(frequency),
 //! with staleness annotation and already-surfaced dedup.
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::long_term::MemoryEntry;
 
-/// Four-type taxonomy matching Phase 77.5 extractMemories.
+/// Four-type taxonomy matching the memory extractor.
 ///
 /// Half-life rationale:
 ///   user      — ∞ (preferences don't expire)

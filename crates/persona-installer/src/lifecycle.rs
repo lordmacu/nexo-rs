@@ -1,9 +1,9 @@
 //! Lifecycle event types emitted on persona install / remove.
-//! Mirrors the plugin lifecycle event shape from Phase 81.21.b
+//! Mirrors the plugin lifecycle event shape
 //! so subscribers writing schema-strict consumers can share
 //! decoder code via a discriminator field. Default subjects
 //! sit under `nexo.persona.*`; configurable by the daemon at
-//! wire-up time (Phase F5).
+//! wire-up time.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Default NATS subject prefix used by lifecycle publishes.
 /// Daemons can override via the broker config to land
 /// persona events on a different bus path (matches the
-/// override pattern Phase 81.21.b shipped for plugin
-/// lifecycle events).
+/// override pattern used for plugin lifecycle events).
 pub const DEFAULT_LIFECYCLE_SUBJECT_PREFIX: &str = "nexo.persona";
 
 /// Discriminator + payload for every lifecycle wire event.
@@ -87,7 +86,7 @@ impl LifecycleEvent {
     }
 
     /// Concrete subject under a caller-supplied prefix
-    /// (matches Phase 81.21.b's override pattern for plugin
+    /// (matches the override pattern used for plugin
     /// lifecycle events).
     pub fn subject_with_prefix(&self, prefix: &str) -> String {
         format!("{}.{}", prefix.trim_end_matches('.'), self.sub_subject())

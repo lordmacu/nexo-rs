@@ -1,4 +1,4 @@
-//! M9 — `expose_tools` typo regression guard.
+//! `expose_tools` typo regression guard.
 //!
 //! Maintains a hardcoded snapshot of every canonical tool name that
 //! has ever appeared in `EXPOSABLE_TOOLS` and asserts bidirectional
@@ -9,7 +9,7 @@
 //!    that would leave operator YAML
 //!    (`mcp_server.expose_tools: [...]`) referencing names the
 //!    catalog no longer recognises. The runtime currently warns at
-//!    `src/main.rs:9261-9269` and moves on; the snapshot makes
+//!    boot and moves on; the snapshot makes
 //!    that warn impossible to ship accidentally from CODE-side.
 //! 2. Every entry in [`EXPOSABLE_TOOLS`] is in the snapshot —
 //!    forces the developer to extend the snapshot when adding a
@@ -24,8 +24,8 @@
 //! `SkippedInfraMissing` / `SkippedDenied` shape). That covers the
 //! direction "catalog entry → dispatch arm wired".
 //!
-//! M9 covers the inverse: "every name we have ever exposed still
-//! resolves AND every catalog entry is acknowledged". The two tests
+//! This test covers the inverse: "every name we have ever exposed
+//! still resolves AND every catalog entry is acknowledged". The two tests
 //! are siblings, not duplicates.
 //!
 //! ## Workflow
@@ -38,11 +38,9 @@
 //!   fail message:
 //!   1. Restore the catalog entry (rename was accidental).
 //!   2. Drop the snapshot entry (rename intentional; operators
-//!      with old YAML will see a boot warn from
-//!      `src/main.rs:9261-9269`; document the breaking change in
-//!      the PR body).
-//!   3. Add a deprecated-alias mapping (M9.b follow-up — not yet
-//!      shipped).
+//!      with old YAML will see a boot warn; document the breaking
+//!      change in the PR body).
+//!   3. Add a deprecated-alias mapping (not yet shipped).
 //! - **Removing a tool** — drop both the catalog entry and the
 //!   snapshot entry. Conscious decision; document in commit body.
 //!
@@ -54,17 +52,8 @@
 //! Gemini / DeepSeek / xAI / Mistral) drives the call. The
 //! snapshot inherits that property.
 //!
-//! ## Prior art
-//!
-//! - `research/src/channels/ids.test.ts:48-50` — OpenClaw uses the
-//!   same snapshot-vs-catalog assertion
-//!   (`expect(CHAT_CHANNEL_ALIASES).toEqual(collectBundledChatChannelAliases())`)
-//!   for its alias map. We extend the pattern to the full
-//!   canonical-name set.
-//! - `claude-code-leak/src/tools.ts:193-251` — `getAllBaseTools()`
-//!   returns a hardcoded array WITHOUT a snapshot test; the leak
-//!   has no protection against silent renames. The pattern we
-//!   intentionally do NOT follow.
+//! The snapshot-vs-catalog assertion guards against silent renames,
+//! which a plain hardcoded array of base tool names would not catch.
 
 use std::collections::HashSet;
 
@@ -75,55 +64,55 @@ use nexo_config::types::mcp_exposable::{lookup_exposable, EXPOSABLE_TOOLS};
 /// the `EXPOSABLE_TOOLS` const at 2026-04-30.
 ///
 /// **Any change here is a conscious decision documented in the PR
-/// body.** Organised by phase comment so the audit trail is visible
-/// in git blame.
+/// body.** Grouped by tool family so the audit trail is visible in
+/// git blame.
 const KNOWN_CANONICAL_NAMES_SNAPSHOT: &[&str] = &[
-    // Plan-mode (Phase 79.1)
+    // Plan-mode
     "EnterPlanMode",
     "ExitPlanMode",
     "plan_mode_resolve",
-    // Discovery / scratch (Phase 79.2 / 79.3 / 79.4)
+    // Discovery / scratch
     "ToolSearch",
     "SyntheticOutput",
     "TodoWrite",
-    // LSP (Phase 79.5)
+    // LSP
     "Lsp",
-    // Team* (Phase 79.6)
+    // Team*
     "TeamCreate",
     "TeamDelete",
     "TeamSendMessage",
     "TeamList",
     "TeamStatus",
-    // Cron (Phase 79.7)
+    // Cron
     "cron_create",
     "cron_list",
     "cron_delete",
     "cron_pause",
     "cron_resume",
-    // RemoteTrigger (Phase 79.8)
+    // RemoteTrigger
     "RemoteTrigger",
-    // ConfigTool + audit tail (Phase 79.10)
+    // ConfigTool + audit tail
     "Config",
     "config_changes_tail",
-    // MCP resource router (Phase 79.11)
+    // MCP resource router
     "ListMcpResources",
     "ReadMcpResource",
-    // NotebookEdit (Phase 79.13)
+    // NotebookEdit
     "NotebookEdit",
-    // Web (Phase 21 / 25)
+    // Web
     "web_fetch",
     "web_search",
-    // Memory (Phase 5 / 10)
+    // Memory
     "forge_memory_checkpoint",
     "memory_history",
     "memory_snapshot",
-    // TaskFlow (Phase 14)
+    // TaskFlow
     "taskflow",
-    // Followup tools (Phase 14 follow-up)
+    // Followup tools
     "start_followup",
     "check_followup",
     "cancel_followup",
-    // Delegation + heartbeat (Phase 7 / 8)
+    // Delegation + heartbeat
     "delegate",
     "Heartbeat",
 ];

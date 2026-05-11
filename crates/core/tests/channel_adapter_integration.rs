@@ -1,4 +1,4 @@
-//! Phase 81.8 — end-to-end ChannelAdapter registration + outbound
+//! End-to-end ChannelAdapter registration + outbound
 //! round-trip via a mock SMS adapter that tracks state transitions.
 //! No real broker IO — the mock adapter's `start()` does not
 //! subscribe to anything; this test exercises the trait + registry

@@ -1,4 +1,4 @@
-//! Phase 81.27 — end-to-end smoke for `RemoteHookHandler`.
+//! End-to-end smoke for `RemoteHookHandler`.
 //! Builds a tempdir with a `nexo-plugin.toml` declaring
 //! `[plugin.extends].hooks = ["before_message"]` and a bash mock
 //! that:

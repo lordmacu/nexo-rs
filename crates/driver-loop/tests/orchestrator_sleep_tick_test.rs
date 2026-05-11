@@ -1,4 +1,4 @@
-//! Phase 77.20.2 — when a turn returns the Sleep sentinel, the
+//! When a turn returns the Sleep sentinel, the
 //! orchestrator must park the goal, wake it, and prepend a synthetic
 //! `<tick>` prompt to the next turn.
 

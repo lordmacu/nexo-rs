@@ -54,8 +54,8 @@ pub struct StdioSpawnOptions {
     pub base_backoff: Duration,
     pub max_backoff: Duration,
     pub env_blocklist_suffixes: Vec<String>,
-    /// Phase 82.12.b — explicit env var names that bypass the
-    /// blocklist filter. Populated by the spawn caller from the
+    /// Explicit env var names that bypass the blocklist filter.
+    /// Populated by the spawn caller from the
     /// plugin manifest's
     /// `[plugin.capabilities.http_server].token_env` (and any
     /// other declared bearer-style names) so legitimate child-
@@ -67,7 +67,7 @@ pub struct StdioSpawnOptions {
     /// var keys.
     pub env_passthrough_allowlist: Vec<String>,
     pub shutdown_grace: Duration,
-    /// Phase 82.10.h.b.3 — optional admin RPC router. When set,
+    /// Optional admin RPC router. When set,
     /// frames whose `id` is a string starting with `app:` are
     /// forwarded to the router instead of the pending-request map
     /// (microapp-initiated admin requests). When unset, those
@@ -172,8 +172,8 @@ impl StdioRuntime {
         manifest: &ExtensionManifest,
         mut opts: StdioSpawnOptions,
     ) -> Result<Self, StartError> {
-        // Phase 82.12.b — when the manifest declares an HTTP
-        // server with a `token_env` (e.g. `AGENT_CREATOR_TOKEN`),
+        // When the manifest declares an HTTP server with a
+        // `token_env` (e.g. `AGENT_CREATOR_TOKEN`),
         // whitelist that env var name so the spawn doesn't strip
         // it via the `_TOKEN` suffix blocklist. Without this the
         // microapp's HTTP layer reads `unset` + degrades to
@@ -186,8 +186,8 @@ impl StdioRuntime {
             {
                 opts.env_passthrough_allowlist.push(http.token_env.clone());
             }
-            // Phase 82.12.c — manifest may declare additional
-            // env var names the spawn must let past the
+            // The manifest may declare additional env var names the
+            // spawn must let past the
             // secret-suffix blocklist. Used by microapps that
             // proxy to a sibling extension and need the
             // sibling's bearer in their own env (e.g.
@@ -297,7 +297,7 @@ impl StdioRuntime {
         &self.extension_id
     }
 
-    /// Phase 82.10.h.b.5 — clone of the outbound stdin queue. Used
+    /// Clone of the outbound stdin queue. Used
     /// by the admin RPC bootstrap to wire a `DispatcherAdminRouter`
     /// + `StdioPairingNotifier` post-spawn (the underlying mpsc
     /// channel is created inside [`spawn_with`], so a reference
@@ -408,7 +408,7 @@ impl StdioRuntime {
         self.shutdown_with_reason("client shutdown").await
     }
 
-    /// Phase 11.3 follow-up — shutdown variant that threads a
+    /// Shutdown variant that threads a
     /// human-readable `reason` into the `shutdown` notification payload
     /// so extensions can differentiate SIGTERM vs config reload vs
     /// explicit user action in their cleanup logic.
@@ -728,9 +728,9 @@ fn build_command(
         .kill_on_drop(true);
 
     // Strip secrets by suffix blocklist before passing env.
-    // Phase 82.12.b — names in `env_passthrough_allowlist`
-    // bypass the blocklist (operator-declared `token_env`
-    // entries from the plugin manifest reach the child).
+    // Names in `env_passthrough_allowlist` bypass the blocklist
+    // (operator-declared `token_env` entries from the plugin
+    // manifest reach the child).
     let env: Vec<(String, String)> = std::env::vars()
         .filter(|(k, _)| {
             opts.env_passthrough_allowlist.iter().any(|a| a == k)
@@ -743,7 +743,7 @@ fn build_command(
     }
     cmd.env("AGENT_VERSION", env!("CARGO_PKG_VERSION"));
     cmd.env("AGENT_EXTENSION_ID", extension_id);
-    // Phase 82.6.b — stamp the per-extension state directory so
+    // Stamp the per-extension state directory so
     // microapp boot points its on-disk state (SQLite DBs, vault
     // files, per-tenant artifacts) at the canonical location
     // without reimplementing the path layout. Idempotent
@@ -878,8 +878,8 @@ async fn spawn_and_handshake(
     Ok((child, stdin, reader_handle, handshake))
 }
 
-/// Handle one decoded JSON-RPC line. Phase 82.10.h.b.3 split this
-/// out of [`reader_task`] so the dispatch logic is unit-testable
+/// Handle one decoded JSON-RPC line. Split out of [`reader_task`]
+/// so the dispatch logic is unit-testable
 /// without spinning up a `tokio::process::Child`. Three id shapes:
 /// numeric → existing `tools/call` response path via `pending`;
 /// `app:`-prefixed string → microapp-initiated admin frame routed

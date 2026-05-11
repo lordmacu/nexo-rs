@@ -1,4 +1,4 @@
-//! Phase 67.D.2 — admission gate for the `program_phase` family of
+//! Admission gate for the `program_phase` family of
 //! tools. Pure function with no I/O: feed it the resolved policy,
 //! the trust signal, the live cap counters, and the requested
 //! phase id; get back `Ok(())` or a structured `DispatchDenied`.
@@ -274,7 +274,7 @@ mod tests {
             DispatchDenied::PhaseNotAllowed("5.4".into())
         );
 
-        // Same agent dispatching to 67.x is allowed.
+        // Same agent dispatching to an allowed phase id is allowed.
         let req_ok = write_request(&p, "67.10");
         DispatchGate::check(&req_ok).unwrap();
     }

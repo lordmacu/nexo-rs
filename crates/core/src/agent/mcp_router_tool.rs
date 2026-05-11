@@ -1,8 +1,7 @@
-//! Phase 79.11 — `ListMcpResources` + `ReadMcpResource` LLM tools
-//! that **route** across every connected MCP server in the active
-//! session.
+//! `ListMcpResources` + `ReadMcpResource` LLM tools that **route**
+//! across every connected MCP server in the active session.
 //!
-//! Distinct from `mcp_resource_tool.rs` (Phase 12.5), which
+//! Distinct from `mcp_resource_tool.rs`, which
 //! registers ONE tool per server (`mcp__<server>__list_resources`).
 //! The router-shaped tool takes the server as an argument so the
 //! model has a single discovery surface — useful when an agent

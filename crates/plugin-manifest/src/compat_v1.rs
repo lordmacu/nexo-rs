@@ -1,14 +1,15 @@
-//! Phase 81.13 — `manifest_version = 1` legacy compat layer.
+//! `manifest_version = 1` legacy compat layer.
 //!
-//! Pre-81.13 the framework shipped two parallel manifest
-//! parsers: `nexo-extensions::manifest` (Phase 11 strict —
+//! The framework used to ship two parallel manifest
+//! parsers: `nexo-extensions::manifest` (strict —
 //! `[plugin]`, `[capabilities]`, `[transport]`, `[meta]`) and
-//! `nexo-plugin-manifest::manifest` (Phase 31.5+ richer —
+//! `nexo-plugin-manifest::manifest` (richer —
 //! `[plugin.entrypoint]`, `[plugin.capabilities.admin]`,
-//! `[plugin.capabilities.http_server]`, etc.). 81.13 unifies on
-//! the modern shape with [`crate::CURRENT_MANIFEST_VERSION`]; the
-//! legacy shape gets read by this module + auto-translated to v2
-//! in-memory at parse time.
+//! `[plugin.capabilities.http_server]`, etc.). Now everything
+//! unifies on the modern shape with
+//! [`crate::CURRENT_MANIFEST_VERSION`]; the legacy shape gets
+//! read by this module + auto-translated to v2 in-memory at
+//! parse time.
 //!
 //! Plugin authors get one full minor cycle to migrate their
 //! `plugin.toml` to v2; a deprecation warn fires once per
@@ -16,9 +17,8 @@
 //! doesn't drown the operator in log noise.
 //!
 //! Pure self-contained: this module does NOT depend on
-//! `nexo-extensions` (would create a cycle once Step 6 of 81.13
-//! makes the legacy crate depend on this one). The v1 structs
-//! mirror `nexo-extensions::manifest` field-for-field.
+//! `nexo-extensions` (that would create a dependency cycle). The
+//! v1 structs mirror `nexo-extensions::manifest` field-for-field.
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -33,7 +33,7 @@ use crate::manifest::{
 
 // ── v1 legacy struct mirrors ────────────────────────────────────
 
-/// Phase 11 root — flat top-level sections.
+/// v1 root — flat top-level sections.
 ///
 /// Mirrors `nexo_extensions::manifest::ExtensionManifest` so this
 /// module stays self-contained. Field names + serde attrs MUST
@@ -55,16 +55,15 @@ struct LegacyV1Manifest {
     transport: LegacyV1Transport,
     #[serde(default)]
     meta: LegacyV1Meta,
-    /// Phase 12.7 — MCP server declarations. Top-level table
-    /// in v1; nested under `[plugin.mcp_servers]` after migration
-    /// (sub-phase 81.13.b ships the v2 home for these).
+    /// MCP server declarations. Top-level table
+    /// in v1; nested under `[plugin.mcp_servers]` after migration.
     #[serde(default)]
     mcp_servers: BTreeMap<String, toml::Value>,
     #[serde(default)]
     context: LegacyV1ContextConfig,
     #[serde(default)]
     requires: LegacyV1Requires,
-    /// Phase 82.3 — outbound dispatch allowlist. Top-level table
+    /// Outbound dispatch allowlist. Top-level table
     /// in v1.
     #[serde(default)]
     outbound_bindings: BTreeMap<String, Vec<String>>,
@@ -98,16 +97,16 @@ struct LegacyV1Capabilities {
     providers: Vec<String>,
     #[serde(default)]
     pollers: Vec<String>,
-    /// Phase 82.10 — admin RPC capabilities. Field-for-field
+    /// Admin RPC capabilities. Field-for-field
     /// identical to the v2 [`AdminCapabilities`] so the migrator
     /// can pass it through.
     #[serde(default)]
     admin: LegacyV1AdminCapabilities,
-    /// Phase 82.12 — HTTP server. Field-for-field identical to
+    /// HTTP server. Field-for-field identical to
     /// v2 [`HttpServerCapability`].
     #[serde(default)]
     http_server: Option<LegacyV1HttpServerCapability>,
-    /// Phase 82.15.bx — broker subscribe/publish allowlist. Field-
+    /// Broker subscribe/publish allowlist. Field-
     /// for-field identical to v2 [`BrokerCapability`]; the migrator
     /// passes it through without dropping.
     #[serde(default)]
@@ -141,7 +140,7 @@ struct LegacyV1HttpServerCapability {
     token_env: String,
     #[serde(default = "default_legacy_health_path")]
     health_path: String,
-    /// Phase 82.12.b — extra env-var passthrough allowlist.
+    /// Extra env-var passthrough allowlist.
     /// Microapps that proxy to a sibling extension on a
     /// shared bearer (e.g. agent-creator → marketing on
     /// `MARKETING_ADMIN_TOKEN`) declare them here so the
@@ -165,8 +164,8 @@ fn default_legacy_health_path() -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[allow(dead_code)] // Nats / Http variants accept the field for shape parity but
-                    // the migrator drops them with a warning today; full v2 home
-                    // for non-stdio transports is sub-phase 81.13.b.
+                    // the migrator drops them with a warning today; a full v2 home
+                    // for non-stdio transports is a future addition.
 enum LegacyV1Transport {
     Stdio {
         command: String,
@@ -215,7 +214,7 @@ struct LegacyV1Requires {
 /// Outcome of a v1 → v2 migration. The translated manifest is
 /// always returned; `dropped_fields` carries the list of legacy
 /// fields that don't have a direct v2 equivalent in this release
-/// (sub-phase 81.13.b adds homes for them). Callers log the list
+/// (a future release adds homes for them). Callers log the list
 /// once per plugin so the operator knows what wasn't translated.
 pub struct MigrationOutcome {
     pub manifest: PluginManifest,
@@ -257,16 +256,16 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             bind: h.bind,
             token_env: h.token_env,
             health_path: h.health_path,
-            // Phase 82.12.b — pass the allowlist through
-            // verbatim. Pre-82.12.b v1 manifests omit the
-            // field and arrive here as an empty vec.
+            // Pass the allowlist through verbatim. Older v1
+            // manifests omit the field and arrive here as an
+            // empty vec.
             extra_env_passthrough: h.extra_env_passthrough,
         });
 
     // Capabilities.tools/hooks/channels/providers/pollers — these
     // are runtime-registration informational lists in v1. v2 uses
     // typed sections (`[plugin.tools.exposed.*]`, etc.). Today
-    // we drop them; sub-phase 81.13.b ships preservation.
+    // we drop them; a future release ships preservation.
     if !legacy.capabilities.tools.is_empty() {
         dropped.push("capabilities.tools");
     }
@@ -293,9 +292,9 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         dropped.push("capabilities.broker");
     }
 
-    // Top-level v1 tables that don't yet have v2 homes (deferred
-    // to 81.13.b for the wire surface; runtime consumers still
-    // read them from the legacy plugin.toml in the meantime).
+    // Top-level v1 tables that don't yet have v2 homes (the wire
+    // surface is deferred; runtime consumers still read them from
+    // the legacy plugin.toml in the meantime).
     if !legacy.mcp_servers.is_empty() {
         dropped.push("mcp_servers");
     }
@@ -407,7 +406,7 @@ fn parse_version_req(s: &str, field: &'static str) -> Result<semver::VersionReq,
 ///    - `2` → strict v2 parse.
 ///    - anything else (`1`, stray int) → v1 legacy parse + migrate.
 /// 2. Otherwise, **try v2 parse first**. v2 is the canonical shape
-///    going forward; most plugins authored after 81.13 won't bother
+///    going forward; most newer plugins won't bother
 ///    setting `manifest_version` even though they're v2-shaped.
 ///    Only fall back to v1 if the v2 parse rejects an unknown field
 ///    or a missing required field — those are the legacy markers.
@@ -438,7 +437,7 @@ pub fn try_parse_v2_or_v1(raw: &str) -> Result<(PluginManifest, bool), ManifestE
                 tracing::warn!(
                     plugin_id = %outcome.manifest.plugin.id,
                     dropped = ?outcome.dropped_fields,
-                    "manifest_version=1 fields dropped during 81.13 migration; see Phase 81.13.b for full preservation",
+                    "manifest_version=1 fields dropped during migration; full preservation is a future addition",
                 );
             }
             Ok((outcome.manifest, true))
@@ -450,7 +449,7 @@ pub fn try_parse_v2_or_v1(raw: &str) -> Result<(PluginManifest, bool), ManifestE
             ))))
         }
         None => {
-            // Try v2 first. Pre-81.13 v2 plugins didn't bother
+            // Try v2 first. Older v2 plugins didn't bother
             // setting manifest_version even though their shape is
             // canonical.
             match toml::from_str::<PluginManifest>(raw) {
@@ -467,7 +466,7 @@ pub fn try_parse_v2_or_v1(raw: &str) -> Result<(PluginManifest, bool), ManifestE
                         tracing::warn!(
                             plugin_id = %outcome.manifest.plugin.id,
                             dropped = ?outcome.dropped_fields,
-                            "manifest_version=1 fields dropped during 81.13 migration; see Phase 81.13.b for full preservation",
+                            "manifest_version=1 fields dropped during migration; full preservation is a future addition",
                         );
                     }
                     Ok((outcome.manifest, true))
@@ -495,7 +494,7 @@ pub fn emit_v1_deprecation_warning(plugin_id: &str, plugin_version: &str) {
         tracing::warn!(
             plugin_id = %plugin_id,
             plugin_version = %plugin_version,
-            "manifest_version=1 is deprecated (Phase 81.13); please migrate to v2 before nexo-rs 0.2.0",
+            "manifest_version=1 is deprecated; please migrate to v2 before nexo-rs 0.2.0",
         );
     }
 }
@@ -603,7 +602,7 @@ command = "./agent-creator"
         assert_eq!(http.health_path, "/healthz");
     }
 
-    /// Phase 82.12.b — v1 manifests with the allowlist must
+    /// v1 manifests with the allowlist must
     /// translate verbatim. Without this fix the parser rejects
     /// the field as `deny_unknown_fields`, the manifest fails to
     /// load, and the microapp boots without an admin router →
@@ -634,7 +633,7 @@ command = "./agent-creator"
         assert_eq!(http.extra_env_passthrough, vec!["MARKETING_ADMIN_TOKEN"]);
     }
 
-    /// Phase 82.12.b — v1 manifests without the field default
+    /// v1 manifests without the field default
     /// to empty (back-compat).
     #[test]
     fn migrate_legacy_http_server_defaults_extra_env_passthrough_empty() {

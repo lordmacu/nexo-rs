@@ -1,9 +1,9 @@
-//! Phase 84.2 — `<task-notification>` XML envelope for worker results.
+//! `<task-notification>` XML envelope for worker results.
 //!
 //! When a forked subagent (`nexo-fork`) or a TeamCreate worker
-//! completes, the coordinator receives the result. Pre-Phase 84.2,
+//! completes, the coordinator receives the result. Previously
 //! that result was either appended as plain text or returned via the
-//! tool-call response path. Phase 84.2 standardizes a single XML
+//! tool-call response path. This standardizes a single XML
 //! envelope so the coordinator's parser (LLM or downstream tool) can
 //! match deterministically and ignore free-form chatter.
 //!
@@ -95,7 +95,7 @@ pub struct TaskUsage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskNotification {
     /// Worker goal id — same value the coordinator passes to
-    /// `SendMessageToWorker` (Phase 84.3) when continuing.
+    /// `SendMessageToWorker` when continuing.
     pub task_id: String,
     pub status: TaskStatus,
     /// One-line outcome for the coordinator's synthesis. Always

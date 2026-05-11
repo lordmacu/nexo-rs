@@ -1,4 +1,4 @@
-//! Phase 82.10.t.x — production [`LlmCompleter`] adapter.
+//! Production [`LlmCompleter`] adapter.
 //!
 //! Bridges `nexo/admin/llm/complete` to the daemon's
 //! [`LlmRegistry`] + [`LlmConfig`]. Resolves the provider

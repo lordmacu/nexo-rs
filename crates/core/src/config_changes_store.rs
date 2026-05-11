@@ -1,6 +1,5 @@
-//! Phase 79.10 — durable audit log of `ConfigTool` proposals +
-//! their lifecycle (proposed → applied | rolled_back | rejected |
-//! expired).
+//! Durable audit log of `ConfigTool` proposals + their lifecycle
+//! (proposed → applied | rolled_back | rejected | expired).
 //!
 //! Two consumers:
 //!   * `crates/core/src/agent/config_tool.rs` writes one row per
@@ -8,10 +7,9 @@
 //!     file disappears, the audit row survives).
 //!   * `crates/core/src/agent/config_changes_tail_tool.rs` is the
 //!     read-only LLM tool that lets a model post-mortem its own
-//!     mutation history. Same shape as Phase 72 `agent_turns_tail`.
+//!     mutation history.
 //!
-//! Pattern lift: `crates/agent-registry/src/turn_log.rs` (Phase 72).
-//! Different table, similar idempotent-on-id semantics.
+//! Uses idempotent-on-id semantics so a duplicate write is a no-op.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

@@ -10,8 +10,8 @@ use crate::event_source::EventSourceMeta;
 
 /// Identifies which inbound binding a tool call originated from.
 ///
-/// Stamped on every tool call dispatched to a Phase 11 stdio
-/// extension or a Phase 12 MCP server (under `params._meta.nexo.binding`).
+/// Stamped on every tool call dispatched to a stdio extension or
+/// an MCP server (under `params._meta.nexo.binding`).
 /// A microapp reads it to route work to the correct tenant /
 /// channel / account.
 ///
@@ -20,7 +20,7 @@ use crate::event_source::EventSourceMeta;
 /// (does NOT depend on the binding vector index).
 ///
 /// `mcp_channel_source` is populated when the inbound that
-/// triggered the call arrived via a Phase 80.9 MCP channel
+/// triggered the call arrived via an MCP channel
 /// server (`"slack"`, `"telegram"`, etc.), allowing a tool to
 /// distinguish "telegram-binding answered via MCP slack server"
 /// from "telegram-binding answered via the native Telegram
@@ -66,21 +66,21 @@ pub struct BindingContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binding_id: Option<String>,
 
-    /// Phase 80.9 — MCP channel server name when the inbound
+    /// MCP channel server name when the inbound
     /// arrived via `notifications/nexo/channel`. `None` for
     /// native-channel inbounds. Examples: `"slack"`,
     /// `"telegram"`, `"imessage"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_channel_source: Option<String>,
 
-    /// Phase 82.4 — event-subscriber metadata when the agent's
+    /// Event-subscriber metadata when the agent's
     /// inbound was synthesised from a NATS event (subject pattern
     /// match). `None` for human-message turns / native-channel
     /// inbounds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_source: Option<EventSourceMeta>,
 
-    /// Phase 83.8.12 — SaaS tenant (tenant) key. `None` for
+    /// SaaS tenant key. `None` for
     /// agents that predate the multi-tenant model
     /// (`agents.yaml.<id>` without an `tenant_id` field).
     /// Multi-tenant filtering across admin RPC + microapp tools
@@ -89,7 +89,7 @@ pub struct BindingContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
 
-    /// Phase 81.19.b locale follow-up item 6 — resolved BCP-47
+    /// Resolved BCP-47
     /// locale for this binding (`InboundBinding.language` over
     /// `AgentConfig.language`). When present, the SDK's STT
     /// inbound transform handler trims to ISO-639-1 and passes
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn binding_context_deserializes_legacy_payload_without_tenant_id() {
-        // Producers predating Phase 83.8.12 emit BindingContext
+        // Older producers emit BindingContext
         // payloads that lack the tenant_id field. The wire path
         // MUST NOT fail in that case — the new field defaults to
         // None so single-tenant deployments keep working.

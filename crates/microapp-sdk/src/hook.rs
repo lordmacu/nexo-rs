@@ -11,9 +11,9 @@ use crate::errors::ToolError;
 ///
 /// `Continue` lets the daemon proceed with whatever the hook
 /// observed; the other variants are vote-to-block / vote-to-
-/// transform decisions (Phase 83.3) — the core remains
-/// authoritative and decides whether to apply the vote, with an
-/// audit log row written for every applied block / transform.
+/// transform decisions — the core remains authoritative and
+/// decides whether to apply the vote, with an audit log row
+/// written for every applied block / transform.
 ///
 /// `#[non_exhaustive]` so future outcomes (e.g. `Reroute`) land
 /// non-major.
@@ -22,19 +22,19 @@ use crate::errors::ToolError;
 pub enum HookOutcome {
     /// Default outcome — the daemon proceeds.
     Continue,
-    /// Phase 11 legacy alias of [`HookOutcome::Block`]. Kept so
-    /// existing handlers compile unchanged. Wire form serialises
-    /// as the legacy `{abort: true, reason: "..."}` shape so a
-    /// pre-83.3 daemon parser keeps working; new daemons parse
-    /// either shape.
+    /// Legacy alias of [`HookOutcome::Block`]. Kept so existing
+    /// handlers compile unchanged. Wire form serialises as the
+    /// legacy `{abort: true, reason: "..."}` shape so an older
+    /// daemon parser keeps working; new daemons parse either
+    /// shape.
     Abort {
         /// Human-readable reason surfaced in tracing + LLM context.
         reason: String,
     },
-    /// Phase 83.3 — vote to block dispatch. Identical wire
-    /// semantics to `Abort` but signals an explicit Phase 83.3
-    /// decision so the daemon can audit-log the vote separately
-    /// from legacy aborts.
+    /// Vote to block dispatch. Identical wire semantics to
+    /// `Abort` but signals an explicit block decision so the
+    /// daemon can audit-log the vote separately from legacy
+    /// aborts.
     Block {
         /// Operator-visible reason.
         reason: String,
@@ -43,8 +43,8 @@ pub enum HookOutcome {
         /// (anti-loop signal). Defaults to `false`.
         do_not_reply_again: bool,
     },
-    /// Phase 83.3 — vote to rewrite the inbound body before the
-    /// agent sees it. The daemon SHOULD apply the rewrite
+    /// Vote to rewrite the inbound body before the agent sees
+    /// it. The daemon SHOULD apply the rewrite
     /// (subject to operator policy) and audit-log the diff.
     Transform {
         /// Replacement body the agent will receive in place of
@@ -80,13 +80,13 @@ impl HookOutcome {
 }
 
 /// Wire shape:
-/// - Phase 11 legacy: `{abort: bool, reason?: String}`.
-/// - Phase 83.3: `{decision: "allow" | "block" | "transform",
+/// - Legacy: `{abort: bool, reason?: String}`.
+/// - Current: `{decision: "allow" | "block" | "transform",
 ///   reason?: String, transformed_body?: String,
 ///   do_not_reply_again?: bool}`.
 ///
-/// Both are emitted side-by-side so a pre-83.3 daemon (which
-/// reads `abort`) keeps working and a post-83.3 daemon reads the
+/// Both are emitted side-by-side so an older daemon (which
+/// reads `abort`) keeps working and a newer daemon reads the
 /// richer `decision` field. Discriminator-on-Continue is
 /// `"allow"`.
 impl Serialize for HookOutcome {
@@ -219,7 +219,7 @@ mod tests {
         }
     }
 
-    // ── Phase 83.3 — vote-to-block / vote-to-transform tests ──
+    // ── vote-to-block / vote-to-transform tests ──
 
     #[test]
     fn block_serialises_with_decision_field() {
@@ -230,7 +230,7 @@ mod tests {
         let v = serde_json::to_value(&out).unwrap();
         assert_eq!(v["decision"], "block");
         assert_eq!(v["reason"], "anti-loop");
-        // Legacy field still present so a pre-83.3 daemon parser
+        // Legacy field still present so an older daemon parser
         // (which only reads `abort`) keeps working.
         assert_eq!(v["abort"], true);
         // do_not_reply_again omitted when false.
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn legacy_abort_serialises_decision_block() {
-        // Pre-83.3 handlers using `Abort { reason }` get auto-
+        // Legacy handlers using `Abort { reason }` get auto-
         // upgraded to a `block` decision on the wire so the new
         // daemon's vote-to-block path triggers, AND the legacy
         // `abort: true` stays for back-compat with old daemons.

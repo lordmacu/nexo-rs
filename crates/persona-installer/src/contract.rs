@@ -1,8 +1,8 @@
 //! [`PersonaExtractContract`] — adapts the v2 persona manifest
 //! parser to [`nexo_ext_installer::ExtractContract`] so the
 //! same resolve+download pipeline serves both
-//! `nexo plugin install` and `nexo persona install` via Phase
-//! F1's parameterized `resolve_release_with_contract`.
+//! `nexo plugin install` and `nexo persona install` via the
+//! parameterized `resolve_release_with_contract`.
 
 use nexo_ext_installer::{ExtractContract, InstallError, RepoCoords};
 use nexo_persona_manifest::PersonaManifest;

@@ -1,4 +1,4 @@
-//! Phase 12.8 — MCP `notifications/message` capability.
+//! MCP `notifications/message` capability.
 //!
 //! Per MCP spec 2024-11-05, servers may push log messages at runtime
 //! with a level (RFC 5424 subset) plus optional `logger` component and

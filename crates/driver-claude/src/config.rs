@@ -1,4 +1,4 @@
-//! Operator-visible config struct. The real loader lives in 67.4 —
+//! Operator-visible config struct. The real loader lives elsewhere;
 //! here we only define the deserialisable shape so a YAML round-trip
 //! can be tested in isolation.
 

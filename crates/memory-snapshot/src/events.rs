@@ -257,8 +257,8 @@ mod tests {
 
     #[test]
     fn lifecycle_subject_with_prefix_overrides_default() {
-        // Phase 90 audit fix — multi-daemon shard isolation requires
-        // the configured prefix to win, not the const default.
+        // Multi-daemon shard isolation requires the configured prefix
+        // to win, not the const default.
         let m = sample_meta();
         assert_eq!(
             LifecycleEvent::Created(m).subject_with_prefix("shard.alpha.snap"),

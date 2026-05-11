@@ -1,4 +1,4 @@
-//! Phase 80.9.b — channel permission relay.
+//! Channel permission relay.
 //!
 //! When a tool requires user approval, an MCP channel server that
 //! opted into [`crate::channel::CHANNEL_PERMISSION_CAPABILITY_KEY`]
@@ -28,9 +28,8 @@
 //!
 //! The actual approval flow (race the channel reply against the
 //! local prompt, claim the first responder, audit the outcome)
-//! lives in the higher-level driver-permission crate and gets
-//! wired through `ChannelInboundLoop` once 80.9.b.b lands the
-//! `CapabilityClaim` change. The MVP today is the protocol
+//! lives in the higher-level driver-permission crate and is wired
+//! through `ChannelInboundLoop`. This module owns the protocol
 //! surface — every operator-visible knob, every wire frame.
 #![allow(clippy::type_complexity)]
 
@@ -458,8 +457,8 @@ impl<C: McpClient + 'static> PermissionRelayDispatcher for McpPermissionRelayDis
     }
 }
 
-/// Phase 80.9.b.b — dispatcher that fans out to every connected
-/// MCP client by name. The runtime exposes a `SessionMcpRuntime`
+/// Dispatcher that fans out to every connected MCP client by name.
+/// The runtime exposes a `SessionMcpRuntime`
 /// snapshot of `(name, Arc<dyn McpClient>)` pairs; this dispatcher
 /// looks up `server_name` against that snapshot and forwards via
 /// the client's `send_notification`. Snapshot is captured by a
@@ -475,8 +474,8 @@ impl ClientResolverDispatcher {
     }
 }
 
-/// Phase 80.9.b.b — spawn a task that subscribes to the supplied
-/// `McpClient`'s event broadcast, parses every
+/// Spawn a task that subscribes to the supplied `McpClient`'s
+/// event broadcast, parses every
 /// `ChannelPermissionResponse` event, and resolves the matching
 /// pending entry in [`PendingPermissionMap`]. Returns the spawned
 /// task handle so the caller controls shutdown via the cancel

@@ -1,14 +1,13 @@
 //! `ForkOverrides` — selective overrides applied to the parent
-//! [`AgentContext`] clone for a fork. Step 80.19 / 4.
+//! [`AgentContext`] clone for a fork.
 //!
 //! Most state stays shared via `Arc<...>` — Rust's ownership model
-//! already isolates by construction, unlike KAIROS's TypeScript path
-//! that needed deep clones for everything (leak `forkedAgent.ts:345-462`).
+//! already isolates by construction, so no deep clones are needed.
 //!
-//! The fields below are the ones whose isolation actually matters in
-//! nexo's architecture. Abort signal + tool filter live in
-//! [`crate::ForkParams`] directly because they are *fork-loop* concerns,
-//! not [`AgentContext`] concerns (the context doesn't carry either).
+//! The fields below are the ones whose isolation actually matters.
+//! Abort signal + tool filter live in [`crate::ForkParams`] directly
+//! because they are *fork-loop* concerns, not [`AgentContext`]
+//! concerns (the context doesn't carry either).
 
 use nexo_core::agent::AgentContext;
 
@@ -19,8 +18,7 @@ pub struct ForkOverrides {
     /// fork invokes. Default: parent's agent_id.
     pub agent_id: Option<String>,
 
-    /// Critical system reminder injected on every turn. Mirrors
-    /// `criticalSystemReminder_EXPERIMENTAL` (leak `:316-318`).
+    /// Critical system reminder injected on every turn.
     /// Read by [`crate::run_turn_loop`] from [`crate::ForkParams`] —
     /// stored here so callers can pass it via overrides for symmetry.
     pub critical_system_reminder: Option<String>,
@@ -30,9 +28,7 @@ pub struct ForkOverrides {
 /// overrides applied. All `Arc` fields keep their refcount — the fork
 /// shares the parent's memory store, MCP runtime, broker, etc.
 ///
-/// This is the Rust analogue of `createSubagentContext` (leak `:345-462`)
-/// minus the 17 fields whose isolation TypeScript needed but Rust doesn't:
-/// no [`tokio::sync::RwLock`] readers leak between threads, no shared
+/// No [`tokio::sync::RwLock`] readers leak between threads, no shared
 /// mutable closures, no `setAppState` callback hand-off — Rust enforces
 /// these invariants at compile time.
 pub fn create_fork_context(parent: &AgentContext, overrides: ForkOverrides) -> AgentContext {
@@ -42,7 +38,7 @@ pub fn create_fork_context(parent: &AgentContext, overrides: ForkOverrides) -> A
     }
     // critical_system_reminder is consumed by `run_turn_loop`, not by
     // AgentContext itself — it has no field for it. We accept the value
-    // here for ergonomic parity with KAIROS's overrides struct; ForkParams
+    // here for ergonomic symmetry in the overrides struct; ForkParams
     // also carries it so consumers can decide where to thread it.
     ctx
 }

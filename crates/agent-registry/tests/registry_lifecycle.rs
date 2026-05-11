@@ -1,7 +1,6 @@
-//! Phase 67.B.2 — store-level lifecycle test. The registry façade
-//! that wraps these calls lands in 67.B.3; this test pins the
-//! contract of the persistence layer in isolation so future cap /
-//! queue changes don't accidentally rewrite the store semantics.
+//! Store-level lifecycle test. This test pins the contract of the
+//! persistence layer in isolation so future cap / queue changes
+//! don't accidentally rewrite the store semantics.
 
 use std::path::PathBuf;
 use std::time::Duration;

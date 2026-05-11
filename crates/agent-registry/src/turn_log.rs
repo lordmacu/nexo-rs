@@ -1,4 +1,4 @@
-//! Phase 72.1 — durable per-turn audit log.
+//! Durable per-turn audit log.
 //!
 //! Every Claude Code subprocess turn produces an `AttemptResult`
 //! event. The runtime forwards these into `EventForwarder`, which
@@ -30,8 +30,8 @@ use uuid::Uuid;
 
 use crate::store::AgentRegistryStoreError;
 
-/// Phase 80.9.h — stable prefix for the `source` column when an
-/// inbound came via an MCP channel server. Render with
+/// Stable prefix for the `source` column when an inbound came via an
+/// MCP channel server. Render with
 /// [`format_channel_source`]; parse with [`parse_channel_source`].
 pub const CHANNEL_SOURCE_PREFIX: &str = "channel:";
 
@@ -81,19 +81,18 @@ pub struct TurnRecord {
     /// Full JSON-encoded payload for callers that need every field
     /// (Anthropic's tool-call array, raw acceptance verdict, etc.).
     pub raw_json: String,
-    /// Phase 80.9.h — origin marker. `Some("channel:<server>")`
-    /// when the inbound that drove this turn arrived via an MCP
-    /// channel server (Slack, Telegram, iMessage). `None` for
-    /// turns triggered by every other intake path (paired user
-    /// inbound, cron fire, agent-to-agent delegate, heartbeat,
-    /// poller). Audit tooling filters on this column to answer
-    /// "what came in via Slack today?".
+    /// Origin marker. `Some("channel:<server>")` when the inbound
+    /// that drove this turn arrived via an MCP channel server (Slack,
+    /// Telegram, iMessage). `None` for turns triggered by every other
+    /// intake path (paired user inbound, cron fire, agent-to-agent
+    /// delegate, heartbeat, poller). Audit tooling filters on this
+    /// column to answer "what came in via Slack today?".
     #[serde(default)]
     pub source: Option<String>,
-    /// Phase 82.8 — tenant scope. `Some(account_id)` when the
-    /// inbound carries one (Phase 82.1 `BindingContext`); legacy
-    /// rows + system-driven turns (heartbeat, cron, internal
-    /// delegate) stay `None`. Tenant-scoped tail queries filter
+    /// Tenant scope. `Some(account_id)` when the inbound carries one
+    /// (via the `BindingContext`); legacy rows + system-driven turns
+    /// (heartbeat, cron, internal delegate) stay `None`. Tenant-scoped
+    /// tail queries filter
     /// on this column; rows with `None` are returned only by
     /// operator/admin-scoped tails to avoid an existence oracle
     /// for cross-tenant probing.
@@ -127,7 +126,7 @@ pub trait TurnLogStore: Send + Sync + 'static {
     /// the parent row so the audit log doesn't outlive its goal.
     async fn drop_for_goal(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError>;
 
-    /// Phase 80.14 — turns recorded since `since` (UTC), newest first,
+    /// Turns recorded since `since` (UTC), newest first,
     /// across ALL goals. Used by the AWAY_SUMMARY digest builder
     /// to sweep the silence window. `limit` is capped at 1000 by
     /// the impl to keep a runaway window from pulling the whole
@@ -208,9 +207,7 @@ impl SqliteTurnLogStore {
         )
         .execute(pool)
         .await?;
-        // Phase 80.9.h — additive `source` column. Idempotent ALTER
-        // pattern (same shape as the cron `permanent` column +
-        // pre-existing `recipient` column on the same module): we
+        // Additive `source` column. Idempotent ALTER pattern: we
         // tolerate the "duplicate column" error so migrate() stays
         // safe to call on every boot.
         let alter_source = sqlx::query("ALTER TABLE goal_turns ADD COLUMN source TEXT")
@@ -229,10 +226,9 @@ impl SqliteTurnLogStore {
         .execute(pool)
         .await?;
 
-        // Phase 82.8 — additive `account_id` column for
-        // multi-tenant audit isolation. Same idempotent
-        // ALTER pattern as `source` above so migrate() stays
-        // safe to call on every boot.
+        // Additive `account_id` column for multi-tenant audit
+        // isolation. Same idempotent ALTER pattern as `source` above
+        // so migrate() stays safe to call on every boot.
         let alter_account = sqlx::query("ALTER TABLE goal_turns ADD COLUMN account_id TEXT")
             .execute(pool)
             .await;
@@ -437,11 +433,10 @@ impl TurnLogStore for SqliteTurnLogStore {
     }
 }
 
-/// Phase 82.8 — convenience extension over the trait. v0
-/// production adapter implements directly via SQL; mocks stay
-/// simple by using `tail_since` + a filter step. Lives outside
-/// the trait so the legacy in-memory store doesn't have to
-/// implement it.
+/// Convenience extension over the trait. The production adapter
+/// implements directly via SQL; mocks stay simple by using
+/// `tail_since` + a filter step. Lives outside the trait so the
+/// legacy in-memory store doesn't have to implement it.
 impl SqliteTurnLogStore {
     /// Tenant-scoped tail. Returns rows whose `account_id`
     /// matches `account_id` (legacy `NULL` rows are excluded).
@@ -599,7 +594,7 @@ mod tests {
         assert_eq!(rows.len(), 10);
     }
 
-    // ---- Phase 80.9.h source marker ----
+    // ---- source marker ----
 
     #[tokio::test]
     async fn source_field_round_trips_through_sqlite() {
@@ -660,7 +655,7 @@ mod tests {
         assert_eq!(parse_channel_source(""), None);
     }
 
-    // ---- Phase 82.8 account_id multi-tenant filter ----
+    // ---- account_id multi-tenant filter ----
 
     fn record_for_tenant(
         goal: GoalId,

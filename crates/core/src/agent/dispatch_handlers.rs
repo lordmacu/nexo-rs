@@ -1,5 +1,5 @@
-//! Phase 67-PT-1 — `ToolHandler` adapters for the dispatch
-//! subsystem. Bridges the agent loop's `(AgentContext, Value) ->
+//! `ToolHandler` adapters for the dispatch subsystem. Bridges the
+//! agent loop's `(AgentContext, Value) ->
 //! Result<Value>` shape onto the typed
 //! `program_phase_dispatch` / `list_agents` / `agent_status` /
 //! `cancel_agent` / `pause_agent` / `resume_agent` /
@@ -55,13 +55,13 @@ pub struct DispatchToolContext {
     pub registry: Arc<AgentRegistry>,
     pub hooks: Arc<HookRegistry>,
     pub log_buffer: Arc<LogBuffer>,
-    /// Phase 71.3 — exposed so the shutdown drain in `src/main.rs`
+    /// Exposed so the shutdown drain in `src/main.rs`
     /// can fire `notify_origin` / `notify_channel` on every Running
     /// goal before the channel plugins go down. Same `Arc` the
     /// `EventForwarder` was wired with at boot. `None` in tests
     /// that don't exercise hook firing.
     pub hook_dispatcher: Option<Arc<dyn nexo_dispatch_tools::HookDispatcher>>,
-    /// Phase 72 — durable per-turn audit log. `None` keeps the
+    /// Durable per-turn audit log. `None` keeps the
     /// legacy in-memory-only behaviour; production boot wires
     /// `SqliteTurnLogStore` so `agent_turns_tail` can replay every
     /// turn after a restart.
@@ -71,9 +71,9 @@ pub struct DispatchToolContext {
     /// the rest stays config-driven.
     pub default_caps: CapSnapshot,
     pub require_trusted: bool,
-    /// PT-3 — telemetry sink consulted on every dispatch /
+    /// Telemetry sink consulted on every dispatch /
     /// hook outcome. Defaults to `NoopTelemetry`; production
-    /// boot wires `NatsDispatchTelemetry` (PT-7).
+    /// boot wires `NatsDispatchTelemetry`.
     pub telemetry: Arc<dyn nexo_dispatch_tools::DispatchTelemetry>,
     /// Self-modify gate. When `false`, dispatch tools that would
     /// target the daemon's own source workspace (i.e. the daemon
@@ -100,8 +100,8 @@ pub struct DispatchToolContext {
     /// DispatchAudit goals. `None` keeps hook chaining disabled
     /// (useful for read-only configurations).
     pub chainer: Option<Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>>,
-    /// Phase 90 audit fix (Cody A.3) — daemon's shared
-    /// `Arc<LlmRegistry>` so `PreflightHandler` reports
+    /// Daemon's shared `Arc<LlmRegistry>` so `PreflightHandler`
+    /// reports
     /// `llm_ready` accurately for any registered provider, not
     /// just the historical anthropic/minimax hardcode. `None`
     /// in tests where the registry isn't wired (preflight then
@@ -126,7 +126,7 @@ impl DispatchToolContext {
     }
 
     fn origin_for(&self, ctx: &AgentContext) -> Option<OriginChannel> {
-        // B3 — runtime intake stamps `inbound_origin` into the
+        // Runtime intake stamps `inbound_origin` into the
         // context after binding resolution; we lift it into an
         // OriginChannel so notify_origin knows where to send the
         // completion summary.
@@ -205,12 +205,12 @@ impl ToolHandler for ProgramPhaseHandler {
         )
         .await
         .map_err(|e| anyhow::anyhow!("program_phase: {e}"))?;
-        // PT-3 — telemetry on dispatch outcome.
+        // Telemetry on dispatch outcome.
         match &out {
             ProgramPhaseOutput::Dispatched { goal_id, phase_id } => {
                 // Auto-attach audit hook on admit.
                 if dispatch.audit_before_done {
-                    // B19 + S1 — idempotent attach + clean uuid id.
+                    // Idempotent attach + clean uuid id.
                     dispatch.hooks.add_unique(
                         *goal_id,
                         nexo_dispatch_tools::CompletionHook {
@@ -258,7 +258,7 @@ impl ToolHandler for ProgramPhaseHandler {
                     })
                     .await;
             }
-            // B13 — NotFound / NotTracked also emit so dashboards
+            // NotFound / NotTracked also emit so dashboards
             // see "operator asked for a phase that doesn't exist"
             // / "no PHASES.md in workspace" without grepping logs.
             ProgramPhaseOutput::NotFound { phase_id } => {
@@ -286,12 +286,9 @@ impl ToolHandler for ProgramPhaseHandler {
     }
 }
 
-/// Phase 90 audit fix (Cody A.2) — `program_phase_chain` was
-/// declared in `WRITE_TOOL_NAMES` and referenced by Cody's system
-/// prompt but never registered, so chain calls fell through as
-/// "unknown tool". The underlying function in
-/// `nexo-dispatch-tools::chain.rs::program_phase_chain` already
-/// existed; this handler bridges it to the agent runtime + binds
+/// Adapter for `program_phase_chain`. The underlying function in
+/// `nexo-dispatch-tools::chain.rs::program_phase_chain` does the
+/// work; this handler bridges it to the agent runtime + binds
 /// the synthesised `chain_hooks` to the freshly-dispatched goal
 /// (the comment at chain.rs:140-146 says the runtime is the right
 /// place for that binding because chains can outlive a single
@@ -344,10 +341,10 @@ impl ToolHandler for ProgramPhaseChainHandler {
     }
 }
 
-/// Phase 90 audit fix (Cody A.2) — `program_phase_parallel`
-/// counterpart. Same shape as the chain handler: the function in
-/// `nexo-dispatch-tools::chain.rs::program_phase_parallel` already
-/// existed; this is the missing registration.
+/// Adapter for `program_phase_parallel`. Same shape as the chain
+/// handler: the function in
+/// `nexo-dispatch-tools::chain.rs::program_phase_parallel` does
+/// the work; this registers it.
 pub struct ProgramPhaseParallelHandler;
 
 #[async_trait]
@@ -389,11 +386,9 @@ impl ToolHandler for ProgramPhaseParallelHandler {
     }
 }
 
-/// Phase 90 audit fix (Cody A.1) — `add_hook` was declared in
-/// `WRITE_TOOL_NAMES` and referenced by Cody's system prompt
-/// but never registered. Operator calls fell through as
-/// "unknown tool". Bridges directly to `HookRegistry::add_unique`
-/// (idempotent — duplicate ids are rejected with a clear
+/// `add_hook` handler. Bridges directly to
+/// `HookRegistry::add_unique` (idempotent — duplicate ids are
+/// rejected with a clear
 /// reason field) so a replay of the same attach is a no-op.
 pub struct AddHookHandler;
 
@@ -438,7 +433,7 @@ impl ToolHandler for AddHookHandler {
     }
 }
 
-/// Phase 90 audit fix (Cody A.1) — `remove_hook` counterpart.
+/// `remove_hook` counterpart.
 /// Returns `removed: false` when the (goal_id, hook_id) pair is
 /// not in the registry — operators can probe-then-remove
 /// without polluting logs with errors.
@@ -647,11 +642,11 @@ pub struct AuditChainer {
     pub hooks: Arc<nexo_dispatch_tools::HookRegistry>,
     pub log_buffer: Arc<nexo_agent_registry::LogBuffer>,
     pub default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot,
-    /// B22 — driver workspace root. The audit goal targets the
+    /// Driver workspace root. The audit goal targets the
     /// PARENT's worktree (`<workspace_root>/<parent_id>`) so
     /// Claude inside the audit sees the parent's commits.
     pub workspace_root: std::path::PathBuf,
-    /// B24 — separate cap for audit goals. None = unlimited.
+    /// Separate cap for audit goals. None = unlimited.
     pub audit_cap: Option<u32>,
 }
 
@@ -674,7 +669,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         use nexo_agent_registry::{AgentHandle, AgentRunStatus, AgentSnapshot};
         use nexo_driver_types::{AcceptanceCriterion, BudgetGuards, Goal};
 
-        // B24 — gate by audit_cap. Count running audit:* rows; if
+        // Gate by audit_cap. Count running audit:* rows; if
         // we're at the cap, refuse the dispatch with a clear
         // reason rather than queueing forever.
         if let Some(cap) = self.audit_cap {
@@ -698,7 +693,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             }
         }
 
-        // B22 — parent's diff_stat lives in the registry's
+        // Parent's diff_stat lives in the registry's
         // snapshot; lift it into the prompt so Claude in the
         // audit goal has concrete context even when a different
         // worktree path doesn't replay the changes.
@@ -728,7 +723,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             parent_diff = parent_diff,
         );
 
-        // B22 — point at the parent's worktree so Claude sees the
+        // Point at the parent's worktree so Claude sees the
         // commits. WorkspaceManager creates them deterministically
         // under <workspace_root>/<goal_id>; the goal's worktree
         // path is reachable by simple join.
@@ -779,7 +774,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             plan_mode: None,
             kind: nexo_agent_registry::SessionKind::Interactive,
         };
-        // B24 — admit with enqueue=false so audits don't queue
+        // Admit with enqueue=false so audits don't queue
         // behind main dispatch; if the audit_cap check above
         // passed, the registry's global cap shouldn't refuse
         // either, but we fail-fast here just in case.
@@ -790,7 +785,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         self.registry.set_max_turns(goal_id, goal.budget.max_turns);
 
         // Audit goals get a notify_origin hook so findings reach
-        // the operator. B19 + S1.
+        // the operator.
         self.hooks.add_unique(
             goal_id,
             nexo_dispatch_tools::CompletionHook {
@@ -836,11 +831,9 @@ impl ToolHandler for InterruptAgentHandler {
 // ─── Tracker read handlers ─────────────────────────────────
 
 /// `project_phases_list` — return phases parsed from PHASES.md,
-/// optionally filtered by status. Phase 67.E.x backlog item; the
-/// canonical name lives in `dispatch-tools::tool_names::READ_TOOL_NAMES`
-/// but the handler / register call had not been wired, so every
-/// invocation came back as "unknown tool". This is the minimal
-/// implementation needed to unblock chat-side queries like "qué
+/// optionally filtered by status. The canonical name lives in
+/// `dispatch-tools::tool_names::READ_TOOL_NAMES`; this is the
+/// handler that backs it for chat-side queries like "qué
 /// fases nos faltan" without forcing the LLM to fall back to file
 /// reads (which it does not have access to).
 pub struct ProjectPhasesListHandler;
@@ -1051,8 +1044,8 @@ impl ToolHandler for PreflightHandler {
                         d.daemon_source_root.display().to_string(),
                     )
                 });
-        // Phase 90 audit fix (Cody A.3) — consult the shared
-        // LlmRegistry instead of hardcoding anthropic/minimax.
+        // Consult the shared LlmRegistry instead of hardcoding
+        // anthropic/minimax.
         // Falls back to the legacy substring check when the
         // registry isn't wired (test contexts).
         let llm_ready = match ctx.dispatch.as_ref().and_then(|d| d.llm_registry.as_ref()) {
@@ -1168,7 +1161,7 @@ impl ToolHandler for InitProjectHandler {
             }));
         }
 
-        // Phase 76 — initialise a git repo at the project root when
+        // Initialise a git repo at the project root when
         // one isn't already present and the dir lives outside the
         // daemon's source repo. Without this, the orchestrator
         // falls back to cloning the *parent* repo (nexo-rs) into
@@ -1206,7 +1199,7 @@ impl ToolHandler for InitProjectHandler {
     }
 }
 
-/// Phase 76 — `git init` + initial commit on a fresh project so
+/// `git init` + initial commit on a fresh project so
 /// the per-goal worktree can branch from it instead of cloning the
 /// daemon's outer repo. Returns a short status string for the
 /// `init_project` response payload; `None` when the git CLI is
@@ -1342,11 +1335,9 @@ fn obj_schema(req: &[&str], props: Value) -> Value {
 /// what the binding-level filter uses to drop tools the binding's
 /// `DispatchPolicy` does not allow.
 pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
-    // Tracker reads — Phase 67.E backlog had named these in
-    // `dispatch-tools::tool_names::READ_TOOL_NAMES` without
-    // landing the handlers, so every chat call to
-    // `project_phases_list` / `project_status` /
-    // `followup_detail` came back as "unknown tool". Wire them
+    // Tracker reads — `project_phases_list` / `project_status` /
+    // `followup_detail` are named in
+    // `dispatch-tools::tool_names::READ_TOOL_NAMES`. Wire them
     // first so they're available even when WRITE tools get
     // stripped by per-binding capability filtering.
     registry.register(
@@ -1405,12 +1396,9 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
         ),
         ProgramPhaseHandler,
     );
-    // Phase 90 audit fix (Cody A.2) — `program_phase_chain` and
-    // `program_phase_parallel` declared in WRITE_TOOL_NAMES +
-    // referenced by Cody's system prompt but never registered.
-    // Functions live in `nexo-dispatch-tools::chain.rs`; the
-    // missing wire-up made every chain/parallel call return
-    // "unknown tool" at runtime.
+    // `program_phase_chain` and `program_phase_parallel` —
+    // functions live in `nexo-dispatch-tools::chain.rs`; these
+    // register the handlers for them.
     registry.register(
         def(
             "program_phase_chain",
@@ -1439,9 +1427,8 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
         ),
         ProgramPhaseParallelHandler,
     );
-    // Phase 90 audit fix (Cody A.1) — `add_hook` / `remove_hook`
-    // declared in WRITE_TOOL_NAMES but never registered. Bridges
-    // straight to HookRegistry::add_unique / remove (idempotent).
+    // `add_hook` / `remove_hook` — bridge straight to
+    // HookRegistry::add_unique / remove (idempotent).
     registry.register(
         def(
             "add_hook",

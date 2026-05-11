@@ -1,9 +1,8 @@
-//! Phase 76.1 — Streamable HTTP + SSE legacy transport for the
-//! MCP server.
+//! Streamable HTTP + SSE legacy transport for the MCP server.
 //!
-//! Reuses [`Dispatcher`] (76.2) verbatim; this module owns only
-//! framing, sessions, middleware, and adversarial defenses. Stdio
-//! path is unaffected.
+//! Reuses [`Dispatcher`] verbatim; this module owns only framing,
+//! sessions, middleware, and adversarial defenses. Stdio path is
+//! unaffected.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,15 +44,15 @@ pub struct HttpServerHandle {
     pub bind_addr: std::net::SocketAddr,
     pub shutdown: CancellationToken,
     pub join: JoinHandle<std::io::Result<()>>,
-    /// Phase 76.7 — handle to the running session manager so the
-    /// host can push notifications. `Arc` is cheap; `Clone` of
+    /// Handle to the running session manager so the host can push
+    /// notifications. `Arc` is cheap; `Clone` of
     /// the manager just bumps the inner refcount.
     pub(crate) sessions: Arc<HttpSessionManager>,
 }
 
 impl HttpServerHandle {
-    /// Phase 76.7 — broadcast `notifications/tools/list_changed`
-    /// to every active SSE consumer. Returns the number of
+    /// Broadcast `notifications/tools/list_changed` to every active
+    /// SSE consumer. Returns the number of
     /// sessions reached. Idempotent — clients debounce on their
     /// side via the existing 200 ms session-side window.
     pub fn notify_tools_list_changed(&self) -> usize {
@@ -64,7 +63,7 @@ impl HttpServerHandle {
         self.sessions.broadcast_to_all(body)
     }
 
-    /// Phase 76.7 — broadcast `notifications/resources/list_changed`.
+    /// Broadcast `notifications/resources/list_changed`.
     /// Symmetric to `notify_tools_list_changed`.
     pub fn notify_resources_list_changed(&self) -> usize {
         let body = serde_json::json!({
@@ -74,8 +73,8 @@ impl HttpServerHandle {
         self.sessions.broadcast_to_all(body)
     }
 
-    /// Phase 76.7 — push `notifications/resources/updated` to
-    /// every session that called `resources/subscribe { uri }`.
+    /// Push `notifications/resources/updated` to every session that
+    /// called `resources/subscribe { uri }`.
     /// `contents`, when supplied, is included in the body so the
     /// subscriber can refresh without a follow-up
     /// `resources/read`. Returns the number of sessions reached.
@@ -93,8 +92,8 @@ impl HttpServerHandle {
         self.sessions.notify_resource_updated(uri, body)
     }
 
-    /// Phase M1.b — produce a clone-able lightweight notifier that
-    /// can be moved into a tokio task (e.g. SIGHUP reload handler)
+    /// Produce a clone-able lightweight notifier that can be moved
+    /// into a tokio task (e.g. SIGHUP reload handler)
     /// without owning the `JoinHandle`. The notifier shares the
     /// session manager `Arc` with the running server, so a
     /// `notify_tools_list_changed()` call goes to every live SSE
@@ -106,8 +105,8 @@ impl HttpServerHandle {
     }
 }
 
-/// Phase M1.b — clone-able lightweight notifier. Detached from the
-/// `JoinHandle`, safe to move into long-lived background tasks.
+/// Clone-able lightweight notifier. Detached from the `JoinHandle`,
+/// safe to move into long-lived background tasks.
 #[derive(Clone)]
 pub struct HttpNotifyHandle {
     sessions: Arc<HttpSessionManager>,
@@ -135,8 +134,8 @@ pub(crate) struct AppState<H: McpServerHandler + 'static> {
     pub(crate) shutdown: CancellationToken,
     pub(crate) ready: Arc<AtomicBool>,
     pub(crate) rate_limiter: Arc<PerIpRateLimiter>,
-    /// Phase 76.3 — pluggable authenticator. Constructed once at
-    /// boot from `cfg.auth` (or the legacy `cfg.auth_token`).
+    /// Pluggable authenticator. Constructed once at boot from
+    /// `cfg.auth` (or the legacy `cfg.auth_token`).
     pub(crate) authenticator: Arc<dyn McpAuthenticator>,
 }
 
@@ -173,8 +172,8 @@ where
     cfg.validate()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
-    // Phase 76.3 — resolve `auth` config (with backward-compat
-    // promotion of the legacy `auth_token`).
+    // Resolve `auth` config (with backward-compat promotion of the
+    // legacy `auth_token`).
     let auth_cfg = resolve_auth_config(&cfg)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let authenticator = auth_cfg
@@ -187,13 +186,13 @@ where
     );
 
     // Stdio-side dispatcher still consumes the legacy auth_token
-    // string for parity (tests + Phase 12.6 contract). HTTP path
-    // uses `authenticator` exclusively; the dispatcher's own token
-    // gate is only reachable from stdio frames anyway.
+    // string for parity with the stdio contract. HTTP path uses
+    // `authenticator` exclusively; the dispatcher's own token gate
+    // is only reachable from stdio frames anyway.
     //
-    // Phase 76.5 — when `per_principal_rate_limit` is configured,
-    // build the limiter. Phase 76.6 — same for the concurrency cap.
-    // Both spawn background sweepers, so we must be inside a tokio
+    // When `per_principal_rate_limit` is configured, build the
+    // limiter. Same for the concurrency cap. Both spawn background
+    // sweepers, so we must be inside a tokio
     // runtime (we are — `start_http_server` is async).
     let rate_limiter_opt = if let Some(rl_cfg) = cfg.per_principal_rate_limit.clone() {
         let lim = super::per_principal_rate_limit::PerPrincipalRateLimiter::new(rl_cfg)
@@ -219,8 +218,8 @@ where
     } else {
         None
     };
-    // Phase 76.8 — when a session-event-store block is configured
-    // AND `enabled: true`, open the SQLite store and feed it into
+    // When a session-event-store block is configured AND
+    // `enabled: true`, open the SQLite store and feed it into
     // the session manager so every emit() is durable + every
     // reconnect with `Last-Event-ID` can replay the gap.
     let session_event_store_opt: Option<Arc<dyn super::event_store::SessionEventStore>> =
@@ -261,18 +260,18 @@ where
 
     // Build the session manager BEFORE the dispatcher so the
     // dispatcher can hold an `Arc<dyn SessionLookup>` pointing
-    // at it (Phase 76.7 `resources/subscribe`).
+    // at it (for `resources/subscribe`).
     let sessions = HttpSessionManager::with_event_store(
         &cfg,
         shutdown.clone(),
         session_event_store_opt.clone(),
     );
-    // Phase 76.7 — keep an `Arc` for the `HttpServerHandle` so
-    // operators can call `notify_*` after `start_http_server`
-    // returns. `AppState` clones it again for in-flight handlers.
+    // Keep an `Arc` for the `HttpServerHandle` so operators can
+    // call `notify_*` after `start_http_server` returns. `AppState`
+    // clones it again for in-flight handlers.
     let handle_sessions = Arc::clone(&sessions);
     let _janitor = sessions.spawn_janitor();
-    // Phase 76.8 — periodic purge worker. Drops events older than
+    // Periodic purge worker. Drops events older than
     // `session_max_lifetime_secs` so the SQLite file does not grow
     // without bound. Stops on parent shutdown.
     if session_event_store_opt.is_some() {
@@ -297,8 +296,8 @@ where
     let session_lookup: Arc<dyn super::http_session::SessionLookup> =
         Arc::clone(&sessions) as Arc<dyn super::http_session::SessionLookup>;
 
-    // Phase 76.11 — when an audit-log block is configured AND
-    // `enabled: true`, open the SQLite store and spawn the writer
+    // When an audit-log block is configured AND `enabled: true`,
+    // open the SQLite store and spawn the writer
     // worker. The worker drains on `audit_writer.drain(...)` from
     // the graceful-shutdown closure further down.
     let audit_writer_opt = if let Some(audit_cfg) = cfg.audit_log.clone() {
@@ -380,9 +379,9 @@ where
             // Give SSE consumers a brief beat to drain the
             // shutdown event before axum tears the listener down.
             tokio::time::sleep(Duration::from_millis(100)).await;
-            // Phase 76.11 — flush pending audit rows synchronously
-            // before the process exits. 5 s ceiling per Phase 71
-            // shutdown-drain budget.
+            // Flush pending audit rows synchronously before the
+            // process exits. 5 s ceiling matching the shutdown-drain
+            // budget.
             if let Some(w) = audit_for_drain {
                 w.drain(Duration::from_secs(5)).await;
             }
@@ -485,9 +484,8 @@ where
 
 /// Per-IP token bucket. Plain DashMap + atomic refill.
 /// `governor` would be a heavier alternative; this implementation
-/// is auditable and does the same job for the per-IP scope
-/// (76.5 will introduce the per-tenant / per-tool layer with a
-/// richer crate).
+/// is auditable and does the same job for the per-IP scope. The
+/// per-tenant / per-tool layer lives in `per_principal_rate_limit`.
 pub(crate) struct PerIpRateLimiter {
     buckets: dashmap::DashMap<std::net::IpAddr, IpBucket>,
     rps: u32,
@@ -701,16 +699,16 @@ async fn post_mcp<H: McpServerHandler + 'static>(
     };
     state.sessions.touch(&session.id);
 
-    // Phase 76.7 — extract `params._meta.progressToken` for the
-    // dispatcher's progress reporter. Spec is strict: only the
+    // Extract `params._meta.progressToken` for the dispatcher's
+    // progress reporter. Spec is strict: only the
     // canonical MCP 2025-11-25 path is honoured.
     let progress_token = params
         .get("_meta")
         .and_then(|m| m.get("progressToken"))
         .cloned();
 
-    // Phase 76.10 — extract `X-Request-ID` (or generate UUIDv4)
-    // for request correlation. Cap at 128 chars; longer
+    // Extract `X-Request-ID` (or generate UUIDv4) for request
+    // correlation. Cap at 128 chars; longer
     // client-supplied values are replaced (don't trust unbounded
     // headers).
     let correlation_id = headers
@@ -869,15 +867,15 @@ async fn legacy_post_messages<H: McpServerHandler + 'static>(
         .to_string();
     let params = obj.get("params").cloned().unwrap_or(Value::Null);
     let id = obj.get("id").cloned();
-    // Phase 76.7 — same progress-token extraction as the
-    // primary `post_mcp` handler.
+    // Same progress-token extraction as the primary `post_mcp`
+    // handler.
     let progress_token = params
         .get("_meta")
         .and_then(|m| m.get("progressToken"))
         .cloned();
 
-    // Phase 76.10 — extract `X-Request-ID` (or generate UUIDv4)
-    // for request correlation. Cap at 128 chars; longer
+    // Extract `X-Request-ID` (or generate UUIDv4) for request
+    // correlation. Cap at 128 chars; longer
     // client-supplied values are replaced (don't trust unbounded
     // headers).
     let correlation_id = headers
@@ -998,10 +996,9 @@ async fn get_mcp<H: McpServerHandler + 'static>(
     };
     let session = match state.sessions.get(&id_str) {
         Some(s) => s,
-        // Phase 76.8 — match the leak's wire contract:
-        // `claude-code-leak/src/services/mcp/client.ts:189-206`
-        // — clients treat 404 + `-32001 "Session not found"` as a
-        // permanent failure and re-`initialize`.
+        // Match the client wire contract: clients treat 404 +
+        // `-32001 "Session not found"` as a permanent failure and
+        // re-`initialize`.
         None => {
             let body = serde_json::json!({
                 "jsonrpc": "2.0",
@@ -1017,8 +1014,8 @@ async fn get_mcp<H: McpServerHandler + 'static>(
     };
     state.sessions.touch(&session.id);
 
-    // Phase 76.8 — `Last-Event-ID: <u64>` triggers replay from the
-    // durable store. Header absent → no replay (live stream only).
+    // `Last-Event-ID: <u64>` triggers replay from the durable
+    // store. Header absent → no replay (live stream only).
     // Header present but malformed → treat as 0 (replay everything).
     let last_event_id: Option<u64> = headers
         .get(axum::http::header::HeaderName::from_static("last-event-id"))
@@ -1028,7 +1025,7 @@ async fn get_mcp<H: McpServerHandler + 'static>(
     sse_stream_for_session_with_resume(&state, session, last_event_id).into_response()
 }
 
-/// Phase 76.8 — SSE stream with `Last-Event-ID` replay. When
+/// SSE stream with `Last-Event-ID` replay. When
 /// `last_event_id > 0`, the stream first drains
 /// `manager.replay(session_id, last_event_id)` (capped at
 /// `max_replay_batch`) yielding one SSE frame per persisted row,
@@ -1252,7 +1249,7 @@ impl Drop for SseActiveGuard {
 #[allow(dead_code)]
 fn _atomic_usize_anchor(_: AtomicUsize) {}
 
-/// Phase 76.3 — bearer / JWT / mTLS auth enforcement. Delegates to
+/// Bearer / JWT / mTLS auth enforcement. Delegates to
 /// the configured `McpAuthenticator` and returns the resolved
 /// `Principal` so the caller can attach it to `DispatchContext`.
 async fn enforce_auth<H: McpServerHandler + 'static>(
@@ -1384,7 +1381,7 @@ fn jsonrpc_internal_error_response(id: Option<Value>) -> Response {
         .into_response()
 }
 
-#[allow(dead_code)] // currently only used by tests; SSE handlers in step 7 will use it.
+#[allow(dead_code)] // currently only used by tests; SSE handlers will use it.
 fn _session_holder(_s: &Arc<HttpSession>) {}
 
 async fn readyz<H: McpServerHandler + 'static>(

@@ -1,4 +1,4 @@
-//! Phase 80.9.d.b — persistent `SessionRegistry`.
+//! Persistent `SessionRegistry`.
 //!
 //! [`crate::channel_bridge::InMemorySessionRegistry`] is fine for
 //! single-shot tests but loses every threading mapping when the
@@ -61,7 +61,7 @@ pub struct SqliteSessionRegistry {
 impl SqliteSessionRegistry {
     /// Open a SQLite-backed registry at `path`. `:memory:` is
     /// supported for tests. The file is created with WAL +
-    /// `synchronous=NORMAL` — same trade-off Phase 71 / Phase 72
+    /// `synchronous=NORMAL` — same trade-off the other SQLite
     /// stores ship.
     pub async fn open(path: &str) -> Result<Self, SessionStoreError> {
         let opts = SqliteConnectOptions::from_str(&format!("sqlite:{path}"))

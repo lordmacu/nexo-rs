@@ -1,5 +1,4 @@
-//! Phase 76.2 — transport-agnostic JSON-RPC dispatcher for the MCP
-//! server.
+//! Transport-agnostic JSON-RPC dispatcher for the MCP server.
 //!
 //! Owns the protocol logic; transports own framing. Built once per
 //! server, cloned cheaply per request via internal `Arc`. Two
@@ -33,7 +32,7 @@ use crate::server::McpServerHandler;
 use crate::McpTool;
 
 /// Shared, cheaply-clonable JSON-RPC dispatcher. Clones share state
-/// via `Arc` so multiple in-flight requests (HTTP, 76.1) can use the
+/// via `Arc` so multiple in-flight HTTP requests can use the
 /// same handler concurrently without re-instantiating it. The
 /// `Clone` impl is hand-written so it does NOT impose `H: Clone` —
 /// Walk the tool's `input_schema` to find the `enum` values for
@@ -79,21 +78,20 @@ impl<H: McpServerHandler + 'static> Clone for Dispatcher<H> {
 struct DispatcherInner<H: McpServerHandler> {
     handler: H,
     auth_token: Option<String>,
-    /// Phase 76.5 — per-(tenant, tool) rate limiter. `None`
-    /// disables enforcement (no overhead in the hot path).
+    /// Per-(tenant, tool) rate limiter. `None` disables enforcement
+    /// (no overhead in the hot path).
     rate_limiter: Option<Arc<crate::server::per_principal_rate_limit::PerPrincipalRateLimiter>>,
-    /// Phase 76.6 — per-(tenant, tool) concurrency cap +
-    /// per-call timeout. `None` disables enforcement.
+    /// Per-(tenant, tool) concurrency cap + per-call timeout. `None`
+    /// disables enforcement.
     concurrency_cap:
         Option<Arc<crate::server::per_principal_concurrency::PerPrincipalConcurrencyCap>>,
-    /// Phase 76.7 — abstract session lookup so `resources/subscribe`
-    /// can persist subscriptions in the HTTP session manager. Stdio
-    /// passes `None` and the corresponding methods reply
-    /// `Reply({})` without state.
+    /// Abstract session lookup so `resources/subscribe` can persist
+    /// subscriptions in the HTTP session manager. Stdio passes
+    /// `None` and the corresponding methods reply `Reply({})`
+    /// without state.
     session_lookup: Option<Arc<dyn crate::server::http_session::SessionLookup>>,
-    /// Phase 76.11 — per-call audit log writer. `None` disables
-    /// audit; otherwise the dispatcher emits one `AuditRow` per
-    /// dispatched method.
+    /// Per-call audit log writer. `None` disables audit; otherwise
+    /// the dispatcher emits one `AuditRow` per dispatched method.
     audit_writer: Option<Arc<crate::server::audit_log::AuditWriter>>,
 }
 
@@ -102,8 +100,8 @@ struct DispatcherInner<H: McpServerHandler> {
 #[derive(Debug, Clone)]
 pub struct DispatchContext {
     /// Logical session this request belongs to. `None` for stdio
-    /// (single implicit session). HTTP (76.1) populates this with
-    /// the `Mcp-Session-Id` header.
+    /// (single implicit session). The HTTP transport populates this
+    /// with the `Mcp-Session-Id` header.
     pub session_id: Option<String>,
     /// JSON-RPC `id` of the request, if any. Used only for tracing
     /// / structured logging — the transport handles wire wrapping.
@@ -113,27 +111,26 @@ pub struct DispatchContext {
     /// session-level cancel, which is in turn a child of the
     /// process-level shutdown token.
     pub cancel: CancellationToken,
-    /// Phase 76.3 — caller identity. `None` only in
-    /// `DispatchContext::empty()` test helpers. HTTP populates from
-    /// `McpAuthenticator`; stdio populates `Principal::stdio_local()`.
-    /// The dispatcher itself does NOT consume this in 76.3 — it is
-    /// prepared for 76.4 multi-tenant isolation.
+    /// Caller identity. `None` only in `DispatchContext::empty()`
+    /// test helpers. HTTP populates from `McpAuthenticator`; stdio
+    /// populates `Principal::stdio_local()`. Consumed by the
+    /// multi-tenant isolation layer.
     pub principal: Option<crate::server::auth::Principal>,
-    /// Phase 76.7 — `params._meta.progressToken` echoed from the
+    /// `params._meta.progressToken` echoed from the
     /// originating `tools/call` request. When present (and the
     /// transport supplied a `session_sink`), the dispatcher hands
     /// the tool a live `ProgressReporter`; otherwise the reporter
     /// is a noop.
     pub progress_token: Option<serde_json::Value>,
-    /// Phase 76.7 — broadcast sink to the originating session for
+    /// Broadcast sink to the originating session for
     /// server→client notifications (`notifications/progress`,
     /// future `progress`-style events). HTTP populates this from
     /// the session's `notif_tx`; stdio passes `None` (single
     /// implicit session — stdio progress emission is deferred).
     pub session_sink:
         Option<tokio::sync::broadcast::Sender<crate::server::http_session::SessionEvent>>,
-    /// Phase 76.10 — request correlation id. HTTP transport
-    /// extracts from the `X-Request-ID` header (or generates
+    /// Request correlation id. HTTP transport extracts from the
+    /// `X-Request-ID` header (or generates
     /// UUIDv4 when absent) and echoes back in the response
     /// header. Logged on every dispatch span. Capped at 128
     /// chars; longer client-supplied values get replaced with a
@@ -144,9 +141,9 @@ pub struct DispatchContext {
 impl DispatchContext {
     /// Stand-alone context with a fresh, never-cancelled token and
     /// a stdio-local principal. Useful for unit tests and one-shot
-    /// dispatches that have no surrounding session. Phase 76.4
-    /// flipped the principal default from `None` to
-    /// `Some(stdio_local)` so [`tenant`] is always callable.
+    /// dispatches that have no surrounding session. The principal
+    /// defaults to `Some(stdio_local)` so [`tenant`] is always
+    /// callable.
     pub fn empty() -> Self {
         Self {
             session_id: None,
@@ -159,8 +156,8 @@ impl DispatchContext {
         }
     }
 
-    /// Phase 76.4 — borrow the caller's tenant. Panics if
-    /// `principal` is `None`, which is a programming bug at the
+    /// Borrow the caller's tenant. Panics if `principal` is `None`,
+    /// which is a programming bug at the
     /// transport site (every transport in the tree populates the
     /// principal). Tests must use [`empty`] (which populates a
     /// stdio-local principal) or build a `DispatchContext` literal
@@ -169,10 +166,7 @@ impl DispatchContext {
         &self
             .principal
             .as_ref()
-            .expect(
-                "DispatchContext.principal is None — transport must populate \
-                 it (Phase 76.4 contract)",
-            )
+            .expect("DispatchContext.principal is None — transport must populate it")
             .tenant
     }
 }
@@ -189,9 +183,8 @@ pub enum DispatchOutcome {
     /// Protocol or handler error; transport wraps as
     /// `{"jsonrpc","error":{"code","message","data"?},"id"}`.
     /// The `data` field is optional structured detail attached to
-    /// the error — Phase 76.5 uses it for `retry_after_ms` on
-    /// rate-limit rejections; future phases (76.7 progress,
-    /// 76.11 audit) may grow other shapes.
+    /// the error — used for `retry_after_ms` on rate-limit
+    /// rejections; other callers may grow other shapes.
     Error {
         code: i32,
         message: String,
@@ -227,8 +220,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
         }
     }
 
-    /// Phase 76.5 — build a dispatcher with a per-principal
-    /// rate-limiter attached. The limiter applies only to
+    /// Build a dispatcher with a per-principal rate-limiter
+    /// attached. The limiter applies only to
     /// `tools/call`; `initialize`, `tools/list`, `shutdown`, etc.
     /// bypass. Stdio principals bypass too.
     pub fn with_rate_limiter(
@@ -248,10 +241,10 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
         }
     }
 
-    /// Phase 76.6 — build a dispatcher with both layers attached.
-    /// Either or both may be `None`. Order at runtime: rate-limit
-    /// gate (76.5) → concurrency cap acquire (76.6) → handler call
-    /// wrapped in `tokio::time::timeout`. Permits are RAII-released
+    /// Build a dispatcher with both layers attached. Either or both
+    /// may be `None`. Order at runtime: rate-limit gate →
+    /// concurrency cap acquire → handler call wrapped in
+    /// `tokio::time::timeout`. Permits are RAII-released
     /// on success, error, timeout, OR cancellation.
     pub fn with_rate_and_concurrency(
         handler: H,
@@ -273,7 +266,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
         }
     }
 
-    /// Phase 76.7 — full constructor with session-lookup hook so
+    /// Full constructor with session-lookup hook so
     /// `resources/subscribe` can persist per-session state.
     pub fn with_rate_concurrency_and_sessions(
         handler: H,
@@ -296,11 +289,9 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
         }
     }
 
-    /// Phase 76.11 — full constructor with the audit writer.
-    /// Mirrors `with_rate_concurrency_and_sessions` and adds the
-    /// last-mile durable trail. Each subsequent phase may add a
-    /// new constructor; older ones stay compatible by setting the
-    /// new field to `None`.
+    /// Full constructor with the audit writer. Mirrors
+    /// `with_rate_concurrency_and_sessions` and adds the last-mile
+    /// durable trail.
     pub fn with_full_stack(
         handler: H,
         auth_token: Option<String>,
@@ -324,8 +315,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
     }
 
     /// Configured initialize-time auth token, if any. Transports
-    /// may use this for header-level pre-auth (HTTP, 76.1) before
-    /// the dispatcher sees the request.
+    /// may use this for header-level pre-auth (e.g. the HTTP
+    /// transport) before the dispatcher sees the request.
     pub fn auth_token(&self) -> Option<&str> {
         self.inner.auth_token.as_deref()
     }
@@ -381,8 +372,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     .and_then(|c| c.get("version"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("<unknown>");
-                // Phase 73 — echo the client's requested protocol
-                // version when supported. Claude Code 2.1+ sends
+                // Echo the client's requested protocol version when
+                // supported. Claude Code 2.1+ sends
                 // `2025-11-25`; replying with our hardcoded
                 // `2024-11-05` made Claude treat the server as
                 // protocol-mismatched and drop every announced
@@ -433,8 +424,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
             "tools/list" => {
                 guarded(handler.list_tools(), "tools/list", |tools| {
                     tracing::debug!(count = tools.len(), "mcp tools/list");
-                    // Phase 73 — omit `nextCursor` when there is no
-                    // next page. Returning `nextCursor: null` made
+                    // Omit `nextCursor` when there is no next page.
+                    // Returning `nextCursor: null` made
                     // Claude Code 2.1's schema validator refuse the
                     // tool list, surfacing as
                     // "Available MCP tools: none" while the
@@ -461,7 +452,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     .unwrap_or(false);
                 let tenant_opt = ctx.principal.as_ref().map(|p| &p.tenant);
 
-                // Phase 76.10 — RAII gauge guard. Increments
+                // RAII gauge guard. Increments
                 // `mcp_in_flight{tenant,tool}` now; the Drop on
                 // every exit path (success / error / timeout /
                 // cancel / panic) decrements it.
@@ -479,7 +470,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 let started_total = std::time::Instant::now();
                 let metrics_tool = name.to_string();
 
-                // Phase 76.5 — per-(tenant, tool) rate-limit gate.
+                // Per-(tenant, tool) rate-limit gate.
                 // Stdio principals bypass (single-tenant by
                 // construction). When the limiter is `None` (not
                 // configured) this branch compiles to a single
@@ -509,8 +500,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     }
                 }
 
-                // Phase 76.6 — per-(tenant, tool) concurrency cap +
-                // per-call timeout. Stdio bypasses (single-tenant);
+                // Per-(tenant, tool) concurrency cap + per-call
+                // timeout. Stdio bypasses (single-tenant);
                 // when `concurrency_cap` is None we just default to
                 // a 30 s timeout from `MAX_REQUEST_TIMEOUT_SECS`-ish
                 // semantics — but we still apply the timeout so a
@@ -559,8 +550,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     None
                 };
 
-                // Phase 76.7 — build the progress reporter from
-                // the request's `params._meta.progressToken` and
+                // Build the progress reporter from the request's
+                // `params._meta.progressToken` and
                 // the session's broadcast sink. When either is
                 // absent the reporter is a noop (cheap: no
                 // allocation in the hot path).
@@ -576,7 +567,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 let started = std::time::Instant::now();
                 let name_owned = name.to_string();
                 let dispatch_ctx = ctx.clone();
-                // M2 — clone before move so the audit-row build below
+                // Clone before move so the audit-row build below
                 // can read `args` for `compute_args_metrics`. Cheap on
                 // small payloads; capped at `args_hash_max_bytes`.
                 let args_for_audit = args.clone();
@@ -624,7 +615,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     handler_fut.await
                 };
 
-                // Phase 76.10 — observe outcome + duration. The
+                // Observe outcome + duration. The
                 // InFlightGuard drops at scope end (decrements
                 // gauge regardless of branch).
                 let outcome_label = match &outcome {
@@ -652,8 +643,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     started_total.elapsed(),
                 );
 
-                // Phase 76.11 — emit one audit row per
-                // tools/call dispatch. Non-blocking try_send;
+                // Emit one audit row per tools/call dispatch.
+                // Non-blocking try_send;
                 // drops counted internally.
                 if let Some(writer) = self.inner.audit_writer.as_ref() {
                     let now_ms = std::time::SystemTime::now()
@@ -697,7 +688,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                         ),
                         _ => (None, None, None),
                     };
-                    // M2 — sha256 truncated to 16 hex chars + JSON-serialized
+                    // sha256 truncated to 16 hex chars + JSON-serialized
                     // size, gated by `AuditLogConfig` knobs (redact_args,
                     // per_tool_redact_args, args_hash_max_bytes). See
                     // `crate::server::audit_log::hash` for decision tree.
@@ -767,8 +758,8 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 .await
             }
             "resources/subscribe" => {
-                // Phase 76.7 — record this session's interest in
-                // a URI. When `session_lookup` is None (stdio), we
+                // Record this session's interest in a URI. When
+                // `session_lookup` is None (stdio), we
                 // accept the request silently — there's no
                 // session manager to mutate.
                 let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
@@ -902,10 +893,10 @@ where
 }
 
 /// Map a non-handler `McpError` to a JSON-RPC error outcome. Kept
-/// as a free fn for re-use by future transports that surface their
-/// own handler errors outside the `Dispatcher` (e.g. HTTP body
-/// parsing in 76.1).
-#[allow(dead_code)] // reserved for 76.1 HTTP transport surface
+/// as a free fn for re-use by transports that surface their own
+/// handler errors outside the `Dispatcher` (e.g. HTTP body
+/// parsing).
+#[allow(dead_code)] // reserved for the HTTP transport surface
 pub(super) fn map_handler_error(err: McpError) -> DispatchOutcome {
     match err {
         McpError::Protocol(message) => DispatchOutcome::Error {
@@ -923,7 +914,7 @@ pub(super) fn map_handler_error(err: McpError) -> DispatchOutcome {
 
 /// Pull the auth token out of an `initialize` params object.
 /// Accepts both `params.auth_token` and `params._meta.auth_token`
-/// for backward-compat with Phase 12.6 wire format.
+/// for backward-compat with the older wire format.
 pub(super) fn extract_auth_token(params: &Value) -> Option<&str> {
     params
         .get("auth_token")
@@ -942,9 +933,9 @@ pub(super) fn extract_auth_token(params: &Value) -> Option<&str> {
 ///
 /// **Caveat:** the length check itself is data-dependent — an
 /// attacker can probe operator-configured token length by varying
-/// input length. Acceptable for Phase 76.2 because (a) the operator
-/// chooses a fixed-length token and never rotates the length and
-/// (b) Phase 76.3 will replace this with the `subtle` crate's
+/// input length. Acceptable here because (a) the operator chooses a
+/// fixed-length token and never rotates the length and (b) the
+/// authenticator trait path uses the `subtle` crate's
 /// `ConstantTimeEq` over a fixed-size bearer token.
 pub(crate) fn consteq(a: &str, b: &str) -> bool {
     let ab = a.as_bytes();

@@ -1,4 +1,4 @@
-//! Phase 67.A — project tracker. Parses `PHASES.md` and `FOLLOWUPS.md`
+//! Project tracker. Parses `PHASES.md` and `FOLLOWUPS.md`
 //! out of the workspace root so the agent can answer "qué fase va el
 //! desarrollo?" via Telegram/WhatsApp tools without humans having to
 //! grep the repo.

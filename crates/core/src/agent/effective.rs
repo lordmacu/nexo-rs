@@ -66,7 +66,7 @@ pub struct EffectiveBindingPolicy {
     /// keyword and an absent agent-level limit resolve to `None`.
     pub sender_rate_limit: Option<SenderRateLimitConfig>,
     pub allowed_delegates: Vec<String>,
-    /// Phase 79.8 — resolved `RemoteTrigger` destination allowlist.
+    /// Resolved `RemoteTrigger` destination allowlist.
     /// `InboundBinding::remote_triggers` replaces the agent-level list when
     /// present; otherwise the agent-level `remote_triggers` is inherited.
     pub remote_triggers: Vec<nexo_config::types::remote_triggers::RemoteTriggerEntry>,
@@ -76,62 +76,60 @@ pub struct EffectiveBindingPolicy {
     /// to reply in that language while keeping workspace docs
     /// (English) as-is.
     pub language: Option<String>,
-    /// Phase 21 — resolved link-understanding config (per-binding
+    /// Resolved link-understanding config (per-binding
     /// override over agent-level default). Disabled by default;
     /// operators opt in per agent or per channel.
     pub link_understanding: crate::link_understanding::LinkUnderstandingConfig,
-    /// Phase 25 — resolved web-search policy. Disabled by default.
+    /// Resolved web-search policy. Disabled by default.
     /// `provider == "auto"` (or empty) lets the router pick by
     /// available credentials.
     pub web_search: WebSearchPolicy,
-    /// Phase 26 — pairing policy. Default `auto_challenge=false`,
+    /// Pairing policy. Default `auto_challenge=false`,
     /// i.e. the inbound gate is a no-op. Per-binding config can flip
     /// this on for user-facing surfaces (whatsapp / telegram).
     pub pairing: nexo_pairing::PairingPolicy,
-    /// Phase 67.D.1 — resolved project-tracker dispatch policy.
+    /// Resolved project-tracker dispatch policy.
     /// `mode == None` (default) keeps `program_phase` and friends
     /// unregistered for this binding; `read_only` exposes the
     /// query tools; `full` exposes the dispatch surface. The
-    /// `DispatchGate` (67.D.2) consumes this together with the
-    /// pairing trust signal before admitting a `program_phase`
-    /// call.
+    /// `DispatchGate` consumes this together with the pairing trust
+    /// signal before admitting a `program_phase` call.
     pub dispatch_policy: DispatchPolicy,
-    /// Phase 77.20 — resolved proactive tick-loop config for this binding.
+    /// Resolved proactive tick-loop config for this binding.
     pub proactive: ProactiveConfig,
     /// Optional binding role tag (`coordinator`, `worker`, `proactive`).
     pub role: Option<String>,
-    /// Phase 79.5 — resolved LSP policy. Per-binding override replaces
+    /// Resolved LSP policy. Per-binding override replaces
     /// the agent-level `lsp` block; binding `None` inherits.
     pub lsp: nexo_config::types::lsp::LspPolicy,
-    /// Phase 79.6 — resolved team policy. Per-binding override replaces
+    /// Resolved team policy. Per-binding override replaces
     /// the agent-level `team` block.
     pub team: nexo_config::types::team::TeamPolicy,
-    /// Phase 79.10 — resolved config-tool policy (gates self-edit,
+    /// Resolved config-tool policy (gates self-edit,
     /// allowed_paths, approval_timeout). Per-binding override replaces
     /// the agent-level `config_tool` block.
     pub config_tool: nexo_config::types::config_tool::ConfigToolPolicy,
-    /// Phase 79.12 — resolved REPL config. Per-binding override replaces
-    /// the agent-level `repl` block. Closes a latent bug: the override
-    /// was already declared on `InboundBinding::repl` but never consumed
-    /// by the resolver before C1.
+    /// Resolved REPL config. Per-binding override replaces
+    /// the agent-level `repl` block. The override is declared on
+    /// `InboundBinding::repl` and consumed by the resolver here.
     pub repl: nexo_config::types::repl::ReplConfig,
-    /// Phase 80.17 — resolved auto-approve dial. `false` (default)
+    /// Resolved auto-approve dial. `false` (default)
     /// keeps the existing interactive-approval behaviour; `true`
     /// enables auto-allow for the curated tool subset (read-only +
     /// scoped writes + notifications + multi-agent coordination).
     /// Destructive bash, writes outside `workspace_path`, ConfigTool,
     /// REPL, remote_trigger, schedule_cron and unknown tools always
     /// fall through to the interactive prompt regardless of this
-    /// flag. Composes with Phase 16 binding policy: the flag never
+    /// flag. Composes with the binding policy: the flag never
     /// adds tools to the binding's surface, only skips approval for
     /// tools already on the surface AND in the curated subset.
     pub auto_approve: bool,
-    /// Phase 80.17 — canonical workspace path used by the auto-approve
+    /// Canonical workspace path used by the auto-approve
     /// dial to scope FileEdit / FileWrite. `None` disables the
     /// workspace-bounded auto-allow path (those tools always ask).
     /// Set at boot from `agent.workspace`.
     pub workspace_path: Option<std::path::PathBuf>,
-    /// Phase 82.1 Step 2 — channel name copied from
+    /// Channel name copied from
     /// `InboundBinding.plugin` (`"whatsapp"` / `"telegram"` /
     /// `"email"` / `"web"` / …) when the runtime resolved the
     /// inbound to a concrete binding. `None` for synthesised
@@ -139,13 +137,13 @@ pub struct EffectiveBindingPolicy {
     /// the `BindingContext` propagated to tool calls so
     /// extensions and MCP servers can route per-channel.
     pub channel: Option<String>,
-    /// Phase 82.1 Step 2 — account / instance discriminator
-    /// copied from `InboundBinding.instance`. `None` when the
-    /// binding declared no instance (single-account default)
-    /// or for synthesised policies.
+    /// Account / instance discriminator copied from
+    /// `InboundBinding.instance`. `None` when the binding declared
+    /// no instance (single-account default) or for synthesised
+    /// policies.
     pub account_id: Option<String>,
-    /// Phase 82.7 — resolved per-binding tool rate-limit
-    /// overrides. `None` (default) inherits the global
+    /// Resolved per-binding tool rate-limit overrides. `None`
+    /// (default) inherits the global
     /// `AgentConfig.tool_rate_limits` (or unlimited if neither
     /// is set). `Some(map)` FULLY REPLACES the global decision
     /// for this binding — no fall-through to global patterns.
@@ -156,7 +154,7 @@ pub struct EffectiveBindingPolicy {
 }
 
 impl EffectiveBindingPolicy {
-    /// Phase 82.1 Step 2 — render the stable
+    /// Render the stable
     /// `<channel>:<account_id|"default">` binding identifier.
     /// Returns `None` when the policy has no channel match
     /// (synthesised — delegation / heartbeat / tests).
@@ -193,7 +191,7 @@ pub struct WebSearchPolicy {
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_secs: u64,
     /// Default value of the `expand` arg. When `true`, the router
-    /// fills `body` on the top hits via the Phase 21 LinkExtractor
+    /// fills `body` on the top hits via the LinkExtractor
     /// (no-op when link understanding is off).
     #[serde(default)]
     pub expand_default: bool,
@@ -252,7 +250,7 @@ impl EffectiveBindingPolicy {
             team: resolve_team(agent, binding),
             config_tool: resolve_config_tool(agent, binding),
             repl: resolve_repl(agent, binding),
-            // Phase 80.17 — auto_approve resolves binding override > agent default.
+            // auto_approve resolves binding override > agent default.
             auto_approve: binding
                 .and_then(|b| b.auto_approve)
                 .unwrap_or(agent.auto_approve),
@@ -261,12 +259,12 @@ impl EffectiveBindingPolicy {
             } else {
                 Some(std::path::PathBuf::from(&agent.workspace))
             },
-            // Phase 82.1 Step 2 — copy from the matched binding so
+            // Copy from the matched binding so
             // `BindingContext::from_effective` can populate the
             // `(channel, account_id, binding_id)` tuple downstream.
             channel: binding.map(|b| b.plugin.clone()),
             account_id: binding.and_then(|b| b.instance.clone()),
-            // Phase 82.7 — per-binding override fully replaces
+            // Per-binding override fully replaces
             // global; resolver returns the binding's map verbatim
             // (or `None` to inherit global).
             tool_rate_limits: binding.and_then(|b| b.tool_rate_limits.clone()),
@@ -306,21 +304,20 @@ impl EffectiveBindingPolicy {
             team: agent.team.clone(),
             config_tool: agent.config_tool.clone(),
             repl: agent.repl.clone(),
-            // Phase 80.17 — agent-default for the unbound path.
+            // agent-default for the unbound path.
             auto_approve: agent.auto_approve,
             workspace_path: if agent.workspace.is_empty() {
                 None
             } else {
                 Some(std::path::PathBuf::from(&agent.workspace))
             },
-            // Phase 82.1 Step 2 — synthesised policies have no
-            // binding match; both fields stay None so the
-            // `BindingContext` produced for delegation /
-            // heartbeat / test paths keeps the `(channel,
-            // account_id, binding_id)` tuple absent.
+            // Synthesised policies have no binding match; both
+            // fields stay None so the `BindingContext` produced for
+            // delegation / heartbeat / test paths keeps the
+            // `(channel, account_id, binding_id)` tuple absent.
             channel: None,
             account_id: None,
-            // Phase 82.7 — synthesised paths inherit the global
+            // Synthesised paths inherit the global
             // agent-level rate limits when present (or unlimited
             // when absent). `None` here means "fall through to
             // global", consistent with the bindingless legacy
@@ -452,8 +449,8 @@ fn resolve_prompt(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Stri
     }
 }
 
-/// Phase 84.1 + 84.4 — when the binding's resolved `BindingRole`
-/// is `Coordinator` or `Worker`, prepend the role-specific persona
+/// When the binding's resolved `BindingRole` is `Coordinator` or
+/// `Worker`, prepend the role-specific persona
 /// block ahead of the agent's existing system prompt. Other roles
 /// (Proactive / Unset) return `base` unchanged so today's
 /// behaviour is byte-identical for non-role bindings.
@@ -1215,8 +1212,8 @@ allowed_tools:
         assert_eq!(eff.allowed_tools, a.allowed_tools);
     }
 
-    /// Phase 81.19.b locale follow-up item 5 — `InboundBinding.language`
-    /// override must surface in `EffectiveBindingPolicy.language` so
+    /// `InboundBinding.language` override must surface in
+    /// `EffectiveBindingPolicy.language` so
     /// `OutboundReplyContext.language` (built from the policy) honours
     /// the per-channel override instead of always inheriting the
     /// agent-level value.
@@ -1494,9 +1491,8 @@ allowed_tools:
         assert_eq!(eff.config_tool.approval_timeout_secs, 300);
     }
 
-    /// C1 closes a latent bug: `InboundBinding::repl` was already declared
-    /// (Phase 79.12) but `EffectiveBindingPolicy` never consumed it. This
-    /// test would have failed pre-C1.
+    /// `InboundBinding::repl` is declared and `EffectiveBindingPolicy`
+    /// consumes it: the binding override wins over the agent default.
     #[test]
     fn repl_binding_override_wins_over_agent_default() {
         use nexo_config::types::repl::ReplConfig;
@@ -1591,7 +1587,7 @@ allowed_tools:
         assert_eq!(eff.allowed_tools, vec!["file_read".to_string()]);
     }
 
-    // -- Phase 82.1 Step 2 — channel + account_id + binding_id() ---
+    // -- channel + account_id + binding_id() ---
 
     #[test]
     fn step2_resolve_populates_channel_from_binding_plugin() {
@@ -1679,8 +1675,8 @@ allowed_tools:
         assert_ne!(p0.binding_id(), p1.binding_id());
     }
 
-    /// Phase 82.7 — `tool_rate_limits` from a per-binding override
-    /// resolves verbatim onto `EffectiveBindingPolicy`. `None` on
+    /// `tool_rate_limits` from a per-binding override resolves
+    /// verbatim onto `EffectiveBindingPolicy`. `None` on
     /// the binding inherits global (None too); `Some(map)` fully
     /// replaces the global decision for this binding.
     #[test]
@@ -1730,8 +1726,8 @@ allowed_tools:
         );
     }
 
-    /// Phase 82.7 — bindingless paths (delegation / heartbeat /
-    /// tests) resolve to `tool_rate_limits = None`, falling
+    /// Bindingless paths (delegation / heartbeat / tests) resolve
+    /// to `tool_rate_limits = None`, falling
     /// through to global agent-level limiter.
     #[test]
     fn from_agent_defaults_tool_rate_limits_is_none() {

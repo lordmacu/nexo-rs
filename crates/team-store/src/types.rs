@@ -1,18 +1,11 @@
 //! Pure-data layer: row structs, constants, sanitize / validate
 //! helpers.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/utils/swarm/teamHelpers.ts:100-102`
-//!     — `sanitizeName(name) { return name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() }`.
-//!     We mirror the regex but with `[^a-z0-9]` because the
-//!     lowercase pass already happened.
-//!   * `claude-code-leak/src/utils/swarm/teamHelpers.ts:65-90`
-//!     — `TeamFile` shape (member array; `isActive`,
-//!     `worktreePath`, `subscriptions`). We collapse the array
-//!     into a normalised `team_members` row with one row per
-//!     member; subscriptions live on the broker, not in the row.
-//!   * `claude-code-leak/src/utils/swarm/constants.ts:1` —
-//!     `TEAM_LEAD_NAME = 'team-lead'`.
+//! `sanitize_name` lowercases then replaces `[^a-z0-9]` with `-`
+//! (the lowercase pass runs first). Team membership is stored as
+//! one normalised `team_members` row per member rather than a
+//! member array; subscriptions live on the broker, not in the
+//! row. The team lead's reserved name is `team-lead`.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,14 +40,12 @@ pub const SHUTDOWN_DRAIN_SECS: u64 = 30;
 
 /// Maximum body size for `TeamSendMessage`. 64 KiB matches the
 /// per-event broker payload cap with headroom for envelope
-/// fields. Mirror of the leak's `maxResultSizeChars: 100_000`
-/// (`claude-code-leak/src/tools/TeamCreateTool/TeamCreateTool.ts:77`),
-/// scaled down because we count bytes not chars.
+/// fields.
 pub const DM_BODY_MAX_BYTES: usize = 64 * 1024;
 
-/// Reserved member name for the team lead. Matches the leak's
-/// `TEAM_LEAD_NAME = 'team-lead'`. Members cannot register with
-/// this name; the lead row is created by `TeamCreate` itself.
+/// Reserved member name for the team lead (`team-lead`). Members
+/// cannot register with this name; the lead row is created by
+/// `TeamCreate` itself.
 pub const TEAM_LEAD_NAME: &str = "team-lead";
 
 /// Reserved sentinel for `TeamSendMessage { to: "broadcast" }`.
@@ -170,8 +161,7 @@ pub struct TeamEventRow {
 // Sanitize + validate
 // ---------------------------------------------------------------
 
-/// Lowercase + replace every non-alphanumeric with `-`. Mirrors
-/// `claude-code-leak/src/utils/swarm/teamHelpers.ts:100-102`.
+/// Lowercase + replace every non-alphanumeric with `-`.
 pub fn sanitize_name(s: &str) -> String {
     s.chars()
         .map(|c| {

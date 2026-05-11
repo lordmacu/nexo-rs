@@ -1,11 +1,10 @@
-//! Phase F5 of `cody-cli-install` — operator-configured
-//! persona discovery walk knobs. Loaded from
+//! Operator-configured persona discovery walk knobs. Loaded from
 //! `<config_dir>/personas/discovery.yaml` (optional —
 //! missing file means defaults: empty `search_paths` so
 //! nothing is scanned and only personas the operator
 //! manually wired into `agents.d/` survive).
 //!
-//! Mirrors the `plugins.discovery` schema (Phase 81.5) so
+//! Mirrors the `plugins.discovery` schema so
 //! operators familiar with one know the other; the only
 //! shape difference is the missing `follow_symlinks`
 //! toggle (persona installs via `nexo persona install` are

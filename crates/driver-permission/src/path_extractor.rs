@@ -1,13 +1,11 @@
-//! Phase 77.9 — path extraction for common filesystem commands.
+//! Path extraction for common filesystem commands.
 //!
-//! Ported from `claude-code-leak/src/tools/BashTool/pathValidation.ts:27-509`.
 //! Extracts file paths from command arguments so callers can validate
 //! them against allowlists. Handles POSIX `--` end-of-options delimiter.
 
 use std::collections::BTreeSet;
 
 /// Commands whose arguments include filesystem paths.
-/// Ported from `pathValidation.ts:27-64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PathCommand {
     Cd,
@@ -145,8 +143,6 @@ pub fn classify_command(base_cmd: &str) -> Option<PathCommand> {
 /// SECURITY: Extract positional (non-flag) arguments, correctly handling
 /// the POSIX `--` end-of-options delimiter. After `--`, ALL subsequent
 /// arguments are positional even if they start with `-`.
-///
-/// Ported from `pathValidation.ts:126-139`.
 pub fn filter_out_flags(args: &[String]) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
     let mut after_double_dash = false;
@@ -164,8 +160,6 @@ pub fn filter_out_flags(args: &[String]) -> Vec<String> {
 
 /// Extract paths from command arguments based on the command type.
 /// Each command has specific logic for how it handles paths and flags.
-///
-/// Ported from `pathValidation.ts:190-509`.
 pub fn extract_paths(cmd: PathCommand, args: &[String]) -> Vec<String> {
     match cmd {
         PathCommand::Cd => {

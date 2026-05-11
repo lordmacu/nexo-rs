@@ -1,9 +1,9 @@
-//! Phase 80.11 — agent inbox subject contract + payload shape.
+//! Agent inbox subject contract + payload shape.
 //!
 //! Multi-agent coordination via per-goal NATS inbox subject:
 //! `agent.inbox.<goal_id>`. Sender (LLM tool `send_to_peer`) fires
 //! and forgets; receiver subscribes per-goal and queues incoming
-//! messages for injection at next turn start (deferred 80.11.b).
+//! messages for injection at next turn start.
 //!
 //! Wire format is JSON; payload field carries `InboxMessage` so
 //! standard NATS subject + body conventions apply.

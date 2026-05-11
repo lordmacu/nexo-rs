@@ -1,4 +1,4 @@
-//! Phase 25 — `web_search` built-in tool.
+//! `web_search` built-in tool.
 //!
 //! Routes calls into the shared `WebSearchRouter`. Reads the per-binding
 //! `WebSearchPolicy` from the active `AgentContext::effective` so the

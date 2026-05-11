@@ -1,4 +1,4 @@
-//! Phase 76.3 — JWT + JWKS fixtures shared by `http_auth_test.rs`.
+//! JWT + JWKS fixtures shared by `http_auth_test.rs`.
 //!
 //! Each test boots a self-contained RSA keypair and an in-process
 //! axum JWKS server so we can drive the bearer-JWT authenticator

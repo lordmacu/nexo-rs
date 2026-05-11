@@ -1,4 +1,4 @@
-//! Phase 79.M — end-to-end smoke for the MCP server pipeline.
+//! End-to-end smoke for the MCP server pipeline.
 //!
 //! Exercises:
 //!  1. `boot_exposable` constructs handlers for the requested

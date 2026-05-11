@@ -1,16 +1,14 @@
 //! Standalone turn loop using [`nexo_llm::LlmClient`] directly.
-//! Step 80.19 / 6.
 //!
-//! Equivalent to KAIROS's `query()` invoked inside `runForkedAgent`
-//! (leak `forkedAgent.ts:489-541`). Does NOT go through Phase 67
+//! A lightweight query loop for forks. Does NOT go through the
 //! driver-loop, which is goal-flow heavyweight (claude subprocess +
 //! workspace + acceptance + binding store).
 //!
-//! Cache-key invariant from leak `:522-525` is enforced by
-//! [`CacheSafeParams`] not filtering incomplete tool_use blocks.
-//! Phase 77.4 cache-break detection reuses `CacheUsage::hit_ratio` —
-//! we emit a `WARN` on the `fork.cache_break_detected` target when
-//! `hit_ratio < 0.5` so dashboards can pick it up.
+//! The cache-key invariant is enforced by [`CacheSafeParams`] not
+//! filtering incomplete tool_use blocks. Cache-break detection reuses
+//! `CacheUsage::hit_ratio` — we emit a `WARN` on the
+//! `fork.cache_break_detected` target when `hit_ratio < 0.5` so
+//! dashboards can pick it up.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -34,8 +32,8 @@ use crate::tool_filter::ToolFilter;
 /// [`dispatch`](Self::dispatch) for every approved `ToolCall`; the
 /// returned string becomes the synthetic `tool_result` body.
 ///
-/// Implementations adapt to the parent's tool registry. Phase 80.1
-/// autoDream's dispatcher routes through the parent's normal
+/// Implementations adapt to the parent's tool registry. The autoDream
+/// dispatcher routes through the parent's normal
 /// `ToolRegistry` so the fork can reuse the existing `FileEdit` /
 /// `FileWrite` / `Bash` / etc. handlers — but only the ones the
 /// [`ToolFilter`] approves.
@@ -59,8 +57,7 @@ pub struct TurnLoopParams {
     pub on_message: Option<Arc<dyn OnMessage>>,
     pub abort: CancellationToken,
     /// Optional critical system reminder injected on every turn as a
-    /// system-role message right after the parent prefix. Mirrors
-    /// `criticalSystemReminder_EXPERIMENTAL` (leak `:316-318`).
+    /// system-role message right after the parent prefix.
     pub critical_system_reminder: Option<String>,
     /// Telemetry label for traceability.
     pub fork_label: String,
@@ -151,8 +148,8 @@ pub async fn run_turn_loop(params: TurnLoopParams) -> Result<TurnLoopResult, For
             total_cache.input_tokens += cu.input_tokens;
             total_cache.output_tokens += cu.output_tokens;
 
-            // Phase 77.4 — cache-break heuristic. Emit WARN when the
-            // hit ratio drops below 50 %. Dashboards alert on this.
+            // Cache-break heuristic. Emit WARN when the hit ratio drops
+            // below 50 %. Dashboards alert on this.
             let ratio = cu.hit_ratio();
             if turns == 0 && ratio < 0.5 && cu.cache_creation_input_tokens > 0 {
                 warn!(

@@ -1,4 +1,4 @@
-//! Phase 82.10.d — `nexo/admin/credentials/*` handlers.
+//! `nexo/admin/credentials/*` handlers.
 //!
 //! Many-to-many: 1 channel credential → N agents. The credential
 //! payload lives in a per-`(channel, instance)` filesystem entry
@@ -12,7 +12,7 @@
 //! - `YamlPatcher`: same adapter as `agents` domain (wraps
 //!   `nexo_setup::yaml_patch::*`).
 //!
-//! Phase 82.10.n bridges the opaque [`CredentialStore`] write to
+//! Per-channel persisters bridge the opaque [`CredentialStore`] write to
 //! channel-specific runtime state (telegram.yaml accounts list,
 //! email.yaml accounts list, …) via the
 //! [`ChannelCredentialPersister`] trait. Channel plugins
@@ -36,7 +36,7 @@ use nexo_tool_meta::admin::credentials::{
 use super::agents::YamlPatcher;
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 
-/// Phase 82.10.n — per-channel bridge from opaque admin-RPC
+/// Per-channel bridge from opaque admin-RPC
 /// credential payloads to plugin-side runtime state (yaml
 /// accounts list, secret file under `secrets/<…>/`, in-memory
 /// store). Channel plugins implement this trait and register at
@@ -120,7 +120,7 @@ pub trait ChannelCredentialPersister: Send + Sync {
     }
 }
 
-/// Phase 82.10.n — registry of per-channel persisters keyed by
+/// Registry of per-channel persisters keyed by
 /// channel id. Owned by [`crate::agent::admin_rpc::dispatcher::AdminRpcDispatcher`].
 /// Uses `BTreeMap`-style insertion via `HashMap` since lookup is
 /// always by exact channel id, never iteration in stable order.
@@ -206,7 +206,7 @@ pub fn list(store: &dyn CredentialStore, yaml: &dyn YamlPatcher, params: Value) 
 /// payload to the filesystem and append the binding to each
 /// agent in `agent_ids` (idempotent — duplicate bindings skipped).
 ///
-/// Phase 82.10.n adds the optional `persister` arg: when present
+/// The optional `persister` arg: when present
 /// the call sequence becomes
 /// `validate_shape → opaque write → persist → bind → reload → probe`.
 /// Validation failures abort before the opaque write; persist
@@ -232,7 +232,7 @@ pub async fn register(
         return AdminRpcResult::err(AdminRpcError::InvalidParams("channel is empty".into()));
     }
 
-    // Phase 82.10.n step 1 — persister shape validation BEFORE
+    // Step 1 — persister shape validation BEFORE
     // the opaque write so a bad payload never lands on disk.
     if let Some(p) = persister.as_ref() {
         if let Err(e) = p.validate_shape(&input.payload, &input.metadata) {
@@ -246,7 +246,7 @@ pub async fn register(
         return AdminRpcResult::err(AdminRpcError::Internal(format!("credential write: {e}")));
     }
 
-    // Phase 82.10.n step 2 — bridge to plugin runtime state.
+    // Step 2 — bridge to plugin runtime state.
     // On error we leave the opaque blob in place so the operator
     // can retry (idempotent) without losing payload.
     let mut persister_persisted = false;
@@ -277,7 +277,7 @@ pub async fn register(
         reload_signal();
     }
 
-    // Phase 82.10.n step 3 — best-effort probe. Errors here
+    // Step 3 — best-effort probe. Errors here
     // never propagate — the worst case is `outcome.healthy = false`
     // which the operator UI surfaces as a health badge.
     let validation = match persister.as_ref() {
@@ -302,7 +302,7 @@ pub async fn register(
 /// `nexo/admin/credentials/revoke` — delete the filesystem entry
 /// AND remove the binding from every agent that was using it.
 ///
-/// Phase 82.10.n: when `persister` is present, its `revoke` runs
+/// When `persister` is present, its `revoke` runs
 /// BEFORE the opaque delete so the persister can still read the
 /// blob if it needs to (e.g. to look up the secret-file path
 /// referenced from a yaml entry). Persister revoke errors abort
@@ -339,7 +339,7 @@ pub async fn revoke(
         unbound.push(agent_id.clone());
     }
 
-    // Phase 82.10.n — persister revoke before opaque delete.
+    // Persister revoke before opaque delete.
     let mut persister_revoked = false;
     if let Some(pp) = persister.as_ref() {
         match pp.revoke(p.instance.as_deref()).await {
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(response.credentials[0].channel, "whatsapp");
     }
 
-    // ── Phase 82.10.n — ChannelCredentialPersister registry tests ─
+    // ── ChannelCredentialPersister registry tests ─
 
     use crate::agent::admin_rpc::dispatcher::AdminRpcDispatcher;
     use nexo_tool_meta::admin::credentials::reason_code;
@@ -1012,7 +1012,7 @@ mod tests {
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
 
-    // ── Phase 82.10.n — register/revoke bridge tests ──────────────
+    // ── register/revoke bridge tests ──────────────
 
     /// Asserts the persister methods fire in the spec's order
     /// `validate_shape → persist → probe` AND that the opaque

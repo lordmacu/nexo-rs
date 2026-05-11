@@ -1,16 +1,12 @@
-//! Phase 80.19 — Fork subagent infrastructure.
-//!
-//! Verbatim semantics from `claude-code-leak/src/utils/forkedAgent.ts`.
-//! Decisions in `proyecto/design-kairos-port.md` D-8.
+//! Fork subagent infrastructure.
 //!
 //! # Cache-key invariant (CRITICAL)
 //!
-//! Per leak `forkedAgent.ts:522-525`:
-//! > Do NOT `filterIncompleteToolCalls` here — drops the whole assistant
-//! > on partial tool batches, orphaning the paired results (API 400).
-//! > Dangling tool_uses are repaired downstream by
-//! > `ensureToolResultPairing` in claude.ts, same as the main thread —
-//! > identical post-repair prefix keeps the cache hit.
+//! Do NOT filter incomplete tool calls here — that drops the whole
+//! assistant message on partial tool batches, orphaning the paired
+//! results (API 400). Dangling tool_uses are repaired downstream when
+//! pairing tool results in transport, same as the main thread — an
+//! identical post-repair prefix keeps the cache hit.
 //!
 //! Tests verify bit-for-bit message-prefix pass-through.
 

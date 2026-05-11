@@ -11,8 +11,8 @@
 //!
 //! Invalidation: there is no hot reload today. Config changes require a
 //! process restart; the cache is wiped implicitly when the process
-//! restarts. A future `clear(agent_id)` helper can be added when we
-//! support live reconfiguration (tracked in FOLLOWUPS.md).
+//! restarts. A future `clear(agent_id)` helper can be added when
+//! live reconfiguration is supported.
 
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ impl ToolRegistryCache {
         }
     }
 
-    /// Phase 67.H.3 — per-binding registry filtered by both the
+    /// Per-binding registry filtered by both the
     /// agent's `allowed_tools` AND the resolved `DispatchPolicy`.
     /// First call builds it; subsequent calls return the cached
     /// Arc. Hot-reload safety: every reload constructs a fresh
@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(base.to_tool_defs().len(), 4);
     }
 
-    /// Phase 67.H.3 — dispatch_policy=None drops the dispatch tool
+    /// dispatch_policy=None drops the dispatch tool
     /// names from the filtered registry while leaving non-dispatch
     /// tools (memory_*) intact.
     #[test]

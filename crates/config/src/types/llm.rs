@@ -15,7 +15,7 @@ pub struct LlmConfig {
     /// compaction defaults off (rollout gradual), token_counter on.
     #[serde(default)]
     pub context_optimization: ContextOptimizationConfig,
-    /// Phase 83.8.12.5 — per-tenant LLM provider sub-namespaces.
+    /// Per-tenant LLM provider sub-namespaces.
     /// SaaS deployments isolate one tenant's API keys + endpoints
     /// from another's; agents resolve their provider via
     /// `LlmConfig::resolve_provider(tenant_id, name)` which checks
@@ -26,7 +26,7 @@ pub struct LlmConfig {
     pub tenants: HashMap<String, TenantLlmConfig>,
 }
 
-/// Phase 83.8.12.5 — per-tenant LLM config under
+/// Per-tenant LLM config under
 /// `llm.yaml.tenants.<tenant_id>`. Currently only carries
 /// providers; future tenant-scoped knobs (rate limits, retry
 /// overrides) plug in additively.
@@ -41,7 +41,7 @@ pub struct TenantLlmConfig {
 }
 
 impl LlmConfig {
-    /// Phase 83.8.12.5 — resolve a provider with tenant-first /
+    /// Resolve a provider with tenant-first /
     /// global-fallback semantics. Returns the tenant-scoped
     /// definition when present, falling back to the global
     /// `providers` table; `None` when neither exists.
@@ -136,7 +136,7 @@ pub struct CompactionConfig {
     pub summarizer_model: String,
     #[serde(default = "default_lock_ttl_seconds")]
     pub lock_ttl_seconds: u32,
-    /// Phase 77.2 — auto-compact token + age triggers. `None` disables
+    /// Auto-compact token + age triggers. `None` disables
     /// the age trigger and falls back to the legacy `compact_at_pct`.
     #[serde(default)]
     pub auto: Option<AutoCompactionConfig>,
@@ -157,7 +157,7 @@ impl Default for CompactionConfig {
     }
 }
 
-/// Phase 77.2 — auto-compact trigger knobs.
+/// Auto-compact trigger knobs.
 ///
 /// When `auto` is `Some`, both token-percentage and session-age triggers
 /// are armed. `token_pct` replaces the legacy `compact_at_pct` (if you
@@ -338,7 +338,7 @@ pub struct AgentContextOptimizationOverride {
 /// Snapshot of the four kill-switches resolved against an agent's
 /// override + the global config. Cheap to copy; the runtime takes a
 /// fresh one per turn so a hot-reload that swaps `RuntimeSnapshot`
-/// (Phase 18) is observed on the next request.
+/// is observed on the next request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedContextOptimization {
     pub prompt_cache: bool,
@@ -389,7 +389,7 @@ pub struct LlmProviderConfig {
     #[serde(default)]
     pub api_key: String,
     pub base_url: String,
-    /// Phase 82.10.s — factory id from the registry. `None` ⇒ the
+    /// Factory id from the registry. `None` ⇒ the
     /// YAML key (i.e. the map key under `providers.<id>`) IS the
     /// factory id (back-compat with single-instance-per-factory
     /// yamls). When `Some("minimax")`, the operator can name the
@@ -397,7 +397,7 @@ pub struct LlmProviderConfig {
     /// the `minimax` factory.
     #[serde(default)]
     pub factory_type: Option<String>,
-    /// Phase 82.10.s — reference into the secrets store. When set,
+    /// Reference into the secrets store. When set,
     /// `resolve_api_key` reads `<state_root>/secrets/<id>.txt` (or
     /// the configured backend) and populates `api_key`. Mutually
     /// exclusive with a non-empty `api_key`.
@@ -436,7 +436,7 @@ pub struct LlmProviderConfig {
     pub safety_settings: Option<serde_json::Value>,
 }
 
-/// Phase 82.10.s — typed errors from
+/// Typed errors from
 /// [`LlmProviderConfig::resolve_api_key`]. Surface loud at boot so
 /// operators can fix `llm.yaml` before the first agent turn.
 #[derive(Debug, Error)]
@@ -471,7 +471,7 @@ pub enum KeyResolutionError {
 }
 
 impl LlmProviderConfig {
-    /// Phase 82.10.s — resolve `api_key` from one of two mutually
+    /// Resolve `api_key` from one of two mutually
     /// exclusive sources:
     ///
     /// 1. **Inline**: `api_key:` field non-empty (post-`${ENV}`
@@ -542,7 +542,7 @@ impl LlmProviderConfig {
 }
 
 impl LlmConfig {
-    /// Phase 82.10.s — walk every provider (global + tenant-scoped)
+    /// Walk every provider (global + tenant-scoped)
     /// and resolve their API keys. Collects errors per provider id
     /// rather than failing fast, so operators see EVERY broken
     /// instance in one boot pass instead of fixing-restarting in a
@@ -667,7 +667,7 @@ fn default_multiplier() -> f32 {
 mod tests {
     use super::*;
 
-    // ── Phase 83.8.12.5 — resolve_provider semantics ──
+    // ── resolve_provider semantics ──
 
     fn provider(api_key: &str) -> LlmProviderConfig {
         let yaml = format!("api_key: {api_key}\nbase_url: https://api.example.com\n");
@@ -1034,7 +1034,7 @@ auto:
     }
 
     // ────────────────────────────────────────────────────────────
-    // Phase 82.10.s — multi-instance providers + secret-backed keys
+    // Multi-instance providers + secret-backed keys
     // ────────────────────────────────────────────────────────────
 
     use crate::secrets_source::{InMemorySecretsSource, NoSecretsSource};

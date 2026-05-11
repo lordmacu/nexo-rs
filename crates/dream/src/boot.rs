@@ -1,16 +1,13 @@
 //! Boot-time helpers for wiring [`AutoDreamRunner`] into the daemon.
-//! Phase 80.1.b.b.b.
 //!
-//! Operator code calls [`build_runner`] once at startup. Mirrors the
-//! leak's `initAutoDream()` + `backgroundHousekeeping` setup pattern
-//! (`claude-code-leak/src/services/autoDream/autoDream.ts:111-122`).
+//! Operator code calls [`build_runner`] once at startup — the
+//! `initAutoDream()` + background-housekeeping setup pattern.
 //!
 //! # Provider-agnostic
 //!
 //! All inputs in [`BootDeps`] are trait objects (`Arc<dyn LlmClient>`,
 //! `Arc<dyn ToolDispatcher>`) or plain data — no Anthropic-specific
-//! types leak in. Works under any provider impl per memory rule
-//! `feedback_provider_agnostic.md`.
+//! types leak in. Works under any provider impl.
 //!
 //! # main.rs hookup
 //!
@@ -82,25 +79,23 @@ pub struct BootDeps {
     pub llm: Arc<dyn LlmClient>,
     /// Tool dispatcher for the fork's tool calls.
     pub tool_dispatcher: Arc<dyn ToolDispatcher>,
-    /// Fork-side system prompt. Per Phase 77.5 pattern: no parent
-    /// prompt-cache share — fresh ChatRequest per fork.
+    /// Fork-side system prompt. No parent prompt-cache share — a fresh
+    /// ChatRequest per fork.
     pub fork_system_prompt: String,
-    /// Fork-side tool catalog. Empty acceptable for MVP — the
-    /// `AutoMemFilter` (Phase 80.20) restricts what the fork can
-    /// actually invoke regardless.
+    /// Fork-side tool catalog. Empty acceptable — the `AutoMemFilter`
+    /// restricts what the fork can actually invoke regardless.
     pub fork_tools: Vec<ToolDef>,
     /// Fork-side model id (provider-agnostic — works for any
     /// `LlmClient` impl).
     pub fork_model: String,
-    /// Phase 80.1.g — optional memory-checkpoint sink. When `Some`,
-    /// the runner records each successful Completed fork-pass via
-    /// the trait method (typically
-    /// `nexo_core::agent::MemoryGitCheckpointer` wrapping the
-    /// per-binding `MemoryGitRepo`). `None` disables. Skipped on
-    /// empty `files_touched` regardless. Failure logs warn and does
-    /// NOT downgrade the outcome.
+    /// Optional memory-checkpoint sink. When `Some`, the runner
+    /// records each successful Completed fork-pass via the trait
+    /// method (typically `nexo_core::agent::MemoryGitCheckpointer`
+    /// wrapping the per-binding `MemoryGitRepo`). `None` disables.
+    /// Skipped on empty `files_touched` regardless. Failure logs warn
+    /// and does NOT downgrade the outcome.
     pub git_checkpointer: Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
-    /// Phase 36.2 — optional pre-dream snapshot sink. When `Some`,
+    /// Optional pre-dream snapshot sink. When `Some`,
     /// the runner captures a `LocalFsSnapshotter` bundle (label
     /// `auto:pre-dream-<run_id>`) immediately before the fork-pass,
     /// so a corrupt dream can be reverted via `nexo memory restore`.
@@ -180,13 +175,13 @@ pub async fn build_runner(deps: BootDeps) -> Result<Option<Arc<AutoDreamRunner>>
         deps.fork_tools,
         deps.fork_model,
     )?;
-    // Phase 80.1.g — wire optional git checkpoint sink if operator
-    // provided one. Per-binding decision; default is None (no commit).
+    // Wire the optional git checkpoint sink if the operator provided
+    // one. Per-binding decision; default is None (no commit).
     let runner_inner = match deps.git_checkpointer {
         Some(ckpt) => runner_inner.with_git_checkpointer(ckpt),
         None => runner_inner,
     };
-    // Phase 36.2 — wire optional pre-dream snapshot sink.
+    // Wire the optional pre-dream snapshot sink.
     let runner_inner = match deps.pre_dream_snapshot {
         Some(hook) => runner_inner
             .with_pre_dream_snapshot(hook)
@@ -204,15 +199,14 @@ pub async fn build_runner(deps: BootDeps) -> Result<Option<Arc<AutoDreamRunner>>
     Ok(Some(runner))
 }
 
-/// Default memory dir per Phase 10.6 convention:
-/// `<workspace_root>/.nexo-memory/<agent_id>`.
+/// Default memory dir: `<workspace_root>/.nexo-memory/<agent_id>`.
 pub fn default_memory_dir(workspace_root: &Path, agent_id: &str) -> PathBuf {
     workspace_root.join(".nexo-memory").join(agent_id)
 }
 
 /// Default shared dream_runs DB:
 /// `<state_root>/dream_runs.db`. Single open serves all bindings;
-/// `goal_id` partitions naturally per Phase 80.18 schema.
+/// `goal_id` partitions naturally in the `dream_runs` schema.
 pub fn default_dream_db_path(state_root: &Path) -> PathBuf {
     state_root.join("dream_runs.db")
 }
@@ -472,10 +466,9 @@ mod tests {
         assert!(runner.is_some());
     }
 
-    /// Phase 80.1.b.b.b consumer / MS-3 close — when `BootDeps`
-    /// carries a `pre_dream_snapshot` adapter, the constructed
-    /// runner reports `has_pre_dream_snapshot() == true`. Without
-    /// the field, the runner stays without an anchor.
+    /// When `BootDeps` carries a `pre_dream_snapshot` adapter, the
+    /// constructed runner reports `has_pre_dream_snapshot() == true`.
+    /// Without the field, the runner stays without an anchor.
     #[tokio::test]
     async fn build_runner_attaches_pre_dream_snapshot_when_provided() {
         use async_trait::async_trait;

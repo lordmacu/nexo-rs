@@ -1,4 +1,4 @@
-//! Phase 70.6 — pairing-store audit run by `agent setup doctor`.
+//! Pairing-store audit run by `agent setup doctor`.
 //!
 //! Operators wire `pairing.auto_challenge: true` on a binding and
 //! then forget that the `pairing_allow_from` table is empty on first

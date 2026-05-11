@@ -34,21 +34,20 @@
 //! # let _ = app;
 //! ```
 
-// Phase 91 — backend dispatch. Both backends speak the same
+// Backend dispatch. Both backends speak the same
 // `transcribe_file(path, cfg) -> Result<String>` signature so the
 // public re-export at the bottom of this file picks the right one
 // at compile time.
 //
 // Precedence when both features are enabled simultaneously
-// (typically only the parity test in Phase 91.8): `stt-candle`
-// wins as the public re-export; parity tests reference the
-// whisper-rs path directly through
-// `super::stt::transcribe::transcribe_file` and compare against
-// `super::stt::transcribe_candle::transcribe_file`.
+// (typically only the parity test): `stt-candle` wins as the
+// public re-export; parity tests reference the whisper-rs path
+// directly through `super::stt::transcribe::transcribe_file` and
+// compare against `super::stt::transcribe_candle::transcribe_file`.
 //
-// Production builds should pick exactly one backend. Phase 91.11
-// CHANGELOG flags the migration path; Phase 91.12 removes the
-// legacy `stt` feature entirely after a stability window.
+// Production builds should pick exactly one backend. The legacy
+// `stt` feature is slated for removal after a stability window;
+// the CHANGELOG flags the migration path.
 
 // `tool` only wires the `*_inbound_transform` tool that calls
 // `transcribe_file(path, cfg)` — a local-file API. Cloud-only
@@ -67,7 +66,7 @@ pub(crate) mod audio;
 #[cfg(feature = "stt")]
 pub mod transcribe;
 
-// Phase 91 Candle path — the submodules carry their own
+// Candle path — the submodules carry their own
 // `#[cfg(feature = "stt-candle")]` guard so a stale build cache
 // doesn't surface unrelated errors when toggling features.
 #[cfg(feature = "stt-candle")]
@@ -75,13 +74,12 @@ pub(crate) mod mel;
 #[cfg(feature = "stt-candle")]
 pub mod transcribe_candle;
 
-// Phase 91.x.wasm.phase-4 — cloud STT backends (OpenAI Whisper,
-// Groq Whisper-large-v3, Anthropic voice_stream)
-// + `CompositeProvider` fallback chain.
+// Cloud STT backends (OpenAI Whisper, Groq Whisper-large-v3,
+// Anthropic voice_stream) + `CompositeProvider` fallback chain.
 //
-// Phase 91.x.wasm.phase-4c.3 — workspace pin trimmed so
-// resolver-2 doesn't unify wasm-broken reqwest features into
-// the SDK wasm32 graph. With that done, the cloud REST legs
+// The workspace dependency pin is trimmed so resolver-2 doesn't
+// unify wasm-broken reqwest features into the SDK wasm32 graph.
+// With that done, the cloud REST legs
 // compile cleanly on `wasm32-unknown-unknown` via reqwest's
 // browser fetch backend. Two routes:
 //
@@ -94,9 +92,9 @@ pub mod transcribe_candle;
 //   - `local_candle` — needs Candle inference (`stt-candle`
 //     feature; Candle deps don't compile for wasm32)
 //   - `anthropic` — tokio-tungstenite drags TCP types absent
-//     on wasm32; carries its own `cfg(not(wasm32))`. Phase
-//     91.x.wasm.phase-4c.4 swaps tokio-tungstenite for
-//     gloo-net when a browser microapp demands voice_stream.
+//     on wasm32; carries its own `cfg(not(wasm32))`. A future
+//     swap to gloo-net would unblock browser microapps that
+//     demand voice_stream.
 #[cfg(feature = "stt-cloud-wasm")]
 pub mod cloud;
 
@@ -203,7 +201,7 @@ pub struct TranscribeConfig {
     /// other rates produce garbage.
     pub target_sample_rate: u32,
 
-    /// Phase 91 — HuggingFace Hub repository id used to auto-fetch
+    /// HuggingFace Hub repository id used to auto-fetch
     /// the SafeTensors weights + tokenizer + config on first call
     /// when [`Self::model_path`] is empty (the Candle backend
     /// only; the whisper-rs backend ignores this field).

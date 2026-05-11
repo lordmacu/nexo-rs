@@ -1,4 +1,4 @@
-//! Phase 81.5 — filesystem walker that produces a
+//! Filesystem walker that produces a
 //! [`NexoPluginRegistrySnapshot`] from operator-configured search
 //! paths. Mirrors the never-panic shape of
 //! `crates/extensions/src/discovery.rs`: every error becomes a typed
@@ -20,7 +20,7 @@ use super::report::{
 };
 use super::NexoPluginRegistrySnapshot;
 
-/// Phase 81.13 — canonical manifest filename. Fixed (no operator
+/// Canonical manifest filename. Fixed (no operator
 /// override) so a malicious or careless plugin dir cannot smuggle a
 /// manifest under an unexpected name. We also accept the legacy
 /// `nexo-plugin.toml` via [`PLUGIN_MANIFEST_FILENAMES`] so plugins

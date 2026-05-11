@@ -1,4 +1,4 @@
-//! Phase 76.7 — end-to-end progress + notifications tests.
+//! End-to-end progress + notifications tests.
 //!
 //! Drives the dispatcher with a custom `McpServerHandler` that
 //! emits progress via `call_tool_streaming`, asserts the

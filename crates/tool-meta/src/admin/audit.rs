@@ -1,9 +1,9 @@
-//! Phase 83.12.audit-page — wire-shape types for the
+//! Wire-shape types for the
 //! `nexo/admin/microapp_audit/tail` admin RPC method that backs
 //! the `agent-creator-microapp/frontend/` audit log page.
 //!
 //! Moved here from `nexo_core::agent::admin_rpc::audit` so the
-//! ts-types-codegen pipeline (Phase 83.12.ts-types-codegen)
+//! TypeScript types codegen pipeline
 //! picks them up — `nexo-tool-meta` is the canonical home for
 //! types that cross the Rust↔TS boundary, and the
 //! `#[ts(export)]` derive only applies to types in this crate.
@@ -28,7 +28,7 @@ pub enum AdminAuditResult {
 }
 
 impl AdminAuditResult {
-    /// Stable wire string used by the SQLite writer (82.10.g) and
+    /// Stable wire string used by the SQLite writer and
     /// the CLI tail formatter.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -74,7 +74,7 @@ pub struct AdminAuditRow {
     pub result: AdminAuditResult,
     /// Wall-clock duration of the dispatch.
     pub duration_ms: u64,
-    /// Phase 83.8.12.7 — tenant scope for the call. Sniffed from
+    /// Tenant scope for the call. Sniffed from
     /// `params.tenant_id` (string) when present; legacy rows /
     /// non-tenant-scoped calls (echo, pairing, credentials)
     /// leave it `null`.

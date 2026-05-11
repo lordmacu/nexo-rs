@@ -1,34 +1,27 @@
-//! Phase 76.9 — ergonomic MCP server builder.
+//! Ergonomic MCP server builder.
 //!
 //! Two layers of API:
 //!
 //!   1. The [`Tool`] trait — implementors expose typed
 //!      `Args: DeserializeOwned + JsonSchema` and `Output: Serialize`.
 //!      The builder uses `schemars::schema_for!(Args)` to derive
-//!      the JSON Schema at registration time, eliminating the
-//!      hand-rolled-schema drift that bites
-//!      `crates/core/src/agent/web_search_tool.rs:26-42`.
+//!      the JSON Schema at registration time, eliminating
+//!      hand-rolled-schema drift.
 //!
-//!   2. (Phase 76.9 part 2 — separate `crates/mcp-macro/` crate)
-//!      An `#[mcp_tool]` attribute proc-macro that generates a
-//!      `Tool` impl from a free function, so the boilerplate is
-//!      ~3 lines per tool. The trait is the foundation; the
-//!      macro is sugar.
+//!   2. An `#[mcp_tool]` attribute proc-macro (in a separate
+//!      `crates/mcp-macro/` crate) that generates a `Tool` impl
+//!      from a free function, so the boilerplate is ~3 lines per
+//!      tool. The trait is the foundation; the macro is sugar.
 //!
-//! ## Reference patterns
+//! Design notes:
 //!
-//! * **One-tool-per-struct** — `claude-code-leak/src/Tool.ts:362-695`
-//!   bundles `name + description + inputSchema + call` into one
-//!   object. Same shape here, with Rust types replacing TS Zod.
-//! * **`buildTool(def)` defaults helper** —
-//!   `claude-code-leak/src/Tool.ts:783-792`. Mirrored by
-//!   [`McpServerBuilder::tool`] which spreads sensible defaults
+//! * One-tool-per-struct — each tool bundles `name + description +
+//!   inputSchema + call` into one object.
+//! * `McpServerBuilder::tool` spreads sensible defaults
 //!   (`deferred: false`, `search_hint: None`).
-//! * **Lazy schema** —
-//!   `claude-code-leak/src/tools/WebSearchTool/WebSearchTool.ts:25-41`
-//!   defers expensive Zod-to-JSON conversion. We compute the
-//!   schema once at registration and cache the JSON `Value`,
-//!   so list_tools/call_tool are zero-cost in the hot path.
+//! * Lazy schema — the schema is computed once at registration and
+//!   the JSON `Value` cached, so list_tools/call_tool are
+//!   zero-cost in the hot path.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -64,9 +57,9 @@ pub struct ToolCtx<'a> {
 /// and `JsonSchema` so the builder can publish the schema in
 /// `tools/list`) and a `Serialize` `Output`.
 ///
-/// Default `deferred` and `search_hint` mirror the Phase 79.2
-/// surface so a `Tool` impl can opt into the `ToolSearch` lazy
-/// surface without going through extra plumbing.
+/// Default `deferred` and `search_hint` let a `Tool` impl opt into
+/// the `ToolSearch` lazy surface without going through extra
+/// plumbing.
 #[async_trait]
 pub trait Tool: Send + Sync + 'static {
     type Args: DeserializeOwned + JsonSchema + Send;
@@ -135,9 +128,9 @@ struct RegisteredTool {
     name: String,
     description: String,
     schema: Value,
-    #[allow(dead_code)] // surfaces in Phase 79.2 ToolSearch
+    #[allow(dead_code)] // surfaces in ToolSearch
     deferred: bool,
-    #[allow(dead_code)] // surfaces in Phase 79.2 ToolSearch
+    #[allow(dead_code)] // surfaces in ToolSearch
     search_hint: Option<String>,
     handler: BoxedHandler,
 }
@@ -167,8 +160,8 @@ impl McpServerBuilder {
     /// Register a `Tool` impl. The schema is derived once via
     /// `schemars::schema_for!(T::Args)` and cached. Duplicate
     /// names overwrite with a `tracing::warn!` log so the
-    /// operator notices the conflict (mirrors the Phase 11.5
-    /// `ToolRegistry::register` semantics).
+    /// operator notices the conflict (same semantics as
+    /// `ToolRegistry::register`).
     pub fn tool<T: Tool>(mut self, tool: T) -> Self {
         let tool = Arc::new(tool);
         let name = tool.name().to_string();

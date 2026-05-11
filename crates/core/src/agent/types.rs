@@ -71,7 +71,7 @@ pub struct InboundMessage {
     /// heartbeat, proactive ticks) so trusted-only dispatch fails closed
     /// unless intake explicitly marked the sender as admitted.
     pub sender_trusted: bool,
-    /// Phase 82.5 — per-turn inbound metadata (provider-native
+    /// Per-turn inbound metadata (provider-native
     /// sender id, msg id, reply target, has_media flag, …) built
     /// at the intake site from the raw `InboundEvent` payload.
     /// Carried on the message so the per-turn dispatch loop can

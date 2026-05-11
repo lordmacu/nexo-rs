@@ -1,4 +1,4 @@
-//! Phase 26.x — pairing challenge delivery test.
+//! Pairing challenge delivery test.
 //!
 //! Verifies that when the pairing gate issues a `Challenge`, the
 //! runtime delegates to the registered `PairingChannelAdapter` (when

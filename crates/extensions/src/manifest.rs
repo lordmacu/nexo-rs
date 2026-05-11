@@ -49,7 +49,7 @@ pub fn agent_version() -> &'static str {
 pub const MAX_DESC_LEN: usize = 512;
 pub const MAX_CAPABILITY_NAME_LEN: usize = 64;
 
-// Phase 81.13 — id regex + reserved id list now live in
+// The id regex + reserved id list live in
 // `nexo_plugin_manifest::id_regex` so both manifest crates
 // validate the same set. Re-exported here so existing callers
 // keep their import paths unchanged.
@@ -81,14 +81,14 @@ pub struct ExtensionManifest {
     pub transport: Transport,
     #[serde(default)]
     pub meta: Meta,
-    /// Phase 12.7 — optional MCP server declarations. Merged into the
-    /// runtime with keys `{ext_id}.{name}`; `${EXTENSION_ROOT}` placeholders
-    /// are resolved at merge time.
+    /// Optional MCP server declarations. Merged into the runtime with
+    /// keys `{ext_id}.{name}`; `${EXTENSION_ROOT}` placeholders are
+    /// resolved at merge time.
     #[serde(default)]
     pub mcp_servers: std::collections::BTreeMap<String, nexo_config::McpServerYaml>,
-    /// Phase 11.5 follow-up — opt-in context propagation. When enabled,
-    /// `ExtensionTool::call` injects `_meta.agent_id` and
-    /// `_meta.session_id` into the JSON-RPC args object.
+    /// Opt-in context propagation. When enabled, `ExtensionTool::call`
+    /// injects `_meta.agent_id` and `_meta.session_id` into the
+    /// JSON-RPC args object.
     #[serde(default)]
     pub context: ExtensionContextConfig,
     /// Informational declaration of host binaries and environment variables
@@ -96,15 +96,15 @@ pub struct ExtensionManifest {
     /// `status` tools, and ops tooling.
     #[serde(default)]
     pub requires: Requires,
-    /// Phase 82.3 — per-channel `account_id` allowlist the extension is
-    /// allowed to dispatch outbound to via `nexo/dispatch`. Empty (or
-    /// absent) means no outbound permitted; every dispatch request gets
+    /// Per-channel `account_id` allowlist the extension is allowed to
+    /// dispatch outbound to via `nexo/dispatch`. Empty (or absent)
+    /// means no outbound permitted; every dispatch request gets
     /// `unauthorized_binding` rejected.
     #[serde(default)]
     pub outbound_bindings: OutboundBindings,
 }
 
-/// Phase 82.3 — outbound dispatch allowlist.
+/// Outbound dispatch allowlist.
 ///
 /// TOML shape:
 /// ```toml
@@ -114,8 +114,8 @@ pub struct ExtensionManifest {
 /// ```
 ///
 /// Operator declares which `(channel, account_id)` pairs the extension
-/// is allowed to publish to. Defense-in-depth — the credentials gauntlet
-/// (Phase 17) still enforces per-channel auth, but this gate gives the
+/// is allowed to publish to. Defense-in-depth — the credentials
+/// gauntlet still enforces per-channel auth, but this gate gives the
 /// extension a typed `unauthorized_binding` error before any broker
 /// activity.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -246,22 +246,21 @@ pub struct Capabilities {
     pub channels: Vec<String>,
     #[serde(default)]
     pub providers: Vec<String>,
-    /// Phase 19 follow-up — one entry per `kind` the extension
-    /// implements as a poller module. The runtime calls
-    /// `poll_tick { kind, ctx }` on the extension for each tick.
+    /// One entry per `kind` the extension implements as a poller
+    /// module. The runtime calls `poll_tick { kind, ctx }` on the
+    /// extension for each tick.
     #[serde(default)]
     pub pollers: Vec<String>,
-    /// Phase 81.13 + 82.10 — admin RPC capabilities the
-    /// extension declares it needs from the daemon. Lets a
-    /// single `plugin.toml` declare both Phase-11 contributions
-    /// (`tools/hooks/channels/...`) and the Phase-82 admin
+    /// Admin RPC capabilities the extension declares it needs from
+    /// the daemon. Lets a single `plugin.toml` declare both the
+    /// `tools/hooks/channels/...` contributions and the admin
     /// surface; the daemon's `admin_capability_collect` walks
     /// this field directly so a sidecar `nexo-plugin.toml` is no
     /// longer required.
     #[serde(default)]
     pub admin: nexo_plugin_manifest::AdminCapabilities,
-    /// Phase 81.13 + 82.12 — embedded HTTP server policy
-    /// declared by the microapp. The daemon's boot supervisor
+    /// Embedded HTTP server policy declared by the microapp. The
+    /// daemon's boot supervisor
     /// polls `<bind>:<port><health_path>` until 200 OK before
     /// flipping the extension to `ready`. `None` keeps the
     /// extension stdio-only.
@@ -292,13 +291,13 @@ pub struct Meta {
     pub author: Option<String>,
     #[serde(default)]
     pub license: Option<String>,
-    /// Phase 81.13 — operator-facing project URL. Optional.
-    /// Mirrors `nexo_plugin_manifest::manifest::MetaSection.homepage`
-    /// so a single `plugin.toml` can declare both legacy + modern
-    /// metadata under one `[meta]` block.
+    /// Operator-facing project URL. Optional. Mirrors
+    /// `nexo_plugin_manifest::manifest::MetaSection.homepage` so a
+    /// single `plugin.toml` can declare both legacy + modern metadata
+    /// under one `[meta]` block.
     #[serde(default)]
     pub homepage: Option<String>,
-    /// Phase 81.13 — source repository URL. Optional.
+    /// Source repository URL. Optional.
     #[serde(default)]
     pub repository: Option<String>,
 }
@@ -1106,7 +1105,7 @@ url = "ws://x"
         assert!(matches!(err, ManifestError::Parse(_)), "got {:?}", err);
     }
 
-    // ─── Phase 12.7 — mcp_servers parsing and validation ───────────────────
+    // ─── mcp_servers parsing and validation ───────────────────
 
     #[test]
     fn parses_inline_mcp_servers() {

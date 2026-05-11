@@ -1,7 +1,6 @@
-//! Phase 80.1.g — memory-checkpoint contract upstream of nexo-dream
-//! and nexo-core.
+//! Memory-checkpoint contract upstream of nexo-dream and nexo-core.
 //!
-//! Mirrors the [`AutoDreamHook`] pattern from Phase 80.1.b: the trait
+//! Mirrors the [`AutoDreamHook`] pattern: the trait
 //! lives here (in the low-level types crate) so both `nexo-dream`
 //! (consumer) and `nexo-core` (provider via `MemoryGitRepo`) can
 //! depend on `nexo-driver-types` without forming a cycle.
@@ -11,33 +10,18 @@
 //! LLM provider does not enter the decision — checkpoints are pure
 //! infrastructure-layer artifacts.
 //!
+//! The concrete `nexo-core` implementation builds on
+//! `crates/core/src/agent/workspace_git.rs`'s `MemoryGitRepo`, which
+//! enforces a secret-guard + `MAX_COMMIT_FILE_BYTES` cap; this trait
+//! extends the same git-backed memory pattern to the fork-pass deep
+//! consolidation.
+//!
 //! [`AutoDreamHook`]: crate::auto_dream::AutoDreamHook
-//!
-//! # Reference
-//!
-//! - **claude-code-leak (PRIMARY)**: NO autoDream→git wiring in the
-//!   leak. `claude-code-leak/src/memdir/paths.ts:14` uses
-//!   `findCanonicalGitRoot` only to locate the memory dir, not to
-//!   commit. `memoryTypes.ts:187` documents the leak's stance: "Git
-//!   history, recent changes, or who-changed-what — `git log` /
-//!   `git blame` are authoritative" — the leak does NOT duplicate
-//!   git info into memory. Phase 10.9 git-backed memory is a
-//!   nexo-specific innovation; this trait extends it to the
-//!   fork-pass deep consolidation.
-//! - **research/ (OpenClaw)**: no git-as-memory pattern; absence
-//!   noted. Single-process Node app expects user to manage git
-//!   themselves.
-//! - **nexo PRIOR ART**: `crates/core/src/agent/workspace_git.rs`
-//!   (Phase 10.9) ships `MemoryGitRepo` with secret-guard +
-//!   `MAX_COMMIT_FILE_BYTES` enforcement. `src/main.rs:3640-3665`
-//!   already wires the scoring-sweep dreaming to git via
-//!   `commit_all`; this trait extends the symmetry to the
-//!   fork-pass.
 
 use async_trait::async_trait;
 
 /// Sink for memory-state checkpoints. Implemented by
-/// `nexo_core::agent::MemoryGitRepo` (Phase 10.9 git-backed memory);
+/// `nexo_core::agent::MemoryGitRepo` (git-backed memory);
 /// called by nexo-dream's `AutoDreamRunner` after a successful
 /// fork-pass to record the resulting `memory_dir` state.
 ///

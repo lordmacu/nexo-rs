@@ -1,4 +1,4 @@
-//! Phase 67.F.2 — DispatchPhase action calls the registered
+//! DispatchPhase action calls the registered
 //! DispatchPhaseChainer with the parent payload + child phase_id.
 //! Guards: only_if must match the firing transition; if it does
 //! not, the chain is skipped (returns ChainGuardSkipped).

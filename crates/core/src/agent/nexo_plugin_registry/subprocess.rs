@@ -1,4 +1,4 @@
-//! Phase 81.14 — Host-side adapter for out-of-tree plugins running
+//! Host-side adapter for out-of-tree plugins running
 //! as separate child processes. Speaks newline-delimited JSON-RPC
 //! 2.0 over the child's stdin/stdout. Implements [`NexoPlugin`] so
 //! it slots into the existing `wire_plugin_registry` path without
@@ -34,20 +34,9 @@
 //!   against `manifest.channels.publish` allowlist and forwards to
 //!   the broker.
 //!
-//! # IRROMPIBLE refs
-//!
-//! - Internal precedent: `extensions/openai-whisper/src/main.rs:1-79`
-//!   + `protocol.rs:1-23` — proven nexo-rs subprocess plugin shape.
-//!   Reuses methods `initialize` / `tools/call` / `shutdown`. Same
-//!   newline-delimited JSON-RPC.
-//! - claude-code-leak `src/utils/computerUse/mcpServer.ts` and
-//!   `src/commands/mcp/addCommand.ts` — MCP stdio transport pattern
-//!   (`@modelcontextprotocol/sdk`). Same wire envelope, same
-//!   request/notification split.
-//! - OpenClaw absence: `research/extensions/{whatsapp,telegram,browser}/`
-//!   ran in-process Node — no subprocess channel-plugin precedent.
-//!   Subprocess pattern in nexo is strictly tool-extension shape
-//!   (whisper) extended to channel plugins via 81.14.
+//! The wire shape mirrors the existing subprocess tool-extension
+//! plugins (methods `initialize` / `tools/call` / `shutdown`,
+//! newline-delimited JSON-RPC) extended here to channel plugins.
 
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -87,14 +76,14 @@ const DEFAULT_INIT_TIMEOUT_MS: u64 = 5_000;
 /// the broker already promises.
 const STDIN_CHANNEL_DEPTH: usize = 64;
 
-/// Phase 81.21.b.b — hard cap on the per-attempt backoff sleep
+/// Hard cap on the per-attempt backoff sleep
 /// applied between respawn attempts. The doc-comment on
 /// `SupervisorSection.backoff_ms` already promises a 60 s ceiling
 /// regardless of operator-supplied values; this constant is the
 /// single source of truth that enforces that promise.
 const RESPAWN_BACKOFF_CAP_MS: u64 = 60_000;
 
-/// Phase 81.21.b.b — outcome of one supervised lifetime of a
+/// Outcome of one supervised lifetime of a
 /// subprocess plugin child. The supervisor task spawned inside
 /// `spawn_one_attempt` posts exactly one of these via the
 /// `attempt_outcome_tx` oneshot; `respawn_loop` consumes it to
@@ -123,7 +112,7 @@ enum AttemptOutcome {
     Shutdown,
 }
 
-/// Phase 81.21.b.b — exponential backoff calculator used by
+/// Exponential backoff calculator used by
 /// `respawn_loop` between attempts. Doubles per attempt, capped at
 /// [`RESPAWN_BACKOFF_CAP_MS`]. Saturating arithmetic so any
 /// pathological manifest value (e.g. `backoff_ms = u64::MAX`) still
@@ -148,7 +137,7 @@ fn next_backoff(attempt: u32, base_ms: u64) -> Duration {
     Duration::from_millis(raw.min(RESPAWN_BACKOFF_CAP_MS))
 }
 
-/// Phase 81.14 — adapter that owns one child process and brokers
+/// Adapter that owns one child process and brokers
 /// JSON-RPC 2.0 between it and the daemon's broker. Lifecycle is
 /// driven through the `NexoPlugin` trait — `init()` spawns the
 /// child + handshakes; `shutdown()` flushes + reaps it.
@@ -163,20 +152,20 @@ pub struct SubprocessNexoPlugin {
     /// hasn't been started or its boot failed.
     inner: Mutex<Option<Inner>>,
 
-    /// Phase 81.22 — sandbox runner threaded by `init()` from
+    /// Sandbox runner threaded by `init()` from
     /// `PluginInitContext.sandbox`. None for tests that call
     /// `spawn_one_attempt` directly without going through
     /// init() — those paths skip sandbox wrapping (default
     /// disabled, equivalent to `sandbox.enabled = false`).
     sandbox: Mutex<Option<Arc<crate::agent::plugin_sandbox::SandboxRunner>>>,
 
-    /// Phase 81.22 — plugin's per-instance state dir, used to
+    /// Plugin's per-instance state dir, used to
     /// expand `${state_dir}` tokens in `fs_write_paths`.
     /// Threaded from `PluginInitContext::plugin_state_dir(...)`
     /// at init time.
     plugin_state_dir: Mutex<Option<std::path::PathBuf>>,
 
-    /// Phase 81.18.b — daemon-supplied per-spawn env dict. When
+    /// Daemon-supplied per-spawn env dict. When
     /// `Some`, `spawn_one_attempt` calls
     /// `Command::env_clear().envs(&map)` so the child sees ONLY
     /// the keys the daemon explicitly seeded — defense-in-depth
@@ -189,7 +178,7 @@ pub struct SubprocessNexoPlugin {
     /// vars.
     spawn_env: Option<std::collections::HashMap<String, String>>,
 
-    /// Phase 81.18.b — operator-visible label disambiguating N
+    /// Operator-visible label disambiguating N
     /// instances of the same plugin id (`"telegram.bot1"`,
     /// `"telegram.bot2"`). Threaded into log fields so admin
     /// diagnostics list each subprocess distinctly. `None` for
@@ -197,7 +186,7 @@ pub struct SubprocessNexoPlugin {
     /// multiplex.
     instance_label: Option<String>,
 
-    /// Phase 81.21.b.b — set by `shutdown()` so the supervisor
+    /// Set by `shutdown()` so the supervisor
     /// task aborts any in-flight backoff sleep or respawn
     /// attempt instead of marching on after the daemon asked it
     /// to stop. Lives on the OUTER struct (not `Inner`) so it
@@ -207,7 +196,7 @@ pub struct SubprocessNexoPlugin {
     /// hadn't fired.
     shutdown_signaled: Arc<AtomicBool>,
 
-    /// Phase 81.21.b.b — paired wake-up channel for the supervisor
+    /// Paired wake-up channel for the supervisor
     /// task. `shutdown()` calls `notify_waiters()` so a supervisor
     /// parked inside `sleep_or_shutdown(backoff)` wakes immediately
     /// instead of waiting up to 60s for the natural sleep deadline.
@@ -217,7 +206,7 @@ pub struct SubprocessNexoPlugin {
     /// completes.
     shutdown_notify: Arc<Notify>,
 
-    /// Phase 81.21.b.b follow-up — set by `force_restart` to
+    /// Set by `force_restart` to
     /// distinguish operator-initiated teardown from `shutdown()`.
     /// The supervisor task / respawn_loop don't need to inspect
     /// this directly (they observe the cancel cascade); the flag
@@ -227,7 +216,7 @@ pub struct SubprocessNexoPlugin {
     /// state.
     restart_signaled: Arc<AtomicBool>,
 
-    /// Phase 81.21.b.b — populated by both subprocess plugin
+    /// Populated by both subprocess plugin
     /// factories (`subprocess_plugin_factory{,_with_env}`)
     /// immediately after `Arc::new(self)` so
     /// `spawn_supervisor_loop` can upgrade back to `Arc<Self>`.
@@ -237,7 +226,7 @@ pub struct SubprocessNexoPlugin {
     /// constructed exactly once.
     weak_self: std::sync::OnceLock<std::sync::Weak<SubprocessNexoPlugin>>,
 
-    /// Phase 90 audit follow-up — serialise concurrent
+    /// Serialise concurrent
     /// `force_restart` invocations against the same plugin. Without
     /// this two operators clicking "Restart" simultaneously (or a
     /// CLI restart racing the admin RPC) each clone the Arc, run the
@@ -268,14 +257,14 @@ struct Inner {
     /// stay intact.
     pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>>,
 
-    /// Phase 81.24 — fresh JSON-RPC request id generator. Starts
+    /// Fresh JSON-RPC request id generator. Starts
     /// at 2 because `init_id = 1` is hardcoded for the initialize
     /// handshake. Shared with `RemoteChannelAdapter` instances
     /// registered into the channel adapter registry so all
     /// host-issued requests draw from the same id space.
     next_id: Arc<AtomicU64>,
 
-    /// Phase 81.25 — per-id streaming-response state for
+    /// Per-id streaming-response state for
     /// `llm.chat` requests where `params.stream = true`. The
     /// reader's notification handler dispatches
     /// `llm.chat.delta { request_id, chunk }` notifications to
@@ -284,7 +273,7 @@ struct Inner {
     /// closes (signalling end-of-stream to the consumer).
     streaming_pending: Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
 
-    /// Phase 81.29 — tool catalog advertised by the subprocess
+    /// Tool catalog advertised by the subprocess
     /// at initialize-reply time. `register_remote_tool_handlers`
     /// reads this to build one `RemoteToolHandler` per declared
     /// tool. Empty when the plugin doesn't expose any tools
@@ -292,11 +281,11 @@ struct Inner {
     declared_tools: Vec<crate::agent::tool_remote::RemoteToolDef>,
 
     /// Background tasks: stdin writer, stdout reader, broker→child
-    /// bridge per subscribed topic, supervisor (Phase 81.21).
+    /// bridge per subscribed topic, supervisor.
     /// Joined on shutdown.
     tasks: Vec<JoinHandle<()>>,
 
-    /// Child process handle. Phase 81.21 wraps in
+    /// Child process handle. Wrapped in
     /// `Arc<Mutex<...>>` so the supervisor task can `try_wait()`
     /// every 500ms while `shutdown()` can still `take()` for
     /// reaping. Mutex contention is cheap (one try_wait poll per
@@ -308,7 +297,7 @@ struct Inner {
     /// `PluginInitContext.shutdown` token — both paths must work.
     cancel: CancellationToken,
 
-    /// Phase 81.21.b.b — wallclock when this `Inner` was
+    /// Wallclock when this `Inner` was
     /// installed. Used by `maybe_reset_attempt_counter` to decide
     /// whether the next crash should reset the per-plugin attempt
     /// counter (transient blip) versus increment it (recurring
@@ -316,7 +305,7 @@ struct Inner {
     /// `spawn_one_attempt` after the handshake succeeded.
     spawned_at: Instant,
 
-    /// Phase 81.21.b.b — single-shot receiver the per-attempt
+    /// Single-shot receiver the per-attempt
     /// supervisor task posts an `AttemptOutcome` to when the
     /// child exits (or shutdown fires). `respawn_loop` `take()`s
     /// it once via `wait_for_attempt_outcome` and `select!`s
@@ -340,29 +329,29 @@ impl SubprocessNexoPlugin {
             plugin_state_dir: Mutex::new(None),
             spawn_env: None,
             instance_label: None,
-            // Phase 81.21.b.b — auto-respawn shutdown coordination.
+            // Auto-respawn shutdown coordination.
             // Both default-quiescent: the supervisor task only checks
             // them after init() succeeds + the respawn_loop is
             // spawned by the init_loop.rs hook.
             shutdown_signaled: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
-            // Phase 81.21.b.b follow-up — quiescent until
+            // Quiescent until
             // `force_restart` flips it; cleared on return.
             restart_signaled: Arc::new(AtomicBool::new(false)),
-            // Phase 81.21.b.b — populated by the factory after
+            // Populated by the factory after
             // `Arc::new(self)` so `spawn_supervisor_loop` can
             // upgrade back to `Arc<Self>`. Empty for hand-built
             // plugins constructed outside the factory (tests),
             // which means those plugins can't auto-respawn — fine,
             // tests don't go through init_loop.
             weak_self: std::sync::OnceLock::new(),
-            // Phase 90 audit follow-up — quiescent until the first
+            // Quiescent until the first
             // force_restart acquires it. See field doc.
             restart_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
-    /// Phase 81.18.b — supply a per-spawn env dict that replaces
+    /// Supply a per-spawn env dict that replaces
     /// the daemon's process env at child spawn time. See
     /// [`spawn_env`](#structfield.spawn_env) for the full
     /// rationale. Builder API; chain after `new()`.
@@ -371,7 +360,7 @@ impl SubprocessNexoPlugin {
         self
     }
 
-    /// Phase 81.18.b — operator-visible label for multi-instance
+    /// Operator-visible label for multi-instance
     /// plugins. Threaded into tracing log fields so admin
     /// diagnostics distinguish concurrent subprocesses. Empty
     /// strings are normalised to `None`.
@@ -385,7 +374,7 @@ impl SubprocessNexoPlugin {
         self
     }
 
-    // ─── Phase 81.21.b.b helpers ───────────────────────────
+    // ─── Helpers ───
 
     /// Upgrade the factory-populated `weak_self` to a typed
     /// `Arc<Self>` so callers (init_loop) can hand the Arc into
@@ -510,7 +499,7 @@ impl SubprocessNexoPlugin {
         }
     }
 
-    /// Phase 81.21.b.b — auto-respawn lifecycle owner. Spawned
+    /// Auto-respawn lifecycle owner. Spawned
     /// by `init_loop` AFTER the first `spawn_one_attempt`
     /// succeeded + the `Inner` was installed. Owns the `Inner`
     /// slot for the rest of the daemon's lifetime: every
@@ -524,8 +513,7 @@ impl SubprocessNexoPlugin {
     ///      `NormalExit` / `Shutdown`.
     ///   2. On `Shutdown` / `NormalExit`: return immediately.
     ///   3. On `Crashed`: publish `plugin.lifecycle.<id>.crashed`.
-    ///      If `respawn=false`, return (matches Phase 81.21.b
-    ///      semantics exactly).
+    ///      If `respawn=false`, return.
     ///   4. Else: maybe reset attempt counter (heuristic), check
     ///      `attempt >= max_attempts` → `gave_up` event + return.
     ///   5. Sleep `next_backoff(attempt)` (interruptible by
@@ -575,7 +563,7 @@ impl SubprocessNexoPlugin {
                     exit_code,
                     stderr_tail,
                 } => {
-                    // Phase 81.21.b.b follow-up — capture the
+                    // Capture the
                     // dying Inner's uptime BEFORE drain so the
                     // subsequent `respawned` event can report
                     // how long the previous attempt lived.
@@ -588,8 +576,8 @@ impl SubprocessNexoPlugin {
                             .map(|i| i.spawned_at.elapsed().as_millis() as u64)
                             .unwrap_or(0)
                     };
-                    // Always publish `crashed` (matches
-                    // Phase 81.21.b operator-observable behavior).
+                    // Always publish `crashed` so the operator
+                    // sees it regardless of respawn policy.
                     Self::publish_lifecycle_event(
                         &broker,
                         &plugin_id,
@@ -602,9 +590,8 @@ impl SubprocessNexoPlugin {
                     )
                     .await;
                     if !respawn_enabled {
-                        // Phase 81.21.b semantics: detect, publish,
-                        // give up. Operator restarts daemon to
-                        // recover. No respawn.
+                        // Detect, publish, give up. Operator
+                        // restarts daemon to recover. No respawn.
                         return;
                     }
                     // Reset counter if the dead child outlived the
@@ -648,8 +635,7 @@ impl SubprocessNexoPlugin {
                     // holding stale request ids.
                     self.drain_pending_with_error("plugin restarted; retry")
                         .await;
-                    // Phase 81.21.b.b deferred-test fix —
-                    // labelled inner loop drives the spawn-retry
+                    // The labelled inner loop drives the spawn-retry
                     // path inline. Earlier `continue` to the
                     // outer loop on Err short-circuited the very
                     // next `wait_for_attempt_outcome` (no Inner
@@ -737,7 +723,7 @@ impl SubprocessNexoPlugin {
                         json!({
                             "plugin_id": plugin_id,
                             "attempt": attempt + 1,
-                            // Phase 81.21.b.b follow-up — uptime
+                            // Uptime
                             // of the PREVIOUS Inner (the one that
                             // just crashed and triggered this
                             // respawn). Operators graph per-cycle
@@ -755,7 +741,7 @@ impl SubprocessNexoPlugin {
         }
     }
 
-    /// Phase 81.21.b.b — public entry the init_loop hook calls
+    /// Public entry the init_loop hook calls
     /// AFTER `init()` succeeds + all post-init registrations
     /// (channel adapters, llm providers, hook handlers, vector
     /// backends, tool handlers) complete. Spawns the
@@ -780,7 +766,7 @@ impl SubprocessNexoPlugin {
         // AttemptOutcome → respawn_loop chain — but if we never
         // start a respawn_loop, the AttemptOutcome receiver
         // closes when its Inner gets dropped, with no observable
-        // operator-side effect. Phase 81.21.b operators expect
+        // operator-side effect. Operators expect
         // to see `crashed` events even with `respawn=false`, so
         // we DO start the loop; respawn_loop's early-return
         // branch handles the `respawn=false` case after
@@ -788,7 +774,7 @@ impl SubprocessNexoPlugin {
         let _join = tokio::spawn(self.respawn_loop(ctx_shutdown, broker, memory, llm));
     }
 
-    /// Phase 81.21.b.b follow-up — operator-driven plugin
+    /// Operator-driven plugin
     /// restart. Bypasses the auto-respawn loop's natural
     /// Crashed flow so no spurious `crashed` event fires for an
     /// intentional kill. Reuses the existing cancel cascade +
@@ -820,7 +806,7 @@ impl SubprocessNexoPlugin {
         memory: Option<Arc<LongTermMemory>>,
         llm: Option<LlmServices>,
     ) -> Result<nexo_tool_meta::admin::plugin_restart::PluginsRestartResponse, anyhow::Error> {
-        // Phase 90 audit follow-up — serialise concurrent
+        // Serialise concurrent
         // restarts of the same plugin. Lock held for the entire
         // 11-step cascade so a second caller observes the freshly
         // installed Inner via wait, never builds a parallel one
@@ -926,7 +912,7 @@ impl SubprocessNexoPlugin {
         }
 
         // Step 10: publish `restarted_manually` event.
-        // Phase 90 audit fix — include `new_pid` in the broker
+        // Include `new_pid` in the broker
         // payload so subscribers tailing lifecycle events see the
         // freshly spawned PID without an extra RPC round-trip.
         // Mirrors the `PluginsRestartResponse` wire shape; encoded
@@ -963,7 +949,7 @@ impl SubprocessNexoPlugin {
         )
     }
 
-    /// Phase 81.26 — for each backend name in
+    /// For each backend name in
     /// `manifest.plugin.extends.memory_backends`, build a
     /// `RemoteVectorBackend` sharing this plugin's stdio bridge
     /// and register it with the vector backend registry.
@@ -1019,7 +1005,7 @@ impl SubprocessNexoPlugin {
         Ok(registered)
     }
 
-    /// Phase 81.27 — for each hook name in
+    /// For each hook name in
     /// `manifest.plugin.extends.hooks`, build a
     /// `RemoteHookHandler` sharing this plugin's stdio bridge
     /// and register it with the hook registry. Returns the list
@@ -1067,7 +1053,7 @@ impl SubprocessNexoPlugin {
         Ok(registered)
     }
 
-    /// Phase 81.29 — for each tool name in
+    /// For each tool name in
     /// `manifest.plugin.extends.tools` that the subprocess
     /// confirmed via initialize-reply, build a `RemoteToolHandler`
     /// sharing this plugin's stdio bridge and register it with
@@ -1144,7 +1130,7 @@ impl SubprocessNexoPlugin {
         Ok(registered)
     }
 
-    /// Phase 81.25 — for each provider name in
+    /// For each provider name in
     /// `manifest.plugin.extends.llm_providers`, build a
     /// `RemoteLlmFactory` sharing this plugin's stdio bridge and
     /// register it with the LLM registry. Returns the list of
@@ -1206,7 +1192,7 @@ impl SubprocessNexoPlugin {
         Ok(registered)
     }
 
-    /// Phase 81.24 — for each kind in
+    /// For each kind in
     /// `manifest.plugin.extends.channels`, build a
     /// `RemoteChannelAdapter` sharing this plugin's stdio bridge
     /// and register it with the channel adapter registry.
@@ -1299,7 +1285,7 @@ impl SubprocessNexoPlugin {
             }
         }
 
-        // Phase 81.22 — wrap the spawn command with the sandbox
+        // Wrap the spawn command with the sandbox
         // runner when one is configured. `init()` stashes the
         // runner + state dir; tests calling spawn_one_attempt
         // directly leave both as None → wrap_command resolves to
@@ -1337,13 +1323,13 @@ impl SubprocessNexoPlugin {
         cmd.args(&prog_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // Phase 81.23 — pipe stderr into the daemon's tracing
+            // Pipe stderr into the daemon's tracing
             // subsystem instead of discarding. Child code that uses
             // `eprintln!` / `tracing` writing to stderr now becomes
             // operator-visible debug output filtered by `plugin_id`.
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        // Phase 81.18.b — when the daemon supplied a per-spawn env
+        // When the daemon supplied a per-spawn env
         // dict via `with_spawn_env`, wipe the inherited env first
         // so the child sees ONLY what the daemon explicitly seeded.
         // Defense-in-depth against secrets leaking from the daemon
@@ -1377,7 +1363,7 @@ impl SubprocessNexoPlugin {
             .take()
             .ok_or_else(|| anyhow::anyhow!("child has no stderr"))?;
 
-        // Phase 81.21 — wrap the Child in Arc<Mutex<Option<...>>>
+        // Wrap the Child in Arc<Mutex<Option<...>>>
         // immediately so the supervisor task (spawned after the
         // bridge wires up) can poll `try_wait` while shutdown can
         // still `take()` for reaping. Mutex contention is cheap:
@@ -1428,7 +1414,7 @@ impl SubprocessNexoPlugin {
             }
         });
 
-        // Phase 81.23 — stderr reader task. Forwards each line
+        // Stderr reader task. Forwards each line
         // the child writes to stderr into the daemon's tracing
         // subsystem at `target = "plugin.stderr"` with the
         // plugin_id captured as a structured field. Operators can
@@ -1438,7 +1424,7 @@ impl SubprocessNexoPlugin {
         // errors land in the operator's log.
         let stderr_cancel = cancel.clone();
         let stderr_plugin_id = self.cached_manifest.plugin.id.clone();
-        // Phase 81.21.b — ring buffer of last N stderr lines.
+        // Ring buffer of last N stderr lines.
         // Capacity comes from `manifest.supervisor.stderr_tail_lines`
         // (validated at parse-time to be ≤ SUPERVISOR_STDERR_TAIL_MAX).
         // Shared between the stderr reader (writer side) and the
@@ -1508,7 +1494,7 @@ impl SubprocessNexoPlugin {
         let (init_tx, init_rx) = oneshot::channel::<Result<Value, String>>();
         pending.insert(init_id, init_tx);
 
-        // Phase 81.14.b — broker bridge state.
+        // Broker bridge state.
         // The reader task reads `broker.publish` notifications and
         // forwards to the broker, but it must SKIP forwarding until
         // the handshake completes successfully (otherwise the child
@@ -1527,7 +1513,7 @@ impl SubprocessNexoPlugin {
         let reader_cancel = cancel.clone();
         let reader_pending = pending.clone();
         let reader_streaming_pending = streaming_pending.clone();
-        // Phase 81.20.a — reader needs stdin_tx so it can write
+        // Reader needs stdin_tx so it can write
         // responses back to the child for incoming requests
         // (memory.recall today; llm.complete + tool.dispatch in
         // 81.20.b/.c).
@@ -1556,7 +1542,7 @@ impl SubprocessNexoPlugin {
                 let parsed: Value = match serde_json::from_str(trimmed) {
                     Ok(v) => v,
                     Err(_) => {
-                        // Phase 81.23 — non-JSON stdout lines are
+                        // Non-JSON stdout lines are
                         // INFO-level child output, NOT a parser
                         // failure. Plugin authors mixing stderr +
                         // stdout for diagnostics get the same
@@ -1582,7 +1568,7 @@ impl SubprocessNexoPlugin {
                 let id_val = parsed.get("id").cloned();
                 let method_str = parsed.get("method").and_then(|v| v.as_str()).unwrap_or("");
                 if id_val.is_some() && !method_str.is_empty() {
-                    // Phase 81.20.a — incoming child request.
+                    // Incoming child request.
                     // Dispatch + write response back via stdin_tx.
                     // Bridge is the source of host services
                     // (memory / future llm + tools); when bridge
@@ -1635,7 +1621,7 @@ impl SubprocessNexoPlugin {
                         let _ = sender.send(payload);
                         continue;
                     }
-                    // Phase 81.25 — streaming-response path. The
+                    // Streaming-response path. The
                     // final reply for an `llm.chat` streaming
                     // request resolves the per-id `final_tx` AND
                     // drops the `streaming_pending` entry so its
@@ -1682,7 +1668,7 @@ impl SubprocessNexoPlugin {
                     handle_child_publish(bridge, &reader_plugin_id, &parsed).await;
                     continue;
                 }
-                // Phase 81.25 — `llm.chat.delta { request_id,
+                // `llm.chat.delta { request_id,
                 // chunk }` notifications push streaming chunks
                 // into the per-id `streaming_pending.delta_tx`.
                 // Drop on `try_send` failure (consumer slow / gone).
@@ -1805,7 +1791,7 @@ impl SubprocessNexoPlugin {
             );
         }
 
-        // Phase 81.29 — parse optional `result.tools` array (tool
+        // Parse optional `result.tools` array (tool
         // catalog advertised by the subprocess at handshake). Subset
         // check: every advertised tool name MUST appear in
         // `manifest.plugin.extends.tools` (defense against drift /
@@ -1861,14 +1847,14 @@ impl SubprocessNexoPlugin {
             }
         }
 
-        // Phase 81.14.b — wire the broker ↔ child topic bridge.
+        // Wire the broker ↔ child topic bridge.
         // Derives subscribe / publish patterns from
         // `manifest.channels.register[].kind`. Plugins that don't
         // declare any channel kind get no bridge — the connection
         // stays open with just the writer + reader tasks but no
         // broker traffic crosses. Test paths pass `broker = None`
         // to skip subscriptions entirely.
-        // Phase 81.21 — supervisor task. Polls `child.try_wait()`
+        // Supervisor task. Polls `child.try_wait()`
         // every 500ms; on exit detection, publishes a
         // `AttemptOutcome` to the respawn_loop via this oneshot.
         // Centralised lifecycle event publishing now lives in
@@ -2026,7 +2012,7 @@ impl SubprocessNexoPlugin {
                 publish_allowlist.push(format!("plugin.inbound.{kind}"));
                 publish_allowlist.push(format!("plugin.inbound.{kind}.>"));
             }
-            // Phase 82.15.bx — manifest-declared broker capability.
+            // Manifest-declared broker capability.
             // CRM-style plugins (marketing, analytics) consume topics
             // outside the auto-derived `plugin.outbound.<kind>` family;
             // their `[capabilities.broker]` declares the real surface.
@@ -2128,7 +2114,7 @@ impl SubprocessNexoPlugin {
             tasks,
             child: child_handle,
             cancel,
-            // Phase 81.21.b.b — heuristics + IPC for respawn loop.
+            // Heuristics + IPC for respawn loop.
             // `attempt_outcome_rx` was created earlier in the
             // function (paired with the `attempt_outcome_tx` the
             // supervisor task posts to); now we move it into the
@@ -2140,7 +2126,7 @@ impl SubprocessNexoPlugin {
     }
 }
 
-/// Phase 81.21 — kill the wrapped child if still present. Used by
+/// Kill the wrapped child if still present. Used by
 /// every spawn_one_attempt error path to make sure a partial
 /// boot doesn't leak the child process. Idempotent — `take()`
 /// makes follow-up calls a no-op.
@@ -2151,7 +2137,7 @@ async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
-/// Phase 81.20.b.c — small helper struct collected from
+/// Small helper struct collected from
 /// streaming `Usage` chunks. Mirrors `TokenUsage` but lives in
 /// this module so we can default it without depending on
 /// `TokenUsage::default()` semantics changing.
@@ -2160,7 +2146,7 @@ struct TokenUsageOut {
     completion_tokens: u32,
 }
 
-/// Phase 81.20.b — bundle of LLM-related handles needed to
+/// Bundle of LLM-related handles needed to
 /// service `llm.complete` requests from a subprocess plugin.
 /// `LlmRegistry` builds clients per (provider, model);
 /// `LlmConfig` carries the provider table (api keys, endpoints)
@@ -2171,9 +2157,8 @@ pub struct LlmServices {
     pub config: Arc<LlmConfig>,
 }
 
-/// Phase 81.14.b + 81.20.a + 81.20.b — captured by the stdout
-/// reader task to forward validated `broker.publish`
-/// notifications to the broker AND service incoming
+/// Captured by the stdout reader task to forward validated
+/// `broker.publish` notifications to the broker AND service incoming
 /// `memory.recall` + `llm.complete` requests from the child.
 struct BridgeContext {
     broker: AnyBroker,
@@ -2185,13 +2170,13 @@ struct BridgeContext {
     /// defense against a malicious / buggy plugin attempting to
     /// hijack core nexo topics like `agent.route.*`.
     publish_allowlist: Vec<String>,
-    /// Phase 81.20.a — long-term memory backend the daemon
+    /// Long-term memory backend the daemon
     /// exposes to subprocess plugins via the `memory.recall`
     /// JSON-RPC method. `None` when the operator hasn't
     /// configured long-term memory. Handler returns `-32603`
     /// "memory not configured" when None.
     memory: Option<Arc<LongTermMemory>>,
-    /// Phase 81.20.b — LLM services exposed via `llm.complete`.
+    /// LLM services exposed via `llm.complete`.
     /// `None` means the daemon hasn't wired the registry / config
     /// to the subprocess pipeline (operator-level decision); the
     /// handler returns `-32603 "llm not configured"`.
@@ -2252,7 +2237,7 @@ async fn handle_child_publish(bridge: &BridgeContext, plugin_id: &str, parsed: &
     }
 }
 
-/// Phase 81.20.a — dispatch an incoming child request to the
+/// Dispatch an incoming child request to the
 /// matching daemon-side handler. Returns `Ok(result_value)` on
 /// success or `Err((code, message))` to be serialized as a
 /// JSON-RPC error response.
@@ -2276,7 +2261,7 @@ async fn handle_child_request(
     }
 }
 
-/// Phase 81.20.a — service a `memory.recall` request from the
+/// Service a `memory.recall` request from the
 /// child. Params shape:
 ///   { "agent_id": "<id>", "query": "<text>", "limit": <u64> }
 /// Result on success:
@@ -2304,7 +2289,7 @@ async fn handle_memory_recall(
         .ok_or_else(|| (-32602, "missing or invalid `query` (string)".to_string()))?;
     let limit_u64 = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10);
     // Hard cap to prevent a malicious / buggy plugin from asking
-    // for unbounded results. Same defensive shape as Phase 80.4
+    // for unbounded results. Same defensive shape as the memory
     // tail caps.
     let limit: usize = (limit_u64 as usize).min(1000);
     let entries = memory.recall(agent_id, query, limit).await.map_err(|e| {
@@ -2325,7 +2310,7 @@ async fn handle_memory_recall(
     Ok(json!({ "entries": entries_json }))
 }
 
-/// Phase 81.20.b — service an `llm.complete` request from the
+/// Service an `llm.complete` request from the
 /// child. Params shape:
 ///   {
 ///     "provider": "minimax",
@@ -2404,7 +2389,7 @@ async fn handle_llm_complete(
         .get("system_prompt")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    // Phase 81.20.b.c — opt-in streaming. When `stream: true`,
+    // Opt-in streaming. When `stream: true`,
     // the host calls `client.stream()` and emits each TextDelta
     // as a `llm.complete.delta` notification correlated by
     // `request_id`. Final reply (matching the original `id`)
@@ -2439,7 +2424,7 @@ async fn handle_llm_complete(
     req.system_prompt = system_prompt;
 
     if stream {
-        // Phase 81.20.b.c streaming branch. Iterate the provider's
+        // Streaming branch. Iterate the provider's
         // stream; emit TextDelta chunks as
         // `llm.complete.delta { request_id, chunk }` notifications;
         // collect Usage + final FinishReason for the response. Tool
@@ -2590,7 +2575,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
     }
 
     async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
-        // Phase 81.22 — stash the sandbox runner + plugin state
+        // Stash the sandbox runner + plugin state
         // dir so `spawn_one_attempt` can wrap the child Command
         // with bwrap argv when the manifest declares
         // `[plugin.sandbox] enabled = true`.
@@ -2599,7 +2584,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
         *self.sandbox.lock().await = Some(ctx.sandbox.clone());
         *self.plugin_state_dir.lock().await = Some(plugin_state_dir);
 
-        // Phase 81.20.b.b — build LlmServices from the context's
+        // Build LlmServices from the context's
         // already-threaded registry + config so `llm.complete`
         // RPC requests reach operator-configured providers.
         let llm = Some(LlmServices {
@@ -2623,7 +2608,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
     }
 
     async fn shutdown(&self) -> Result<(), PluginShutdownError> {
-        // Phase 81.21.b.b — flag the auto-respawn supervisor task
+        // Flag the auto-respawn supervisor task
         // BEFORE we drain the Inner so a supervisor parked in
         // backoff sleep wakes immediately + bails instead of
         // racing the teardown.
@@ -2652,7 +2637,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
         // Whether the shutdown reply arrived or not, tear down.
         inner.cancel.cancel();
         // 1s grace for the child to exit on its own; SIGKILL after.
-        // The supervisor task (Phase 81.21) may have already taken
+        // The supervisor task may have already taken
         // the child if it observed an exit; `take()` returning None
         // is fine — `kill_handle` is a no-op.
         let child_taken = inner.child.lock().await.take();
@@ -2671,7 +2656,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
     }
 }
 
-/// Phase 81.14 — factory helper for subprocess plugins. Reads the
+/// Factory helper for subprocess plugins. Reads the
 /// manifest at registration time and returns a closure that builds
 /// a fresh `Arc<SubprocessNexoPlugin>` per call. Each `factory(&m)`
 /// invocation produces a new adapter; the daemon's init loop calls
@@ -2685,7 +2670,7 @@ pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
         // (Discovery should hand the same manifest back, so this is
         // defensive against future refactors.)
         let _ = reg_manifest;
-        // Phase 81.21.b.b — wrap in `Arc<SubprocessNexoPlugin>`
+        // Wrap in `Arc<SubprocessNexoPlugin>`
         // first so we can populate the `weak_self` field used by
         // `spawn_supervisor_loop` to upgrade back to a typed Arc.
         // Then coerce to `Arc<dyn NexoPlugin>` for the registry.
@@ -2697,7 +2682,7 @@ pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
     })
 }
 
-/// Phase 81.18.b — factory variant that captures a per-spawn env
+/// Factory variant that captures a per-spawn env
 /// dict + instance label at registration time. Used by the daemon's
 /// multi-instance loops in `proyecto/src/main.rs` so each entry of
 /// `cfg.plugins.{telegram,whatsapp}` produces a distinct adapter
@@ -2715,7 +2700,7 @@ pub fn subprocess_plugin_factory_with_env(
     instance_label: String,
 ) -> PluginFactory {
     Box::new(move |_reg_manifest| {
-        // Phase 81.21.b.b — same pattern as
+        // Same pattern as
         // `subprocess_plugin_factory`: typed Arc first, populate
         // `weak_self`, then coerce to `Arc<dyn NexoPlugin>`.
         let typed: Arc<SubprocessNexoPlugin> = Arc::new(
@@ -2917,7 +2902,7 @@ sleep 30
             .expect("second shutdown also idempotent");
     }
 
-    // ─── Phase 81.14.b — broker bridge tests ────────────────────────
+    // ─── Broker bridge tests ───
 
     use nexo_broker::AnyBroker;
     use nexo_plugin_manifest::ChannelDecl;
@@ -3119,7 +3104,7 @@ sleep 5
         cancel.cancel();
     }
 
-    /// Phase 81.23 — stderr is piped (not Stdio::null()) so the
+    /// Stderr is piped (not Stdio::null()) so the
     /// reader task can forward child stderr lines into daemon
     /// tracing. We assert this by writing a stderr-emitting mock
     /// that successfully completes the handshake — if stderr were
@@ -3175,13 +3160,11 @@ sleep 5
         cancel.cancel();
     }
 
-    /// Phase 81.21 (refactored 81.21.b.b) — supervisor task
-    /// detects child exit, drains the stderr tail, and posts an
-    /// `AttemptOutcome::Crashed` via the oneshot channel that
-    /// `respawn_loop` consumes. Lifecycle event publishing now
-    /// lives in `respawn_loop` (covered by Fase G tests); this
-    /// test verifies the supervisor's detection contract in
-    /// isolation.
+    /// The supervisor task detects child exit, drains the stderr
+    /// tail, and posts an `AttemptOutcome::Crashed` via the oneshot
+    /// channel that `respawn_loop` consumes. Lifecycle event
+    /// publishing lives in `respawn_loop`; this test verifies the
+    /// supervisor's detection contract in isolation.
     #[tokio::test]
     async fn supervisor_posts_crashed_outcome_with_stderr_tail() {
         let script = r#"#!/bin/sh
@@ -3250,7 +3233,7 @@ exit 7
         cancel.cancel();
     }
 
-    /// Phase 81.21.b — manifest validation rejects a stderr tail
+    /// Manifest validation rejects a stderr tail
     /// request above the hard cap (preventing a buggy / malicious
     /// manifest from requesting megabytes of in-memory ring
     /// buffer per running plugin).
@@ -3289,7 +3272,7 @@ stderr_tail_lines = {}
         );
     }
 
-    /// Phase 81.20.a — `memory.recall` request handler servicing
+    /// `memory.recall` request handler servicing
     /// a child's request. We seed an in-memory `LongTermMemory`
     /// with one entry, build a BridgeContext with it, then call
     /// the handler directly. This avoids spinning up the full
@@ -3349,7 +3332,7 @@ stderr_tail_lines = {}
         );
     }
 
-    /// Phase 81.20.a — when memory backend is None (operator
+    /// When memory backend is None (operator
     /// hasn't configured long-term memory OR main.rs hasn't
     /// plumbed the handle yet), the handler returns -32603 with
     /// a clear "memory not configured" message. Plugin authors
@@ -3376,7 +3359,7 @@ stderr_tail_lines = {}
         }
     }
 
-    /// Phase 81.20.a — bad params surface as -32602 invalid
+    /// Bad params surface as -32602 invalid
     /// params per JSON-RPC 2.0 spec. Tests both missing
     /// `agent_id` and wrong-type `query`.
     #[tokio::test]
@@ -3416,7 +3399,7 @@ stderr_tail_lines = {}
         }
     }
 
-    /// Phase 81.20.b — `llm.complete` handler returns -32603
+    /// `llm.complete` handler returns -32603
     /// when no `LlmServices` is wired in the bridge. Covers the
     /// "operator hasn't enabled LLM RPC" path.
     #[tokio::test]
@@ -3448,7 +3431,7 @@ stderr_tail_lines = {}
         }
     }
 
-    /// Phase 81.20.b — bad params surface as -32602. We test
+    /// Bad params surface as -32602. We test
     /// missing `provider`, missing `messages`, empty `messages`,
     /// and a malformed message (role as integer). Each path must
     /// fail with the correct field name in the error.
@@ -3533,7 +3516,7 @@ stderr_tail_lines = {}
         }
     }
 
-    /// Phase 81.20.b — when the provider is not registered in the
+    /// When the provider is not registered in the
     /// LlmRegistry, the handler returns -32603 with the build
     /// error wrapped (not -32602 — the params themselves are
     /// well-formed JSON; the failure is server-side).
@@ -3574,7 +3557,7 @@ stderr_tail_lines = {}
         }
     }
 
-    /// Phase 81.18.b — `with_spawn_env` populates the field; the
+    /// `with_spawn_env` populates the field; the
     /// builder is otherwise a no-op (state isn't visible at the
     /// public API level until `spawn_one_attempt` runs). Verify
     /// the dict survives the builder + that `with_instance_label`
@@ -3624,7 +3607,7 @@ stderr_tail_lines = {}
         assert_eq!(plugin3.instance_label.as_deref(), Some("real"));
     }
 
-    /// Phase 81.18.b — by default (`SubprocessNexoPlugin::new`
+    /// By default (`SubprocessNexoPlugin::new`
     /// alone), `spawn_env` stays `None` so `spawn_one_attempt`
     /// keeps the pre-81.18.b inherit-daemon-env behaviour. The
     /// single-instance browser plugin and any test that calls
@@ -3638,7 +3621,7 @@ stderr_tail_lines = {}
         assert!(plugin.instance_label.is_none());
     }
 
-    // ── Phase 81.21.b.b — `next_backoff` pure unit tests ──
+    // ─── `next_backoff` pure unit tests ───
 
     #[test]
     fn next_backoff_doubles_per_attempt() {
@@ -3680,7 +3663,7 @@ stderr_tail_lines = {}
         assert_eq!(result, Duration::from_millis(RESPAWN_BACKOFF_CAP_MS));
     }
 
-    // ── Phase 81.21.b.b — respawn loop integration tests ──
+    // ─── Respawn loop integration tests ───
 
     /// Drop a tiny shell-script fixture that crashes after handshake.
     /// Each invocation of the binary writes a fresh handshake reply,
@@ -3978,7 +3961,7 @@ exit {exit_code}
         cancel.cancel();
     }
 
-    /// Phase 81.21.b.b follow-up — `respawned.total_uptime_ms`
+    /// `respawned.total_uptime_ms`
     /// reports the previous Inner's lifespan (handshake → crash
     /// detection). Operators graph this per-cycle to spot
     /// degrading plugins. Field used to be hard-coded `0`; now
@@ -4025,7 +4008,7 @@ exit {exit_code}
         cancel.cancel();
     }
 
-    // ── Phase 81.21.b.b follow-up — force_restart tests ──
+    // ─── Force_restart tests ───
 
     /// Drop a stable mock that handshakes then sleeps forever.
     /// Force-restart kills it cleanly and a fresh spawn follows.
@@ -4087,7 +4070,7 @@ exit {exit_code}
         cancel.cancel();
     }
 
-    /// Phase 90 audit follow-up — two operators clicking "Restart"
+    /// Two operators clicking "Restart"
     /// simultaneously (or a CLI restart racing the admin RPC) must
     /// not produce orphaned children. The per-plugin `restart_lock`
     /// holds for the full force_restart cascade so the second caller
@@ -4197,7 +4180,7 @@ exit {exit_code}
             .get("restarted_at_ms")
             .and_then(|v| v.as_i64())
             .is_some());
-        // Phase 90 audit fix — broker payload must mirror the
+        // Broker payload must mirror the
         // `PluginsRestartResponse.new_pid` field so subscribers
         // don't have to RPC again to learn the freshly spawned
         // PID. `Some(_)` from Tokio's `Child::id()` is the common
@@ -4331,7 +4314,7 @@ exit {exit_code}
         cancel.cancel();
     }
 
-    // ── Phase 81.21.b.b deferred tests (6 cases from FOLLOWUPS) ──
+    // ─── Deferred tests (6 cases from FOLLOWUPS) ───
 
     /// Auto-respawn path drains pending oneshots with the
     /// "plugin restarted; retry" message (distinct from
@@ -4775,7 +4758,7 @@ fi
         cancel.cancel();
     }
 
-    /// Phase 90 audit follow-up — golden coverage for the
+    /// Golden coverage for the
     /// `restarted_manually` event shape. The auto-respawn golden
     /// at `lifecycle_event_payload_shapes_match_spec` only
     /// reaches `crashed`/`respawning`/`gave_up`; manual restart

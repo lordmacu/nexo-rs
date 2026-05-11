@@ -1,4 +1,4 @@
-//! Phase 81.7 — end-to-end plugin skill discovery + load via
+//! End-to-end plugin skill discovery + load via
 //! `SkillLoader::with_plugin_roots`. Builds two on-disk plugin
 //! trees, runs `merge_plugin_contributed_skills`, threads the
 //! resulting roots into a `SkillLoader`, asserts both contributed

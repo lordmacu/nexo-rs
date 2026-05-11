@@ -1,4 +1,4 @@
-//! Phase 81.25 — wire types for `RemoteLlmClient`.
+//! Wire types for `RemoteLlmClient`.
 //!
 //! Subprocess plugins exchange `ChatRequest` / `ChatResponse` /
 //! `StreamChunk` over stdio JSON-RPC. The in-tree types in

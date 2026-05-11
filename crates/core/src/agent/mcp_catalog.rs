@@ -1,6 +1,7 @@
-//! Phase 12.3 — collect tools from N `StdioMcpClient`s and publish them in
-//! the agent's `ToolRegistry`. Snapshot semantics: 12.4 will introduce
-//! session-scoped refresh on `notifications/tools/list_changed`.
+//! Collect tools from N `StdioMcpClient`s and publish them in
+//! the agent's `ToolRegistry`. Snapshot semantics: session-scoped
+//! refresh on `notifications/tools/list_changed` is handled
+//! elsewhere.
 use super::mcp_tool::McpTool;
 use super::tool_registry::ToolRegistry;
 use futures::future::join_all;
@@ -24,7 +25,7 @@ pub struct McpServerSummary {
     pub client: Arc<dyn McpClient>,
     pub tool_count: usize,
     pub error: Option<String>,
-    /// Phase 12.5 — `true` if the server advertised the `resources`
+    /// `true` if the server advertised the `resources`
     /// capability during `initialize`. Used by `register_into` to decide
     /// whether to surface the 2 resource meta-tools.
     pub resources_capable: bool,
@@ -41,17 +42,17 @@ impl std::fmt::Debug for McpServerSummary {
 pub struct McpToolCatalog {
     servers: Vec<McpServerSummary>,
     entries: Vec<McpCatalogEntry>,
-    /// Phase 12.8 — propagate caller identity to every `tools/call`
+    /// Propagate caller identity to every `tools/call`
     /// emitted by tools born from this catalog.
     context_passthrough: bool,
-    /// Phase 12.8 — per-server override (keyed by server name). `None`
+    /// Per-server override (keyed by server name). `None`
     /// in the map defers to `context_passthrough`.
     per_server_passthrough: std::collections::HashMap<String, bool>,
-    /// Phase 12.5 follow-up — optional shared `resources/read` cache.
+    /// Optional shared `resources/read` cache.
     /// When `Some`, every `McpResourceReadTool` built by `register_into`
     /// is wired to it.
     resource_cache: Option<Arc<ResourceCache>>,
-    /// Phase 12.5 follow-up — optional URI scheme allowlist. Empty =
+    /// Optional URI scheme allowlist. Empty =
     /// permissive. Threaded into every `McpResourceReadTool`.
     resource_uri_allowlist: Arc<Vec<String>>,
 }
@@ -66,7 +67,7 @@ impl McpToolCatalog {
     pub async fn build(clients: Vec<Arc<dyn McpClient>>) -> Self {
         Self::build_with_context(clients, false).await
     }
-    /// Phase 12.8 — variant that records a global `context_passthrough`
+    /// Variant that records a global `context_passthrough`
     /// flag which `register_into` then propagates to every produced
     /// `McpTool`. Per-server overrides are empty.
     pub async fn build_with_context(
@@ -80,7 +81,7 @@ impl McpToolCatalog {
         )
         .await
     }
-    /// Phase 12.8 — like `build_with_context` but with per-server
+    /// Like `build_with_context` but with per-server
     /// overrides. `overrides.get(server_name)` wins over the global flag
     /// when present.
     pub async fn build_with_overrides(
@@ -93,7 +94,7 @@ impl McpToolCatalog {
         c.per_server_passthrough = overrides;
         c
     }
-    /// Phase 12.5 follow-up — attach a shared `resources/read` cache.
+    /// Attach a shared `resources/read` cache.
     /// Returns self so callers can chain after `build_with_overrides`.
     pub fn with_resource_cache(mut self, cache: Arc<ResourceCache>) -> Self {
         self.resource_cache = Some(cache);
@@ -238,12 +239,11 @@ impl McpToolCatalog {
                     .with_context_passthrough(effective_passthrough),
             );
             if inserted {
-                // Phase 79.2 follow-up — MCP-imported tools are
-                // auto-marked as deferred so `ToolSearch` can fetch
-                // their schemas on demand. Search hint = first 80
-                // chars of the description, lower-case (lift from
-                // leak `ToolSearchTool/prompt.ts:62-68` —
-                // "MCP tools are always deferred (workflow-specific)").
+                // MCP-imported tools are auto-marked as deferred so
+                // `ToolSearch` can fetch their schemas on demand.
+                // Search hint = first 80 chars of the description,
+                // lower-case. MCP tools are always deferred
+                // (workflow-specific).
                 let hint: String = description_for_hint
                     .chars()
                     .take(80)
@@ -273,7 +273,7 @@ impl McpToolCatalog {
                 "mcp catalog registration summary"
             );
         }
-        // Phase 12.5 — surface resource meta-tools for capable servers.
+        // Surface resource meta-tools for capable servers.
         for summary in &self.servers {
             if !summary.resources_capable {
                 continue;

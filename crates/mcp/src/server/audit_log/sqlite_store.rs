@@ -1,9 +1,9 @@
 //! `SqliteAuditLogStore` — production audit-log backend.
 //!
-//! Mirrors `crates/agent-registry/src/turn_log.rs:100-260` (Phase
-//! 72): WAL + synchronous=NORMAL, idempotent INSERT OR REPLACE on
-//! the primary key, async `tail` with hard cap. The MCP audit
-//! schema differs from per-turn (different columns + indexes) but
+//! Mirrors `crates/agent-registry/src/turn_log.rs`'s SQLite store:
+//! WAL + synchronous=NORMAL, idempotent INSERT OR REPLACE on the
+//! primary key, async `tail` with hard cap. The MCP audit schema
+//! differs from per-turn (different columns + indexes) but
 //! the I/O pattern is identical — keep them aligned so a single
 //! operator playbook covers both.
 

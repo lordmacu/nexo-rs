@@ -1,6 +1,6 @@
 //! Objective acceptance criteria evaluated AFTER the CLI claims
-//! "done". Phase 67.5 owns the actual evaluator; here we only define
-//! the contract.
+//! "done". The driver loop owns the actual evaluator; here we only
+//! define the contract.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -26,20 +26,20 @@ pub enum AcceptanceCriterion {
         #[serde(default = "default_true")]
         required: bool,
     },
-    /// Custom verifier dispatched by name in 67.5. The arg shape is
-    /// agreed between caller and verifier — opaque to this crate.
+    /// Custom verifier dispatched by name by the evaluator. The arg
+    /// shape is agreed between caller and verifier — opaque to this crate.
     Custom {
         name: String,
         args: serde_json::Value,
     },
-    /// Phase 87.1 — LLM-as-judge verifier. The orchestrator routes
+    /// LLM-as-judge verifier. The orchestrator routes
     /// this to a forked subagent running the judge persona prompt;
     /// `criterion_text` is the human-readable rule the judge must
     /// evaluate against the worker's output (e.g. "the diff must
     /// add a null check at validate.ts:42"). The verdict comes
     /// back as JSON `{verdict: pass|fail, reasons: [string]}`.
-    /// Pairs with Phase 84 coordinator's "verification rigor"
-    /// section: spawn a fresh worker with no implementation
+    /// Implements the coordinator's "verification rigor" approach:
+    /// spawn a fresh worker with no implementation
     /// context to cross-check the implementation worker's claim.
     LlmJudge { criterion_text: String },
 }
@@ -77,7 +77,7 @@ impl AcceptanceCriterion {
         }
     }
 
-    /// Phase 87.1 — build an `LlmJudge` criterion from a
+    /// Build an `LlmJudge` criterion from a
     /// human-readable rule text.
     pub fn llm_judge(criterion_text: impl Into<String>) -> Self {
         Self::LlmJudge {

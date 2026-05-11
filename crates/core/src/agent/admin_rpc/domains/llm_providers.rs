@@ -1,4 +1,4 @@
-//! Phase 82.10.f — `nexo/admin/llm_providers/*` handlers.
+//! `nexo/admin/llm_providers/*` handlers.
 //!
 //! Operates on `llm.yaml.providers.<id>`. Abstracted via
 //! [`LlmYamlPatcher`] so this crate stays cycle-free vs
@@ -19,7 +19,7 @@ use super::agents::YamlPatcher;
 use super::secrets::SecretsStore;
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 
-/// Phase 82.10.u — minimal schema lookup the upsert handler needs to
+/// Minimal schema lookup the upsert handler needs to
 /// validate operator payloads against the factory the daemon has
 /// registered. Production wraps a `nexo_llm::LlmRegistry`; tests can
 /// inject an inline mock. Kept small + read-only so the handler
@@ -37,7 +37,7 @@ pub trait FactorySchemaLookup: Send + Sync {
     fn supported_auth_modes(&self, factory_id: &str) -> Option<Vec<AuthMode>>;
 }
 
-/// Phase 82.10.s.3.b — derive a valid `SecretsStore` name from an
+/// Derive a valid `SecretsStore` name from an
 /// LLM provider instance id. The store enforces
 /// `^[A-Z][A-Z0-9_]{1,63}$`, but instance ids are lowercase slugs
 /// (e.g. `minimax-cliente-a`). Transform: prefix `LLM_`, uppercase,
@@ -75,7 +75,7 @@ pub trait LlmYamlPatcher: Send + Sync {
     /// Remove the entire `providers.<id>` block.
     fn remove_provider(&self, provider_id: &str) -> anyhow::Result<()>;
 
-    /// Phase 83.8.12.5.c.b — list provider ids under
+    /// List provider ids under
     /// `tenants.<tenant_id>.providers`. Empty when the tenant
     /// has no providers block (or the tenant doesn't exist).
     /// Default impl returns empty so legacy patchers without
@@ -85,7 +85,7 @@ pub trait LlmYamlPatcher: Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Phase 83.8.12.5.c.b — read a dotted field under
+    /// Read a dotted field under
     /// `tenants.<tenant_id>.providers.<provider_id>.*`.
     /// Default impl returns `None`.
     fn read_tenant_provider_field(
@@ -97,7 +97,7 @@ pub trait LlmYamlPatcher: Send + Sync {
         Ok(None)
     }
 
-    /// Phase 83.8.12.5.c.b — upsert a dotted field under
+    /// Upsert a dotted field under
     /// `tenants.<tenant_id>.providers.<provider_id>.*`.
     /// Default impl errors so unimplemented adapters surface
     /// the gap explicitly rather than silently no-op.
@@ -113,7 +113,7 @@ pub trait LlmYamlPatcher: Send + Sync {
         ))
     }
 
-    /// Phase 83.8.12.5.c.b — remove the
+    /// Remove the
     /// `tenants.<tenant_id>.providers.<provider_id>` block.
     fn remove_tenant_provider(&self, _tenant_id: &str, _provider_id: &str) -> anyhow::Result<()> {
         Err(anyhow::anyhow!(
@@ -159,16 +159,16 @@ pub fn list(patcher: &dyn LlmYamlPatcher) -> AdminRpcResult {
 ///
 /// Two execution paths:
 ///
-/// * **Schema-driven (Phase 82.10.u)**: when `input.fields` is
+/// * **Schema-driven**: when `input.fields` is
 ///   non-empty, the handler resolves the factory's
 ///   `credential_schema` via `factory_schema`, validates the
 ///   payload, then persists each field — `secret == true` to the
-///   SecretsStore, others inline in yaml. Triggered by Phase 82.10.u
+///   SecretsStore, others inline in yaml. Triggered by the
 ///   microapp wizard.
-/// * **Legacy (Phase 82.10.s)**: when `input.fields` is empty,
+/// * **Legacy**: when `input.fields` is empty,
 ///   falls back to the api_key_env / api_key_secret_id /
 ///   api_key_secret_value path (exactly-one-source rule). Existing
-///   pre-82.10.u microapps keep working unchanged.
+///   older microapps keep working unchanged.
 pub async fn upsert(
     patcher: &dyn LlmYamlPatcher,
     secrets: Option<&dyn SecretsStore>,
@@ -187,7 +187,7 @@ pub async fn upsert(
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
 
-    // Phase 82.10.u — OAuth bypass. When the operator has already
+    // OAuth bypass. When the operator has already
     // run `oauth_finish` (which persisted the bundle to the
     // SecretsStore + patched yaml `auth.mode = oauth_bundle,
     // auth.bundle = <path>`), the subsequent `upsert` call only
@@ -212,7 +212,7 @@ pub async fn upsert(
         return upsert_oauth_metadata(patcher, input, reload_signal);
     }
 
-    // Phase 82.10.u — schema-driven path when the operator
+    // Schema-driven path when the operator
     // submitted a non-OAuth `fields` payload. Legacy path stays
     // intact for callers that still use api_key_env etc.
     if !input.fields.is_empty() {
@@ -220,13 +220,13 @@ pub async fn upsert(
     }
     let _ = factory_schema; // silence unused when fields empty
 
-    // Phase 82.10.s.3 — exactly-one-key-source rule. Caller must
+    // Exactly-one-key-source rule. Caller must
     // pick a SINGLE path:
     //   * api_key_env (legacy, deprecated): name of an env var
     //     already exported in the daemon process.
     //   * api_key_secret_id: name of a pre-written secret in the
     //     SecretsStore (write it via secrets/write first).
-    //   * api_key_secret_value: write-through (deferred to .3.b).
+    //   * api_key_secret_value: write-through.
     // Refuse mixed sources loud — operator intent must be explicit.
     let env_set = !input.api_key_env.is_empty();
     let secret_id_set = input
@@ -251,7 +251,7 @@ pub async fn upsert(
             "conflicting API key sources: pick exactly ONE of api_key_env, api_key_secret_id, api_key_secret_value".into(),
         ));
     }
-    // Phase 82.10.s.3.b — write-through. Stamp the value into the
+    // Write-through. Stamp the value into the
     // SecretsStore under a derived id (`LLM_<INSTANCE>`), then on
     // successful persist swap the in-memory input to point at the
     // secret_id so the rest of the handler treats it as the
@@ -285,7 +285,7 @@ pub async fn upsert(
         )));
     }
 
-    // Phase 83.8.12.5.c.b — split the write path: tenant-scoped
+    // Split the write path: tenant-scoped
     // upserts call `upsert_tenant_provider_field` (writes under
     // `tenants.<id>.providers.<provider_id>.*`); global upserts
     // call the legacy `upsert_provider_field` exactly as before.
@@ -308,7 +308,7 @@ pub async fn upsert(
     if let Err(e) = write_field("base_url", Value::String(input.base_url.clone())) {
         return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
     }
-    // Phase 82.10.s.3 — persist factory_type when supplied so the
+    // Persist factory_type when supplied so the
     // registry can split instance-id from factory-id at runtime.
     // Empty / None ⇒ skip the write so legacy yamls stay tidy
     // (factory_type field stays absent, instance id is the
@@ -323,7 +323,7 @@ pub async fn upsert(
             return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml write: {e}")));
         }
     }
-    // Phase 82.10.s.3 — write whichever single key source was
+    // Write whichever single key source was
     // provided. The pre-validation above guaranteed exactly one is
     // set; we still defensively check before writing each.
     if env_set {
@@ -361,7 +361,7 @@ pub async fn upsert(
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
 }
 
-/// Phase 82.10.u — OAuth metadata-only path. The operator has
+/// OAuth metadata-only path. The operator has
 /// already run `oauth_finish` which persisted the bundle to the
 /// SecretsStore + patched yaml `auth.mode = oauth_bundle,
 /// auth.bundle = <path>`. The follow-up `upsert` only stamps
@@ -438,7 +438,7 @@ fn upsert_oauth_metadata(
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
 }
 
-/// Phase 82.10.u — schema-driven persistence path. Triggered when
+/// Schema-driven persistence path. Triggered when
 /// `LlmProviderUpsertInput::fields` is non-empty. Validates the
 /// payload against the factory's declared
 /// [`CredentialFieldDescriptor`] schema before any disk write so
@@ -659,7 +659,7 @@ async fn upsert_schema_driven(
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
 }
 
-/// Phase 82.10.u — derive a per-field secret id from
+/// Derive a per-field secret id from
 /// `(instance_id, field_name)`. Combines the instance-id transform
 /// (`secret_id_for_instance`) with the field name to produce e.g.
 /// `LLM_MINIMAX_CLIENTE_A_API_KEY`. Deterministic + reversible.
@@ -807,7 +807,7 @@ pub fn delete(
         }
     }
 
-    // Phase 83.8.12.5.c.b — split the delete path mirroring
+    // Split the delete path mirroring
     // upsert. Tenant scope checks the tenant's provider list +
     // calls `remove_tenant_provider`; global scope keeps the
     // legacy path.
@@ -843,7 +843,7 @@ pub fn delete(
     }
 }
 
-/// Phase 82.10.l — daemon-side probe surface.
+/// Daemon-side probe surface.
 ///
 /// Production adapter (`nexo_setup::llm_provider_probe::HttpLlmProviderProbe`)
 /// reads the daemon's resolved `llm.yaml` config + env var,
@@ -863,7 +863,7 @@ pub trait LlmProvidersProbe: Send + Sync {
         tenant_id: Option<&str>,
     ) -> Result<LlmProviderProbeResponse, AdminRpcError>;
 
-    /// Phase 82.10.u — probe a DRAFT payload that hasn't landed in
+    /// Probe a DRAFT payload that hasn't landed in
     /// `llm.yaml` yet. Used by the SPA wizard to validate
     /// credentials BEFORE persistence so a bad key never lands on
     /// disk.
@@ -909,7 +909,7 @@ async fn try_probe(
     serde_json::to_value(response).map_err(|e| AdminRpcError::Internal(e.to_string()))
 }
 
-/// Phase 82.10.u — `nexo/admin/llm_providers/probe_draft` handler.
+/// `nexo/admin/llm_providers/probe_draft` handler.
 ///
 /// Forwards a not-yet-persisted credential payload to the probe
 /// adapter. Validates the input shape, then defers entirely to
@@ -945,7 +945,7 @@ async fn try_probe_draft(
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Phase 82.10.u — OAuth start/finish handlers.
+// OAuth start/finish handlers.
 //
 // Two-step flow that suspends PKCE state in `VerifierStore` so the
 // SPA never sees the verifier. Single-use sessions: `oauth_finish`
@@ -1261,7 +1261,7 @@ fn read_summary(
         id: provider_id.to_string(),
         base_url,
         api_key_env,
-        // Phase 83.8.12.5.c — global-scope reads stamp `None`.
+        // Global-scope reads stamp `None`.
         // Tenant-scoped reads (when the handler honours
         // `tenant_id` filter) populate this field with the
         // owning tenant id. Wire-up of the tenant read path
@@ -1280,7 +1280,7 @@ mod tests {
     #[derive(Default)]
     struct MockLlm {
         providers: Mutex<HashMap<String, HashMap<String, Value>>>,
-        /// Phase 83.8.12.5.c.b — tenant providers keyed by
+        /// Tenant providers keyed by
         /// `(tenant_id, provider_id)`.
         tenant_providers: Mutex<HashMap<(String, String), HashMap<String, Value>>>,
     }
@@ -1530,7 +1530,7 @@ mod tests {
         assert!(!response.removed);
     }
 
-    // ── Phase 83.8.12.5.c.b — tenant-scoped CRUD ──
+    // ── tenant-scoped CRUD ──
 
     /// `tenant_id: Some` upsert writes under tenant namespace
     /// + leaves the global table untouched. Resulting summary
@@ -1693,7 +1693,7 @@ mod tests {
     }
 
     // ────────────────────────────────────────────────────────
-    // Phase 82.10.l — probe handler tests.
+    // Probe handler tests.
     // ────────────────────────────────────────────────────────
 
     /// Mock that captures invocations + returns a canned
@@ -1787,7 +1787,7 @@ mod tests {
         assert_eq!(calls[0].1.as_deref(), Some("acme"));
     }
 
-    // ── Phase 82.10.u — schema-driven upsert ────────────────────
+    // ── schema-driven upsert ────────────────────
 
     use nexo_tool_meta::admin::llm_providers::{
         AuthMode, CredentialFieldDescriptor, FieldKind, FieldValidation,

@@ -66,7 +66,7 @@ struct HandleMeta {
 pub struct AgentRegistry {
     inner: DashMap<GoalId, RegistryEntry>,
     queue: Mutex<VecDeque<GoalId>>,
-    /// Phase 67-PT-5: serialises the read-then-write decision in
+    /// Serialises the read-then-write decision in
     /// `admit` so two concurrent dispatchers cannot each observe
     /// `count_running < cap` and both end up Admitted (overshoot
     /// of N = number of in-flight admits). Reads are still
@@ -95,7 +95,7 @@ impl AgentRegistry {
         *self.cap.read()
     }
 
-    /// Phase 67.G.4 — operator override for the global cap.
+    /// Operator override for the global cap.
     /// Returns the new value. Lowering the cap below the live
     /// running count does not pre-empt; existing goals keep going,
     /// new admissions land in the queue until count drops back
@@ -152,7 +152,7 @@ impl AgentRegistry {
         handle: AgentHandle,
         enqueue: bool,
     ) -> Result<AdmitOutcome, RegistryError> {
-        // PT-5 + B16 — serialise the cap decision + queue mutation
+        // Serialise the cap decision + queue mutation
         // + in-memory entry insert under admit_lock, then drop the
         // lock BEFORE the persistent store upsert. The store call
         // can block on disk IO; holding admit_lock across it would
@@ -237,7 +237,7 @@ impl AgentRegistry {
         }
         self.clear_sleep_snapshot(goal_id);
         self.persist(goal_id).await?;
-        // B12 — atomic pop-and-mark-Running of the next queued
+        // Atomic pop-and-mark-Running of the next queued
         // goal. Two callers racing release would otherwise both
         // see the same head and both try to promote it; this
         // moves the head out of the queue under the queue lock
@@ -276,7 +276,7 @@ impl AgentRegistry {
         self.persist(goal_id).await
     }
 
-    /// Phase 77.20.3 — mark a goal as parked by proactive Sleep and
+    /// Mark a goal as parked by proactive Sleep and
     /// persist the wake metadata separately from the turn transcript.
     pub async fn set_sleeping(
         &self,

@@ -1,4 +1,4 @@
-//! Phase 12.8 — file watcher for `mcp.yaml`.
+//! File watcher for `mcp.yaml`.
 //!
 //! Observes `{config_dir}/mcp.yaml` and calls
 //! `McpRuntimeManager::update_config` on stable content changes. Opt-in

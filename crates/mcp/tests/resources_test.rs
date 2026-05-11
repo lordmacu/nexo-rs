@@ -1,4 +1,4 @@
-//! Phase 12.5 — integration tests for `resources/list` + `resources/read`
+//! Integration tests for `resources/list` + `resources/read`
 //! against the `mock_mcp_server` binary in mode=`resources`.
 
 use std::collections::HashMap;

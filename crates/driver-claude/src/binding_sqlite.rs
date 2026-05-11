@@ -1,9 +1,9 @@
-//! SQLite-backed `SessionBindingStore`. See spec for Phase 67.2.
+//! SQLite-backed `SessionBindingStore`.
 //!
 //! Schema lives in `claude_session_bindings`. WAL mode is enabled on
 //! file-backed databases; `:memory:` skips it (the WAL pragma errors
-//! there). `PRAGMA user_version = 1` is the migration sentinel — Phase
-//! 67.x will bump it when the schema evolves.
+//! there). `PRAGMA user_version = 1` is the migration sentinel —
+//! bump it when the schema evolves.
 
 use std::path::Path;
 use std::time::Duration;

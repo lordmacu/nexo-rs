@@ -1,4 +1,4 @@
-//! Error type for AutoDream. Phase 80.1.
+//! Error type for AutoDream.
 
 use std::time::Duration;
 use thiserror::Error;

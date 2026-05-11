@@ -15,7 +15,7 @@ pub enum EncryptionKey {
     /// stays plaintext inside the encrypted payload.
     AgePublicKey(String),
 
-    /// Phase 90 follow-up — multi-recipient variant. Bundle body
+    /// Multi-recipient variant. Bundle body
     /// is wrapped with one `age` header per recipient; any matching
     /// identity can decrypt the body. Used by the admin RPC create
     /// path so all `EncryptionSection.recipients` participate in

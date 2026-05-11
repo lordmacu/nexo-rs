@@ -1,9 +1,8 @@
 //! `PollerRunner` — owns the registry of `Poller` impls + the per-job
 //! tokio tasks. One task per job, lease-acquired, schedule-driven.
 //!
-//! Step 8 builds the core happy path: spawn → tick → save → sleep
-//! → tick. Backoff + breaker + auto-pause + hot-reload are layered on
-//! in steps 9 and 10.
+//! The core happy path is spawn → tick → save → sleep → tick.
+//! Backoff, breaker, auto-pause, and hot-reload are layered on top.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,7 +83,7 @@ pub struct PollerRunner {
     state: Arc<PollState>,
     broker: AnyBroker,
     credentials: Arc<CredentialsBundle>,
-    /// Phase 20 — optional LLM access for the `agent_turn` built-in.
+    /// Optional LLM access for the `agent_turn` built-in.
     /// Boot wires this from the same `LlmRegistry` + `LlmConfig` the
     /// agent runtimes use; pollers without LLM-driven kinds leave
     /// it `None` and pay no cost.
@@ -117,7 +116,7 @@ impl PollerRunner {
         }
     }
 
-    /// Phase 20 — wire the LLM registry + config so the `agent_turn`
+    /// Wire the LLM registry + config so the `agent_turn`
     /// built-in can build clients on demand. Optional: pollers that
     /// only do data ingestion (gmail, rss, webhook) work without it.
     pub fn with_llm(

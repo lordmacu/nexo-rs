@@ -1,6 +1,6 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)]
 
-//! Phase 79.2 — `ToolSearch` deferred-schema discovery tool.
+//! `ToolSearch` deferred-schema discovery tool.
 //!
 //! Lets the model fetch the full JSONSchema for tools whose schema is
 //! omitted from the system prompt. The model sees the deferred tool
@@ -8,21 +8,11 @@
 //! `ToolSearch(select:Foo)` (or a keyword query) to retrieve the
 //! schema; the matching tool becomes invokable in the next turn.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/ToolSearchTool/ToolSearchTool.ts:21-302`
-//!     (input schema, select: prefix, keyword search with required
-//!     `+token` prefix, scoring weights for name parts vs description
-//!     vs searchHint).
-//!   * `claude-code-leak/src/tools/ToolSearchTool/prompt.ts:27-51`
-//!     (the canonical "Result format: <functions>" wording).
+//! Query grammar: a `select:` prefix selects exact tool names; a
+//! keyword query uses a required `+token` prefix and scoring weights
+//! for name parts vs description vs search hint.
 //!
-//! Reference (secondary):
-//!   * OpenClaw — no equivalent (`grep -rln "ToolSearch" research/src/`
-//!     returns nothing relevant). Single-process TS reference does
-//!     not face the wide-surface MCP token cost that motivates this
-//!     tool.
-//!
-//! MVP scope (Phase 79.2):
+//! Scope:
 //!   * Discovery surface — `ToolSearch` returns matching tool names
 //!     PLUS their full schemas, ready to consume.
 //!   * Per-turn rate limit (default 5) so a runaway model can't
@@ -30,8 +20,8 @@
 //!   * Out of scope: filtering deferred tools out of the LLM request
 //!     body. The LLM provider shims (anthropic, minimax, gemini,
 //!     openai-compat) still emit the full schema today; the savings
-//!     land when a follow-up wires the four shims to consult
-//!     `ToolRegistry::deferred_tools()`. See FOLLOWUPS.md Phase 79.2.
+//!     land when a follow-up wires the shims to consult
+//!     `ToolRegistry::deferred_tools()`.
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
@@ -45,16 +35,14 @@ use std::time::{Duration, Instant};
 pub const TOOL_SEARCH_DEFAULT_MAX_RESULTS: usize = 5;
 pub const TOOL_SEARCH_HARD_CAP: usize = 25;
 
-/// Default cap on `ToolSearch` calls per agent per minute. Lift
-/// from the leak's spec (5 / turn). We use per-minute instead of
-/// per-turn because nexo-rs's runtime does not surface a clean
+/// Default cap on `ToolSearch` calls per agent per minute. Per-minute
+/// rather than per-turn because the runtime does not surface a clean
 /// turn boundary to the tool layer.
 pub const TOOL_SEARCH_DEFAULT_RATE_PER_MINUTE: u32 = 5;
 
 /// Process-shared sliding-window rate limiter for `ToolSearch`.
 /// Keyed by `agent_id`. Used to cap exploration so a runaway
-/// model can't pathologically explode the surface (PHASES.md
-/// 79.2 follow-up).
+/// model can't pathologically explode the surface.
 #[derive(Default)]
 pub struct ToolSearchRateLimiter {
     buckets: DashMap<String, Mutex<std::collections::VecDeque<Instant>>>,
@@ -136,9 +124,9 @@ impl ToolSearchTool {
     }
 }
 
-/// Split a tool name into searchable lowercase parts. Lift from
-/// `ToolSearchTool.ts:132-161` — handles both MCP convention
-/// (`mcp__server__action`) and CamelCase / snake_case.
+/// Split a tool name into searchable lowercase parts. Handles both
+/// the MCP convention (`mcp__server__action`) and CamelCase /
+/// snake_case.
 fn parse_tool_name(name: &str) -> Vec<String> {
     if let Some(stripped) = name.strip_prefix("mcp__") {
         return stripped
@@ -172,8 +160,8 @@ fn parse_tool_name(name: &str) -> Vec<String> {
     parts
 }
 
-/// Score one tool against the query terms. Mirror of the weights in
-/// `ToolSearchTool.ts:266-291` adapted to MCP-aware dotted names.
+/// Score one tool against the query terms. Weights favour name parts
+/// over description over search hint; MCP-aware for dotted names.
 fn score_tool(
     name: &str,
     description: &str,
@@ -240,11 +228,10 @@ impl ToolHandler for ToolSearchTool {
             return Err(anyhow::anyhow!("ToolSearch: `query` cannot be empty"));
         }
 
-        // Phase 79.2 follow-up — sliding-window rate limit per
-        // agent. Cap defaults to 5 / minute (matches the leak's
-        // 5 / turn intent — we use minutes because there is no
-        // clean turn boundary at the tool layer). Per-instance
-        // limiter so each tests construct its own.
+        // Sliding-window rate limit per agent. Cap defaults to
+        // 5 / minute (we use minutes because there is no clean turn
+        // boundary at the tool layer). Per-instance limiter so each
+        // test constructs its own.
         if !self
             .rate_limiter
             .try_acquire(&ctx.agent_id, self.rate_per_minute)
@@ -274,8 +261,7 @@ impl ToolHandler for ToolSearchTool {
         };
         let total_deferred = deferred.len();
 
-        // `select:Foo,Bar` — exact match path. Lift from
-        // `ToolSearchTool.ts:362-406`. We look up against the
+        // `select:Foo,Bar` — exact match path. We look up against the
         // FULL registry so that selecting an already-loaded tool is
         // a harmless no-op; the result's "matched" array reports
         // actual hits.

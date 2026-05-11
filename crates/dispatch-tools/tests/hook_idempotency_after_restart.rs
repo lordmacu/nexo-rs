@@ -1,4 +1,4 @@
-//! Phase 67.F.3 — `try_claim` is idempotent across pool reopens
+//! `try_claim` is idempotent across pool reopens
 //! (i.e. across daemon restarts).
 
 use std::path::PathBuf;

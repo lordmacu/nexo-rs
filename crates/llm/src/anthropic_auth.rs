@@ -30,22 +30,20 @@ pub const DEFAULT_REFRESH_ENDPOINT: &str = "https://console.anthropic.com/v1/oau
 pub const DEFAULT_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 /// Beta header required by Anthropic for Bearer-auth requests.
 pub const OAUTH_BETA: &str = "oauth-2025-04-20";
-/// Setup-token prefix (OpenClaw `provider-auth-token.ts`).
+/// Setup-token prefix.
 pub const SETUP_TOKEN_PREFIX: &str = "sk-ant-oat01-";
 pub const SETUP_TOKEN_MIN_LEN: usize = 80;
 
 /// First system block prepended on every Bearer-auth request. Anthropic
 /// gates Opus / Sonnet 4.x behind a Claude-Code identity claim — without
 /// this exact string as `system[0]`, the API rejects the request with a
-/// 4xx that surfaces as "no quota" in the agent UI. Mirrors OpenClaw
-/// `anthropic-transport-stream.ts:631`.
+/// 4xx that surfaces as "no quota" in the agent UI.
 pub const CLAUDE_CODE_SPOOF_SYSTEM: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Default Claude Code CLI version embedded in `User-Agent`. Operators
 /// can override via `NEXO_CLAUDE_CLI_VERSION` env var when Anthropic
 /// bumps the accepted CLI version without us shipping a release.
-/// Tracks OpenClaw `anthropic-transport-stream.ts:30`.
 pub const CLAUDE_CLI_DEFAULT_VERSION: &str = "2.1.75";
 
 /// Beta tags Anthropic expects on every Bearer-auth request. Order

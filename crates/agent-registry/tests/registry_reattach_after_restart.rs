@@ -1,4 +1,4 @@
-//! Phase 67.B.4 — when the daemon restarts, reattach() seeds the
+//! When the daemon restarts, reattach() seeds the
 //! in-memory registry from the persistent store and applies the
 //! configured policy. Running goals come back as Resume; queued
 //! goals as Requeued; old terminal rows are evicted.

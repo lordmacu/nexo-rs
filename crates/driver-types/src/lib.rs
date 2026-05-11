@@ -1,4 +1,4 @@
-//! Phase 67.0 — types and trait surface for the Nexo driver subsystem.
+//! Types and trait surface for the Nexo driver subsystem.
 //!
 //! See `crates/driver-types/README.md` for the layering rationale; this
 //! file just re-exports the public surface so callers can write

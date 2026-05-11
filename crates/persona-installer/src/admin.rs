@@ -1,12 +1,11 @@
 //! Admin-layer trait + DTOs the daemon's admin RPC routes
 //! call to drive persona install / list / remove. Mirrors
-//! the plugin-admin surface (Phase 31.1.c) so the same admin
+//! the plugin-admin surface so the same admin
 //! plugin can speak both protocols.
 //!
 //! `PersonaAdmin` is `async_trait`-flavored. The default
 //! implementation lives in [`InMemoryPersonaAdmin`] for tests
-//! + early dev; the daemon wires a disk-backed impl in
-//! Phase F5.
+//! + early dev; the daemon wires a disk-backed impl.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

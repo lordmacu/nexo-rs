@@ -1,28 +1,23 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)]
 
-//! Phase 79.1 — `EnterPlanMode` and `ExitPlanMode` tool handlers.
+//! `EnterPlanMode` and `ExitPlanMode` tool handlers.
 //!
 //! These two handlers manage transitions on
 //! `AgentContext.plan_mode`. The dispatcher gate
-//! (`crates/dispatch-tools/src/policy_gate.rs`, step 10) consults the
+//! (`crates/dispatch-tools/src/policy_gate.rs`) consults the
 //! same `Arc<RwLock<PlanModeState>>` to short-circuit mutating tool
 //! calls while plan mode is on.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts:21-25,55-72,77-101`
-//!     (zero-arg input, read-only flag, sub-agent guard, transition
-//!     to `'plan'` mode).
-//!   * `claude-code-leak/src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:147-220,243-403`
-//!     (validate-input refusal pattern, restoreMode logic, teammate
-//!     mailbox path — step 13 takes the equivalent role with
-//!     TaskFlow wait/resume).
+//! `EnterPlanMode` takes zero args, sets a read-only flag, applies a
+//! sub-agent guard, and transitions to plan mode. `ExitPlanMode`
+//! uses a validate-input refusal pattern and restores the prior
+//! mode.
 //!
-//! v0 caveat: this step ships the state transitions and the tool
-//! shapes. The pairing approval gate (step 13) wraps the
+//! Caveat: the pairing approval gate (which wraps the
 //! `ExitPlanMode::call` body in a `FlowManager::set_waiting` /
-//! `resume` round-trip; until then `ExitPlanMode` is "trust the
-//! model" — useful in tests and dev, NOT safe for production until
-//! step 13 lands.
+//! `resume` round-trip) is not yet wired; until then `ExitPlanMode`
+//! is "trust the model" — useful in tests and dev, NOT safe for
+//! production.
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
@@ -38,9 +33,8 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 /// Hard cap on the plan body the model may submit via
-/// `ExitPlanMode`. Brainstorm decision **a** — when real workloads
-/// hit this, follow-up `final_plan_path` variant lifts from the
-/// leak's disk-backed approach.
+/// `ExitPlanMode`. When real workloads hit this, a follow-up
+/// `final_plan_path` variant can take a disk-backed approach.
 pub const PLAN_MODE_MAX_PLAN_BYTES: usize = 8 * 1024;
 
 /// Operator decision delivered via `plan_mode_resolve` (or, in
@@ -58,8 +52,8 @@ pub enum PlanApprovalDecision {
 /// matching `Sender` to wake the awaiting handler.
 ///
 /// In-process only: a daemon restart loses pending approvals — the
-/// turn-log audit trail (Phase 72) preserves history, and the goal
-/// reattach path (Phase 71) flips the goal to `LostOnApproval` when
+/// turn-log audit trail preserves history, and the goal reattach
+/// path flips the goal to `LostOnApproval` when
 /// it reads a plan-mode-On state without a live waiter (future
 /// hardening: persist plan_id → goal_id mapping for full restart
 /// recovery).
@@ -115,8 +109,7 @@ impl PlanApprovalRegistry {
 ///   `[plan-mode] approve plan_id=<ULID>`
 ///   `[plan-mode] reject  plan_id=<ULID> reason=<text>`
 ///
-/// Reference: OpenClaw `research/src/gateway/exec-approval-ios-push.ts:55-89`
-/// (bracketed command grammar for operator-side approvals).
+/// Bracketed command grammar for operator-side approvals.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanModeApprovalCommand {
     Approve {
@@ -190,12 +183,9 @@ impl EnterPlanModeTool {
 #[async_trait]
 impl ToolHandler for EnterPlanModeTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        // Sub-agent / non-interactive guard. Lift from leak
-        // `EnterPlanModeTool.ts:78-80`, refined with OpenClaw
-        // `research/src/acp/session-interaction-mode.ts:4-15`: only
-        // goals rooted in a live channel can plan, because only they
-        // have a path to deliver the operator approval that ends
-        // plan mode.
+        // Sub-agent / non-interactive guard: only goals rooted in a
+        // live channel can plan, because only they have a path to
+        // deliver the operator approval that ends plan mode.
         if !ctx.is_interactive() {
             anyhow::bail!(
                 "EnterPlanMode is unavailable in this context (sub-agent, cron, poller, or heartbeat-spawned goal). Plan mode requires an interactive channel that can deliver an approval message."
@@ -227,8 +217,8 @@ impl ToolHandler for EnterPlanModeTool {
         };
         drop(guard);
 
-        // Phase 79.1 — emit canonical notify line. Tracing-only for
-        // now; pairing parser hookup lands in step 17/follow-up.
+        // Emit canonical notify line. Tracing-only for now; pairing
+        // parser hookup is a follow-up.
         if !already_on {
             let notify = format_notify_entered(entered_at, &plan_mode_reason);
             tracing::info!(
@@ -273,11 +263,9 @@ impl ExitPlanModeTool {
     }
 }
 
-/// Reject-followup prompt template. Lift from OpenClaw
-/// `research/src/agents/bash-tools.exec-approval-followup.ts:27-40`
-/// — when the operator rejects the plan, the model receives this
-/// canonical text so it knows to revise rather than retry the same
-/// plan blindly.
+/// Reject-followup prompt template. When the operator rejects the
+/// plan, the model receives this canonical text so it knows to
+/// revise rather than retry the same plan blindly.
 fn build_reject_followup_prompt(reason: &str) -> String {
     format!(
         "Plan rejected by operator. Reason: {reason}.\n\
@@ -296,8 +284,8 @@ impl ToolHandler for ExitPlanModeTool {
             .ok_or_else(|| anyhow::anyhow!("ExitPlanMode requires `final_plan` (string)"))?
             .to_string();
 
-        // Phase 79.1 brainstorm decision **a** — 8 KiB hard cap;
-        // structured error so the model retries with a shorter plan.
+        // 8 KiB hard cap; structured error so the model retries with
+        // a shorter plan.
         let actual = final_plan.len();
         if actual > PLAN_MODE_MAX_PLAN_BYTES {
             return Err(anyhow::anyhow!(
@@ -307,8 +295,7 @@ impl ToolHandler for ExitPlanModeTool {
             ));
         }
 
-        // Refusal when called outside plan mode (lift leak
-        // `ExitPlanModeV2Tool.ts:195-220`). Distinct from
+        // Refusal when called outside plan mode. Distinct from
         // `PlanModeRefusal` (which gates mutators while plan-mode is
         // on); this is the inverse rail.
         {

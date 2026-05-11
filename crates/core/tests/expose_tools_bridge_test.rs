@@ -1,4 +1,4 @@
-//! Phase 76.16 — integration tests for the `expose_tools` whitelist.
+//! Integration tests for the `expose_tools` whitelist.
 //!
 //! Verifies that `ToolRegistryBridge` surfaces exactly the tools
 //! registered in `ToolRegistry` after the `expose_tools` loop in
@@ -115,7 +115,7 @@ async fn empty_registry_returns_no_tools() {
     assert!(tools.is_empty(), "expected no tools, got: {tools:?}");
 }
 
-/// Two Phase-79 tools registered, allowlist = None → both visible.
+/// Two tools registered, allowlist = None → both visible.
 #[tokio::test]
 async fn no_allowlist_exposes_all_registered_tools() {
     let reg = Arc::new(ToolRegistry::new());

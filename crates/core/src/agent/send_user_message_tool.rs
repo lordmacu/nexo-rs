@@ -1,4 +1,4 @@
-//! Phase 80.8 — `send_user_message` tool.
+//! `send_user_message` tool.
 //!
 //! Brief mode tells the model that user-visible output flows
 //! through this tool, not free text. The driver-loop is free to
@@ -22,9 +22,8 @@ use std::sync::Arc;
 use super::tool_registry::{ToolHandler, ToolRegistry};
 use super::AgentContext;
 
-/// Tool name. Mirrors the public-facing leak alias for
-/// cross-tool-catalog compatibility (operators porting from one
-/// stack to the other can reuse prompt fragments).
+/// Tool name. Kept stable so operators porting prompt fragments
+/// between stacks can reuse them.
 pub const TOOL_NAME: &str = "send_user_message";
 
 /// Sentinel key in the JSON result so downstream renderers

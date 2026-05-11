@@ -45,7 +45,7 @@ impl WaitCondition {
 /// their `WaitCondition`.
 ///
 /// The engine is intentionally minimal — no broker, no internal scheduler.
-/// `tick()` is pull-based and idempotent; the host (or Phase 7 heartbeat)
+/// `tick()` is pull-based and idempotent; the host (or the heartbeat)
 /// invokes it on whatever cadence is appropriate. `run(interval, shutdown)`
 /// is provided as a convenience for the common case.
 #[derive(Clone)]

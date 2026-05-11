@@ -1,4 +1,4 @@
-//! Phase 82.13.d — SQLite-backed `ProcessingControlStore`.
+//! SQLite-backed `ProcessingControlStore`.
 //!
 //! Durable variant of `InMemoryProcessingControlStore` so operator
 //! pause / resume + the per-scope pending inbound queue survive

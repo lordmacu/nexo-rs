@@ -1,4 +1,4 @@
-//! Phase 80.1.b — driver-loop ↔ nexo-dream interface contracts.
+//! Driver-loop ↔ nexo-dream interface contracts.
 //!
 //! Defined here (in the low-level types crate) to avoid the cycle
 //! `nexo-driver-loop ↔ nexo-dream`: both crates depend on
@@ -18,7 +18,7 @@ use crate::goal::GoalId;
 
 /// Outcome of one `check_and_run` invocation, lossy-collapsed for
 /// the lightweight per-turn event. Detailed run state lives in the
-/// 80.18 `dream_runs` audit row.
+/// `dream_runs` audit row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoDreamOutcomeKind {
@@ -42,11 +42,11 @@ pub enum AutoDreamOutcomeKind {
 /// Slim shape — does NOT carry the parent `AgentContext` or
 /// `ChatRequest`. The runner clones an operator-supplied
 /// `parent_ctx_template` + builds a fresh `ChatRequest` per fork
-/// (mirror Phase 77.5 `ExtractMemories`; same trade-off accepting
+/// (mirrors `ExtractMemories`; same trade-off accepting
 /// no parent prompt-cache share).
 #[derive(Debug, Clone)]
 pub struct DreamContext {
-    /// Phase 80.1.b.b.b.c — owning agent identifier. Populated by
+    /// Owning agent identifier. Populated by
     /// the orchestrator's `run_turn` from
     /// `goal.metadata["agent_id"]`. Routing key for the
     /// multi-runner orchestrator: an empty string means the goal
@@ -56,9 +56,9 @@ pub struct DreamContext {
     pub goal_id: GoalId,
     pub session_id: String,
     pub transcript_dir: PathBuf,
-    /// Phase 80.15 future — when `assistant_mode: true` on the
+    /// When `assistant_mode: true` on the
     /// binding, KAIROS runs the dream from a disk skill so
-    /// autoDream skips. Hardcoded `false` until 80.15 ships.
+    /// autoDream skips. Hardcoded `false` until that path ships.
     pub kairos_active: bool,
     /// Driver-loop runtime flag — `true` when running in
     /// remote-control mode. Hardcoded `false` until exposed.
@@ -71,7 +71,7 @@ pub struct DreamContext {
 pub trait AutoDreamHook: Send + Sync + 'static {
     /// Per-turn check + optional fork. Returns the lightweight
     /// outcome kind for telemetry. Detailed run state lives in
-    /// the 80.18 `dream_runs` audit row.
+    /// the `dream_runs` audit row.
     async fn check_and_run(&self, ctx: &DreamContext) -> AutoDreamOutcomeKind;
 }
 

@@ -1,26 +1,18 @@
 //! LSP-result formatters: convert raw `lsp_types` payloads into
 //! `path:line:col` strings suitable for `tool_result` display.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/LSPTool/formatters.ts:24-100` —
-//!     `formatUri`, group-by-file, location formatter. We mirror
-//!     the `path:line:col` shape and the relative-path heuristic
-//!     ("only use relative when shorter and not starting with
-//!     `../../`").
-//!   * `claude-code-leak/src/services/lsp/passiveFeedback.ts:18-35`
-//!     — `mapLSPSeverity` (1=Error, 2=Warning, 3=Info, 4=Hint).
-//!
-//! Reference (secondary):
-//!   * `research/src/agents/pi-bundle-lsp-runtime.ts:279-292` —
-//!     OpenClaw stringifies the raw JSON. We reject that pattern;
-//!     `path:line:col` is 3-5x cheaper in tokens.
+//! We mirror the prior art's `path:line:col` shape, its group-by-file
+//! layout, its relative-path heuristic ("only use relative when
+//! shorter and not starting with `../../`"), and its severity map
+//! (1=Error, 2=Warning, 3=Info, 4=Hint). We deliberately do NOT
+//! stringify the raw JSON the way OpenClaw does — `path:line:col` is
+//! 3-5x cheaper in tokens.
 
 use std::path::{Path, PathBuf};
 
-/// Workspace-symbol cap on the formatted output. Matches
-/// `claude-code-leak/src/tools/LSPTool/LSPTool.ts:130`'s
-/// `maxResultSizeChars: 100_000`. We truncate with a `+N more`
-/// note rather than splitting into chunks.
+/// Workspace-symbol cap on the formatted output (100 000 chars,
+/// matching the prior art's `maxResultSizeChars`). We truncate with
+/// a `+N more` note rather than splitting into chunks.
 pub const MAX_FORMATTED_BYTES: usize = 100_000;
 
 /// Convert a `file://` URL into a path string. When `workspace_root`
@@ -180,8 +172,7 @@ pub fn format_workspace_symbols(
 
 /// Format diagnostics for a single file. Each line:
 /// `path:line:col [Severity] (source) message`.
-/// Severity mapping: 1→Error, 2→Warning, 3→Info, 4→Hint
-/// (`claude-code-leak/src/services/lsp/passiveFeedback.ts:18-35`).
+/// Severity mapping: 1→Error, 2→Warning, 3→Info, 4→Hint.
 pub fn format_diagnostics(
     file_path: &Path,
     workspace_root: Option<&Path>,
@@ -210,8 +201,8 @@ pub fn format_diagnostics(
 }
 
 /// Stable severity label. Defaults to `Error` when the server
-/// omits the field, mirroring the leak's
-/// `passiveFeedback.ts:32-34`.
+/// omits the field, mirroring the prior art's passive-feedback
+/// mapping.
 pub fn severity_name(sev: Option<lsp_types::DiagnosticSeverity>) -> &'static str {
     match sev {
         Some(lsp_types::DiagnosticSeverity::ERROR) | None => "Error",

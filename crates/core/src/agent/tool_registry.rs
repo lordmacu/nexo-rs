@@ -1,4 +1,4 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)]
 
 use super::context::AgentContext;
 use async_trait::async_trait;
@@ -7,13 +7,12 @@ use nexo_llm::ToolDef;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Phase 79.2 — per-tool metadata kept in a side-channel map so we
-/// don't churn `ToolDef` (48 literal sites across the workspace).
-/// Default values keep existing tools behaving identically.
+/// Per-tool metadata kept in a side-channel map so we don't churn
+/// `ToolDef` at every literal construction site. Default values keep
+/// existing tools behaving identically.
 ///
-/// Reference (PRIMARY): `claude-code-leak/src/tools/ToolSearchTool/`
-/// + `prompt.ts:62-108` (`isDeferredTool` semantics: MCP tools
-/// auto-deferred, others opt-in via `shouldDefer: true`).
+/// Deferred-tool semantics: MCP tools are auto-deferred, others opt
+/// in via an explicit `deferred` flag.
 #[derive(Debug, Clone, Default)]
 pub struct ToolMeta {
     /// When `true`, the tool's full JSONSchema may be omitted from
@@ -58,7 +57,7 @@ pub type HandlerEntry = (ToolDef, Arc<dyn ToolHandler>);
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
     handlers: Arc<DashMap<String, HandlerEntry>>,
-    /// Phase 79.2 — per-tool metadata side-channel keyed by tool
+    /// Per-tool metadata side-channel keyed by tool
     /// name. Empty for tools registered via the legacy `register`
     /// path; populated by `register_with_meta`. Reads via
     /// [`ToolRegistry::meta`] return `None` when no meta is recorded
@@ -85,7 +84,7 @@ impl ToolRegistry {
         self.handlers.insert(name, (def, Arc::new(handler)));
     }
 
-    /// Phase 79.M — register an already-boxed handler. Used by the
+    /// Register an already-boxed handler. Used by the
     /// MCP-server boot dispatcher which constructs handlers via
     /// `Arc<dyn ToolHandler>` so the `EXPOSABLE_TOOLS` match arm
     /// can return a uniform type per tool.
@@ -100,7 +99,7 @@ impl ToolRegistry {
         self.handlers.insert(name, (def, handler));
     }
 
-    /// Phase 79.2 — register a tool together with its metadata
+    /// Register a tool together with its metadata
     /// (deferred flag, search hint). Useful for callers that mark
     /// MCP tools as deferred at import time, or built-ins that want
     /// to surface a curated `searchHint` for `ToolSearch` ranking.
@@ -115,7 +114,7 @@ impl ToolRegistry {
         self.meta.insert(name, meta);
     }
 
-    /// Phase 79.2 — set or replace the meta for an already-registered
+    /// Set or replace the meta for an already-registered
     /// tool. No-op when the name is unknown — callers that want to
     /// see the failure should check `contains` first.
     pub fn set_meta(&self, tool_name: &str, meta: ToolMeta) {
@@ -124,14 +123,14 @@ impl ToolRegistry {
         }
     }
 
-    /// Phase 79.2 — read the meta for `tool_name`. `None` for tools
+    /// Read the meta for `tool_name`. `None` for tools
     /// registered without meta (the default-meta semantic — not
     /// deferred, no search hint).
     pub fn meta(&self, tool_name: &str) -> Option<ToolMeta> {
         self.meta.get(tool_name).map(|e| e.value().clone())
     }
 
-    /// Phase 79.2 — list every (name, meta) pair where
+    /// List every (name, meta) pair where
     /// `meta.deferred == true`. Empty when no tool is deferred.
     pub fn deferred_tools(&self) -> Vec<(String, ToolMeta)> {
         self.meta
@@ -155,7 +154,7 @@ impl ToolRegistry {
         }
     }
 
-    /// Phase 81.3 — Arc-friendly variant of `register_if_absent`.
+    /// Arc-friendly variant of `register_if_absent`.
     /// Used by `ScopedToolRegistry` (the per-plugin proxy) so plugin
     /// callers go through a path that rejects collisions atomically
     /// without re-Arc-ing an already-boxed handler.
@@ -180,7 +179,7 @@ impl ToolRegistry {
         self.handlers.iter().map(|e| e.value().0.clone()).collect()
     }
 
-    /// Phase 79.2 — same as [`to_tool_defs`] but skips tools marked
+    /// Same as [`to_tool_defs`] but skips tools marked
     /// [`ToolMeta::deferred`]. The filtered schemas are surfaced via
     /// the system prompt instead (see [`deferred_tools_summary`]) so
     /// the model still knows their names + descriptions and can load
@@ -193,7 +192,7 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// Phase 79.2 — compact text block listing every deferred tool
+    /// Compact text block listing every deferred tool
     /// by name + description (capped at 120 chars). Returns `None`
     /// when no tool is deferred so callers can skip the block.
     pub fn deferred_tools_summary(&self) -> Option<String> {
@@ -233,13 +232,12 @@ impl ToolRegistry {
         Some(parts.join("\n"))
     }
     /// All registered tool names — cheap because [`HandlerEntry`]
-    /// already owns the name string. Phase 79.1 boot guard consumes
-    /// this list to verify every tool is classified for plan-mode
-    /// gating.
+    /// already owns the name string. The boot guard consumes this
+    /// list to verify every tool is classified for plan-mode gating.
     pub fn names(&self) -> Vec<String> {
         self.handlers.iter().map(|e| e.key().clone()).collect()
     }
-    /// Phase 79.1 — return tool names that are NOT classified for
+    /// Return tool names that are NOT classified for
     /// plan-mode gating. Empty result = every registered tool is
     /// recognised by `nexo_core::plan_mode::classify_tool`. Callers
     /// (main.rs boot path) typically `tracing::warn!` the slice and
@@ -308,7 +306,7 @@ impl ToolRegistry {
         clone.retain_matching(allowed_tools);
         clone
     }
-    /// Phase 67.D.3 — drop every dispatch-related tool whose
+    /// Drop every dispatch-related tool whose
     /// `DispatchKind` is not allowed by the binding's resolved
     /// `DispatchPolicy`. Returns the number of tools removed. Read
     /// tools survive when `mode >= ReadOnly`; write tools only when
@@ -343,7 +341,7 @@ impl ToolRegistry {
         removed
     }
 
-    /// Phase 12.8 — remove every tool whose name starts with `prefix`.
+    /// Remove every tool whose name starts with `prefix`.
     /// Used to drop a server's previous tool set before re-registering
     /// after a `notifications/tools/list_changed`. Returns the number of
     /// tools removed.

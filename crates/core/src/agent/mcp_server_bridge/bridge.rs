@@ -1,4 +1,4 @@
-//! Phase 12.6 — adapt `ToolRegistry` to `McpServerHandler`. Powers the
+//! Adapt `ToolRegistry` to `McpServerHandler`. Powers the
 //! `agent mcp-server` subcommand so external MCP clients (Claude Desktop,
 //! Cursor) can call the agent's registered tools.
 use crate::agent::context::AgentContext;
@@ -80,11 +80,11 @@ impl WorkspaceDoc {
         }
     }
 }
-// Phase 76.1 — `Clone` lets the same bridge serve both the stdio
-// and HTTP transports concurrently. All fields are cheap to clone
+// `Clone` lets the same bridge serve both the stdio and HTTP
+// transports concurrently. All fields are cheap to clone
 // (Arc, owned String, ArcSwap-shared allowlist).
 //
-// Phase M1 — `allowlist` is now `Arc<ArcSwap<...>>` so an external
+// `allowlist` is an `Arc<ArcSwap<...>>` so an external
 // caller (post-hook / SIGHUP / admin-ui) can swap the filter
 // without reconstructing the bridge. Clones share the same
 // ArcSwap, so a swap on any clone is visible to all clones.
@@ -150,7 +150,7 @@ impl ToolRegistryBridge {
         }
     }
 
-    /// Phase M1 — opt in to advertising `tools/listChanged: true`
+    /// Opt in to advertising `tools/listChanged: true`
     /// in the capability negotiation. Caller is responsible for
     /// actually pushing `notifications/tools/list_changed` (e.g.
     /// `HttpServerHandle::notify_tools_list_changed()`) when the
@@ -163,7 +163,7 @@ impl ToolRegistryBridge {
         self
     }
 
-    /// Phase M1 — atomically replace the allowlist filter. Future
+    /// Atomically replace the allowlist filter. Future
     /// `list_tools` / `call_tool` calls observe the new set
     /// immediately. `None` removes the filter (everything non-proxy
     /// is exposed). Concurrent in-flight `is_allowed` calls finish
@@ -201,7 +201,7 @@ impl ToolRegistryBridge {
             Value::String(s) => s.clone(),
             other => serde_json::to_string_pretty(other).unwrap_or_default(),
         };
-        // Phase 74.3 — populate `structured_content` only when the
+        // Populate `structured_content` only when the
         // payload is non-string (objects/arrays). Pure-string
         // results stay text-only because Claude wouldn't gain a
         // typed view from echoing the same string twice.
@@ -318,7 +318,7 @@ impl McpServerHandler for ToolRegistryBridge {
         self.server_info.clone()
     }
     fn capabilities(&self) -> Value {
-        // Phase M1 — `tools.listChanged` reflects whether THIS
+        // `tools.listChanged` reflects whether THIS
         // bridge instance is bound to a transport that can push
         // `notifications/tools/list_changed`. Defaults to `false`;
         // HTTP path opts in via `with_list_changed_capability(true)`.
@@ -796,7 +796,7 @@ mod tests {
         assert!(text.contains("How should you answer?"));
     }
 
-    // ── Phase M1 — listChanged capability + hot-swap allowlist ──
+    // ── listChanged capability + hot-swap allowlist ──
 
     #[tokio::test]
     async fn capability_defaults_to_false() {

@@ -1,4 +1,4 @@
-//! Phase 12.4 — integration tests for `McpRuntimeManager`.
+//! Integration tests for `McpRuntimeManager`.
 //!
 //! Uses the `mock_mcp_server` binary (a `[[bin]]` in this crate) so
 //! `CARGO_BIN_EXE_mock_mcp_server` resolves and gives us a real child

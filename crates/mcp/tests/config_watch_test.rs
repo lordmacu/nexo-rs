@@ -1,4 +1,4 @@
-//! Phase 12.8 — integration: file watcher picks up edits to `mcp.yaml`
+//! Integration: file watcher picks up edits to `mcp.yaml`
 //! and drives `McpRuntimeManager::update_config`.
 
 use std::io::Write;

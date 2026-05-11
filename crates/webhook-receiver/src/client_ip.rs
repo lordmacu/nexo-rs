@@ -1,4 +1,4 @@
-//! Phase 82.2 — pure-fn client-IP resolution honouring trusted
+//! Pure-fn client-IP resolution honouring trusted
 //! reverse-proxy lists.
 //!
 //! Every helper here is decoupled from any HTTP framework — caller
@@ -6,12 +6,11 @@
 //! `(forwarded_for, real_ip)` header view. Tests cover the gates
 //! without spinning a TCP listener.
 //!
-//! Mirror of OpenClaw `research/extensions/webhooks/src/http.ts:705-715`
-//! `resolveRequestClientIp(req, gateway.trustedProxies,
-//! allowRealIpFallback)`. Differs in being pure-fn (no `req`
-//! coupling), CIDR-based (matches against `IpNetwork` not single
-//! IP literals), and returning a typed `IpAddr` rather than
-//! `string | undefined`.
+//! Mirror of OpenClaw's `resolveRequestClientIp(req,
+//! gateway.trustedProxies, allowRealIpFallback)`. Differs in being
+//! pure-fn (no `req` coupling), CIDR-based (matches against
+//! `IpNetwork` not single IP literals), and returning a typed
+//! `IpAddr` rather than `string | undefined`.
 
 use std::net::IpAddr;
 

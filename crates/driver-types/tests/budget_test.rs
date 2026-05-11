@@ -124,7 +124,7 @@ fn consecutive_413_axis_disabled_when_cap_is_zero() {
 #[test]
 fn consecutive_413_under_cap_returns_none() {
     // One 413 retry is fine; only the second consecutive one trips
-    // the budget axis. Reactive recovery (Phase 85.1) relies on this
+    // the budget axis. Reactive recovery relies on this
     // — a single retry happens cleanly, the loop only aborts on
     // sustained failures.
     let g = guards();

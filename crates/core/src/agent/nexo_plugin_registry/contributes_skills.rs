@@ -1,4 +1,4 @@
-//! Phase 81.7 — catalog plugin-contributed skills. Walks each
+//! Catalog plugin-contributed skills. Walks each
 //! loaded plugin's `skills.contributes_dir`, indexes any subdir
 //! containing a `SKILL.md` file, and records the per-plugin root
 //! plus first-plugin-wins attribution. Actual skill content is NOT

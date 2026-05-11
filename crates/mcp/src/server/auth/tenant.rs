@@ -1,4 +1,4 @@
-//! Phase 76.4 — tenant identity + scoped path helpers.
+//! Tenant identity + scoped path helpers.
 //!
 //! The `Principal` carries a [`TenantId`] derived at the auth boundary
 //! (JWT claim, mTLS CN, static-token YAML config, or stdio constant).
@@ -13,8 +13,7 @@
 //! (a JWT claim, a CN forwarded by a proxy). Validation here is the
 //! choke point.
 //!
-//! Defenses ported from `claude-code-leak/src/memdir/teamMemPaths.ts`
-//! (`sanitizePathKey`, lines 22–64) and adapted to Rust:
+//! Defenses applied:
 //!
 //! * Null bytes — C-syscall truncation vector.
 //! * NFKC normalization — fullwidth-form bypasses (e.g. `．．／`).
@@ -40,8 +39,7 @@ impl TenantId {
     pub const STDIO_LOCAL: &'static str = "local";
 
     /// Default tenant for static-token auth when the operator omits an
-    /// explicit `tenant` field. Mirrors the leak's `'default'` scope
-    /// (see `claude-code-leak/src/services/mcp/types.ts:10-20`).
+    /// explicit `tenant` field.
     pub const DEFAULT: &'static str = "default";
 
     /// Maximum byte length. 64 is generous for human-readable slugs
@@ -52,16 +50,14 @@ impl TenantId {
     pub fn parse(raw: &str) -> Result<Self, TenantIdError> {
         // Step 1: null-byte rejection. C syscalls truncate at NUL,
         // so a tenant id with an embedded NUL would split into a
-        // shorter identifier on disk. Pattern from
-        // claude-code-leak/src/memdir/teamMemPaths.ts:22-64.
+        // shorter identifier on disk.
         if raw.contains('\0') {
             return Err(TenantIdError::NullByte);
         }
 
         // Step 2: NFKC normalize and reject if normalization changed
         // the string. Catches fullwidth bypasses (Ｔｅｎａｎｔ, ．．／)
-        // and other compatibility-form tricks. Same pattern as
-        // sanitizePathKey's NFKC step in the leak.
+        // and other compatibility-form tricks.
         let nfkc: String = raw.nfkc().collect();
         if nfkc != raw {
             return Err(TenantIdError::NonCanonical);
@@ -249,7 +245,7 @@ pub struct CrossTenantError {
 ///
 /// Use this for *new* paths (writes to files that may not yet
 /// exist). For reads, prefer [`tenant_scoped_canonicalize`] which
-/// also runs symlink-aware containment checks (Phase 76.4 step 4).
+/// also runs symlink-aware containment checks.
 pub fn tenant_scoped_path(root: &Path, tenant: &TenantId, suffix: &str) -> PathBuf {
     let mut base = root.join("tenants").join(tenant.as_str());
     if suffix.is_empty() {
@@ -292,22 +288,15 @@ pub fn tenant_scoped_path(root: &Path, tenant: &TenantId, suffix: &str) -> PathB
 /// Per-tenant SQLite path. Layout is
 /// `<root>/tenants/<tenant>/state.sqlite3` so the SQLite file lives
 /// next to whatever else the tenant accumulates. One DB per tenant
-/// is the strongest isolation Rust's `rusqlite` makes easy; the
-/// production-grade reference at
-/// `claude-code-leak/src/services/teamMemorySync/index.ts:163-166`
-/// is server-side enforced (Bearer token gates the org_id in
-/// responses), but for the in-process MCP server one-DB-per-tenant
-/// is the cheapest way to make a corruption blast radius equal one
-/// tenant.
+/// is the strongest isolation Rust's `rusqlite` makes easy and the
+/// cheapest way to make a corruption blast radius equal one tenant.
 pub fn tenant_db_path(root: &Path, tenant: &TenantId) -> PathBuf {
     tenant_scoped_path(root, tenant, "state.sqlite3")
 }
 
 // --- tenant_scoped_canonicalize -----------------------------------
 
-/// Two-pass containment check ported from
-/// `claude-code-leak/src/memdir/teamMemPaths.ts:228-256`
-/// (`validateTeamMemWritePath`):
+/// Two-pass containment check:
 ///
 ///   * Pass 1: lexical resolution. We reject absolute suffixes,
 ///     `..` segments, and verify the joined path is well-formed.
@@ -326,10 +315,9 @@ pub fn tenant_db_path(root: &Path, tenant: &TenantId) -> PathBuf {
 ///
 /// Symlink edge cases on Windows: `std::fs::canonicalize` returns
 /// UNC paths (`\\?\C:\…`), which break the prefix containment check.
-/// Phase 76.4 treats Windows as out of scope; the symlink-defense
-/// tests are gated on `cfg(unix)` and full Windows port is a
-/// follow-up. This is consistent with the project's musl/Termux
-/// production targets.
+/// Windows is out of scope; the symlink-defense tests are gated on
+/// `cfg(unix)` and a full Windows port is a follow-up. This is
+/// consistent with the project's musl/Termux production targets.
 pub fn tenant_scoped_canonicalize(
     root: &Path,
     tenant: &TenantId,
@@ -365,8 +353,8 @@ pub fn tenant_scoped_canonicalize(
     // semantics by canonicalising the tenant_dir itself.
     //
     // We canonicalise the deepest existing ancestor + re-attach
-    // the tail; this is the leak's exact trick to handle "writing
-    // a file that doesn't exist yet inside a directory that does".
+    // the tail; this is the standard trick to handle "writing a
+    // file that doesn't exist yet inside a directory that does".
     let (existing_root, tail) = deepest_existing_ancestor(&lexical)?;
     let canon_existing = match std::fs::canonicalize(&existing_root) {
         Ok(p) => p,

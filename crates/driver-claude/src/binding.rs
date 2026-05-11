@@ -1,9 +1,9 @@
 //! Session-binding store. Keeps `(goal_id → claude session_id)` so the
 //! next turn against the same goal can `--resume <id>`.
 //!
-//! Phase 67.1 ships `MemoryBindingStore`; Phase 67.2 adds
-//! `SqliteBindingStore` (gated behind the `sqlite` feature) plus four
-//! trait extensions with backward-compatible defaults.
+//! Provides `MemoryBindingStore` plus `SqliteBindingStore` (gated
+//! behind the `sqlite` feature) and four trait extensions with
+//! backward-compatible defaults.
 
 use std::path::PathBuf;
 
@@ -29,12 +29,12 @@ pub struct SessionBinding {
     /// structural `updated_at` so an idle-TTL filter does not reset on
     /// a no-op upsert.
     ///
-    /// `#[serde(default)]` so payloads serialised by 67.1 (which lacked
+    /// `#[serde(default)]` so older payloads (which lacked
     /// this field) deserialise to epoch; the store implementations are
     /// responsible for normalising it on the next `upsert`.
     #[serde(default)]
     pub last_active_at: DateTime<Utc>,
-    /// Phase 67.B.1 — channel that originated this goal (e.g. the
+    /// Channel that originated this goal (e.g. the
     /// Telegram chat that ran `program_phase`). Used by the
     /// completion router to publish summaries back to the right
     /// place after the goal finishes. `None` for goals launched
@@ -42,12 +42,12 @@ pub struct SessionBinding {
     /// with no chat context).
     #[serde(default)]
     pub origin_channel: Option<OriginChannel>,
-    /// Phase 67.B.1 — agent / sender that issued the dispatch.
+    /// Agent / sender that issued the dispatch.
     /// Distinct from `origin_channel`: a chained `dispatch_phase`
     /// hook keeps the original `origin_channel` (so notifications
     /// land where the human asked) but sets `dispatcher.agent_id`
     /// to the parent agent for audit. `None` for legacy bindings
-    /// from before 67.B.1.
+    /// that predate this field.
     #[serde(default)]
     pub dispatcher: Option<DispatcherIdentity>,
 }
@@ -136,12 +136,12 @@ impl SessionBinding {
 
 #[async_trait]
 pub trait SessionBindingStore: Send + Sync + 'static {
-    // 67.1 surface — required.
+    // Core surface — required.
     async fn get(&self, goal_id: GoalId) -> Result<Option<SessionBinding>, ClaudeError>;
     async fn upsert(&self, binding: SessionBinding) -> Result<(), ClaudeError>;
     async fn clear(&self, goal_id: GoalId) -> Result<(), ClaudeError>;
 
-    // 67.2 — defaults preserve `MemoryBindingStore` behaviour.
+    // Extensions — defaults preserve `MemoryBindingStore` behaviour.
 
     /// Mark the binding for `goal_id` as invalidated (e.g. Claude
     /// rejected the session id mid-turn). Default delegates to

@@ -1,4 +1,4 @@
-//! Phase F4 — wiremock integration tests for the
+//! Wiremock integration tests for the
 //! `nexo-persona-installer` orchestrator + admin layer.
 //!
 //! Eleven install scenarios cover the resolve → validate →

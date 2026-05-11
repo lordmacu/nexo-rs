@@ -1,4 +1,4 @@
-//! Phase 82.10.n — production [`ChannelCredentialPersister`]
+//! Production [`ChannelCredentialPersister`]
 //! for the whatsapp channel.
 //!
 //! WhatsApp credentials follow a different lifecycle than the

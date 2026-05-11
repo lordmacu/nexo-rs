@@ -1,10 +1,10 @@
-//! Phase 79.7 — `cron_create` / `cron_list` / `cron_delete` /
-//! `cron_pause` / `cron_resume` storage layer.
+//! `cron_create` / `cron_list` / `cron_delete` / `cron_pause` /
+//! `cron_resume` storage layer.
 //!
 //! Persists LLM-time-scheduled cron entries to SQLite. Distinct
-//! from Phase 7 Heartbeat (config-time only) and Phase 20
-//! `agent_turn` poller (config-time only) — this is the only path
-//! where the model itself mutates the schedule.
+//! from config-time Heartbeat and the config-time `agent_turn`
+//! poller — this is the only path where the model itself mutates
+//! the schedule.
 //!
 //! Schedule shape:
 //!   * 5-field POSIX cron expressions (also accepts a 6-field
@@ -13,8 +13,8 @@
 //!   * Hard cap of 50 entries per binding (see [`MAX_PER_BINDING`]).
 //!   * 60 s minimum interval guard at validate time.
 //!
-//! Phase 80.2-80.6 layered the jitter cluster on top of this
-//! storage layer: `CronJitterConfig` lives in
+//! A jitter cluster layers on top of this storage layer:
+//! `CronJitterConfig` lives in
 //! [`nexo_config::types::cron_jitter`] and its helpers
 //! ([`apply_recurring_jitter`], [`apply_one_shot_lead`],
 //! [`jitter_frac_from_entry_id`]) are consumed by [`CronRunner`]
@@ -67,7 +67,7 @@ pub struct CronEntry {
     /// `None` = inherit binding's primary channel.
     pub channel: Option<String>,
     /// LLM provider pinned at schedule time. `None` on legacy rows
-    /// created before Phase 79.7.B; dispatcher falls back to process
+    /// created before pinned models landed; dispatcher falls back to process
     /// default wiring in that case.
     #[serde(default)]
     pub model_provider: Option<String>,
@@ -75,7 +75,7 @@ pub struct CronEntry {
     /// `model_provider`). `None` on legacy rows.
     #[serde(default)]
     pub model_name: Option<String>,
-    /// Phase 79.7 outbound — optional recipient (channel-specific
+    /// Outbound — optional recipient (channel-specific
     /// id: WhatsApp JID, Telegram chat_id, email address). When
     /// `Some`, the runtime's `LlmCronDispatcher` (with publisher
     /// wired) routes the model response to
@@ -101,13 +101,13 @@ pub struct CronEntry {
     /// Soft-disable flag — toggled by `cron_pause` / `cron_resume`. `true`
     /// keeps the entry in storage but skips firing.
     pub paused: bool,
-    /// Phase 80.5 — exempt from `recurring_max_age_ms` auto-expiry.
+    /// Exempt from `recurring_max_age_ms` auto-expiry.
     /// Built-in / always-on entries (assistant_mode initial cron,
     /// ops cleanups) carry `true` so a long uptime doesn't sweep
     /// them away. Default `false`.
     #[serde(default)]
     pub permanent: bool,
-    /// Phase 83.8.12.5.cron — owning tenant. Stamped at schedule
+    /// Owning tenant. Stamped at schedule
     /// time from the agent's `AgentConfig.tenant_id`. The cron
     /// dispatcher's LLM client cache keys on
     /// `(provider, model, tenant_id)` and resolves provider keys
@@ -228,7 +228,7 @@ pub trait CronStore: Send + Sync {
         last_fired_at: i64,
     ) -> Result<u32, CronStoreError>;
 
-    /// Phase 80.6 — boot helper. Atomically rewrite `next_fire_at`
+    /// Boot helper. Atomically rewrite `next_fire_at`
     /// to `i64::MAX` for every entry whose stored `next_fire_at`
     /// is more than `skew_ms` milliseconds in the past. Returns the
     /// number of entries quarantined.
@@ -244,7 +244,7 @@ pub trait CronStore: Send + Sync {
         skew_ms: i64,
     ) -> Result<usize, CronStoreError>;
 
-    /// Phase 80.5 — auto-expire **recurring** entries older than
+    /// Auto-expire **recurring** entries older than
     /// `max_age_ms`. `permanent: true` entries are exempt regardless
     /// of age. Returns the number of entries deleted. `max_age_ms`
     /// of `0` is a no-op (operator opt-in).
@@ -262,11 +262,10 @@ pub trait CronStore: Send + Sync {
 /// goes BEFORE `from_unix` (a negative jitter past `from_unix`
 /// would re-fire immediately).
 ///
-/// Phase 80.2-80.4 superseded by [`apply_recurring_jitter`] +
-/// [`apply_one_shot_lead`] which take a `CronJitterConfig` + the
-/// entry id so retries are deterministic. This single-`pct`
-/// variant remains for the legacy `CronRunner::with_jitter_pct`
-/// shim path.
+/// Superseded by [`apply_recurring_jitter`] + [`apply_one_shot_lead`]
+/// which take a `CronJitterConfig` + the entry id so retries are
+/// deterministic. This single-`pct` variant remains for the legacy
+/// `CronRunner::with_jitter_pct` shim path.
 pub fn apply_jitter(next_fire_at: i64, from_unix: i64, pct: u32) -> i64 {
     if pct == 0 {
         return next_fire_at;
@@ -296,12 +295,12 @@ pub fn apply_jitter(next_fire_at: i64, from_unix: i64, pct: u32) -> i64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.2-80.6 — config-driven jitter helpers
+// config-driven jitter helpers
 // ─────────────────────────────────────────────────────────────────────
 
 use nexo_config::types::cron_jitter::CronJitterConfig;
 
-/// Phase 80.3 — deterministic jitter fraction in `[0.0, 1.0)`
+/// Deterministic jitter fraction in `[0.0, 1.0)`
 /// derived from the entry id. The first 8 hex chars of a UUIDv4
 /// supply 32 bits of entropy normalised to a float; non-UUID-shaped
 /// ids fall back to `0.0` (no jitter) so legacy entries don't
@@ -321,7 +320,7 @@ pub fn jitter_frac_from_entry_id(entry_id: &str) -> f64 {
     }
 }
 
-/// Phase 80.2 + 80.3 + 80.4 — recurring forward jitter.
+/// Recurring forward jitter.
 /// `t1 + min(frac * (t2 - t1), cap_ms)` where `frac` is derived
 /// deterministically from `entry_id`. `t1` and `t2` are the next
 /// two fire timestamps (unix seconds) from the cron expression.
@@ -357,7 +356,7 @@ pub fn apply_recurring_jitter(
     }
 }
 
-/// Phase 80.4 — one-shot backward lead. The fire happens `lead`
+/// One-shot backward lead. The fire happens `lead`
 /// seconds BEFORE `target_unix`, never after. Only applied when
 /// the target's minute-of-hour passes the modulo gate
 /// `cfg.one_shot_minute_mod`. `from_unix` clamps so the result is
@@ -412,8 +411,7 @@ impl SqliteCronStore {
         sqlx::query(INDEX_BINDING).execute(&pool).await?;
         sqlx::query(INDEX_FIRE).execute(&pool).await?;
         // Idempotent ALTER for DBs created before the recipient
-        // column existed. Same pattern as Phase 71's plan_mode
-        // column on agent_registry: tolerate "duplicate column"
+        // column existed: tolerate "duplicate column"
         // errors so migrate() stays callable on every boot.
         let alter = sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN recipient TEXT")
             .execute(&pool)
@@ -466,7 +464,7 @@ impl SqliteCronStore {
                 return Err(CronStoreError::Sql(e));
             }
         }
-        // Phase 83.8.12.5.cron — tenant_id column. Idempotent
+        // tenant_id column. Idempotent
         // ALTER for DBs created before multi-tenant cron landed.
         let alter_tenant_id =
             sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN tenant_id TEXT")
@@ -516,7 +514,7 @@ fn row_to_entry(row: &SqliteRow) -> Result<CronEntry, CronStoreError> {
         // migration. Default to None when the row predates the
         // column.
         recipient: row.try_get("recipient").unwrap_or(None),
-        // Phase 83.8.12.5.cron — same forward-only ALTER pattern.
+        // Same forward-only ALTER pattern.
         tenant_id: row.try_get("tenant_id").unwrap_or(None),
     })
 }
@@ -1065,7 +1063,7 @@ mod tests {
         assert_eq!(e.tenant_id.as_deref(), Some("acme"));
     }
 
-    // ----- Phase 80.2-80.6 jitter cluster -----
+    // ----- jitter cluster -----
 
     #[test]
     fn jitter_frac_from_entry_id_is_deterministic() {

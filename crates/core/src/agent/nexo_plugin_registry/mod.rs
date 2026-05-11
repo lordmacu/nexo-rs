@@ -1,11 +1,11 @@
-//! Phase 81.5 — `NexoPluginRegistry` — hot-reloadable snapshot of
+//! `NexoPluginRegistry` — hot-reloadable snapshot of
 //! validated `NexoPlugin` manifests produced by [`discover`].
 //!
 //! This module owns the discovery contract; the manifest schema +
-//! validator live in `nexo-plugin-manifest` (Phase 81.1) and the
-//! plugin lifecycle trait lives in `crate::agent::plugin_host`
-//! (Phase 81.2). 81.5 only produces validated manifests + paths;
-//! actual `NexoPlugin::init()` invocation is Phase 81.6's job.
+//! validator live in `nexo-plugin-manifest` and the
+//! plugin lifecycle trait lives in `crate::agent::plugin_host`.
+//! Discovery only produces validated manifests + paths;
+//! `NexoPlugin::init()` invocation happens in the init loop.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -52,7 +52,7 @@ pub use subprocess::{
     subprocess_plugin_factory, subprocess_plugin_factory_with_env, SubprocessNexoPlugin,
 };
 
-/// Phase 81.18.b — build a synthetic [`DiscoveredPlugin`] for
+/// Build a synthetic [`DiscoveredPlugin`] for
 /// the N-th instance of a multi-instance subprocess plugin. The
 /// caller passes a base manifest the discovery walker found at
 /// boot (e.g. `id = "telegram"` from `nexo-plugin-telegram`'s
@@ -76,7 +76,7 @@ pub fn synthesize_instance_plugin(
 }
 
 /// Hot-reloadable snapshot container. Read paths are zero-contention
-/// thanks to `ArcSwap`; Phase 18 hot-reload will call
+/// thanks to `ArcSwap`; hot-reload calls
 /// [`Self::swap`] with a freshly-discovered snapshot.
 #[derive(Debug)]
 pub struct NexoPluginRegistry {
@@ -87,10 +87,9 @@ pub struct NexoPluginRegistry {
 pub struct NexoPluginRegistrySnapshot {
     pub plugins: Vec<DiscoveredPlugin>,
     pub last_report: PluginDiscoveryReport,
-    /// Phase 81.7 — runtime routing data: `plugin_id -> absolute
-    /// skills root` populated by `merge_plugin_contributed_skills`.
-    /// Per-agent `SkillLoader::with_plugin_roots` consumes the
-    /// values at boot. Empty on snapshots that pre-date 81.7 wire.
+    /// Runtime routing data: `plugin_id -> absolute skills root`
+    /// populated by `merge_plugin_contributed_skills`. Per-agent
+    /// `SkillLoader::with_plugin_roots` consumes the values at boot.
     pub skill_roots: BTreeMap<String, PathBuf>,
 }
 
@@ -107,7 +106,7 @@ impl NexoPluginRegistry {
         self.inner.load_full()
     }
 
-    /// Atomically replace the active snapshot. Phase 18 reload calls
+    /// Atomically replace the active snapshot. Reload calls
     /// this after re-running [`discover`].
     pub fn swap(&self, snap: Arc<NexoPluginRegistrySnapshot>) {
         self.inner.store(snap);

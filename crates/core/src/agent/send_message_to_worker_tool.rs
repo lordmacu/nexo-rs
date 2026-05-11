@@ -1,17 +1,16 @@
-//! Phase 84.3 — `SendMessageToWorker` continuation tool.
+//! `SendMessageToWorker` continuation tool.
 //!
-//! The coordinator (Phase 84.1) needs to re-engage a finished
-//! worker with its loaded context. Today the choice was binary:
+//! The coordinator needs to re-engage a finished worker with its
+//! loaded context. The alternatives don't fit:
 //! - `TeamCreate` → spawn a fresh worker (loses research context)
 //! - `SendToPeer` → at-rest peer agent (different semantics)
 //!
 //! `SendMessageToWorker` fills the gap. The tool looks up
-//! `worker_id` in a [`WorkerRegistry`] (Phase 84.3 worker registry
-//! module), validates the four error scenarios from the spec, and
-//! returns a structured response payload that the coordinator's
-//! next turn can read.
+//! `worker_id` in a [`WorkerRegistry`], validates the four error
+//! scenarios, and returns a structured response payload that the
+//! coordinator's next turn can read.
 //!
-//! ## Error scenarios (spec)
+//! ## Error scenarios
 //!
 //! | Scenario | Returned `kind` |
 //! |---|---|
@@ -29,9 +28,8 @@
 //! pipeline arrives. Until then, the success path returns a
 //! placeholder `Continued` payload + an explicit
 //! `pipeline_pending: true` flag so the coordinator can see that
-//! the work was registered but not yet executed. This matches the
-//! 84.2 deferral pattern (build the type + producer, defer the
-//! end-to-end wire-up).
+//! the work was registered but not yet executed (build the type +
+//! producer first, defer the end-to-end wire-up).
 
 use std::sync::Arc;
 
@@ -44,8 +42,7 @@ use super::tool_registry::ToolHandler;
 use super::worker_registry::{WorkerLookup, WorkerRegistry};
 
 /// The LLM-facing tool name. Stable string — referenced by the
-/// coordinator persona prompt (Phase 84.1) and the binding
-/// allowlist.
+/// coordinator persona prompt and the binding allowlist.
 pub const SEND_MESSAGE_TO_WORKER_TOOL_NAME: &str = "SendMessageToWorker";
 
 const MAX_MESSAGE_BYTES: usize = 32 * 1024;

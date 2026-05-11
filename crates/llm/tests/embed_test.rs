@@ -1,8 +1,8 @@
 //! Tests for the `LlmClient::embed` path.
 //!
-//! Full HTTP-level coverage arrives with Phase 10 (embeddings + sqlite-vec); for
-//! now we pin the default-error behaviour and the zero-input shortcut so
-//! providers that opt out return predictable errors to callers.
+//! Full HTTP-level coverage lives alongside the embeddings + sqlite-vec
+//! work; for now we pin the default-error behaviour and the zero-input
+//! shortcut so providers that opt out return predictable errors to callers.
 
 use async_trait::async_trait;
 use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};

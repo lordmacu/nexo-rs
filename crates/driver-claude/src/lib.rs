@@ -1,4 +1,4 @@
-//! Phase 67.1 — `nexo-driver-claude`.
+//! `nexo-driver-claude`.
 //!
 //! Spawn the `claude` CLI, consume its stream-json events, and keep
 //! session bindings so the next turn can `--resume <id>`. See

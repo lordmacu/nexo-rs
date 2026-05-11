@@ -1,7 +1,7 @@
-//! Reusable runtime helpers for Phase 11 stdio microapps consuming
-//! the nexo-rs daemon.
+//! Reusable runtime helpers for stdio microapps consuming the
+//! nexo-rs daemon.
 //!
-//! Phase 83.4. Replaces ~200 LOC of boilerplate every microapp would
+//! Replaces ~200 LOC of boilerplate every microapp would
 //! otherwise rewrite (JSON-RPC line loop, dispatch table, frame
 //! encoding, `_meta.nexo.binding` parsing, hook outcome serialisation,
 //! tracing setup).
@@ -46,25 +46,24 @@ pub mod notifications;
 #[cfg(feature = "events")]
 pub mod events;
 
-// Phase 91 — the STT module ships three mutually-compatible
-// backends: legacy whisper-rs (`stt`), Candle pure-Rust
-// (`stt-candle`), and cloud REST (`stt-cloud`). Each carries
-// its own feature flag; combining them at the call site is
-// `CompositeProvider`'s job.
+// The STT module ships three mutually-compatible backends:
+// legacy whisper-rs (`stt`), Candle pure-Rust (`stt-candle`),
+// and cloud REST (`stt-cloud`). Each carries its own feature
+// flag; combining them at the call site is `CompositeProvider`'s
+// job.
 //
-// Phase 91.x.wasm.phase-3 — the local inference paths (`stt`
-// whisper-rs + `stt-candle` Candle ML stack) depend on heavy
-// native crates (`opus-wave`, `ogg`, `candle-{core,nn,
-// transformers}`, `tokenizers`, plus tokio's `fs` + `io-std`
-// surface) that don't compile on `wasm32-unknown-unknown`. The
-// per-submodule cfg gates inside `stt/mod.rs` keep them out of
-// WASM builds.
+// The local inference paths (`stt` whisper-rs + `stt-candle`
+// Candle ML stack) depend on heavy native crates (`opus-wave`,
+// `ogg`, `candle-{core,nn,transformers}`, `tokenizers`, plus
+// tokio's `fs` + `io-std` surface) that don't compile on
+// `wasm32-unknown-unknown`. The per-submodule cfg gates inside
+// `stt/mod.rs` keep them out of WASM builds.
 //
-// Phase 91.x.wasm.phase-4 — the cloud backend (`stt-cloud`)
-// uses `reqwest`, which swaps to the browser fetch API on
-// wasm32. So `stt-cloud` alone is the path for WASM consumers
-// who want real STT; `stt` / `stt-candle` give them the wire
-// types but the inference modules drop out.
+// The cloud backend (`stt-cloud`) uses `reqwest`, which swaps to
+// the browser fetch API on wasm32. So `stt-cloud` alone is the
+// path for WASM consumers who want real STT; `stt` /
+// `stt-candle` give them the wire types but the inference
+// modules drop out.
 //
 // Parent gate accepts any one of the three features; inner
 // modules in `stt/mod.rs` apply the correct per-backend +

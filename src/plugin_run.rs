@@ -1,4 +1,4 @@
-//! Phase 31.7 — `nexo plugin run <path>` local dev loop.
+//! `nexo plugin run <path>` local dev loop.
 //!
 //! Boots the daemon with a local plugin directory injected as
 //! `cfg.plugins.discovery.search_paths[0]`, bypassing the
@@ -8,9 +8,9 @@
 //! Implementation: validates the path + manifest pre-boot, sets
 //! a side-channel override on `CliArgs`, falls through to the
 //! existing `Mode::Run` boot path. The daemon's existing
-//! subprocess auto-fallback (Phase 81.17.b) handles the spawn
+//! subprocess auto-fallback handles the spawn
 //! identically to a normally-installed plugin; hot-reload
-//! (Phase 81.10) re-walks `search_paths` on every tick so
+//! re-walks `search_paths` on every tick so
 //! `cargo build --release` triggers a respawn.
 
 use std::path::{Path, PathBuf};

@@ -1,4 +1,4 @@
-//! Phase 79.5 — `Lsp` tool registration + handler.
+//! `Lsp` tool registration + handler.
 //!
 //! Single tool, discriminator `kind` inside the args, dynamically-
 //! described based on the [`LspManager`]'s aggregated capabilities
@@ -46,11 +46,10 @@ fn map_language(wire: &LspLanguageWire) -> LspLanguage {
 pub struct LspTool {
     manager: Arc<LspManager>,
     workspace_root: PathBuf,
-    /// Set true when the originating tool call comes from a Phase
-    /// 19/20 synthetic poller. The MVP wires `false` everywhere
-    /// (Phase 67 already plumbed `is_synthetic` into the dispatch
-    /// context; threading it into AgentContext is a 79.5.b
-    /// follow-up).
+    /// Set true when the originating tool call comes from a
+    /// synthetic poller. Currently wired `false` everywhere;
+    /// `is_synthetic` is plumbed into the dispatch context but not
+    /// yet threaded into AgentContext.
     treat_origin_as_synthetic: bool,
 }
 
@@ -109,7 +108,7 @@ impl LspTool {
     /// running yet), the description includes all 5 kinds with a
     /// note that the result may be `ServerUnavailable` until a
     /// session warms up.
-    /// Phase 79.M.b — synchronous tool_def for boot dispatchers
+    /// Synchronous tool_def for boot dispatchers
     /// (`mcp_server_bridge::dispatch`) that can't `await` during
     /// catalog construction. Always returns the empty-caps
     /// description; the dynamic version above is reserved for

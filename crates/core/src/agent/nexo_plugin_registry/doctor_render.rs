@@ -1,10 +1,9 @@
-//! Phase 81.9 — render the `NexoPluginRegistrySnapshot` +
+//! Render the `NexoPluginRegistrySnapshot` +
 //! `ChannelAdapterRegistry` as the human-readable + JSON outputs
 //! consumed by `nexo agent doctor plugins`.
 //!
-//! Stable wire shape — admin-ui (Phase 81.11) reads the same
-//! `DoctorPluginsJsonReport` over wire when its `--json` mode
-//! ships.
+//! Stable wire shape — admin-ui reads the same
+//! `DoctorPluginsJsonReport` over wire in its `--json` mode.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -20,7 +19,7 @@ use crate::agent::channel_adapter::ChannelAdapterRegistry;
 
 /// Wire format consumed by `--json` mode of
 /// `nexo agent doctor plugins`. Stable serde shape so admin-ui
-/// (Phase 81.11) decodes the same struct.
+/// decodes the same struct.
 #[derive(Debug, Serialize)]
 pub struct DoctorPluginsJsonReport<'a> {
     pub config_path: &'a Path,

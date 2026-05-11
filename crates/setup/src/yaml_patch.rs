@@ -211,7 +211,7 @@ pub fn get_agent_list(file: &Path, agent_id: &str, list_key: &str) -> Result<Vec
 /// `*.example.yaml`). Mirrors the loader logic in `nexo-config`'s
 /// `merge_agents_drop_in` so the wizard sees the same set the
 /// daemon will load at boot.
-/// Phase 83.8.12 — list every agent id whose
+/// List every agent id whose
 /// `agents.yaml.<id>.tenant_id` matches `tenant_id`. Returns
 /// the list in stable order (matches `list_agent_ids`). Used
 /// by `TenantsYamlPatcher` to detect orphan agents on tenant
@@ -687,7 +687,7 @@ pub fn upsert_agent_field(path: &Path, agent_id: &str, dotted: &str, value: Valu
             .get_mut("agents")
             .and_then(Value::as_sequence_mut)
             .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
-        // Phase 82.10.p.b — create the agent block if absent so
+        // Create the agent block if absent so
         // `nexo/admin/agents/upsert` can act as a true upsert
         // (the wizard's "save new agent" flow expects creation,
         // not just patching of an existing one).
@@ -899,7 +899,7 @@ fn write_atomic(path: &Path, root: &Value) -> Result<()> {
 
 // Historical test module — additional helpers are intentionally
 // defined below. Moving this to the end of the file would churn diffs
-// across every future helper added to the Phase 17 section.
+// across every future helper added to the multi-instance section.
 #[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
@@ -1009,7 +1009,7 @@ mod tests {
         assert_eq!(v.as_str(), Some("es"));
     }
 
-    /// Phase 82.10.p.b regression: when the agent doesn't exist
+    /// Regression: when the agent doesn't exist
     /// yet, upsert appends a fresh `- id: <agent_id>` block and
     /// then writes the field. Supports the wizard's "save new
     /// agent" flow that lands at `nexo/admin/agents/upsert`
@@ -1071,7 +1071,7 @@ mod tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 17 helpers — multi-instance plugin entries + per-agent
+// Multi-instance plugin entries + per-agent
 // `credentials:` block + google-auth.yaml account upsert. These exist
 // in a separate impl block so the wizard can call them imperatively
 // without going through the declarative ServiceDef flow, which cannot
@@ -1665,7 +1665,7 @@ pub fn google_auth_upsert_account(
 }
 
 // =====================================================================
-// Phase 79.10 — `YamlPatch` shape + denylist-aware applier.
+// `YamlPatch` shape + denylist-aware applier.
 //
 // `YamlPatch` is the wire shape persisted under
 // `.nexo/config-proposals/<patch_id>.yaml` between `propose` and
@@ -1673,11 +1673,7 @@ pub fn google_auth_upsert_account(
 // (defense-in-depth — `propose` already gated; `apply` re-gates because
 // the staging file may have been edited externally) and only then
 // delegates to the existing `upsert_agent_field` / `remove_agent_field`
-// (Phase 69 helpers).
-//
-// Reference (PRIMARY): leak's `claude-code-leak/src/tools/ConfigTool/
-// ConfigTool.ts:310-343` (`updateSettingsForSource('userSettings', update)`)
-// — the leak ships no denylist gate; we add it.
+// helpers.
 // =====================================================================
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -1907,7 +1903,7 @@ agents:
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.10.h.3 helpers — whole-block agent removal + llm.yaml
+// Whole-block agent removal + llm.yaml
 // `providers.<id>` mapping helpers, consumed by the admin RPC
 // production adapters in `crate::admin_adapters`.
 // ─────────────────────────────────────────────────────────────────────
@@ -2074,7 +2070,7 @@ pub fn remove_llm_provider(path: &Path, provider_id: &str) -> Result<bool> {
     Ok(removed)
 }
 
-// ── Phase 83.8.12.5.c.b — tenant-scoped provider helpers ──
+// ── Tenant-scoped provider helpers ──
 //
 // Operate on `tenants.<tenant_id>.providers.<provider_id>.*`.
 // Mirror the global `*_llm_provider_*` helpers above —
@@ -2383,7 +2379,7 @@ mod admin_adapter_helper_tests {
         );
     }
 
-    // ── Phase 83.8.12.5.c.b — tenant-scoped helpers ──
+    // ── Tenant-scoped helpers ──
 
     #[test]
     fn upsert_llm_tenant_provider_creates_nested_blocks_from_scratch() {

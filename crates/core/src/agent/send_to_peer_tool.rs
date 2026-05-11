@@ -1,4 +1,4 @@
-//! Phase 80.11 — `send_to_peer` LLM tool.
+//! `send_to_peer` LLM tool.
 //!
 //! Fire-and-forget peer-to-peer messaging via NATS subject
 //! `agent.inbox.<goal_id>`. Resolves the `to:` argument to a peer

@@ -267,7 +267,7 @@ async fn build_bundle(
     })
 }
 
-/// Phase 90 follow-up — shared resolver used by both
+/// Shared resolver used by both
 /// [`build_encryption_meta`] and [`pack_pipeline`] so the
 /// fingerprint list in the manifest always matches the recipient
 /// set that actually wraps the bundle. Dedupes duplicate strings
@@ -350,8 +350,8 @@ fn pack_pipeline(
 
     #[cfg(feature = "snapshot-encryption")]
     {
-        // Phase 90 follow-up — both single + multi-recipient
-        // variants converge to a Vec<Recipient> here, then the
+        // Both single + multi-recipient variants converge to a
+        // Vec<Recipient> here, then the
         // existing `encrypt_writer(hashing, recipients)` call
         // (which already accepts a Vec) wraps the bundle with
         // one age header per recipient.
@@ -527,7 +527,7 @@ mod tests {
         );
     }
 
-    // ── Phase 90 follow-up — multi-recipient encrypt tests ──
+    // ── multi-recipient encrypt tests ──
 
     /// `EncryptionKey::AgePublicKeys` carrying N recipients
     /// produces a bundle that decrypts cleanly with ANY of the N

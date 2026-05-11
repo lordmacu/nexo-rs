@@ -1,4 +1,4 @@
-//! Phase 91.x.wasm.phase-4 — cloud STT backends.
+//! Cloud STT backends.
 //!
 //! Provides a uniform [`SttProvider`] trait that wraps three
 //! concrete impls:
@@ -9,9 +9,8 @@
 //!   OpenAI-compatible `openai/v1/audio/transcriptions`
 //!   endpoint (Groq exposes it under their domain).
 //! - [`anthropic::AnthropicVoiceStream`] — the
-//!   `voice_stream` WebSocket per the `claude-code-leak`
-//!   mining; OAuth-gated. **Not yet implemented** — placeholder
-//!   for Phase 91.x.wasm.phase-4b.
+//!   `voice_stream` WebSocket; OAuth-gated. **Not yet
+//!   implemented** — placeholder for a future iteration.
 //!
 //! Plus a [`CompositeProvider`] fallback chain so callers can
 //! configure cloud-first with Candle as a safety net (or any
@@ -25,8 +24,8 @@
 //! and `stt-candle` (the local backend) gated out.
 
 #![cfg(feature = "stt-cloud-wasm")]
-// Phase 91.x.wasm.phase-4 module — allow brief builder-method
-// docs to live in the trait + outer-section comments rather
+// Allow brief builder-method docs to live in the trait +
+// outer-section comments rather
 // than per-fn. The crate-level `deny(missing_docs)` would
 // otherwise require Doc comments on every `with_*` builder
 // which adds noise without information density.
@@ -39,7 +38,7 @@ use serde::Deserialize;
 
 use super::SttError;
 
-// Phase 91.x.wasm.phase-4c — `anthropic` carries its own
+// `anthropic` carries its own
 // `not(target_arch = "wasm32")` cfg gate at the module level
 // because tokio-tungstenite (its WebSocket transport) needs
 // TCP types absent on wasm32. The REST legs (`openai`, `groq`)
@@ -48,12 +47,11 @@ pub mod anthropic;
 pub mod groq;
 pub mod openai;
 
-// Phase 91.x.wasm.phase-4d — bridge that wraps the local Candle
-// backend behind the cloud `SttProvider` trait so it can sit at
-// the tail of a `CompositeProvider` chain. Only compiled when
-// `stt-cloud` AND `stt-candle` are both on; cloud-only WASM
-// builds skip it (Candle inference path can't run on wasm32
-// today — Phase 91.x.wasm.phase-4 follow-up).
+// Bridge that wraps the local Candle backend behind the cloud
+// `SttProvider` trait so it can sit at the tail of a
+// `CompositeProvider` chain. Only compiled when `stt-cloud` AND
+// `stt-candle` are both on; cloud-only WASM builds skip it
+// (the Candle inference path can't run on wasm32 today).
 #[cfg(feature = "stt-candle")]
 pub mod local_candle;
 
@@ -67,7 +65,7 @@ pub mod local_candle;
 /// and rely on the filename extension; we pass it through
 /// either way so the multipart upload is correctly tagged.
 ///
-/// Phase 91.x.wasm.phase-4c.3 — on wasm32 we drop the
+/// on wasm32 we drop the
 /// `Send + Sync` bounds + use `async_trait(?Send)` because
 /// reqwest's browser fetch backend returns futures holding
 /// `Rc<RefCell<...>>` (js-sys types) that can't cross thread
@@ -89,7 +87,7 @@ pub trait SttProvider: Send + Sync + fmt::Debug {
     fn name(&self) -> &'static str;
 }
 
-/// Phase 91.x.wasm.phase-4c.3 — wasm32 variant of [`SttProvider`]
+/// wasm32 variant of [`SttProvider`]
 /// without `Send + Sync` bounds + with `async_trait(?Send)`
 /// applied. Required because reqwest's wasm32 backend returns
 /// futures holding `Rc<RefCell<...>>` which can't be Send.
@@ -122,7 +120,7 @@ struct OpenAiCompatibleTranscription {
 /// the Bearer token; the wire is otherwise identical, so the
 /// actual HTTP work lives here once.
 ///
-/// Phase 91.x.wasm.phase-4c — multipart body is assembled by
+/// multipart body is assembled by
 /// hand (raw bytes) instead of via `reqwest::multipart::Form`
 /// because the latter is native-only on reqwest; wasm32 exposes
 /// only a subset of the builder. Hand-assembled body lets the
@@ -173,7 +171,7 @@ async fn post_openai_compatible(
     Ok(text)
 }
 
-/// Phase 91.x.wasm.phase-4c — assemble an RFC 7578
+/// assemble an RFC 7578
 /// `multipart/form-data` body for the OpenAI-compatible
 /// `/v1/audio/transcriptions` endpoint. Three fields:
 ///   - `model` (string)
@@ -189,8 +187,8 @@ async fn post_openai_compatible(
 ///
 /// Built into a `Vec<u8>` (not a streaming body) so reqwest's
 /// `.body(Vec<u8>)` accepts it on both native and wasm32 —
-/// `reqwest::multipart::Form` is native-only, which is what
-/// blocked WASM cloud STT pre-phase-4c.
+/// `reqwest::multipart::Form` is native-only, which previously
+/// blocked WASM cloud STT.
 fn build_openai_multipart_body(
     boundary: &str,
     model: &str,
@@ -323,7 +321,7 @@ impl SttProvider for CompositeProvider {
     }
 }
 
-// Phase 91.x.wasm.phase-4d.b — convenience layer on top of
+// convenience layer on top of
 // CompositeProvider + SttProvider.
 //
 // The user-stated workflow is "try the cloud STT first; if it
@@ -337,7 +335,7 @@ impl SttProvider for CompositeProvider {
 // Cfg-gated so cloud-only consumers (no `stt-candle`) and
 // WASM consumers (no `tokio::fs`) skip the additions cleanly.
 
-/// Phase 91.x.wasm.phase-4d.b — read the audio file at `path`
+/// read the audio file at `path`
 /// into memory and dispatch through an arbitrary
 /// [`SttProvider`] chain.
 ///
@@ -385,7 +383,7 @@ pub fn mime_from_path(path: &std::path::Path) -> &'static str {
     }
 }
 
-/// Phase 91.x.wasm.phase-4d.b — Anthropic `voice_stream`
+/// Anthropic `voice_stream`
 /// WebSocket primary + local Candle fallback. One-liner for
 /// the user-stated "try cloud, fall back to local" pattern.
 ///
@@ -405,7 +403,7 @@ pub fn anthropic_then_candle(
     ])
 }
 
-/// Phase 91.x.wasm.phase-4d.b — OpenAI Whisper-1 REST primary
+/// OpenAI Whisper-1 REST primary
 /// + local Candle fallback. Requires `stt-cloud-local-candle`.
 #[cfg(feature = "stt-cloud-local-candle")]
 pub fn openai_then_candle(
@@ -418,7 +416,7 @@ pub fn openai_then_candle(
     ])
 }
 
-/// Phase 91.x.wasm.phase-4d.b — Groq Whisper-large-v3 REST
+/// Groq Whisper-large-v3 REST
 /// primary + local Candle fallback. Requires
 /// `stt-cloud-local-candle`.
 #[cfg(feature = "stt-cloud-local-candle")]
@@ -542,8 +540,7 @@ mod tests {
         assert!(matches!(err, SttError::Whisper(_)));
     }
 
-    // Phase 91.x.wasm.phase-4d.b tests — MIME picker matrix +
-    // path-based dispatch.
+    // MIME picker matrix + path-based dispatch tests.
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
@@ -653,8 +650,8 @@ mod tests {
         assert!(matches!(err, SttError::Io(_)));
     }
 
-    // Phase 91.x.wasm.phase-4c.2 tests — hand-assembled
-    // multipart body. We don't have a live STT server to call;
+    // Hand-assembled multipart body tests. We don't have a live
+    // STT server to call;
     // these verify byte-exact framing so the
     // build_openai_multipart_body output matches what
     // reqwest::multipart::Form would have produced.

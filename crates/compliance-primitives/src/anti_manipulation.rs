@@ -1,7 +1,7 @@
 //! Anti-manipulation matcher.
 //!
 //! Detects prompt-injection / role-hijack patterns in inbound
-//! text. Microapps wire this into the Phase 83.3 hook
+//! text. Microapps wire this into the dispatch hook
 //! interceptor and vote `Block` on a positive match — the agent
 //! never sees the manipulation attempt.
 //!

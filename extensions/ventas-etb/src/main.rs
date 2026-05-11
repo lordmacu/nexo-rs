@@ -1,18 +1,13 @@
-//! Phase 83.8 — `ventas-etb` reference SaaS-shaped microapp.
+//! `ventas-etb` reference SaaS-shaped microapp.
 //!
-//! First real microapp built on Phase 83.1-83.7 primitives.
+//! A real microapp built on the microapp-SDK primitives.
 //! Validates the framework is usable for production work, not
 //! just toy examples.
 //!
 //! Same binary serves multiple personas (Ana / Carlos / María)
-//! by reading per-agent `extensions_config` (Phase 83.1) at
+//! by reading per-agent `extensions_config` at
 //! initialize time and routing each `tools/call` through the
-//! agent-id carried in `BindingContext` (Phase 82.1).
-//!
-//! Stage 1 (this commit): scaffold + 4 stub tools + leads-store
-//! placeholder. Real markdown tarifarios, SQLite leads.db,
-//! compliance hooks, and skill markdown land in subsequent
-//! commits.
+//! agent-id carried in `BindingContext`.
 
 use nexo_microapp_sdk::{Microapp, ToolCtx, ToolError, ToolReply};
 use serde_json::{json, Value};
