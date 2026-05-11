@@ -106,6 +106,21 @@ class HandshakeTests(unittest.TestCase):
         with self.assertRaises(ManifestError):
             PluginAdapter(manifest_toml="[plugin]\nversion = \"0.1.0\"\n")
 
+    def test_manifest_invalid_id_regex_raises(self):
+        from nexo_plugin_sdk import ManifestError, PluginAdapter
+
+        # Uppercase + leading digit both violate ^[a-z][a-z0-9_]{0,31}$.
+        with self.assertRaises(ManifestError):
+            PluginAdapter(manifest_toml='[plugin]\nid = "Bad-Id"\nversion = "0.1.0"\n')
+        with self.assertRaises(ManifestError):
+            PluginAdapter(manifest_toml='[plugin]\nid = "9lives"\nversion = "0.1.0"\n')
+
+    def test_manifest_invalid_toml_raises(self):
+        from nexo_plugin_sdk import ManifestError, PluginAdapter
+
+        with self.assertRaises(ManifestError):
+            PluginAdapter(manifest_toml="[plugin\nid = oops")
+
 
 if __name__ == "__main__":
     unittest.main()
