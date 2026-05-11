@@ -22,8 +22,10 @@
 #
 # Pre-built targets: Linux x86_64 / aarch64 (static musl), macOS
 # Intel / Apple Silicon, Windows x86_64 (MSVC). On Windows run this
-# from Git Bash (or use WSL — it then sees Linux). Termux: `pkg
-# install` the aarch64 .deb from the same release page.
+# from Git Bash, OR use the native PowerShell installer:
+#   irm https://lordmacu.github.io/nexo-rs/install.ps1 | iex
+# (WSL also works — it then sees Linux.) Termux: `pkg install` the
+# aarch64 .deb from the same release page.
 #
 # Flags:
 #   --install-dir <dir>   where to put the `nexo` binary
