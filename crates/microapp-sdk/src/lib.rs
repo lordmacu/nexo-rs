@@ -69,7 +69,7 @@ pub mod events;
 // Parent gate accepts any one of the three features; inner
 // modules in `stt/mod.rs` apply the correct per-backend +
 // target cfg.
-#[cfg(any(feature = "stt", feature = "stt-candle", feature = "stt-cloud"))]
+#[cfg(any(feature = "stt", feature = "stt-candle", feature = "stt-cloud-wasm"))]
 pub mod stt;
 
 #[cfg(feature = "wizard")]

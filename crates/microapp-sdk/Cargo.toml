@@ -82,18 +82,39 @@ stt-candle-hub = [
     "stt-candle",
     "dep:hf-hub",
 ]
-# Phase 91.x.wasm.phase-4 — cloud STT backends. Native-only
-# until the workspace daemon's reqwest pin gets split into
-# wasm-safe and native variants (Phase 91.x.wasm.phase-4c.3,
-# real cost much higher than the original estimate — see
-# FOLLOWUPS.md for the spike findings).
+# Phase 91.x.wasm.phase-4 — cloud STT backends. SplitS into
+# two base features so wasm32 consumers don't pay the
+# `rustls-tls` native-only cost:
 #
-# Adds an `SttProvider` trait with three impls (OpenAI Whisper,
-# Groq, Anthropic voice_stream) + `CompositeProvider` fallback
-# chain wired into `transcribe_file_with_chain`.
-stt-cloud = [
-    "dep:reqwest",
-]
+#   `stt-cloud-wasm` — minimal, browser-compatible. Pulls
+#     reqwest with just the workspace-pin baseline features
+#     (`json`, `stream`, `cookies`, `charset`, `http2`). The
+#     browser fetch API handles TLS without a Rust TLS dep.
+#     Use this for `wasm32-unknown-unknown` microapps.
+#
+#   `stt-cloud` — native-default. Stacks `rustls-tls` on top
+#     of the wasm base so HTTPS works on Linux / macOS /
+#     Windows / Android (no system OpenSSL). The compound
+#     features (`stt-cloud-anthropic`, `stt-cloud-local-candle`)
+#     are native-only anyway and auto-include `stt-cloud`.
+#
+# Phase 91.x.wasm.phase-4c.3 (real) — the workspace-pin trim
+# (removed `rustls-tls` + `macos-system-configuration` from
+# `workspace.dependencies.reqwest`) unblocks the wasm32 path
+# because resolver-2 no longer unifies those features into
+# wasm32 SDK builds. Both REST legs (OpenAI / Groq) compile
+# cleanly on wasm32 with `stt-cloud-wasm`. Anthropic
+# `voice_stream` WebSocket leg stays native-only (its own
+# `cfg(not(wasm32))` — tokio-tungstenite needs TCP types).
+# Phase 91.x.wasm.phase-4c.3 — both features are now no-ops
+# at the Cargo level (reqwest is per-target unconditional);
+# they only gate the `stt::cloud` module visibility via
+# `cfg(feature = "stt-cloud-wasm")`. Consumers enable
+# `stt-cloud` on native, `stt-cloud-wasm` on wasm32 —
+# functionally equivalent today, but the split preserves a
+# future hook for per-target opt-in features.
+stt-cloud-wasm = []
+stt-cloud = ["stt-cloud-wasm"]
 # Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
 # STT (per the claude-code-leak mining). Adds tokio-tungstenite
 # for the WebSocket transport on top of `stt-cloud` (native
@@ -160,7 +181,7 @@ stt-candle-accelerate = [
 # compatible API key server-side (`GET {base_url}/models`) so the
 # raw key never leaves the microapp. Pulls `reqwest` rustls-only
 # to avoid system OpenSSL.
-wizard = ["dep:reqwest"]
+wizard = []
 # Voice-mode reply pipeline — `VoiceModeStore` toggle + text
 # normalizer + SSML hinter + `TtsProvider` trait with a Microsoft
 # Edge Read-Aloud impl + `synthesize_voice_note` end-to-end
@@ -328,6 +349,13 @@ uuid        = { workspace = true }
 # so native targets don't pull `wasm-bindgen` unnecessarily.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 uuid = { version = "1", features = ["js"] }
+# Phase 91.x.wasm.phase-4c.3 — wasm-clean reqwest pin: only
+# `json` so reqwest's browser fetch backend resolves without
+# pulling rustls-tls / tokio-fs / cookies / http2 (all
+# native-only). The browser handles TLS / cookies / HTTP2 in
+# its fetch implementation; we just need reqwest's
+# `wasm-bindgen`-backed Client.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # Phase 91.x.wasm.phase-2 — extra tokio features the native SDK
 # needs on top of the WASM-safe baseline above. `io-std` powers
@@ -340,6 +368,11 @@ uuid = { version = "1", features = ["js"] }
 # cfg.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", default-features = false, features = ["io-std", "rt-multi-thread", "fs", "process"] }
+# Phase 91.x.wasm.phase-4c.3 — native reqwest with rustls-tls.
+# Separate decl from the wasm32 block so features differ per
+# target without hitting Cargo's "duplicate key" on a single
+# optional dep inside `[dependencies]`.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # Phase 82.10 — admin RPC pending-request map. Optional dep
 # (only the `admin` feature pulls it). Keeps the default
 # microapp dep tree slim.
@@ -411,21 +444,11 @@ ogg = { version = "0.9", optional = true }
 symphonia = { version = "0.5", default-features = false, features = [
     "mp3"
 ], optional = true }
-# `wizard` feature — server-side LLM key probe. rustls-only to
-# match the agent-creator-microapp baseline (no system OpenSSL).
-#
-# Phase 91.x.wasm.phase-4c — `multipart` dropped from the
-# feature set because the REST legs now build the multipart
-# body by hand via `build_openai_multipart_body`. That removes
-# one of the two wasm32 blockers (reqwest's `multipart::Form`
-# was native-only). The other blocker — `rustls-tls` not
-# compiling for wasm32 — still keeps the cloud module gated
-# on `not(wasm32)` at the parent. Filed as Phase
-# 91.x.wasm.phase-4c.3: requires workspace-level reqwest split
-# (daemon binary's pin includes `macos-system-configuration`
-# + `rustls-tls` which poisons the resolver-2 unified feature
-# set for wasm32 SDK consumers).
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# NOTE: reqwest moved into per-target dependency blocks
+# (see [target.'cfg(...)'] sections below) so we can give it
+# different feature sets on wasm32 vs native — Cargo doesn't
+# allow per-target features on a single optional dep inside
+# `[dependencies]`. Phase 91.x.wasm.phase-4c.3.
 # Phase 91.x.wasm.phase-4b — Anthropic voice_stream WebSocket
 # transport. `rustls-tls-webpki-roots` skips the system trust
 # store probe (we ship the public Mozilla roots inside the

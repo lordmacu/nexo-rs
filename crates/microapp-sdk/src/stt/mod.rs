@@ -79,24 +79,25 @@ pub mod transcribe_candle;
 // Groq Whisper-large-v3, Anthropic voice_stream)
 // + `CompositeProvider` fallback chain.
 //
-// Phase 91.x.wasm.phase-4c — partial unblock. The
-// `phase-4c.2` refactor (hand-assembled multipart) removed one
-// wasm32 blocker. The remaining blocker is workspace-level:
-// the daemon binary's reqwest pin requests features that
-// can't activate on wasm32 (`macos-system-configuration`,
-// `rustls-tls`), and resolver-2's cross-workspace feature
-// unification silently drops reqwest from wasm32 dep
-// resolution for ANY workspace member that pulls it (the SDK
-// included). Confirmed via `cargo tree --invert reqwest
-// --target wasm32-unknown-unknown` — "nothing to print" even
-// after explicit `--features stt-cloud-wasm`. The earlier
-// phase-4c.3 spike split `stt-cloud` into `stt-cloud` /
-// `stt-cloud-wasm` sub-features but reqwest still didn't
-// link on wasm32 — the workspace unification dominates.
-// Real unblock needs structural workspace change (separate
-// `reqwest-wasm` package alias for the SDK, or extracting
-// the SDK out of this workspace). Filed in FOLLOWUPS.
-#[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
+// Phase 91.x.wasm.phase-4c.3 — workspace pin trimmed so
+// resolver-2 doesn't unify wasm-broken reqwest features into
+// the SDK wasm32 graph. With that done, the cloud REST legs
+// compile cleanly on `wasm32-unknown-unknown` via reqwest's
+// browser fetch backend. Two routes:
+//
+//   - `stt-cloud-wasm` — wasm-compatible base (no rustls-tls)
+//   - `stt-cloud` — native default (stacks rustls-tls on top)
+//
+// Either feature enables this module. Inner submodules carry
+// per-target cfg gates for native-only transports:
+//
+//   - `local_candle` — needs Candle inference (`stt-candle`
+//     feature; Candle deps don't compile for wasm32)
+//   - `anthropic` — tokio-tungstenite drags TCP types absent
+//     on wasm32; carries its own `cfg(not(wasm32))`. Phase
+//     91.x.wasm.phase-4c.4 swaps tokio-tungstenite for
+//     gloo-net when a browser microapp demands voice_stream.
+#[cfg(feature = "stt-cloud-wasm")]
 pub mod cloud;
 
 use std::path::PathBuf;
