@@ -86,6 +86,10 @@ VOICE.md
 /demos/
 # `proyecto/` — accumulated `AUDIT-*.md` review notes (dev scratch).
 /proyecto/
+# `evals/` — golden eval suites (.jsonl) + the fixture-format spec
+# for the `agent eval run` subcommand, which is deferred to Phase
+# 51.x. Aspirational infra, not used by anything yet.
+/evals/
 
 # mdBook build output — published via GitHub Actions, not committed
 docs/book/
