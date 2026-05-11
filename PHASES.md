@@ -4502,7 +4502,7 @@ config inputs scoped per-subprocess (same shape as the
 existing whatsapp yaml flow); no
 `crates/setup/src/capabilities.rs::INVENTORY` entry needed.
 
-### Phase 81.20 — Plugin broker stdio-bridge (cross-process local broker)   ⬜
+### Phase 81.20.d — Plugin broker stdio-bridge (cross-process local broker)   ⬜
 
 **Goal:** Eliminate the implicit NATS dependency that
 Phase 81.18.b introduced for any subprocess-extracted plugin.
@@ -4736,14 +4736,14 @@ behaviour after upgrading both daemon AND plugin to
 versions that ship this phase.
 
 **Follow-ups out of scope for this phase (parked in
-`FOLLOWUPS.md > 81.20.*`):**
+`FOLLOWUPS.md > 81.20.d.*`):**
 
-- `81.20.followup-flow-control` — the stdio bridge has no
+- `81.20.d.followup-flow-control` — the stdio bridge has no
   back-pressure today; a runaway publisher could OOM the
   daemon's forwarder buffer. Add a bounded `mpsc` per
   subscriber and either drop-oldest or drop-newest on
   overflow.
-- `81.20.followup-broker-auth` — `Local` broker has no
+- `81.20.d.followup-broker-auth` — `Local` broker has no
   auth concept (single-host trust boundary). When NATS is
   used, JWT auth gates topic access. The bridge does not
   enforce capability allowlists today; the bridge should
@@ -4752,7 +4752,7 @@ versions that ship this phase.
   list. Pulling the manifest's allowlist into the
   subprocess host's `Inner` and checking on each publish
   closes the gap. Same for subscribe.
-- `81.20.followup-windows-stdio` — Windows stdio is
+- `81.20.d.followup-windows-stdio` — Windows stdio is
   notoriously line-buffered; verify the bridge works on
   Windows runner without explicit `O_NONBLOCK` /
   `SetNamedPipeHandleState` calls. Existing tool.invoke
