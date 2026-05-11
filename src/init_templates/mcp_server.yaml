@@ -1,0 +1,8 @@
+# mcp_server.yaml — expose THIS daemon as an MCP server (Phase 12.6)
+# Lets other MCP clients (Claude desktop, IDEs) call our tools.
+mcp_server:
+  enabled: false
+  bind: 127.0.0.1:8765
+  # transport: stdio | sse | streamable_http
+  transport: stdio
+schema_version: 11

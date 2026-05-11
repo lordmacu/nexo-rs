@@ -1,0 +1,14 @@
+# runtime.yaml — daemon-level knobs (Phase 18)
+# Always populated; absent file → defaults below.
+runtime:
+  # migrations: auto-apply schema version bumps on config load.
+  # On = silent migrate; off = log pending + bail until operator
+  # runs `nexo setup migrate --apply`.
+  migrations:
+    auto_apply: true
+  # hot_reload: file-watcher driven re-load of agents.yaml /
+  # llm.yaml. Currently agents-only.
+  hot_reload:
+    enabled: true
+    debounce_ms: 500
+schema_version: 11

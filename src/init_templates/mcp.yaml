@@ -1,0 +1,9 @@
+# mcp.yaml — MCP client subsystem (Phase 12.4)
+# Consume external MCP servers as tools. Absent file → subsystem off.
+mcp:
+  servers: []
+  # Example:
+  # - name: brave-search
+  #   url: stdio:///usr/local/bin/brave-mcp-server
+  #   timeout: 30s
+schema_version: 11

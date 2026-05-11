@@ -1,0 +1,47 @@
+# extensions.yaml — out-of-tree extension subsystem (Phase 11)
+#
+# Extensions are subprocess plugins that ship as binaries +
+# manifest under `extensions.search_paths`. Examples: agent-creator
+# microapp, marketing CRM, telegram bot adapter.
+#
+# Default: subsystem off when this file is absent (the daemon
+# treats `extensions: None` as "skip discovery").
+
+extensions:
+  enabled: false
+  # search_paths: dirs the walker scans at boot. Each dir's
+  # children that contain a `plugin.toml` become candidate
+  # extensions.
+  search_paths: []
+  # disabled: drop these by id even if discovered.
+  disabled: []
+  # allowlist: empty = allow all discovered; non-empty = strict
+  # filter to listed ids only.
+  allowlist: []
+  ignore_dirs:
+    - target
+    - .git
+    - node_modules
+    - dist
+  max_depth: 2
+  # transport_defaults: NATS-based subprocess transport knobs.
+  # Per-extension overrides go under `entries.<id>.transport`.
+  transport_defaults:
+    nats:
+      subject_prefix: ext
+      call_timeout: 30s
+      handshake_timeout: 10s
+      heartbeat_interval: 15s
+      heartbeat_grace_factor: 3
+      shutdown_grace: 2s
+  watch:
+    enabled: false
+    debounce_ms: 500
+  # entries: per-extension overrides + capability grants.
+  # Capabilities listed here are the union of `required` +
+  # `optional` from the extension's plugin.toml manifest. Drop
+  # a capability to revoke it; add one not in the manifest to
+  # error at boot (defense-in-depth).
+  entries: {}
+
+schema_version: 11

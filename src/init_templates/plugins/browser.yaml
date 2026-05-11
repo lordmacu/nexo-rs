@@ -1,0 +1,9 @@
+# plugins/browser.yaml — browser automation via CDP (Phase 81.17.c)
+# Absent file → browser plugin off.
+browser:
+  enabled: false
+  # cdp_endpoint: Chrome DevTools Protocol websocket endpoint.
+  # cdp_endpoint: ws://127.0.0.1:9222
+  # headless: true
+  # user_data_dir: ./data/browser/profile
+schema_version: 11
