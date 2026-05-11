@@ -48,10 +48,25 @@ config/agents.d/*.yaml
 .idea/
 .vscode/
 
-# Claude Code local worktrees + runtime artifacts
-.claude/worktrees/
-.claude/scheduled_tasks.lock
-.claude/projects/
+# Claude Code project artifacts — slash commands, settings, local
+# worktrees, scheduled tasks, per-project state. All local; not for
+# the repo. (Untracked via `git rm --cached`; this stops them
+# coming back.)
+.claude/
+
+# `/forge` workflow scratch — brainstorm / spec / plan docs and the
+# per-phase recap / research / handoff notes accumulate at the repo
+# root. The kept trackers are PHASES.md, PHASES-archive.md,
+# FOLLOWUPS.md, design-agent-framework.md and nexo-plugin-contract.md
+# — everything matching the patterns below is transient dev scratch.
+/brainstorm-*.md
+/spec-*.md
+/plan-*.md
+/PHASE-[0-9]*.md
+/design-kairos-port.md
+/OPENCLAW-*.md
+/PHASES-curated.md
+/PHASES-microapps.md
 
 # mdBook build output — published via GitHub Actions, not committed
 docs/book/
