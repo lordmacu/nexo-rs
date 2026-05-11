@@ -128,9 +128,9 @@ across 7 branches; brainstorm + spec + plan approved
 | F0 | `BrokerKind::StdioBridge` blocker fix | — | ✅ no-op (already shipped via commit `1cb39ab`) |
 | F1 | `nexo-ext-installer` parameterized refactor (`PluginCoords`→`RepoCoords` + `ExtractContract` trait + `resolve_release_with_contract`) | 2h | ✅ shipped session 2026-05-11.b |
 | F2 | NEW `crates/persona-manifest` v2 schema + 12 unit tests | 2h | ✅ shipped session 2026-05-11.b |
-| F3 | NEW `crates/persona-installer` orchestrator + admin + lifecycle | 4h | ⬜ |
-| F4 | wiremock integration tests (11 install + 5 admin scenarios) | 2h | ⬜ |
-| F5 | boot-time persona discovery + wire to `AgentConfig` | 3h | ⬜ |
+| F3 | NEW `crates/persona-installer` orchestrator + admin + lifecycle | 4h | ✅ shipped session 2026-05-11.b |
+| F4 | wiremock integration tests (11 install + 5 admin scenarios) | 2h | ✅ shipped session 2026-05-11.b |
+| F5 | boot-time persona discovery + wire to `AgentConfig` (config section + main.rs hook + InMemoryPersonaAdmin cell; admin RPC routes deferred to F6, agent_configs merge into AgentsDirectory deferred to F5.b follow-up) | 3h | ✅ shipped session 2026-05-11.b |
 | F6 | CLI surface — 7 `Mode` variants (`PersonaInstall`/`List`/`Remove`/etc.) | 2h | ⬜ |
 | F7 | `NEXO_DISABLE_BUNDLED_PERSONAS` INVENTORY + `docs/personas/install.md` | 1.5h | ⬜ |
 | F8 | `nexo-persona-cody` v0.2.0 release prep + GH workflow CI | 2.5h | ⬜ |

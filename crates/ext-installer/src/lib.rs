@@ -464,16 +464,27 @@ pub async fn resolve_release(
     })
 }
 
-/// Download the resolved tarball, fetch the expected sha256
-/// from its `.sha256` sibling, stream-verify the downloaded
-/// bytes' digest matches. Aborts and removes the partial file
-/// if the digest doesn't match.
-pub async fn download_and_verify(
+/// URL-based download+verify primitive. Fetches the expected
+/// sha256 from `sha256_url`, streams the tarball from
+/// `tarball_url` to `dest_path`, and rejects on mismatch
+/// (cleaning up the partial file). Returns the byte count.
+///
+/// Decoupled from [`ResolvedInstall`] so `persona-installer`
+/// (Phase F3) can drive download without constructing an
+/// `ExtEntry`. Plugin path uses [`download_and_verify`] which
+/// is now a thin wrapper.
+///
+/// `pkg_id_for_errors` is echoed verbatim into
+/// [`InstallError::Sha256Invalid`] / [`InstallError::Sha256Mismatch`]
+/// so CLI output references the package the operator asked
+/// for, not a generic "tarball" string.
+pub async fn download_and_verify_url(
     client: &reqwest::Client,
-    resolved: &ResolvedInstall,
+    tarball_url: &str,
+    sha256_url: &str,
+    pkg_id_for_errors: &str,
     dest_path: &Path,
-) -> Result<InstalledTarball, InstallError> {
-    let download = &resolved.entry.downloads[resolved.download_index];
+) -> Result<u64, InstallError> {
     if let Some(parent) = dest_path.parent() {
         if !parent.as_os_str().is_empty() {
             tokio::fs::create_dir_all(parent)
@@ -486,7 +497,7 @@ pub async fn download_and_verify(
     // single line of lowercase hex (64 chars) with optional
     // trailing whitespace.
     let expected_sha = client
-        .get(&resolved.sha256_url)
+        .get(sha256_url)
         .header("User-Agent", "nexo-ext-installer")
         .send()
         .await
@@ -500,13 +511,13 @@ pub async fn download_and_verify(
         .to_lowercase();
     if expected_sha.len() != 64 || !expected_sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(InstallError::Sha256Invalid {
-            id: resolved.entry.id.clone(),
+            id: pkg_id_for_errors.to_string(),
             got: expected_sha,
         });
     }
 
     let response = client
-        .get(&download.url)
+        .get(tarball_url)
         .header("User-Agent", "nexo-ext-installer")
         .send()
         .await
@@ -550,11 +561,33 @@ pub async fn download_and_verify(
     if computed != expected_sha {
         let _ = tokio::fs::remove_file(dest_path).await;
         return Err(InstallError::Sha256Mismatch {
-            id: resolved.entry.id.clone(),
+            id: pkg_id_for_errors.to_string(),
             expected: expected_sha,
             got: computed,
         });
     }
+    Ok(size)
+}
+
+/// Download the resolved tarball, fetch the expected sha256
+/// from its `.sha256` sibling, stream-verify the downloaded
+/// bytes' digest matches. Aborts and removes the partial file
+/// if the digest doesn't match. Thin wrapper over
+/// [`download_and_verify_url`].
+pub async fn download_and_verify(
+    client: &reqwest::Client,
+    resolved: &ResolvedInstall,
+    dest_path: &Path,
+) -> Result<InstalledTarball, InstallError> {
+    let download = &resolved.entry.downloads[resolved.download_index];
+    let size = download_and_verify_url(
+        client,
+        &download.url,
+        &resolved.sha256_url,
+        &resolved.entry.id,
+        dest_path,
+    )
+    .await?;
     Ok(InstalledTarball {
         tarball_path: dest_path.to_path_buf(),
         entry: resolved.entry.clone(),

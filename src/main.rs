@@ -567,6 +567,13 @@ enum AgentDreamSubcommand {
 
 struct CliArgs {
     config_dir: PathBuf,
+    /// Phase 94 — optional override-dir flag (`--override-from <path>`)
+    /// or `NEXO_OVERRIDE_FROM` env. Files in this dir with canonical
+    /// YAML names (broker.yaml, llm.yaml, …) are deep-merged on top
+    /// of the same-named file in `config_dir`. Per-file env vars
+    /// (`NEXO_<NAME>_YAML`) take precedence over both layers. See
+    /// `nexo-config::load_with_override`.
+    override_from: Option<PathBuf>,
     mode: Mode,
     /// Phase 31.7 — set when `Mode::PluginRun` falls through to
     /// `Mode::Run`. Tells the daemon boot path to mutate the
@@ -748,6 +755,24 @@ struct CronRebuildDeps {
 /// No-op when the operator hasn't configured `plugins.browser`
 /// in YAML — the subprocess (if discovered) falls back to the
 /// hardcoded defaults in `env_config.rs`.
+/// Best-effort `<owner>/<repo>` extraction from a GitHub URL.
+/// Used by Phase F5 persona discovery to reconstruct coords
+/// when the on-disk persona only carries the homepage URL
+/// (no tag info — bootloader uses `"unknown"` tag in the
+/// resulting `RepoCoords`). Returns `None` for non-GitHub
+/// URLs or paths shorter than `/owner/repo`.
+fn github_owner_repo_from_url(url: &str) -> Option<(String, String)> {
+    let trimmed = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let after_host = trimmed.strip_prefix("github.com/")?;
+    let mut parts = after_host.trim_end_matches('/').split('/');
+    let owner = parts.next()?.to_string();
+    let repo = parts.next()?.to_string();
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner, repo))
+}
+
 fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
     std::env::set_var(
         "NEXO_PLUGIN_BROWSER_HEADLESS",
@@ -2958,6 +2983,98 @@ async fn main() -> Result<()> {
         .start_all(broker.clone())
         .await
         .context("failed to start plugins")?;
+
+    // Phase F5 of `cody-cli-install` — boot-time persona discovery.
+    // Walks `cfg.personas.discovery.search_paths`, parses + validates
+    // every `<id>-<version>/persona.toml`, applies the disabled /
+    // allowlist filters, and registers each survivor in an
+    // `InMemoryPersonaAdmin` cell. `PersonaAdmin` brought into scope
+    // here (not at module top) to keep the import close to its sole
+    // use site until F6 wires admin RPC routes.
+    // Admin RPC routes (Phase F6) read the cell to surface
+    // `nexo persona list / get / remove` over the wire. Discovery
+    // is best-effort: malformed packs log at WARN + are skipped
+    // rather than aborting boot.
+    #[allow(unused_imports)]
+    use nexo_persona_installer::PersonaAdmin as _PersonaAdminInScope;
+    let persona_admin = std::sync::Arc::new(
+        nexo_persona_installer::InMemoryPersonaAdmin::new(),
+    );
+    if !cfg.personas.discovery.search_paths.is_empty() {
+        let discovered =
+            nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths).await;
+        let mut registered: usize = 0;
+        let mut filtered: usize = 0;
+        for d in discovered {
+            let id = d.manifest.persona.id.clone();
+            if !cfg.personas.discovery.id_passes_filters(&id) {
+                tracing::info!(persona = %id, "persona filtered by discovery.disabled / allowlist");
+                filtered += 1;
+                continue;
+            }
+            // Synthesize an InstalledPersona shape so the admin cell
+            // sees the full provenance even though we didn't run the
+            // install pipeline this boot. Coords are best-effort
+            // parsed from `manifest.persona.homepage` when it points
+            // at a GitHub repo; a placeholder is used otherwise (the
+            // boot path doesn't know the original tag).
+            let coords = d
+                .manifest
+                .persona
+                .homepage
+                .as_deref()
+                .and_then(github_owner_repo_from_url)
+                .and_then(|(owner, repo)| {
+                    nexo_ext_installer::RepoCoords::parse(&format!("{owner}/{repo}")).ok()
+                })
+                .unwrap_or_else(|| nexo_ext_installer::RepoCoords {
+                    owner: "unknown".into(),
+                    repo: id.clone(),
+                    tag: "unknown".into(),
+                });
+            let installed = nexo_persona_installer::InstalledPersona {
+                id: id.clone(),
+                version: d.manifest.persona.version.parse().unwrap_or_else(|_| {
+                    semver::Version::new(0, 0, 0)
+                }),
+                install_root: d.install_root.clone(),
+                coords,
+                installed_at: chrono::Utc::now(),
+                manifest: d.manifest.clone(),
+                tarball_bytes: 0,
+                was_already_present: true,
+            };
+            if let Err(e) = persona_admin.register(installed).await {
+                tracing::warn!(persona = %id, error = %e, "persona discovery: register failed");
+                continue;
+            }
+            tracing::info!(
+                persona = %id,
+                install_root = %d.install_root.display(),
+                agent_configs = d
+                    .manifest
+                    .persona
+                    .contributes
+                    .as_ref()
+                    .map(|c| c.agent_configs.len())
+                    .unwrap_or(0),
+                "persona discovered + registered"
+            );
+            registered += 1;
+        }
+        tracing::info!(
+            registered,
+            filtered,
+            search_paths = cfg.personas.discovery.search_paths.len(),
+            "persona discovery complete"
+        );
+    }
+    // _persona_admin will be wired into admin RPC + agents.d/ merge
+    // in Phase F6 (admin RPC routes) + a follow-up (agent_configs
+    // merge into AgentsDirectory). Bind here so the cell stays alive
+    // for the rest of boot; rebound to a `let _ = persona_admin;`
+    // below to silence the unused-binding warning until F6 lands.
+    let _persona_admin = persona_admin;
 
     // Phase 81.9 — atomic plugin registry boot wire. The helper
     // runs the four-step pipeline (discover → merge agents → merge
