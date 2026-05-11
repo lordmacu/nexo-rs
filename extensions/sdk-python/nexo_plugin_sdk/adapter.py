@@ -96,7 +96,10 @@ class PluginAdapter:
         self._stdout = stdout_guard.original_stdout() or sys.stdout
 
         self._write_lock = asyncio.Lock()
-        self._broker = BrokerSender(self._write_lock)
+        # The broker writes blessed broker.publish frames through the
+        # captured original stdout — bypassing the guard even when it
+        # is installed.
+        self._broker = BrokerSender(self._write_lock, self._stdout)
         # Track in-flight handler tasks so shutdown can await them
         # before the loop returns. Without this, `asyncio.run`
         # would cancel mid-handler tasks on exit and the host would
