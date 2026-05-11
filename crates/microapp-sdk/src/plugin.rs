@@ -70,7 +70,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use nexo_broker::Event;
+use nexo_broker::{Event, StdioBridgeBroker};
 use nexo_llm::types::ChatMessage;
 use nexo_memory::MemoryEntry;
 use nexo_plugin_manifest::PluginManifest;
@@ -789,6 +789,14 @@ pub struct PluginAdapter {
     /// (operator likely migrated incrementally + forgot to
     /// drop the old call).
     tool_handler_with_context: Option<Arc<dyn ToolHandlerWithContext>>,
+    /// Phase 92 — outbound drain channel populated by
+    /// [`PluginAdapter::with_stdio_bridge_broker`]. The dispatch
+    /// loop spawns a task at startup that forwards each
+    /// drained `Value` onto the same stdout writer the rest of
+    /// the loop uses, so the `StdioBridgeBroker` returned from
+    /// the helper publishes through the single async writer
+    /// without racing with `tool.invoke` responses.
+    outbound_drain: Option<mpsc::Receiver<Value>>,
 }
 
 /// Phase 81.15.c.b — handle returned by
@@ -889,6 +897,7 @@ impl PluginAdapter {
             declared_tools: Vec::new(),
             tool_handler: None,
             tool_handler_with_context: None,
+            outbound_drain: None,
         })
     }
 
@@ -907,6 +916,55 @@ impl PluginAdapter {
     pub fn on_broker_event<H: BrokerEventHandler>(mut self, handler: H) -> Self {
         self.on_broker_event = Some(Arc::new(handler));
         self
+    }
+
+    /// Phase 92 — wire a [`StdioBridgeBroker`] into the adapter.
+    /// Returns the adapter (chainable) plus an `Arc<StdioBridgeBroker>`
+    /// the plugin can wrap in `nexo_broker::AnyBroker::stdio_bridge`
+    /// and use through the [`nexo_broker::BrokerHandle`] trait.
+    ///
+    /// The helper performs three pieces of wiring:
+    ///
+    /// 1. Creates an outbound mpsc channel and hands the Sender to
+    ///    the bridge (the bridge writes `broker.publish`
+    ///    notifications into it).
+    /// 2. Stores the Receiver on the adapter so the dispatch loop
+    ///    spawns a forwarder task at startup that drains it onto
+    ///    the same async stdout writer used for `tool.invoke`
+    ///    responses. Net: outbound `broker.publish` notifications
+    ///    serialize through the single writer without racing
+    ///    other RPC traffic.
+    /// 3. Registers an `on_broker_event` handler that feeds each
+    ///    `(topic, event)` the daemon pushes inbound into the
+    ///    bridge's local fanout. The plugin's existing
+    ///    `BrokerHandle::subscribe` calls then receive matching
+    ///    events without the plugin having to wire the inbound
+    ///    handler manually.
+    ///
+    /// Operators MUST NOT call [`Self::on_broker_event`] in
+    /// addition to this helper — the helper installs its own
+    /// inbound handler and the second one would overwrite it.
+    /// If you need to observe events outside the bridge, do it
+    /// from a downstream `Subscription` on the returned
+    /// `StdioBridgeBroker` instead.
+    pub fn with_stdio_bridge_broker(mut self) -> (Self, Arc<StdioBridgeBroker>) {
+        let (broker, drain_rx) = StdioBridgeBroker::with_channel();
+        let broker_arc = Arc::new(broker);
+        // Inbound: route every broker.event the daemon pushes
+        // into the bridge's local fanout.
+        let broker_for_evt = broker_arc.clone();
+        self.on_broker_event = Some(Arc::new(
+            move |topic: String, event: Event, _sender: BrokerSender| {
+                let b = broker_for_evt.clone();
+                Box::pin(async move {
+                    b.feed_event(topic, event).await;
+                }) as BoxFuture<'static, ()>
+            },
+        ));
+        // Outbound: stash the drain receiver for the dispatch
+        // loop to consume on startup.
+        self.outbound_drain = Some(drain_rx);
+        (self, broker_arc)
     }
 
     /// Phase 81.17.c — declare the tools this plugin will expose
@@ -988,11 +1046,47 @@ impl PluginAdapter {
 async fn dispatch_loop<R>(
     reader: R,
     writer: Arc<Mutex<Box<dyn AsyncWrite + Send + Unpin>>>,
-    adapter: PluginAdapter,
+    mut adapter: PluginAdapter,
 ) -> SdkResult<()>
 where
     R: AsyncBufRead + Unpin + Send + 'static,
 {
+    // Phase 92 — if the operator wired a StdioBridgeBroker via
+    // `with_stdio_bridge_broker`, the outbound mpsc Receiver lives
+    // on `adapter.outbound_drain`. Spawn a forwarder task that
+    // drains each `Value` into the same writer the rest of the
+    // dispatch loop uses. The Receiver is taken (not borrowed)
+    // because the task owns it until the channel closes (which
+    // happens when the bridge's Sender side is dropped — typically
+    // on plugin shutdown).
+    if let Some(mut drain) = adapter.outbound_drain.take() {
+        let writer_for_drain = writer.clone();
+        tokio::spawn(async move {
+            while let Some(frame) = drain.recv().await {
+                let line = match serde_json::to_string(&frame) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "outbound drain: serialize failed");
+                        continue;
+                    }
+                };
+                let mut w = writer_for_drain.lock().await;
+                if let Err(e) = w.write_all(line.as_bytes()).await {
+                    tracing::warn!(error = %e, "outbound drain: write failed (host closed?)");
+                    return;
+                }
+                if let Err(e) = w.write_all(b"\n").await {
+                    tracing::warn!(error = %e, "outbound drain: newline failed");
+                    return;
+                }
+                if let Err(e) = w.flush().await {
+                    tracing::warn!(error = %e, "outbound drain: flush failed");
+                    return;
+                }
+            }
+            // Sender side dropped → exit gracefully.
+        });
+    }
     let mut lines = reader.lines();
     let manifest_value = serde_json::to_value(&adapter.cached_manifest)
         .map_err(|e| SdkError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;

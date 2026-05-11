@@ -1,0 +1,22 @@
+# plugins/whatsapp.yaml — WhatsApp plugin instances (Phase 81.18.b.2)
+# One entry per WhatsApp bot account. Absent file → 0 instances.
+whatsapp:
+  # Example: a single instance named `smoketest`.
+  # - enabled: true
+  #   instance: smoketest
+  #   session_dir: ./data/whatsapp/session
+  #   media_dir: ./data/whatsapp/media
+  #   acl:
+  #     # E.164 phone numbers allowed to talk to this bot. Empty
+  #     # = open to anyone who has the WA contact.
+  #     allow_list: []
+  #     # OR read allowlist from env var (newline-delimited).
+  #     from_env: ""
+  #   transcriber:
+  #     # Auto-transcribe inbound voice notes via whisper.
+  #     enabled: false
+  #     timeout_ms: 60000
+  #   bridge:
+  #     # Plugin ↔ daemon JSON-RPC bridge response timeout.
+  #     response_timeout_ms: 30000
+schema_version: 11

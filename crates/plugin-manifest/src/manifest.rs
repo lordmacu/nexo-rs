@@ -309,6 +309,20 @@ impl Default for SupervisorSection {
 /// requesting megabytes of in-memory ring buffer.
 pub const SUPERVISOR_STDERR_TAIL_MAX: usize = 512;
 
+/// Phase 90 audit fix — minimum allowed `backoff_ms`. A smaller
+/// base degenerates the documented exponential schedule into a
+/// tight retry loop. 100ms is generous enough for the cheapest
+/// healthy plugin and small enough to allow legitimate "fast
+/// recovery" tuning.
+pub const SUPERVISOR_BACKOFF_MS_MIN: u64 = 100;
+
+/// Phase 90 audit fix — maximum allowed `backoff_ms`. Larger bases
+/// saturate the `base * max_attempts * 2` reset-counter heuristic
+/// (capped internally at 600s) so per-window recovery silently
+/// stops working. 5min upper limit keeps the heuristic meaningful
+/// for every realistic operator policy.
+pub const SUPERVISOR_BACKOFF_MS_MAX: u64 = 300_000;
+
 // ── Capabilities ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

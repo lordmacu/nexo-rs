@@ -1,9 +1,11 @@
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
+    #[serde(default)]
     pub short_term: ShortTermConfig,
+    #[serde(default)]
     pub long_term: LongTermConfig,
     #[serde(default)]
     pub vector: VectorConfig,
@@ -190,6 +192,16 @@ pub struct ShortTermConfig {
     pub max_sessions: usize,
 }
 
+impl Default for ShortTermConfig {
+    fn default() -> Self {
+        Self {
+            max_history_turns: default_max_turns(),
+            session_ttl: default_session_ttl(),
+            max_sessions: default_max_sessions(),
+        }
+    }
+}
+
 fn default_max_turns() -> usize {
     50
 }
@@ -207,6 +219,22 @@ pub struct LongTermConfig {
     pub backend: String,
     pub sqlite: Option<SqliteConfig>,
     pub redis: Option<RedisConfig>,
+}
+
+impl Default for LongTermConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_backend(),
+            // Default to a sqlite-backed memory at the default
+            // path so daemon zero-config (Phase 93) boots without
+            // requiring memory.yaml on disk. Operators that want
+            // Redis or a custom path edit memory.yaml.
+            sqlite: Some(SqliteConfig {
+                path: default_sqlite_path(),
+            }),
+            redis: None,
+        }
+    }
 }
 
 fn default_backend() -> String {

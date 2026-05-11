@@ -8,7 +8,8 @@
 # Getting started
 
 - [Installation](./getting-started/installation.md)
-- [Quickstart](./getting-started/quickstart.md)
+- [Zero-config quickstart (30s)](./getting-started/zero-config.md)
+- [Quickstart (10min walkthrough)](./getting-started/quickstart.md)
 - [Platform support](./getting-started/platform-support.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
 - [Verifying releases](./getting-started/verify.md)
@@ -36,6 +37,10 @@
 - [Publishing a plugin](./plugins/publishing.md)
 - [Signing & publishing](./plugins/signing-and-publishing.md)
 - [Plugin supervisor (auto-respawn)](./plugins/supervisor.md)
+
+# Personas
+
+- [Installing personas](./personas/install.md)
 
 # Extensions
 
@@ -103,6 +108,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Overview](./architecture/overview.md)
 - [Agent runtime](./architecture/agent-runtime.md)
 - [Event bus (NATS)](./architecture/event-bus.md)
+- [Broker shapes (local / NATS / embedded)](./architecture/broker-shapes.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)

@@ -1,0 +1,9 @@
+# personas/discovery.yaml — persona pack walker (Phase F5 cody-cli)
+# Where `nexo persona install` drops persona packs + where the
+# admin RPC lists them from. Absent → empty (no scan).
+discovery:
+  search_paths: []
+  disabled: []
+  allowlist: []
+  follow_symlinks: false
+schema_version: 11

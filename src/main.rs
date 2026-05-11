@@ -1,5 +1,7 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
+mod init_cli;
+mod persona_cli;
 mod plugin_admin;
 mod plugin_install;
 mod plugin_new;
@@ -51,6 +53,35 @@ enum Mode {
     DlqList,
     DlqReplay(String),
     DlqPurge,
+    /// Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+    /// edits `broker.yaml` in the daemon's config dir to switch
+    /// between `nats` and `local` transports without an operator
+    /// learning sed syntax. After the edit, sends SIGTERM to any
+    /// running daemon (matched by its `--config` argument) so the
+    /// supervisor loop (dev-daemon.sh or systemd) respawns and
+    /// picks up the new config. `--no-signal` skips the kill for
+    /// scripted workflows that want to control restart timing.
+    SetBroker {
+        kind: String,
+        url: Option<String>,
+        no_signal: bool,
+    },
+    /// Phase 95 — `nexo init [--yaml <names>] [--output <dir>]
+    /// [--force] [--stdout]` scaffolds the 19 sample YAML files
+    /// the daemon's `AppConfig::load` knows about, each densely
+    /// commented with field semantics + sane defaults. Operators
+    /// edit in place to customize. `--yaml` filters by name
+    /// (csv: `--yaml broker,llm` or shorthand `--yaml plugins`
+    /// for every plugins/*.yaml). `--output` overrides the
+    /// resolved config dir. `--force` overwrites existing files.
+    /// `--stdout` emits a concatenated stream to stdout instead
+    /// of writing files.
+    Init {
+        yaml_filter: Option<String>,
+        output_dir: Option<PathBuf>,
+        force: bool,
+        stdout: bool,
+    },
     ExtList {
         json: bool,
     },
@@ -158,6 +189,46 @@ enum Mode {
         yes: bool,
         json: bool,
     },
+    /// Phase F6 of `cody-cli-install` — `nexo persona install
+    /// <owner>/<repo>[@<tag>] [--dest <dir>] [--target
+    /// <triple>] [--json]`. Mirror of `Mode::PluginInstall`
+    /// but for v2 persona packs (out-of-tree agent
+    /// definitions). Resolves + verifies + extracts under
+    /// `--dest` (or `cfg.personas.discovery.search_paths[0]`,
+    /// or `<state_dir>/personas/`).
+    PersonaInstall {
+        coords: String,
+        dest: Option<PathBuf>,
+        target: Option<String>,
+        json: bool,
+    },
+    /// Phase F6 — `nexo persona list [--json]`. Walks
+    /// `cfg.personas.discovery.search_paths`, applies
+    /// disabled / allowlist filters, tabulates each survivor.
+    PersonaList { json: bool },
+    /// Phase F6 — `nexo persona remove <id> [--yes] [--json]`.
+    /// Atomic dir removal of the install root for `<id>`.
+    PersonaRemove {
+        id: String,
+        yes: bool,
+        json: bool,
+    },
+    /// Phase F6 — `nexo persona get <id> [--json]`. STUB; will
+    /// surface manifest + lifecycle history in F6.b. Meanwhile
+    /// suggests the operator-equivalent shell.
+    PersonaGet { id: String, json: bool },
+    /// Phase F6 — `nexo persona upgrade <id> [--json]`. STUB;
+    /// re-resolve recorded coords + delegate to install path
+    /// in F6.b. Meanwhile suggests the install-with-newer-tag
+    /// workaround.
+    PersonaUpgrade { id: String, json: bool },
+    /// Phase F6 — `nexo persona run <path> [--json]`. STUB;
+    /// inner-loop dev (mirror of `nexo plugin run`) deferred
+    /// to F6.b.
+    PersonaRun { path: PathBuf, json: bool },
+    /// Phase F6 — static help block printed by
+    /// `nexo persona help`.
+    PersonaHelp,
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
     /// canonical state directory for `<id>` resolved against
     /// the current `NEXO_HOME` (created if absent). Operators
@@ -554,12 +625,24 @@ enum AgentDreamSubcommand {
 
 struct CliArgs {
     config_dir: PathBuf,
+    /// Phase 94 — optional override-dir flag (`--override-from <path>`)
+    /// or `NEXO_OVERRIDE_FROM` env. Files in this dir with canonical
+    /// YAML names (broker.yaml, llm.yaml, …) are deep-merged on top
+    /// of the same-named file in `config_dir`. Per-file env vars
+    /// (`NEXO_<NAME>_YAML`) take precedence over both layers. See
+    /// `nexo-config::load_with_override`.
+    override_from: Option<PathBuf>,
     mode: Mode,
     /// Phase 31.7 — set when `Mode::PluginRun` falls through to
     /// `Mode::Run`. Tells the daemon boot path to mutate the
     /// loaded `AppConfig` (prepend the local plugin's path to
     /// discovery search_paths; optionally clear agents).
     plugin_run_override: Option<plugin_run::PluginRunOverride>,
+    /// Phase F6.b — set when `Mode::PersonaRun` falls through to
+    /// daemon boot. The boot path applies the override to the
+    /// loaded `AppConfig` (prepends the local persona pack's
+    /// parent dir to `cfg.personas.discovery.search_paths`).
+    persona_run_override: Option<persona_cli::PersonaRunOverride>,
 }
 
 /// Shared state for the companion WebSocket pairing handshake.
@@ -735,6 +818,24 @@ struct CronRebuildDeps {
 /// No-op when the operator hasn't configured `plugins.browser`
 /// in YAML — the subprocess (if discovered) falls back to the
 /// hardcoded defaults in `env_config.rs`.
+/// Best-effort `<owner>/<repo>` extraction from a GitHub URL.
+/// Used by Phase F5 persona discovery to reconstruct coords
+/// when the on-disk persona only carries the homepage URL
+/// (no tag info — bootloader uses `"unknown"` tag in the
+/// resulting `RepoCoords`). Returns `None` for non-GitHub
+/// URLs or paths shorter than `/owner/repo`.
+fn github_owner_repo_from_url(url: &str) -> Option<(String, String)> {
+    let trimmed = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let after_host = trimmed.strip_prefix("github.com/")?;
+    let mut parts = after_host.trim_end_matches('/').split('/');
+    let owner = parts.next()?.to_string();
+    let repo = parts.next()?.to_string();
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((owner, repo))
+}
+
 fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
     std::env::set_var(
         "NEXO_PLUGIN_BROWSER_HEADLESS",
@@ -787,8 +888,30 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 /// Defense-in-depth — `Command::env_clear().envs(&map)` in
 /// `SubprocessNexoPlugin::spawn_and_handshake` enforces this.
 #[allow(dead_code)] // Wired in the telegram-loop flip step (81.18.b.1 step 5).
+/// Phase 92 — map the daemon's own broker config to the wire
+/// string a subprocess plugin should use when constructing its
+/// own broker:
+///
+/// - daemon `Nats` → child connects to the same NATS server.
+/// - daemon `Local` → child uses the stdio bridge (the local
+///   broker is in-process tokio::mpsc, unreachable from another
+///   process; the bridge forwards through the parent's
+///   stdin/stdout JSON-RPC channel).
+/// - daemon `StdioBridge` → invalid for an operator-set config;
+///   the kind is daemon-derived only. Fall back to
+///   `stdio_bridge` defensively so a misconfiguration doesn't
+///   crash boot.
+fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &'static str {
+    match kind {
+        nexo_config::types::broker::BrokerKind::Nats => "nats",
+        nexo_config::types::broker::BrokerKind::Local
+        | nexo_config::types::broker::BrokerKind::StdioBridge => "stdio_bridge",
+    }
+}
+
 fn seed_telegram_subprocess_env_for(
     cfg: &nexo_config::types::plugins::TelegramPluginConfig,
+    broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -801,7 +924,17 @@ fn seed_telegram_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    // Phase 92 — explicit broker transport selector. `nats` keeps
+    // the historical NATS connect path; `local` is logically the
+    // same on the subprocess side (treated as a fallback URL);
+    // `stdio_bridge` tells the plugin to construct a
+    // `nexo_broker::StdioBridgeBroker` and skip the network. The
+    // URL is omitted for `stdio_bridge` because the transport is
+    // the parent process's stdin/stdout.
+    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
+    if broker_kind != "stdio_bridge" {
+        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    }
     env.insert("NEXO_PLUGIN_TELEGRAM_TOKEN".into(), cfg.token.clone());
     if let Some(ref instance) = cfg.instance {
         if !instance.trim().is_empty() {
@@ -1033,6 +1166,7 @@ fn spawn_whatsapp_typing_presence_subscriber(
 #[allow(dead_code)] // Wired in the whatsapp-loop flip below.
 fn seed_whatsapp_subprocess_env_for(
     cfg: &nexo_config::WhatsappPluginConfig,
+    broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -1041,7 +1175,12 @@ fn seed_whatsapp_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    // Phase 92 — explicit broker transport selector. See the
+    // matching comment block in `seed_telegram_subprocess_env_for`.
+    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
+    if broker_kind != "stdio_bridge" {
+        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    }
     env.insert(
         "NEXO_PLUGIN_WHATSAPP_SESSION_DIR".into(),
         cfg.session_dir.clone(),
@@ -1400,6 +1539,22 @@ async fn main() -> Result<()> {
         Mode::DlqList => return run_dlq_list(&args.config_dir).await,
         Mode::DlqReplay(id) => return run_dlq_replay(&args.config_dir, &id).await,
         Mode::DlqPurge => return run_dlq_purge(&args.config_dir).await,
+        Mode::SetBroker {
+            kind,
+            url,
+            no_signal,
+        } => {
+            return run_set_broker(&args.config_dir, &kind, url.as_deref(), no_signal);
+        }
+        Mode::Init {
+            yaml_filter,
+            output_dir,
+            force,
+            stdout,
+        } => {
+            let target = output_dir.as_deref().unwrap_or(&args.config_dir);
+            return init_cli::run_init(target, yaml_filter.as_deref(), force, stdout);
+        }
         Mode::ExtHelp => return run_ext_help(),
         Mode::ExtList { json } => return run_ext_cli(&args.config_dir, ExtCmd::List { json }),
         Mode::ExtInfo { id, json } => {
@@ -1750,6 +1905,55 @@ async fn main() -> Result<()> {
                     .await?;
             std::process::exit(code);
         }
+        Mode::PersonaInstall {
+            coords,
+            dest,
+            target,
+            json,
+        } => {
+            let code = persona_cli::run_persona_install(
+                &args.config_dir,
+                coords,
+                dest,
+                target,
+                json,
+            )
+            .await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaList { json } => {
+            let code = persona_cli::run_persona_list(&args.config_dir, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaRemove { id, yes, json } => {
+            let code = persona_cli::run_persona_remove(&args.config_dir, id, yes, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaGet { id, json } => {
+            let code = persona_cli::run_persona_get(&args.config_dir, id, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaUpgrade { id, json } => {
+            let code = persona_cli::run_persona_upgrade(&args.config_dir, id, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaRun { path, json } => {
+            let override_ = match persona_cli::resolve_local_persona(&path) {
+                Ok(o) => o,
+                Err(e) => std::process::exit(persona_cli::emit_persona_run_error(
+                    &e,
+                    json,
+                    Some(path),
+                )),
+            };
+            persona_cli::print_persona_run_banner(&override_, json);
+            args.persona_run_override = Some(override_);
+            // Fall through to the daemon boot path below.
+        }
+        Mode::PersonaHelp => {
+            persona_cli::print_persona_help();
+            return Ok(());
+        }
         Mode::Admin { port } => return run_admin_via_plugin(port).await,
         Mode::Run => {}
     }
@@ -1761,13 +1965,26 @@ async fn main() -> Result<()> {
     let _lock = acquire_single_instance_lock().context("failed to acquire agent lock")?;
 
     let config_dir = args.config_dir;
-    tracing::info!(config_dir = %config_dir.display(), "loading config");
-    let mut cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+    let override_from = args.override_from;
+    tracing::info!(
+        config_dir = %config_dir.display(),
+        override_from = ?override_from.as_ref().map(|p| p.display().to_string()),
+        "loading config (Phase 94: env vars NEXO_<NAME>_YAML + --override-from layer)"
+    );
+    let mut cfg = AppConfig::load_with_overrides(&config_dir, override_from.as_deref())
+        .context("failed to load config")?;
 
     // Phase 31.7 — `nexo plugin run <path>` falls through to the
     // boot path with a side-channel override. Apply it here, AFTER
     // load and BEFORE any consumer reads `cfg.plugins.discovery` or
     // `cfg.agents.agents`.
+    // Phase F6.b — `nexo persona run <path>` mirror of plugin
+    // run; prepends the persona pack's parent dir to
+    // cfg.personas.discovery.search_paths so the boot-time F5
+    // discovery picks it up without a real install.
+    if let Some(ref override_) = args.persona_run_override {
+        persona_cli::apply_persona_run_override(&mut cfg, override_);
+    }
     if let Some(ref override_) = args.plugin_run_override {
         plugin_run::apply_override(&mut cfg, override_);
         tracing::info!(
@@ -1944,6 +2161,20 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
+    // Phase 90 audit follow-up — single Arc<LlmRegistry> shared
+    // between the admin bootstrap (used by LivePluginRestarter
+    // when respawning a child, by `RegistryLlmCompleter` for
+    // admin/llm/complete, and by the boot-time provider catalogue
+    // snapshot) AND the daemon main runtime (used by every agent
+    // worker). Previously each site constructed its own
+    // `LlmRegistry::with_builtins()` Arc; today's builtin-only
+    // registries are content-equivalent so the duplication was
+    // benign, but a future plugin-registered LLM factory landing
+    // between the two construction sites would silently diverge
+    // (admin sees the bootstrap-time registry, agents see the
+    // runtime one). Sharing the Arc closes that gap.
+    let llm_registry = std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins());
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2101,11 +2332,13 @@ async fn main() -> Result<()> {
                 // "plugin handles not yet populated; daemon
                 // still booting" error.
                 //
-                // The `LlmRegistry::with_builtins()` here is a
-                // fresh registry of builtin factories — same as
-                // the daemon's main one constructed later at
-                // boot. Builtin factories carry no shared
-                // mutable state, so the duplication is cheap.
+                // Phase 90 audit follow-up — share the daemon's
+                // single `Arc<LlmRegistry>` rather than building
+                // a fresh one. See the construction site comment
+                // above main.rs:1947 for the rationale (avoids
+                // silent divergence if a plugin-registered LLM
+                // factory lands between this and the runtime
+                // registry build at main.rs:2347).
                 plugin_restarter: Some(
                     nexo_setup::admin_adapters::LivePluginRestarter::new(
                         plugin_handles_cell.clone(),
@@ -2125,7 +2358,7 @@ async fn main() -> Result<()> {
                         tokio_util::sync::CancellationToken::new(),
                         broker.clone(),
                         None,
-                        std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                        llm_registry.clone(),
                         std::sync::Arc::new(cfg.llm.clone()),
                     ),
                 ),
@@ -2178,30 +2411,24 @@ async fn main() -> Result<()> {
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
                 // Phase 82.10.t.x — production LLM completer:
-                // wraps a fresh `LlmRegistry` + an `Arc` of the
-                // current `LlmConfig` so admin/llm/complete
-                // resolves providers exactly the way the agent
-                // runtime does. The runtime registry built later
-                // in main.rs is a different Arc but identical
-                // contents (both `with_builtins()` against the
-                // same `cfg.llm`); divergence would require a
-                // dynamic plugin-registered factory landing
-                // between these two construction sites — rare in
-                // practice + audited if it lands.
+                // shares the daemon's single `Arc<LlmRegistry>`
+                // (Phase 90 audit follow-up) so admin/llm/complete
+                // resolves providers identically to the agent
+                // runtime. Same Arc as `plugin_restarter` above
+                // and the runtime registry at main.rs:2347.
                 llm_completer: Some(nexo_setup::llm_completer::RegistryLlmCompleter::new(
-                    std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins()),
+                    llm_registry.clone(),
                     std::sync::Arc::new(cfg.llm.clone()),
                 )
                     as std::sync::Arc<
                         dyn nexo_core::agent::admin_rpc::domains::llm::LlmCompleter,
                     >),
-                // Snapshot the LLM provider catalogue from a fresh
-                // `LlmRegistry::with_builtins()` so the admin RPC
-                // can serve `nexo/admin/llm_providers/catalog` from
-                // boot. The runtime registry built later in main.rs
-                // contains the same builtins; plugin-registered
-                // remote providers (rare) land via daemon restart.
-                llm_provider_catalog: nexo_llm::LlmRegistry::with_builtins()
+                // Snapshot the LLM provider catalogue from the
+                // shared registry so the admin RPC can serve
+                // `nexo/admin/llm_providers/catalog` from boot.
+                // Phase 90 audit follow-up — single source of
+                // truth across admin + runtime.
+                llm_provider_catalog: llm_registry
                     .catalog()
                     .into_iter()
                     .map(|e| {
@@ -2344,7 +2571,12 @@ async fn main() -> Result<()> {
     // (after the wire callsite); now the Arc lives from
     // construction onward. All intermediate `llm_registry.method()`
     // calls work via `Arc<T>: Deref<Target = T>`.
-    let llm_registry = Arc::new(LlmRegistry::with_builtins());
+    //
+    // Phase 90 audit follow-up — re-bind to the Arc constructed
+    // BEFORE admin bootstrap (main.rs:1947 area) so the registry
+    // is single-source-of-truth across admin RPCs and the daemon
+    // runtime. No re-construction here; just re-shadow into local
+    // `llm_registry` for the remaining boot sites that consume it.
 
     // Phase 82.10.s.4 — resolve every provider's API key from its
     // configured source (inline / secret_id / env). This populates
@@ -2568,7 +2800,11 @@ async fn main() -> Result<()> {
     // and logs internally).
     let memory_event_publisher: Arc<dyn nexo_memory_snapshot::EventPublisher> =
         if snapshot_yaml.events.mutation_publish_enabled && memory_snapshotter.is_some() {
-            Arc::new(BrokerEventPublisher::new(broker.clone()))
+            Arc::new(BrokerEventPublisher::new(
+                broker.clone(),
+                snapshot_yaml.events.lifecycle_subject_prefix.clone(),
+                snapshot_yaml.events.mutation_subject_prefix.clone(),
+            ))
         } else {
             Arc::new(nexo_memory_snapshot::NoopPublisher)
         };
@@ -2882,6 +3118,110 @@ async fn main() -> Result<()> {
         .await
         .context("failed to start plugins")?;
 
+    // Phase F5 of `cody-cli-install` — boot-time persona discovery.
+    // Walks `cfg.personas.discovery.search_paths`, parses + validates
+    // every `<id>-<version>/persona.toml`, applies the disabled /
+    // allowlist filters, and registers each survivor in an
+    // `InMemoryPersonaAdmin` cell. `PersonaAdmin` brought into scope
+    // here (not at module top) to keep the import close to its sole
+    // use site until F6 wires admin RPC routes.
+    // Admin RPC routes (Phase F6) read the cell to surface
+    // `nexo persona list / get / remove` over the wire. Discovery
+    // is best-effort: malformed packs log at WARN + are skipped
+    // rather than aborting boot.
+    #[allow(unused_imports)]
+    use nexo_persona_installer::PersonaAdmin as _PersonaAdminInScope;
+    let persona_admin = std::sync::Arc::new(
+        nexo_persona_installer::InMemoryPersonaAdmin::new(),
+    );
+    // Phase F7 — `NEXO_DISABLE_BUNDLED_PERSONAS` kill switch.
+    // Honored even when search_paths is configured; lets a
+    // hardened deployment refuse persona discovery without
+    // mutating the YAML.
+    let personas_killed = std::env::var("NEXO_DISABLE_BUNDLED_PERSONAS")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
+    if personas_killed {
+        tracing::info!(
+            "persona discovery skipped — NEXO_DISABLE_BUNDLED_PERSONAS is set"
+        );
+    }
+    if !personas_killed && !cfg.personas.discovery.search_paths.is_empty() {
+        let discovered =
+            nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths).await;
+        let mut registered: usize = 0;
+        let mut filtered: usize = 0;
+        for d in discovered {
+            let id = d.manifest.persona.id.clone();
+            if !cfg.personas.discovery.id_passes_filters(&id) {
+                tracing::info!(persona = %id, "persona filtered by discovery.disabled / allowlist");
+                filtered += 1;
+                continue;
+            }
+            // Synthesize an InstalledPersona shape so the admin cell
+            // sees the full provenance even though we didn't run the
+            // install pipeline this boot. Coords are best-effort
+            // parsed from `manifest.persona.homepage` when it points
+            // at a GitHub repo; a placeholder is used otherwise (the
+            // boot path doesn't know the original tag).
+            let coords = d
+                .manifest
+                .persona
+                .homepage
+                .as_deref()
+                .and_then(github_owner_repo_from_url)
+                .and_then(|(owner, repo)| {
+                    nexo_ext_installer::RepoCoords::parse(&format!("{owner}/{repo}")).ok()
+                })
+                .unwrap_or_else(|| nexo_ext_installer::RepoCoords {
+                    owner: "unknown".into(),
+                    repo: id.clone(),
+                    tag: "unknown".into(),
+                });
+            let installed = nexo_persona_installer::InstalledPersona {
+                id: id.clone(),
+                version: d.manifest.persona.version.parse().unwrap_or_else(|_| {
+                    semver::Version::new(0, 0, 0)
+                }),
+                install_root: d.install_root.clone(),
+                coords,
+                installed_at: chrono::Utc::now(),
+                manifest: d.manifest.clone(),
+                tarball_bytes: 0,
+                was_already_present: true,
+            };
+            if let Err(e) = persona_admin.register(installed).await {
+                tracing::warn!(persona = %id, error = %e, "persona discovery: register failed");
+                continue;
+            }
+            tracing::info!(
+                persona = %id,
+                install_root = %d.install_root.display(),
+                agent_configs = d
+                    .manifest
+                    .persona
+                    .contributes
+                    .as_ref()
+                    .map(|c| c.agent_configs.len())
+                    .unwrap_or(0),
+                "persona discovered + registered"
+            );
+            registered += 1;
+        }
+        tracing::info!(
+            registered,
+            filtered,
+            search_paths = cfg.personas.discovery.search_paths.len(),
+            "persona discovery complete"
+        );
+    }
+    // _persona_admin will be wired into admin RPC + agents.d/ merge
+    // in Phase F6 (admin RPC routes) + a follow-up (agent_configs
+    // merge into AgentsDirectory). Bind here so the cell stays alive
+    // for the rest of boot; rebound to a `let _ = persona_admin;`
+    // below to silence the unused-binding warning until F6 lands.
+    let _persona_admin = persona_admin;
+
     // Phase 81.9 — atomic plugin registry boot wire. The helper
     // runs the four-step pipeline (discover → merge agents → merge
     // skills → init loop) and folds every report so downstream
@@ -2946,6 +3286,14 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                // Phase 92 — derive the subprocess-side broker
+                // transport from the daemon's own broker config.
+                // `Local` daemons stamp `stdio_bridge` because
+                // their in-process broker is unreachable from
+                // another OS process; the bridge is what gets
+                // the subprocess back to the host broker.
+                let broker_kind =
+                    subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for tg_cfg in cfg.plugins.telegram.clone() {
                     let instance_label = tg_cfg.instance.clone().unwrap_or_default();
                     let trimmed = instance_label.trim();
@@ -2954,7 +3302,7 @@ async fn main() -> Result<()> {
                     } else {
                         format!("telegram.{trimmed}")
                     };
-                    let env = seed_telegram_subprocess_env_for(&tg_cfg, &broker_url);
+                    let env = seed_telegram_subprocess_env_for(&tg_cfg, broker_kind, &broker_url);
                     let synthetic =
                         nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
                             &base, trimmed,
@@ -3016,6 +3364,11 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                // Phase 92 — see telegram mirror for the rationale
+                // behind mapping daemon broker kind → subprocess
+                // transport selector.
+                let broker_kind =
+                    subprocess_broker_kind_str(cfg.broker.broker.kind);
                 for wa_cfg in cfg.plugins.whatsapp.clone() {
                     if !wa_cfg.enabled {
                         continue;
@@ -3027,7 +3380,7 @@ async fn main() -> Result<()> {
                     } else {
                         format!("whatsapp.{trimmed}")
                     };
-                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, &broker_url);
+                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, broker_kind, &broker_url);
                     let synthetic =
                         nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
                             &base, trimmed,
@@ -3839,6 +4192,7 @@ async fn main() -> Result<()> {
             mcp_manager.clone(),
             channel_boot.clone(),
             pending_permissions.clone(),
+            llm_registry.clone(),
         )
         .await;
 
@@ -6654,6 +7008,7 @@ async fn boot_dispatch_ctx_if_enabled(
     mcp_manager: Option<Arc<nexo_mcp::McpRuntimeManager>>,
     channel_boot: nexo_mcp::channel_boot::ChannelBootContext,
     pending_permissions: Arc<nexo_mcp::channel_permission::PendingPermissionMap>,
+    llm_registry: Arc<nexo_llm::LlmRegistry>,
 ) -> Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> {
     // Auto-detect: any agent (or any of its bindings) with
     // dispatch_capability=Full triggers the in-process driver.
@@ -7324,6 +7679,12 @@ async fn boot_dispatch_ctx_if_enabled(
                 audit_cap: Some(2),
             })
                 as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
+            // Phase 90 audit fix (Cody A.3) — share the daemon's
+            // single Arc<LlmRegistry> (Phase 90 P1.4 follow-up)
+            // so PreflightHandler reports llm_ready accurately
+            // for any registered provider, not just the legacy
+            // anthropic/minimax hardcode.
+            llm_registry: Some(llm_registry.clone()),
         },
     ))
 }
@@ -8613,7 +8974,33 @@ fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
 }
 
 fn parse_args() -> CliArgs {
-    let mut config_dir = PathBuf::from("./config");
+    // Phase 92.9 — config dir precedence:
+    //   1. explicit `--config <dir>` flag (highest priority)
+    //   2. `NEXO_CONFIG_DIR` env var (dev-daemon.sh exports it
+    //      so `nexo set-broker local` works from any cwd
+    //      without typing the flag)
+    //   3. `./config` if present in cwd (legacy default for
+    //      operators with an existing project layout)
+    //   4. XDG default — `$XDG_CONFIG_HOME/nexo` or
+    //      `$HOME/.config/nexo`. Auto-created by helpers like
+    //      `set-broker` when missing so `nexo set-broker local`
+    //      runs anywhere with zero setup.
+    let mut config_dir = std::env::var("NEXO_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let cwd_default = PathBuf::from("./config");
+            if cwd_default.exists() {
+                cwd_default
+            } else {
+                default_xdg_config_dir()
+            }
+        });
+    // Phase 94 — override dir layer. Sourced from
+    // `NEXO_OVERRIDE_FROM` env; `--override-from <dir>` flag wins.
+    let mut override_from: Option<PathBuf> = std::env::var("NEXO_OVERRIDE_FROM")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
     let mut positional: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
 
@@ -8624,11 +9011,18 @@ fn parse_args() -> CliArgs {
                     config_dir = PathBuf::from(path);
                 }
             }
+            "--override-from" => {
+                if let Some(path) = args.next() {
+                    override_from = Some(PathBuf::from(path));
+                }
+            }
             "--help" | "-h" => {
                 return CliArgs {
                     config_dir,
+                    override_from,
                     mode: Mode::Help,
                     plugin_run_override: None,
+            persona_run_override: None,
                 }
             }
             other => positional.push(other.to_string()),
@@ -8643,7 +9037,9 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::Version { verbose },
+            override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -8661,7 +9057,9 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::CheckConfig { strict },
+            override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -8675,7 +9073,9 @@ fn parse_args() -> CliArgs {
             mode: Mode::DryRun {
                 json: has_json_flag,
             },
+            override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -8688,7 +9088,9 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -8698,7 +9100,9 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -8729,7 +9133,9 @@ fn parse_args() -> CliArgs {
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
                 tenant_id: parse_kv_flag(&positional, "--tenant"),
             },
+            override_from: override_from.clone(),
             plugin_run_override: None,
+            persona_run_override: None,
         };
     }
 
@@ -8738,7 +9144,9 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
+            persona_run_override: None,
             };
         }
     }
@@ -8756,6 +9164,37 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "dlq" && sub == "list" => Mode::DlqList,
         [cmd, sub] if cmd == "dlq" && sub == "purge" => Mode::DlqPurge,
         [cmd, sub, id] if cmd == "dlq" && sub == "replay" => Mode::DlqReplay(id.clone()),
+        // Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+        // Switch the broker transport in `broker.yaml` and (by default)
+        // kick the running daemon so its supervisor respawns with the
+        // new config.
+        [cmd, kind, ..] if cmd == "set-broker" => {
+            let url_idx = positional.iter().position(|a| a == "--url");
+            let url = url_idx
+                .and_then(|i| positional.get(i + 1))
+                .map(|s| s.to_string());
+            Mode::SetBroker {
+                kind: kind.clone(),
+                url,
+                no_signal: positional.iter().any(|a| a == "--no-signal"),
+            }
+        }
+        // Phase 95 — `nexo init [...]` scaffolds sample YAMLs.
+        // Match `init` plus any rest (flag values like the path
+        // after `--output` survive in `pos_no_flags`; the actual
+        // flags themselves are stripped). `parse_init_args`
+        // walks the outer `positional` directly so it sees flags
+        // and their values together.
+        [cmd, ..] if cmd == "init" => {
+            let (yaml_filter, output_dir, force, stdout) =
+                init_cli::parse_init_args(&positional);
+            Mode::Init {
+                yaml_filter,
+                output_dir,
+                force,
+                stdout,
+            }
+        }
         [cmd] if cmd == "ext" => Mode::ExtHelp,
         [cmd, sub] if cmd == "ext" && sub == "list" => Mode::ExtList {
             json: has_json_flag,
@@ -8839,6 +9278,33 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
+        // Phase F6 of `cody-cli-install` — `nexo persona <sub>` family.
+        [cmd, sub, coords] if cmd == "persona" && sub == "install" => Mode::PersonaInstall {
+            coords: coords.clone(),
+            dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
+            target: parse_kv_flag(&positional, "--target"),
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "persona" && sub == "list" => Mode::PersonaList { json: has_json_flag },
+        [cmd, sub, id] if cmd == "persona" && sub == "remove" => Mode::PersonaRemove {
+            id: id.clone(),
+            yes: positional.iter().any(|a| a == "--yes"),
+            json: has_json_flag,
+        },
+        [cmd, sub, id] if cmd == "persona" && sub == "get" => Mode::PersonaGet {
+            id: id.clone(),
+            json: has_json_flag,
+        },
+        [cmd, sub, id] if cmd == "persona" && sub == "upgrade" => Mode::PersonaUpgrade {
+            id: id.clone(),
+            json: has_json_flag,
+        },
+        [cmd, sub, path] if cmd == "persona" && sub == "run" => Mode::PersonaRun {
+            path: PathBuf::from(path),
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "persona" && sub == "help" => Mode::PersonaHelp,
+        [cmd] if cmd == "persona" => Mode::PersonaHelp,
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => Mode::McpServer(McpServerSubcommand::Serve),
         [cmd, sub, url] if cmd == "mcp-server" && sub == "inspect" => {
@@ -9067,7 +9533,9 @@ fn parse_args() -> CliArgs {
     CliArgs {
         config_dir,
         mode,
-        plugin_run_override: None,
+        override_from: override_from.clone(),
+            plugin_run_override: None,
+            persona_run_override: None,
     }
 }
 
@@ -10448,18 +10916,29 @@ async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
 /// transaction is never poisoned by broker degradation.
 struct BrokerEventPublisher {
     broker: AnyBroker,
+    // Phase 90 audit fix — honour the operator-configured
+    // `EventsSection.lifecycle_subject_prefix` /
+    // `mutation_subject_prefix`. Captured at construction so a
+    // hot-reload would require rebuilding the publisher (acceptable;
+    // memory-snapshot config is boot-time today).
+    lifecycle_prefix: String,
+    mutation_prefix: String,
 }
 
 impl BrokerEventPublisher {
-    fn new(broker: AnyBroker) -> Self {
-        Self { broker }
+    fn new(broker: AnyBroker, lifecycle_prefix: String, mutation_prefix: String) -> Self {
+        Self {
+            broker,
+            lifecycle_prefix,
+            mutation_prefix,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl nexo_memory_snapshot::EventPublisher for BrokerEventPublisher {
     async fn publish_lifecycle(&self, event: nexo_memory_snapshot::LifecycleEvent) {
-        let topic = event.subject();
+        let topic = event.subject_with_prefix(&self.lifecycle_prefix);
         let payload = match serde_json::to_value(&event) {
             Ok(v) => v,
             Err(e) => {
@@ -10478,7 +10957,7 @@ impl nexo_memory_snapshot::EventPublisher for BrokerEventPublisher {
     }
 
     async fn publish_mutation(&self, event: nexo_memory_snapshot::MutationEvent) {
-        let topic = event.subject();
+        let topic = event.subject_with_prefix(&self.mutation_prefix);
         let payload = match serde_json::to_value(&event) {
             Ok(v) => v,
             Err(e) => {
@@ -12780,6 +13259,186 @@ async fn open_disk_queue(config_dir: &std::path::Path) -> Result<DiskQueue> {
         .with_context(|| format!("failed to open disk queue at {path}"))
 }
 
+/// Phase 92.9 — handler for `nexo set-broker <kind> [--url <url>]
+/// [--no-signal]`. Edits `broker.yaml` in `config_dir` so the
+/// operator switches between NATS and Local transports without
+/// learning sed syntax, then (by default) sends SIGTERM to the
+/// running daemon (matched by its `--config` arg) so the
+/// supervisor loop (dev-daemon.sh / systemd) respawns and picks
+/// up the new config.
+///
+/// Kinds accepted:
+///
+/// - `local` — single-host stdio bridge mode. Strips `url:`.
+/// - `nats`  — multi-host or single-host with NATS. `--url`
+///   required when not already set in the YAML (uses an
+///   operator-friendly default `nats://127.0.0.1:4222` when
+///   neither the YAML nor `--url` provide one).
+/// - `stdio_bridge` — REJECTED. This kind is daemon-derived
+///   from `Local` for subprocess plugins; setting it manually
+///   would break the daemon's broker startup. Print a clear
+///   error so operators don't try.
+/// Phase 92.9 — default XDG-spec config dir for `nexo` when no
+/// `--config` flag and no `NEXO_CONFIG_DIR` env are set.
+/// Respects `XDG_CONFIG_HOME` if exported, else falls back to
+/// `$HOME/.config/nexo`. Returns `PathBuf::from("./config")` when
+/// even `$HOME` is unset (CI containers, exotic environments).
+fn default_xdg_config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("nexo");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".config").join("nexo");
+        }
+    }
+    PathBuf::from("./config")
+}
+
+fn run_set_broker(
+    config_dir: &std::path::Path,
+    kind: &str,
+    url: Option<&str>,
+    no_signal: bool,
+) -> Result<()> {
+    let broker_yaml = config_dir.join("broker.yaml");
+    // Phase 92.9 — tolerate missing config dir + missing broker.yaml.
+    // Create both with sane defaults so `nexo set-broker local` Just
+    // Works from any cwd, no `--config` setup required. The default
+    // YAML has `persistence.enabled: true` matching dev-daemon.sh's
+    // seed; operators that want different limits / paths edit the
+    // file afterwards.
+    if !broker_yaml.exists() {
+        std::fs::create_dir_all(config_dir).with_context(|| {
+            format!("creating config dir {}", config_dir.display())
+        })?;
+        let default_yaml = r#"broker:
+  type: local
+  url: ""
+  persistence:
+    enabled: true
+    path: ./data/queue/broker.db
+  limits:
+    max_payload: 4MB
+    max_pending: 10000
+schema_version: 11
+"#;
+        std::fs::write(&broker_yaml, default_yaml).with_context(|| {
+            format!("seeding default broker.yaml at {}", broker_yaml.display())
+        })?;
+        println!(
+            "  (seeded default broker.yaml at {} — local mode with persistence)",
+            broker_yaml.display()
+        );
+    }
+    let normalized_kind = match kind {
+        "local" | "nats" => kind,
+        "stdio_bridge" => anyhow::bail!(
+            "kind `stdio_bridge` is daemon-derived from `local` for subprocess plugins; \
+             operator-facing kinds are `local` or `nats`."
+        ),
+        other => anyhow::bail!("unknown broker kind `{other}` (expected: local | nats)"),
+    };
+
+    let raw = std::fs::read_to_string(&broker_yaml)?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&raw)?;
+    let map = doc
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("broker.yaml top-level is not a mapping"))?;
+    let broker_key = serde_yaml::Value::String("broker".to_string());
+    let broker_map = map
+        .get_mut(&broker_key)
+        .and_then(|v| v.as_mapping_mut())
+        .ok_or_else(|| anyhow::anyhow!("broker.yaml missing top-level `broker:` mapping"))?;
+
+    // Set type
+    broker_map.insert(
+        serde_yaml::Value::String("type".to_string()),
+        serde_yaml::Value::String(normalized_kind.to_string()),
+    );
+
+    // Set url based on kind. `url_key` is rebuilt fresh per access
+    // so the borrow on `broker_map` doesn't linger across the
+    // serialize + post-write `println!` that also wants to inspect
+    // the map.
+    fn url_key() -> serde_yaml::Value {
+        serde_yaml::Value::String("url".to_string())
+    }
+    let final_url_for_log: String = match normalized_kind {
+        "nats" => {
+            let existing_url = broker_map
+                .get(&url_key())
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let final_url = match url {
+                Some(u) => u.to_string(),
+                None => match existing_url.filter(|s| s.starts_with("nats://")) {
+                    Some(s) => s,
+                    None => "nats://127.0.0.1:4222".to_string(),
+                },
+            };
+            broker_map.insert(url_key(), serde_yaml::Value::String(final_url.clone()));
+            final_url
+        }
+        "local" => {
+            // Local broker has no URL; set to empty string to keep
+            // the field present (the BrokerInner serde struct expects
+            // it for backwards compatibility with pre-92 readers).
+            broker_map.insert(url_key(), serde_yaml::Value::String(String::new()));
+            String::new()
+        }
+        _ => unreachable!(),
+    };
+
+    let serialized = serde_yaml::to_string(&doc)?;
+    std::fs::write(&broker_yaml, serialized)?;
+    println!(
+        "✓ broker.yaml updated: type={} url={}",
+        normalized_kind, final_url_for_log
+    );
+
+    if no_signal {
+        println!("  (--no-signal: skipping daemon kick)");
+        println!("  Restart the daemon manually to pick up the new config.");
+        return Ok(());
+    }
+
+    // Best-effort SIGTERM to any running daemon matching this config
+    // dir. `pgrep -f` would be more portable than parsing /proc but
+    // the proyecto target ships unix-only today; revisit when
+    // Windows is in scope.
+    let cfg_path = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+    let needle = format!("--config {}", cfg_path.display());
+    let output = std::process::Command::new("pgrep")
+        .args(["-f", &needle])
+        .output();
+    let pids: Vec<i32> = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .filter(|&pid: &i32| pid != std::process::id() as i32)
+            .collect(),
+        _ => Vec::new(),
+    };
+    if pids.is_empty() {
+        println!("  (no running daemon matched `{needle}`; no signal sent)");
+        println!("  Start the daemon to pick up the new config.");
+        return Ok(());
+    }
+    for pid in &pids {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+    println!(
+        "  Sent SIGTERM to {} daemon process(es); supervisor loop should respawn.",
+        pids.len()
+    );
+    Ok(())
+}
+
 async fn run_dlq_list(config_dir: &std::path::Path) -> Result<()> {
     let queue = open_disk_queue(config_dir).await?;
     let entries = queue.list_dead_letters(1000).await?;
@@ -13909,7 +14568,7 @@ mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
         route_cron_subcommand, seed_email_subprocess_env_for, seed_telegram_subprocess_env_for,
-        seed_whatsapp_subprocess_env_for, Mode,
+        seed_whatsapp_subprocess_env_for, subprocess_broker_kind_str, Mode,
     };
     use nexo_config::types::plugins::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
@@ -13948,7 +14607,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_happy_path() {
         let cfg = telegram_cfg("123:abcdef", Some("bot1"));
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_TELEGRAM_TOKEN").map(String::as_str),
@@ -13992,12 +14651,12 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_omits_empty_instance() {
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
 
         let mut cfg2 = telegram_cfg("tok", Some(""));
         cfg2.instance = Some("   ".into());
-        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats://x");
+        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
     }
 
@@ -14006,7 +14665,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_transcribe_toggle() {
         let mut cfg = telegram_cfg("tok", None);
-        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE"));
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND"));
 
@@ -14016,7 +14675,7 @@ mod tests {
             timeout_ms: 45_000,
             language: Some("es".into()),
         };
-        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE")
@@ -14052,9 +14711,49 @@ mod tests {
     fn seed_telegram_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_TG_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
+    }
+
+    // Phase 92 — daemon broker = Local means the subprocess can't
+    // reach the in-process broker; the env seeder stamps
+    // `NEXO_BROKER_KIND=stdio_bridge` and OMITS the URL because
+    // the transport is the parent's stdin/stdout, not a network
+    // endpoint.
+    #[test]
+    fn seed_telegram_env_stdio_bridge_omits_url() {
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "stdio_bridge", "nats://ignored");
+        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("stdio_bridge"));
+        assert!(
+            !env.contains_key("NEXO_BROKER_URL"),
+            "stdio_bridge must omit NEXO_BROKER_URL; got env={env:?}"
+        );
+    }
+
+    #[test]
+    fn seed_telegram_env_nats_keeps_url() {
+        let cfg = telegram_cfg("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://central:4222");
+        assert_eq!(env.get("NEXO_BROKER_KIND").map(String::as_str), Some("nats"));
+        assert_eq!(env.get("NEXO_BROKER_URL").map(String::as_str), Some("nats://central:4222"));
+    }
+
+    #[test]
+    fn subprocess_broker_kind_str_maps_daemon_to_child() {
+        use nexo_config::types::broker::BrokerKind;
+        assert_eq!(subprocess_broker_kind_str(BrokerKind::Nats), "nats");
+        // Daemon `Local` triggers the stdio bridge on the child
+        // because the in-process broker is unreachable across
+        // process boundaries.
+        assert_eq!(subprocess_broker_kind_str(BrokerKind::Local), "stdio_bridge");
+        // `StdioBridge` is daemon-derived; should never appear in
+        // operator YAML, but the mapper handles it defensively.
+        assert_eq!(
+            subprocess_broker_kind_str(BrokerKind::StdioBridge),
+            "stdio_bridge"
+        );
     }
 
     fn whatsapp_cfg(session_dir: &str, instance: Option<&str>) -> WhatsappPluginConfig {
@@ -14094,7 +14793,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_happy_path() {
         let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://127.0.0.1:4222");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_WHATSAPP_SESSION_DIR")
@@ -14133,11 +14832,11 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
 
         let cfg2 = whatsapp_cfg("/tmp/x", Some("   "));
-        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats://x");
+        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
     }
 
@@ -14146,7 +14845,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
         let mut cfg = whatsapp_cfg("/tmp/x", None);
-        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
 
         cfg.transcriber = WhatsappTranscriberConfig {
@@ -14154,7 +14853,7 @@ mod tests {
             skill: "whisper".into(),
             timeout_ms: 30_000,
         };
-        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED")
@@ -14243,7 +14942,7 @@ mod tests {
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_WA_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_WA_TEST_LEAK_SENTINEL__");
     }

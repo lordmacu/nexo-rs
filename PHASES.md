@@ -4502,6 +4502,288 @@ config inputs scoped per-subprocess (same shape as the
 existing whatsapp yaml flow); no
 `crates/setup/src/capabilities.rs::INVENTORY` entry needed.
 
+### Phase 91 — STT pure-Rust migration via Candle   ⬜
+
+**Goal:** Replace the `whisper-rs` (whisper.cpp C++ binding)
+backend in `nexo-microapp-sdk::stt` with HuggingFace's pure-Rust
+Candle ML framework. Eliminates the Visual Studio Build Tools 2022
+\+ CMake requirement on Windows and unblocks trivial Android NDK /
+WASM cross-compile (precondition for the Flutter Android FFI embed
+goal). Audio decode pipeline (ogg-opus → s16 PCM → f32) is
+untouched; only the inference layer swaps.
+
+**Status:** ⬜ planned, **P3 — POST-CRITICAL**. Full plan + 12
+sub-phases (91.1 API research → 91.12 deprecate `whisper-rs`):
+[`PHASE-91-STT-CANDLE-MIGRATION-PLAN.md`](PHASE-91-STT-CANDLE-MIGRATION-PLAN.md).
+
+**Trigger:** 27.2 GA shipped + microapp UI work pauses, OR a
+Windows / Android operator surfaces a hard block on the C++
+build chain.
+
+---
+
+### Phase 92 — Plugin broker stdio-bridge (cross-process local broker)   ⬜
+
+**Goal:** Wire a third broker transport — `StdioBridgeBroker` —
+that pipes `broker.publish`, `broker.subscribe`, and
+`broker.event` notifications over the existing JSON-RPC stdio
+channel between the daemon and each subprocess plugin. After
+Phase 81.18.b shipped the subprocess flip for marketing /
+whatsapp / telegram, those plugins running in a separate OS
+process can no longer reach the daemon's in-process `Local`
+broker (`tokio::mpsc`); the stdio-bridge restores that path
+without forcing operators to run a separate NATS server.
+Unblocks `.deb` / `.rpm` / `.exe` / Termux distribution out of
+the box for the single-host operator.
+
+**Status:** ⬜ planned, **P2 — UNBLOCKS DISTRIBUTION**. Full
+plan + 9 sub-phases (92.1 BrokerKind variant → 92.9 docs):
+[`PHASE-92-PLUGIN-BROKER-STDIO-BRIDGE-PLAN.md`](PHASE-92-PLUGIN-BROKER-STDIO-BRIDGE-PLAN.md).
+
+**Trigger:** any of —
+
+- Distribution wave (`.deb` / `.rpm` / `.exe` / Termux tarball)
+  needs to ship a working subprocess-plugin host without a
+  separate NATS dependency the operator must install.
+- A second operator surfaces "marketing/whatsapp deployed but
+  silent" with broker connect errors in the daemon log.
+- A dev surfaces "subprocess plugin broker connect refused" in
+  a CI test that does not run NATS.
+
+**Surfaced 2026-05-11** during whatsapp plugin install on
+`agent-creator-microapp`. Workaround for the dev session:
+operator installed `nats-server` via apt (Ubuntu universe) and
+switched `broker.yaml type: nats`. This phase makes that
+workaround obsolete and restores `broker.yaml type: local` as a
+legitimate steady-state mode for single-host deployments.
+
+---
+
+### Phase 93 — Daemon zero-config boot   ✅
+
+**Goal:** `nexo` runs as a daemon out of the box with literally
+zero YAML files on disk. The four historically-required configs
+(agents / broker / llm / memory) collapse to `Default::default()`
+when missing; the missing config dir itself short-circuits to
+`AppConfig::default_baked_in()` with a single WARN log. Removes
+the operator-side burden of seeding YAMLs just to boot the
+daemon — first-time installs from `.deb` / `.rpm` / `.exe` /
+Termux can `nexo` straight away and exercise admin RPCs to
+populate state.
+
+**Status:** ✅ shipped 2026-05-11 (commit `bdda502`).
+
+**Why this matters:**
+
+- **Distribution UX** — `.deb` postinst no longer needs a
+  `mkdir /etc/nexo && cp default/*.yaml /etc/nexo/` step.
+  The package drops the binary + systemd unit and that's it.
+- **Onboarding speed** — the existing operator UX of "follow
+  the wizard, fill out 4 YAMLs by hand, restart" becomes "run
+  daemon, open UI, click through wizard, admin RPCs upsert
+  the config".
+- **Embedded targets** (Phase 90) — Android / iOS / WASM glue
+  doesn't have to ship sample YAMLs in app assets; the
+  daemon side already has sane defaults baked in.
+- **CI tests** — daemon-up smoke tests can spawn against
+  `/tmp/empty-dir/` (or no config arg at all under XDG).
+  No fixture scaffolding required.
+
+**What ships:**
+
+- `AgentsConfig`, `BrokerConfig` (+`BrokerInner`), `LlmConfig`,
+  `MemoryConfig` derive `Default`. Nested types
+  (`ShortTermConfig`, `LongTermConfig`) get manual `impl
+  Default` using their existing `default_*()` field functions
+  so the wire shape is unchanged.
+- New helper
+  `nexo_config::load_optional_or_default<T: Default>(dir,
+  filename) -> Result<T>` — file exists ⇒ delegate to
+  `load_required` (env-var resolution + schema strip
+  unchanged); file missing ⇒ emit one WARN line per file,
+  return `T::default()`.
+- `AppConfig::load` swaps the four `load_required` calls for
+  `load_optional_or_default` AND short-circuits at the top
+  with a single WARN when the config dir itself doesn't
+  exist (returns `default_baked_in()` to avoid spamming a WARN
+  per nested file lookup).
+- New private `AppConfig::default_baked_in()` constructor
+  bundles the four Default configs + None / Default for every
+  optional subsystem.
+- `nexo-config` Cargo.toml gains `tracing = { workspace }` for
+  the WARN logs (the crate was previously silent-or-bail; now
+  it tells operators what's being inferred).
+
+**Verified manually:**
+
+```bash
+$ XDG_CONFIG_HOME=/tmp/phase93-zerocfg nexo
+WARN  nexo_config: config dir not found — booting with
+                   Default::default() for every YAML
+                   (0 agents, BrokerKind::Local, 0 llm providers,
+                   sqlite memory at default path)
+INFO  nexo: broker ready kind=Local url=
+INFO  nexo: long-term memory ready path=./data/memory.db
+INFO  plugins.discovery: plugin registry wire complete
+                          loaded=0 invalid=0
+INFO  nexo: pairing initialised
+INFO  nexo: dispatch boot: no agent declares
+                          dispatch_capability=full — driver stays
+                          unwired
+```
+
+Daemon stays up serving admin RPCs + health endpoint even with
+zero agents. LLM tool calls fail loud (no providers) and
+operators see that in the log.
+
+**Pairs with:**
+- Phase 92.9 `nexo set-broker` subcommand — operator switches
+  broker mode without writing YAML by hand.
+- Phase 92.9 `NEXO_CONFIG_DIR` + XDG-spec config dir discovery
+  — `nexo` finds its config without `--config` when one
+  exists in the canonical XDG location.
+
+**Follow-ups (not yet planned):**
+- `93.followup-deb-postinst` — strip the YAML-seeding from
+  `.deb` / `.rpm` package scripts now that the daemon doesn't
+  require them.
+- `93.followup-zero-config-tests` — unit + integration
+  coverage of `load_optional_or_default` + the
+  `default_baked_in()` path.
+
+---
+
+### Phase 94 — Config injection: env vars + override-dir layer   ✅
+
+**Goal:** Operator can override any YAML at runtime via a
+per-file env var (12-factor / Docker secret style) OR layer an
+entire override directory over the canonical config dir
+(Kustomize style). Both methods compose with the Phase 93
+zero-config defaults so a daemon can boot with no YAMLs at all,
+or with selective overrides, or with a full base + overlay
+config stack — all without rebuilding the binary.
+
+**Status:** ✅ shipped 2026-05-11 (commits `7f3db3e` for the
+loader layer, `c4f535d` for the CLI wiring).
+
+**Precedence per YAML:**
+
+```
+1. NEXO_<NAME>_YAML env var      → wholesale replace
+2. <override-from>/<filename>    → deep-merge on top of base
+3. <config-dir>/<filename>       → base config
+4. Default::default()             → Phase 93 zero-config fallback
+```
+
+**What ships:**
+
+- `nexo_config::load_with_override::<T>(base_dir, override_dir,
+  env_var, filename) -> Result<T>` resolver — implements the
+  4-level precedence chain with `tracing::info!` at each
+  resolved source so operators can audit which layer won.
+- `yaml_deep_merge(&mut base, override)` — recursive
+  Mapping-aware merge. Mappings merge per-key (override wins
+  ties; nested mappings recurse); Sequences + scalars replace
+  wholesale. Tests cover both shapes.
+- `AppConfig::load_with_overrides(dir, Option<&override_dir>)`
+  threads the resolver through the 4 historically-required
+  YAMLs (agents / broker / llm / memory). `AppConfig::load`
+  remains as a backwards-compat thin wrapper that calls
+  `load_with_overrides(dir, None)`.
+- CLI flag `--override-from <dir>` + env var
+  `NEXO_OVERRIDE_FROM` wired through `CliArgs` →
+  daemon startup → `AppConfig::load_with_overrides`.
+- 4 env vars supported today (one per required YAML):
+  `NEXO_AGENTS_YAML`, `NEXO_BROKER_YAML`, `NEXO_LLM_YAML`,
+  `NEXO_MEMORY_YAML`. Follow-up `94.followup-optional-yamls`
+  extends to the 10 optional top-level + 5 plugin subdir
+  files.
+
+**Verified manually:**
+
+```bash
+# Wholesale env replace
+$ NEXO_BROKER_YAML=/tmp/test.yaml nexo
+   INFO  nexo_config: config loaded from env-var override
+                      env_var=NEXO_BROKER_YAML
+                      path=/tmp/test.yaml
+
+# Layered override
+$ nexo --config /etc/nexo --override-from /run/secrets
+   INFO  nexo_config: config loaded with override-dir deep-merge
+                      on top of base
+                      base=/etc/nexo/broker.yaml
+                      override=/run/secrets/broker.yaml
+```
+
+**Test coverage (nexo-config phase94_tests):**
+
+- `yaml_deep_merge_overrides_scalar_in_nested_mapping`
+- `yaml_deep_merge_replaces_sequence_wholesale`
+- `env_var_wholesale_replaces_base`
+- `override_dir_deep_merges_on_base`
+- `missing_everywhere_returns_default`
+- `env_var_pointing_at_missing_file_errors`
+
+6/6 pass.
+
+**Composability — the three Phase 92/93/94 ergonomics layers
+working together:**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Phase 93: daemon zero-config                              │
+│    No YAMLs on disk → AppConfig::default_baked_in()        │
+│    (0 agents, BrokerKind::Local, …) — daemon boots.        │
+│                          ↑                                 │
+│                          │  fallback when nothing above    │
+│  Phase 94: env var override                                │
+│    NEXO_<NAME>_YAML=/path → wholesale replace one YAML.    │
+│                          ↑                                 │
+│                          │  loses to higher precedence     │
+│  Phase 94: override dir layer                              │
+│    --override-from <dir> → deep-merge per-field on base.   │
+│                          ↑                                 │
+│                          │  base layer                     │
+│  Pre-Phase-92: --config dir                                │
+│    Canonical YAML files on disk.                           │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Operator use cases:**
+
+- **Standalone install** (`.deb` / `.rpm` / `.exe`): just run
+  `nexo`. Phase 93 defaults take over; no config dir needed.
+- **Docker** + K8s secret mounted at one path:
+  `docker run -e NEXO_LLM_YAML=/run/secrets/llm.yaml nexo`.
+- **Production cluster** with ConfigMap base + Secret overlay:
+  `nexo --config /etc/nexo --override-from /run/secrets`.
+- **CI test** swapping just the broker config without
+  touching the rest: `NEXO_BROKER_YAML=/tmp/test.yaml nexo`.
+
+**Follow-ups parked:**
+
+- `94.followup-optional-yamls` — extend the resolver to the
+  10 optional top-level YAMLs (`extensions.yaml`, `mcp.yaml`,
+  `runtime.yaml`, `pollers.yaml`, `taskflow.yaml`,
+  `transcripts.yaml`, `pairing.yaml`, `webhook_receiver.yaml`,
+  `mcp_server.yaml`) + 5 plugin subdir YAMLs (`plugins/
+  whatsapp.yaml`, `telegram.yaml`, `email.yaml`,
+  `browser.yaml`, `discovery.yaml`). Today only the 4 required
+  configs honor env/override layers.
+- `94.followup-cli-set-llm` — operator-facing CLI shortcuts
+  (`nexo set-llm-provider <name> --api-key <k>`,
+  `nexo set-agent <id> --model <provider:model>`, etc.)
+  that emit YAML edits via the same resolver path
+  `set-broker` already uses.
+- `94.followup-config-merge-debug-rpc` — admin RPC
+  `nexo/admin/config/effective` that returns the resolved
+  AppConfig as JSON with `source: env|override|base|default`
+  per field, so operators can audit at runtime which layer
+  contributed which value.
+
+---
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47

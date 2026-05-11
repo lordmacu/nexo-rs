@@ -129,20 +129,40 @@ EOF
 # ---------------------------------------------------------------------
 cat > "$PKG_DIR/DEBIAN/postinst" <<'EOF'
 #!/data/data/com.termux/files/usr/bin/sh
-# postinst: scaffold $HOME/.nexo/ on first install if absent.
+# postinst: scaffold $HOME/.nexo/ + ~/.config/nexo/ on first install.
 set -eu
 NEXO_HOME="${HOME}/.nexo"
 if [ ! -d "$NEXO_HOME" ]; then
     mkdir -p "$NEXO_HOME/data" "$NEXO_HOME/secret"
     chmod 700 "$NEXO_HOME/secret"
+    # Phase 95 — seed sample YAMLs in the XDG default location so
+    # `nexo` (Phase 93 zero-config) AND `nexo --config <dir>`
+    # paths both have something to read from a fresh install.
+    # Skipped on upgrade because the inner if-guards on the HOME
+    # dir presence.
+    CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nexo"
+    if [ ! -f "$CFG_DIR/broker.yaml" ]; then
+        mkdir -p "$CFG_DIR"
+        nexo init --output "$CFG_DIR" >/dev/null 2>&1 || :
+    fi
     cat <<MSG
 
   nexo-rs installed.
 
-  Next steps:
-    nexo --help                 # CLI overview
-    nexo setup                  # interactive setup wizard
-    nexo doctor                 # verify dependencies + capabilities
+  Quick smoke test (Phase 93 zero-config):
+    nexo                  # boots with defaults — admin RPCs live
+
+  Common commands:
+    nexo init             # re-emit sample YAMLs (already seeded
+                          # by postinst; re-run with --force to
+                          # refresh templates after upgrade)
+    nexo --help
+    nexo setup            # interactive wizard (LLM key + channels)
+    nexo doctor           # verify dependencies + capabilities
+
+  Switching broker mode (Phase 92.9):
+    nexo set-broker nats --url nats://localhost:4222
+    nexo set-broker local
 
   Docs: https://lordmacu.github.io/nexo-rs/
 

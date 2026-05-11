@@ -94,8 +94,20 @@ if ! command -v rpmbuild >/dev/null; then
     exit 4
 fi
 
+# `NEXO_RPMBUILD_NODEPS=1` lets CI on apt-only runners skip the
+# `BuildRequires:` check for `systemd-rpm-macros` (no apt
+# equivalent). The CI workflow places `/etc/rpm/macros.d/
+# macros.systemd` with hand-rolled definitions of the three macros
+# this spec calls, so the spec's macros still expand correctly —
+# only the rpmdb-based dependency assertion is skipped.
+RPMBUILD_EXTRA=()
+if [ "${NEXO_RPMBUILD_NODEPS:-0}" = "1" ]; then
+    RPMBUILD_EXTRA+=(--nodeps)
+fi
+
 rpmbuild --define "_topdir $RPM_TOP" \
          --target "$ARCH-unknown-linux-gnu" \
+         "${RPMBUILD_EXTRA[@]}" \
          -bb "$RPM_TOP/SPECS/nexo-rs.spec"
 
 # ---------------------------------------------------------------------

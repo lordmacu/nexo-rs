@@ -364,6 +364,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm
+      - name: Install systemd-rpm-macros (Fedora package, no apt equivalent)
+        # `nexo-rs.spec` uses `%systemd_post`, `%systemd_preun`, and
+        # `%systemd_postun_with_restart`, which live in Fedora's
+        # `systemd-rpm-macros` package (no equivalent in Ubuntu apt).
+        # Drop the macro file directly into the rpm macros search path
+        # so `rpmbuild` can expand the macros. `--nodeps` on the
+        # build.sh-invoked rpmbuild skips the `BuildRequires:`
+        # check for the package itself (we satisfied it by files,
+        # not by rpmdb).
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /etc/rpm/macros.d
+          sudo tee /etc/rpm/macros.d/macros.systemd >/dev/null <<'MACROS'
+          # Mirror of Fedora's systemd-rpm-macros (subset).
+          # Source:
+          #   https://src.fedoraproject.org/rpms/systemd
+          #   src/rpm/macros.systemd.in
+          # Only the three macros nexo-rs.spec actually calls are
+          # defined here; expand if the spec grows new scriptlets.
+          %systemd_post() \
+          if [ $1 -eq 1 ] && [ -x /usr/lib/systemd/systemd-update-helper ]; then \
+              /usr/lib/systemd/systemd-update-helper install-system-units %{?*} || : \
+          fi \
+          %{nil}
+
+          %systemd_preun() \
+          if [ $1 -eq 0 ] && [ -x /usr/lib/systemd/systemd-update-helper ]; then \
+              /usr/lib/systemd/systemd-update-helper remove-system-units %{?*} || : \
+          fi \
+          %{nil}
+
+          %systemd_postun_with_restart() \
+          if [ $1 -ge 1 ] && [ -x /usr/lib/systemd/systemd-update-helper ]; then \
+              /usr/lib/systemd/systemd-update-helper mark-restart-system-units %{?*} || : \
+          fi \
+          %{nil}
+          MACROS
       - uses: actions/download-artifact@v4
         with:
           name: dist-${{ matrix.target }}
@@ -380,6 +417,13 @@ jobs:
           fi
           echo "BIN=$PWD/${extracted#./}" >> "$GITHUB_ENV"
       - name: Build .rpm
+        # NEXO_RPMBUILD_NODEPS=1 is consumed by packaging/rpm/build.sh
+        # which threads `--nodeps` into the rpmbuild invocation when
+        # set. This skips the `BuildRequires:` check for the
+        # apt-unavailable `systemd-rpm-macros` package — the macros
+        # themselves were placed in /etc/rpm/macros.d above.
+        env:
+          NEXO_RPMBUILD_NODEPS: "1"
         run: bash packaging/rpm/build.sh --binary "$BIN" --arch ${{ matrix.arch }}
       - name: sha256 sidecar
         working-directory: dist

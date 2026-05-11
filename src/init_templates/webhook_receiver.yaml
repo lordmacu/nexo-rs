@@ -1,0 +1,17 @@
+# webhook_receiver.yaml — inbound HTTP webhook listener (Phase 82.2)
+# Lets external services POST events into the broker.
+# Absent or `enabled: false` → subsystem off.
+webhook_receiver:
+  enabled: false
+  bind: 0.0.0.0:9099
+  # endpoints: per-path config + topic mapping.
+  endpoints: []
+  # Example:
+  # endpoints:
+  #   - path: /github
+  #     topic: webhook.github
+  #     auth:
+  #       type: hmac
+  #       header: X-Hub-Signature-256
+  #       secret_env: GITHUB_WEBHOOK_SECRET
+schema_version: 11

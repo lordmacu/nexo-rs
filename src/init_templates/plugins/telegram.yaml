@@ -1,0 +1,19 @@
+# plugins/telegram.yaml — Telegram bot plugin instances (Phase 81.18)
+# One entry per Telegram Bot API token. Absent file → 0 instances.
+telegram:
+  # Example:
+  # - token: "${TELEGRAM_BOT_TOKEN_BOT1}"   # via env, NOT inline
+  #   instance: support-bot
+  #   polling:
+  #     interval_ms: 1500
+  #     offset_path: ./data/telegram/bot1-offset
+  #   bridge_timeout_ms: 30000
+  #   allowlist:
+  #     # Telegram chat IDs allowed (numeric). Empty = open.
+  #     chat_ids: []
+  #   auto_transcribe:
+  #     enabled: false
+  #     command: ./extensions/openai-whisper/whisper
+  #     timeout_ms: 60000
+  #     language: null
+schema_version: 11

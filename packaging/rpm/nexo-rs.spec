@@ -76,15 +76,37 @@ exit 0
 
 %post
 chown -R nexo:nexo %{_sharedstatedir}/nexo-rs %{_localstatedir}/log/nexo-rs
+# Phase 95 — auto-seed sample YAMLs on first install (skip on
+# upgrade so operator edits survive). `nexo init` ships
+# baked-in templates from the binary itself.
+if [ $1 -eq 1 ] && [ ! -f %{_sysconfdir}/nexo-rs/broker.yaml ]; then
+    mkdir -p %{_sysconfdir}/nexo-rs
+    %{_bindir}/nexo init --output %{_sysconfdir}/nexo-rs >/dev/null 2>&1 || :
+    chown -R nexo:nexo %{_sysconfdir}/nexo-rs
+fi
 %systemd_post nexo-rs.service
 cat <<EOF
 
   nexo-rs installed.
 
-  Next steps:
-    1. Wire your config:    sudo -u nexo nexo setup
-    2. Enable + start:      sudo systemctl enable --now nexo-rs
-    3. Tail logs:           sudo journalctl -u nexo-rs -f
+  Quick smoke test (Phase 93 zero-config):
+    sudo systemctl enable --now nexo-rs
+    sudo journalctl -u nexo-rs -f
+  → daemon boots with defaults (0 agents, broker=local,
+    no LLM provider). Admin RPCs + health endpoint live.
+
+  To customize:
+    A) Edit the auto-seeded YAMLs at /etc/nexo-rs/*.yaml,
+       then `sudo systemctl restart nexo-rs`.
+    B) Run the interactive wizard:
+         sudo -u nexo nexo setup
+    C) Use admin RPCs from the operator UI (microapp).
+
+  Common switches:
+    sudo -u nexo nexo --config /etc/nexo-rs set-broker nats \\
+         --url nats://localhost:4222    # if you run NATS
+    sudo -u nexo nexo --config /etc/nexo-rs set-broker local
+                                         # stdio bridge (default)
 
   Docs: https://lordmacu.github.io/nexo-rs/
 

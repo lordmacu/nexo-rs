@@ -1,0 +1,68 @@
+# llm.yaml — LLM providers + retry + context optimization
+#
+# Default (Phase 93 zero-config): `providers: {}` — no LLM
+# configured. Agents that try to invoke an LLM fail with
+# `provider_not_found`. The daemon stays up; admin RPCs work.
+#
+# Use `nexo/admin/llm_providers/upsert` from the operator UI to
+# add providers at runtime, OR hand-edit + restart.
+#
+# Secret handling: every `api_key` value supports `${ENV_VAR}`
+# placeholder resolution at load time. Avoid committing real
+# keys to git. Phase 11 secrets subsystem can also resolve from
+# Docker secrets (`/run/secrets/*`).
+
+providers:
+  # Example: MiniMax M2.5 (primary in the original design).
+  # Uncomment + set MINIMAX_API_KEY in the daemon's env.
+  #
+  # minimax:
+  #   api_key: "${MINIMAX_API_KEY}"
+  #   base_url: https://api.minimax.io/anthropic
+  #   api_flavor: anthropic_messages   # other flavors: openai, anthropic, gemini
+  #   rate_limit:
+  #     requests_per_second: 2.0
+  #     quota_alert_threshold: 100000
+  #
+  # OpenAI / Anthropic / Groq examples follow the same shape;
+  # see `crates/llm/src/providers.rs` for the full provider list.
+
+# retry: 429 / 5xx backoff policy applied uniformly across
+# providers. Override per-provider via `providers.<name>.retry`.
+retry:
+  # 429 (rate limit) → exponential 1s → 60s, max 5 attempts.
+  rate_limit:
+    max_attempts: 5
+    initial_backoff: 1s
+    max_backoff: 60s
+  # 5xx (server error) → exponential 2s → 30s, max 3 attempts.
+  server_error:
+    max_attempts: 3
+    initial_backoff: 2s
+    max_backoff: 30s
+
+# context_optimization: input-token reduction techniques.
+# All four are independent.
+context_optimization:
+  # Anthropic prompt caching (cache_control on stable prefixes).
+  # Default on; saves ~70% on long system prompts.
+  prompt_cache:
+    enabled: true
+  # Workspace files cached separately from message history.
+  workspace_cache:
+    enabled: true
+  # Older message turns compacted into a summary when nearing
+  # the context window.
+  compaction:
+    enabled: false
+  # tiktoken-based token counter (approximate but fast). Off →
+  # provider returns the count post-response.
+  token_counter:
+    enabled: true
+
+# tenants: per-tenant LLM provider overrides for multi-tenant
+# SaaS deployments. Keys are tenant_id; values mirror the
+# top-level `providers` shape.
+tenants: {}
+
+schema_version: 11

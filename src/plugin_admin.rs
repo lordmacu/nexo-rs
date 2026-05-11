@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
-use nexo_ext_installer::{resolve_release, InstallError, PluginCoords, DEFAULT_GITHUB_API_BASE};
+use nexo_ext_installer::{resolve_release, InstallError, RepoCoords, DEFAULT_GITHUB_API_BASE};
 use nexo_plugin_manifest::PluginManifest;
 use serde::{Deserialize, Serialize};
 
@@ -451,7 +451,7 @@ pub async fn run_plugin_upgrade(
     };
 
     let target = target_override.unwrap_or_else(|| metadata.target.clone());
-    let coords = PluginCoords {
+    let coords = RepoCoords {
         owner: metadata.owner.clone(),
         repo: metadata.repo.clone(),
         tag: metadata.tag.clone(),

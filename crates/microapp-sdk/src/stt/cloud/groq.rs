@@ -18,7 +18,7 @@
 //!
 //! Auth: Bearer token from a Groq Cloud Console API key.
 
-#![cfg(feature = "stt-cloud")]
+#![cfg(feature = "stt-cloud-wasm")]
 
 use async_trait::async_trait;
 
@@ -58,7 +58,8 @@ impl GroqProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SttProvider for GroqProvider {
     async fn transcribe(
         &self,

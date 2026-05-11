@@ -420,6 +420,33 @@ pub async fn wire_plugin_registry_with_runtime(
         "plugin registry wire complete"
     );
 
+    // Dump every diagnostic at WARN so the operator sees why a
+    // plugin was rejected without having to call the `plugins/doctor`
+    // RPC (which requires the `plugin_doctor` capability the dev
+    // bearer typically lacks). `DiagnosticLevel` only has `Warn` +
+    // `Error` today — Error gets a louder log message to make scan
+    // distinguishable from soft warnings.
+    for diag in &report.diagnostics {
+        match diag.level {
+            super::DiagnosticLevel::Error => {
+                tracing::warn!(
+                    target: "plugins.discovery",
+                    path = %diag.path.display(),
+                    kind = ?diag.kind,
+                    "plugin discovery diagnostic (ERROR — plugin rejected)"
+                );
+            }
+            super::DiagnosticLevel::Warn => {
+                tracing::warn!(
+                    target: "plugins.discovery",
+                    path = %diag.path.display(),
+                    kind = ?diag.kind,
+                    "plugin discovery diagnostic (warn)"
+                );
+            }
+        }
+    }
+
     WirePluginRegistryOutput {
         registry,
         skill_roots,

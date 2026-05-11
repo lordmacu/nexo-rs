@@ -1,0 +1,23 @@
+[package]
+name = "nexo-persona-manifest"
+description = "TOML manifest schema + validator for v2 persona packs (cody-cli-install Phase F2)."
+version = "0.1.0"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde      = { workspace = true, features = ["derive"] }
+toml       = "0.8"
+semver     = { workspace = true, features = ["serde"] }
+regex      = { workspace = true }
+thiserror  = { workspace = true }

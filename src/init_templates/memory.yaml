@@ -1,0 +1,78 @@
+# memory.yaml — short-term session cache + long-term store + vector
+#
+# Default (Phase 93 zero-config): short_term defaults applied,
+# long_term backend=sqlite at ./data/memory.db, vector off,
+# secret_guard on (block).
+
+short_term:
+  # max_history_turns: rolling window of (user + assistant) turns
+  # kept per session. Older turns are compacted (if enabled in
+  # llm.yaml) or dropped.
+  max_history_turns: 50
+  # session_ttl: humantime. Idle sessions older than this evict.
+  session_ttl: 24h
+  # max_sessions: soft cap on concurrent live sessions. 0 = unlimited.
+  # Eviction policy: oldest-idle wins on insert at cap.
+  max_sessions: 10000
+
+long_term:
+  # backend: `sqlite` (default, single-host) or `redis` (cluster).
+  backend: sqlite
+  # sqlite: required when backend=sqlite. Path resolves against
+  # the config dir if relative.
+  sqlite:
+    path: ./data/memory.db
+  # redis: required when backend=redis. URL format
+  # `redis://[user:pass@]host:port/db`.
+  # redis:
+  #   url: redis://localhost:6379/0
+
+# vector: opt-in semantic search over long-term memory entries.
+# Off by default — requires embeddings provider configured + the
+# vector backend (`sqlite-vec` is the canonical in-process option).
+vector:
+  enabled: false
+  # backend: sqlite_vec | qdrant
+  # backend: sqlite_vec
+  # embeddings_provider: name from llm.yaml > providers (must
+  # support `embeddings` flavor, e.g. openai text-embedding-3).
+  # embeddings_provider: openai
+
+# secret_guard: scan persisted memory text for secrets (API
+# keys, tokens, credit cards, etc) before write.
+secret_guard:
+  enabled: true
+  # on_secret: `block` rejects the write (recommended);
+  # `redact` overwrites the match with `[redacted]`; `log` only
+  # records the hit (audit-only mode).
+  on_secret: block
+  # rules: `all` enables every built-in detector; or pick a
+  # subset like `[api_key, jwt, credit_card]`.
+  rules: all
+  # exclude_rules: subtractive — drop named rules even when
+  # `rules: all`.
+  exclude_rules: []
+
+# snapshot: timestamped backups of the memory store. Off by
+# default; flip when you want operator-driven restore points
+# (e.g. before risky migrations).
+snapshot:
+  enabled: true
+  # Retention windows for each tier of snapshots.
+  retention:
+    hourly: 24
+    daily: 30
+    monthly: 12
+  # Encryption: when on, snapshots are AES-256-GCM encrypted
+  # with a key from `secrets/snapshot.key`. Requires Phase
+  # 36.2 secrets subsystem.
+  encryption:
+    enabled: false
+  # auto_pre_dream: take a snapshot before each Dream-Mode run.
+  auto_pre_dream: false
+  # auto_pre_restore: take a snapshot before any restore op.
+  # Recommended on — protects against bad restore overwriting
+  # current state.
+  auto_pre_restore: true
+
+schema_version: 11

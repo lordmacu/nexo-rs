@@ -34,7 +34,9 @@ use nexo_config::{
 };
 use nexo_core::agent::{
     context::AgentContext,
-    dispatch_handlers::{DispatchToolContext, ProgramPhaseHandler},
+    dispatch_handlers::{
+        AddHookHandler, DispatchToolContext, ProgramPhaseHandler, RemoveHookHandler,
+    },
     tool_registry::ToolHandler,
 };
 use nexo_dispatch_tools::{
@@ -198,6 +200,7 @@ async fn two_program_phase_calls_queue_two_goals_and_emit_two_spawned_events() {
         daemon_source_root: dir.path().to_path_buf(),
         audit_before_done: false,
         chainer: None,
+        llm_registry: None,
     });
 
     let cfg = empty_config(true);
@@ -268,6 +271,7 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
         daemon_source_root: dir.path().to_path_buf(),
         audit_before_done: false,
         chainer: None,
+        llm_registry: None,
     });
 
     // Capability=None on this agent's policy.
@@ -291,4 +295,213 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
     assert_eq!(denied.len(), 1);
     assert_eq!(denied[0].phase_id, "99.1");
     assert!(telemetry.spawned.lock().unwrap().is_empty());
+}
+
+// ── Phase 90 audit fix (Cody A.1) — add_hook + remove_hook ────
+
+/// Helper: build a DispatchToolContext with a fresh HookRegistry
+/// so the add/remove tests don't share state.
+async fn build_ctx_for_hooks(
+    dir: &tempfile::TempDir,
+) -> (
+    Arc<DispatchToolContext>,
+    Arc<HookRegistry>,
+    Arc<AgentContext>,
+) {
+    std::fs::write(
+        dir.path().join("PHASES.md"),
+        "## Phase 99 — Test\n\n#### 99.1 — A   ⬜\n",
+    )
+    .unwrap();
+    let tracker: Arc<MutableTracker> = Arc::new(MutableTracker::open_fs(dir.path()).unwrap());
+    let registry = Arc::new(AgentRegistry::new(
+        Arc::new(MemoryAgentRegistryStore::default()),
+        4,
+    ));
+    let orch = build_orch(dir.path().join("hooks.sock"), dir.path().join("hooks_ws")).await;
+    let telemetry = Arc::new(CapturingTelemetry::default());
+    let telemetry_dyn: Arc<dyn DispatchTelemetry> = telemetry.clone();
+    let hooks = Arc::new(HookRegistry::new());
+    let dispatch_ctx = Arc::new(DispatchToolContext {
+        tracker,
+        orchestrator: orch,
+        registry: registry.clone(),
+        hooks: hooks.clone(),
+        hook_dispatcher: None,
+        turn_log: None,
+        log_buffer: Arc::new(LogBuffer::new(16)),
+        default_caps: CapSnapshot {
+            queue_when_full: true,
+            ..Default::default()
+        },
+        require_trusted: false,
+        telemetry: telemetry_dyn,
+        allow_self_modify: true,
+        daemon_source_root: dir.path().to_path_buf(),
+        audit_before_done: false,
+        chainer: None,
+        llm_registry: None,
+    });
+    let cfg = empty_config(true);
+    let ctx = AgentContext::new(
+        "tester",
+        cfg,
+        AnyBroker::local(),
+        Arc::new(nexo_core::session::SessionManager::new(
+            Duration::from_secs(60),
+            64,
+        )),
+    )
+    .with_dispatch(dispatch_ctx.clone());
+    (dispatch_ctx, hooks, Arc::new(ctx))
+}
+
+#[tokio::test]
+async fn add_hook_attaches_to_goal_and_returns_position() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_dispatch, hooks, ctx) = build_ctx_for_hooks(&dir).await;
+
+    let goal_id = uuid::Uuid::new_v4();
+    let r = AddHookHandler
+        .call(
+            &ctx,
+            json!({
+                "goal_id": goal_id.to_string(),
+                "hook": {
+                    "id": "my-notify",
+                    "on": { "on": "done" },
+                    "action": { "kind": "notify_origin" }
+                }
+            }),
+        )
+        .await
+        .expect("add_hook ok");
+    assert_eq!(r["added"], true);
+    assert_eq!(r["position"], 0);
+    assert_eq!(r["hook_id"], "my-notify");
+    // Hook actually present in the registry.
+    assert_eq!(
+        hooks.count(nexo_driver_types::GoalId(goal_id)),
+        1,
+        "registry must hold the hook"
+    );
+}
+
+#[tokio::test]
+async fn add_hook_idempotent_on_duplicate_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_dispatch, hooks, ctx) = build_ctx_for_hooks(&dir).await;
+    let goal_id = uuid::Uuid::new_v4();
+    let payload = json!({
+        "goal_id": goal_id.to_string(),
+        "hook": {
+            "id": "dup-check",
+            "on": { "on": "done" },
+            "action": { "kind": "notify_origin" }
+        }
+    });
+    let r1 = AddHookHandler.call(&ctx, payload.clone()).await.unwrap();
+    assert_eq!(r1["added"], true);
+    let r2 = AddHookHandler.call(&ctx, payload).await.unwrap();
+    assert_eq!(r2["added"], false);
+    assert!(r2["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("already attached"));
+    assert_eq!(
+        hooks.count(nexo_driver_types::GoalId(goal_id)),
+        1,
+        "second add must be a no-op"
+    );
+}
+
+#[tokio::test]
+async fn add_hook_rejects_empty_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_dispatch, hooks, ctx) = build_ctx_for_hooks(&dir).await;
+    let goal_id = uuid::Uuid::new_v4();
+    let r = AddHookHandler
+        .call(
+            &ctx,
+            json!({
+                "goal_id": goal_id.to_string(),
+                "hook": {
+                    "id": "",
+                    "on": { "on": "done" },
+                    "action": { "kind": "notify_origin" }
+                }
+            }),
+        )
+        .await
+        .expect("call returns Ok with structured failure");
+    assert_eq!(r["added"], false);
+    assert!(r["reason"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("non-empty"));
+    assert_eq!(hooks.count(nexo_driver_types::GoalId(goal_id)), 0);
+}
+
+#[tokio::test]
+async fn remove_hook_removes_existing_and_handles_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_dispatch, hooks, ctx) = build_ctx_for_hooks(&dir).await;
+    let goal_id = uuid::Uuid::new_v4();
+    AddHookHandler
+        .call(
+            &ctx,
+            json!({
+                "goal_id": goal_id.to_string(),
+                "hook": {
+                    "id": "to-remove",
+                    "on": { "on": "done" },
+                    "action": { "kind": "notify_origin" }
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hooks.count(nexo_driver_types::GoalId(goal_id)), 1);
+
+    // Existing → removed: true
+    let r1 = RemoveHookHandler
+        .call(
+            &ctx,
+            json!({"goal_id": goal_id.to_string(), "hook_id": "to-remove"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r1["removed"], true);
+    assert_eq!(hooks.count(nexo_driver_types::GoalId(goal_id)), 0);
+
+    // Missing → removed: false (probe-then-remove pattern works).
+    let r2 = RemoveHookHandler
+        .call(
+            &ctx,
+            json!({"goal_id": goal_id.to_string(), "hook_id": "ghost"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r2["removed"], false);
+}
+
+#[tokio::test]
+async fn add_hook_rejects_invalid_goal_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_dispatch, _hooks, ctx) = build_ctx_for_hooks(&dir).await;
+    let err = AddHookHandler
+        .call(
+            &ctx,
+            json!({
+                "goal_id": "not-a-uuid",
+                "hook": {
+                    "id": "x",
+                    "on": { "on": "done" },
+                    "action": { "kind": "notify_origin" }
+                }
+            }),
+        )
+        .await
+        .expect_err("invalid uuid must error");
+    assert!(err.to_string().contains("invalid goal_id"));
 }

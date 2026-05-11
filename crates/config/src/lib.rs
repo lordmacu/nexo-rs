@@ -18,6 +18,12 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub plugins: PluginsConfig,
+    /// Phase F5 of `cody-cli-install` — operator-configured
+    /// persona discovery walk knobs. Loaded from
+    /// `personas/discovery.yaml`. Always populated; absent
+    /// file → empty default (no scan, no installed personas
+    /// surface in admin RPC).
+    pub personas: PersonasConfig,
     /// Phase 11 — optional extension system config. `None` when the file is
     /// absent; consumers should fall back to `ExtensionsConfig::default()`.
     pub extensions: Option<ExtensionsConfig>,
@@ -63,15 +69,66 @@ pub struct McpServerBootConfig {
 }
 
 impl AppConfig {
+    /// Backwards-compat entrypoint — `load(dir)` ≡ `load_with_overrides(dir, None)`.
+    /// Pre-Phase-94 callers (CLI entrypoint without `--override-from`)
+    /// route through here unchanged.
     pub fn load(dir: &Path) -> Result<Self> {
+        Self::load_with_overrides(dir, None)
+    }
+
+    /// Phase 94 — load with an optional override-dir layer. Each
+    /// YAML respects the precedence chain in [`load_with_override`]:
+    /// env var > override_dir > base dir > Default. The four
+    /// historically-required configs (agents / broker / llm /
+    /// memory) ALL participate; optional configs fall through to
+    /// the same resolver too so an operator can override
+    /// `mcp.yaml` or `transcripts.yaml` from a Kubernetes
+    /// ConfigMap without touching the canonical config dir.
+    pub fn load_with_overrides(dir: &Path, override_dir: Option<&Path>) -> Result<Self> {
+        // Phase 93 — zero-config daemon mode. When the config dir
+        // doesn't exist or is missing any of the historically
+        // "required" YAMLs, fall through with `Default::default()`
+        // for that file and emit a `tracing::warn!` so operators
+        // see what's being inferred. Removes the hard requirement
+        // for an operator to maintain agents.yaml / broker.yaml /
+        // llm.yaml / memory.yaml on disk just to boot the daemon.
+        if !dir.exists() && override_dir.map(|o| !o.exists()).unwrap_or(true) {
+            tracing::warn!(
+                config_dir = %dir.display(),
+                "config dir not found — booting with Default::default() for every YAML \
+                 (0 agents, BrokerKind::Local, 0 llm providers, sqlite memory at default path)"
+            );
+            return Ok(AppConfig::default_baked_in());
+        }
         maybe_run_yaml_migrations(dir)?;
-        let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        let mut agents = load_with_override::<AgentsConfig>(
+            dir,
+            override_dir,
+            "NEXO_AGENTS_YAML",
+            "agents.yaml",
+        )?;
         merge_agents_drop_in(dir, &mut agents)?;
         resolve_relative_paths(dir, &mut agents);
-        let broker = load_required::<BrokerConfig>(dir, "broker.yaml")?;
-        let llm = load_required::<LlmConfig>(dir, "llm.yaml")?;
-        let memory = load_required::<MemoryConfig>(dir, "memory.yaml")?;
+        let broker = load_with_override::<BrokerConfig>(
+            dir,
+            override_dir,
+            "NEXO_BROKER_YAML",
+            "broker.yaml",
+        )?;
+        let llm = load_with_override::<LlmConfig>(
+            dir,
+            override_dir,
+            "NEXO_LLM_YAML",
+            "llm.yaml",
+        )?;
+        let memory = load_with_override::<MemoryConfig>(
+            dir,
+            override_dir,
+            "NEXO_MEMORY_YAML",
+            "memory.yaml",
+        )?;
         let plugins = load_plugins(dir)?;
+        let personas = load_personas(dir)?;
         let extensions =
             load_optional::<ExtensionsConfigFile>(dir, "extensions.yaml")?.map(|f| f.extensions);
         let mcp = load_optional::<McpConfigFile>(dir, "mcp.yaml")?.map(|f| f.mcp);
@@ -93,6 +150,7 @@ impl AppConfig {
             llm,
             memory,
             plugins,
+            personas,
             extensions,
             mcp,
             mcp_server,
@@ -103,6 +161,34 @@ impl AppConfig {
             pairing,
             webhook_receiver,
         })
+    }
+
+    /// Phase 93 — zero-config baked-in defaults. Returned by
+    /// [`AppConfig::load`] when the config dir doesn't exist.
+    /// Mirrors what `Default::default()` for the top-level
+    /// configs produces; every optional + extension subsystem is
+    /// off, all "required" types collapse to empty / sane
+    /// defaults. Daemon boots, has no agents to spawn, has Local
+    /// broker, has no LLM providers (LLM tools fail loudly but
+    /// the daemon stays up to serve admin RPCs).
+    fn default_baked_in() -> Self {
+        AppConfig {
+            agents: AgentsConfig::default(),
+            broker: BrokerConfig::default(),
+            llm: LlmConfig::default(),
+            memory: MemoryConfig::default(),
+            plugins: PluginsConfig::default(),
+            personas: PersonasConfig::default(),
+            extensions: None,
+            mcp: None,
+            mcp_server: None,
+            runtime: RuntimeConfig::default(),
+            pollers: None,
+            taskflow: TaskflowConfig::default(),
+            transcripts: TranscriptsConfig::default(),
+            pairing: None,
+            webhook_receiver: None,
+        }
     }
 
     /// Phase 12.6 — load only what `agent mcp-server` needs. Tolerant of
@@ -232,6 +318,186 @@ fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
     Ok(())
 }
 
+/// Phase 93 — load an optional YAML file that historically was
+/// required, falling back to `Default::default()` with a WARN log
+/// when the file is absent. Same `${ENV_VAR}` placeholder
+/// resolution + same `schema_version` stripping as
+/// [`load_required`]. The warn is non-fatal: operators that boot
+/// with no YAMLs at all are choosing zero-config mode and the
+/// daemon's defaults are sensible (empty agents, Local broker,
+/// no llm providers, sqlite memory at default path).
+pub fn load_optional_or_default<T>(dir: &Path, filename: &str) -> Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    let path = dir.join(filename);
+    if !path.exists() {
+        tracing::warn!(
+            path = %path.display(),
+            "config file missing — using Default::default() (Phase 93 zero-config mode)"
+        );
+        return Ok(T::default());
+    }
+    load_required::<T>(dir, filename)
+}
+
+/// Phase 94 — resolver for the "where does this YAML come from"
+/// question. Three sources in priority order:
+///
+///   1. `NEXO_<NAME>_YAML` env var pointing at an absolute file
+///      path (12-factor app style, ideal for Docker / Kubernetes
+///      secret mounts where the secret lives outside the
+///      canonical config dir).
+///   2. `<override_dir>/<filename>` — operator-supplied override
+///      that DEEP-MERGES on top of the base config (Kustomize
+///      style). Each mapping key wins from the override; nested
+///      mappings recurse; scalars / sequences replace wholesale.
+///   3. `<base_dir>/<filename>` — the canonical config dir
+///      supplied via `--config` (or the XDG default Phase 92.9
+///      installed).
+///
+/// Returns the resolved value or `T::default()` when none of the
+/// three sources turn up a file. Emits ONE tracing line per
+/// resolved source so operators can audit which layer won.
+pub fn load_with_override<T>(
+    base_dir: &Path,
+    override_dir: Option<&Path>,
+    env_var: &str,
+    filename: &str,
+) -> Result<T>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    // 1) Env var → exact path, wholesale replace.
+    if let Ok(env_path) = std::env::var(env_var) {
+        if !env_path.is_empty() {
+            let path = PathBuf::from(&env_path);
+            if !path.exists() {
+                anyhow::bail!(
+                    "{env_var} = {env_path} but file does not exist; \
+                     unset the env or fix the path"
+                );
+            }
+            tracing::info!(
+                source = "env_var",
+                env_var,
+                path = %path.display(),
+                "config loaded from env-var override"
+            );
+            return load_yaml_file::<T>(&path, filename);
+        }
+    }
+
+    // 2) Override-dir merge layer (when provided).
+    let base_path = base_dir.join(filename);
+    let override_path = override_dir.map(|d| d.join(filename));
+    let has_base = base_path.exists();
+    let has_override = override_path
+        .as_ref()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+
+    match (has_base, has_override) {
+        (false, false) => {
+            tracing::warn!(
+                path = %base_path.display(),
+                "config file missing — using Default::default() (Phase 93 zero-config mode)"
+            );
+            Ok(T::default())
+        }
+        (true, false) => {
+            tracing::debug!(
+                source = "base",
+                path = %base_path.display(),
+                "config loaded from base config dir"
+            );
+            load_yaml_file::<T>(&base_path, filename)
+        }
+        (false, true) => {
+            let path = override_path.unwrap();
+            tracing::info!(
+                source = "override_dir",
+                path = %path.display(),
+                "config loaded from override dir only (no base present)"
+            );
+            load_yaml_file::<T>(&path, filename)
+        }
+        (true, true) => {
+            // Deep-merge override on top of base. Operator
+            // overrides individual keys without forking the whole
+            // file.
+            let override_path = override_path.unwrap();
+            tracing::info!(
+                source = "merge",
+                base = %base_path.display(),
+                override_ = %override_path.display(),
+                "config loaded with override-dir deep-merge on top of base"
+            );
+            let base_str = read_yaml_resolved(&base_path, filename)?;
+            let override_str = read_yaml_resolved(&override_path, filename)?;
+            let mut base_v: serde_yaml::Value = serde_yaml::from_str(&base_str)
+                .with_context(|| format!("invalid base config in {}", base_path.display()))?;
+            let override_v: serde_yaml::Value = serde_yaml::from_str(&override_str)
+                .with_context(|| {
+                    format!("invalid override config in {}", override_path.display())
+                })?;
+            yaml_deep_merge(&mut base_v, override_v);
+            if let Some(map) = base_v.as_mapping_mut() {
+                map.remove(serde_yaml::Value::String("schema_version".to_string()));
+            }
+            serde_yaml::from_value(base_v).with_context(|| {
+                format!(
+                    "merged config (base={}, override={}) failed to deserialize as {}",
+                    base_path.display(),
+                    override_path.display(),
+                    std::any::type_name::<T>()
+                )
+            })
+        }
+    }
+}
+
+/// Phase 94 — recursively merge `over` on top of `base`. Mappings
+/// merge per-key (override wins ties; nested mappings recurse).
+/// Scalars + sequences replace wholesale.
+fn yaml_deep_merge(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
+    match (base, over) {
+        (serde_yaml::Value::Mapping(b), serde_yaml::Value::Mapping(o)) => {
+            for (k, v) in o {
+                match b.get_mut(&k) {
+                    Some(existing) => yaml_deep_merge(existing, v),
+                    None => {
+                        b.insert(k, v);
+                    }
+                }
+            }
+        }
+        (base_slot, over_val) => {
+            *base_slot = over_val;
+        }
+    }
+}
+
+/// Phase 94 — shared "read file + resolve env placeholders" path
+/// for both base and override loads. Mirrors what `load_required`
+/// does inline, factored out so [`load_with_override`] can call
+/// it twice (once per layer) without re-implementing.
+fn read_yaml_resolved(path: &Path, label: &str) -> Result<String> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    env::resolve_placeholders(&raw, label)
+}
+
+/// Phase 94 — deserialize a single YAML file with the same
+/// schema-version stripping + placeholder resolution as
+/// [`load_required`]. Used by [`load_with_override`] when no
+/// merge applies (single-source paths).
+fn load_yaml_file<T: serde::de::DeserializeOwned>(path: &Path, label: &str) -> Result<T> {
+    let resolved = read_yaml_resolved(path, label)?;
+    deserialize_yaml_with_schema_version(&resolved)
+        .with_context(|| format!("invalid config in {}", path.display()))
+}
+
 /// Load a required YAML file, resolving `${ENV_VAR}` placeholders.
 pub fn load_required<T: serde::de::DeserializeOwned>(dir: &Path, filename: &str) -> Result<T> {
     let path = dir.join(filename);
@@ -268,6 +534,16 @@ fn deserialize_yaml_with_schema_version<T: serde::de::DeserializeOwned>(raw: &st
     Ok(serde_yaml::from_value(v)?)
 }
 
+/// Load personas/discovery.yaml. Phase F5 of cody-cli-install.
+/// Missing dir / file → empty defaults (no scan happens).
+fn load_personas(dir: &Path) -> Result<PersonasConfig> {
+    let personas_dir = dir.join("personas");
+    let discovery = load_optional::<PersonaDiscoveryConfigFile>(&personas_dir, "discovery.yaml")?
+        .map(|f| f.discovery)
+        .unwrap_or_default();
+    Ok(PersonasConfig { discovery })
+}
+
 fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let plugins_dir = dir.join("plugins");
     let whatsapp = load_optional::<WhatsappPluginConfigFile>(&plugins_dir, "whatsapp.yaml")?
@@ -292,4 +568,160 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
         browser,
         discovery,
     })
+}
+
+#[cfg(test)]
+mod phase94_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write(dir: &Path, name: &str, contents: &str) {
+        std::fs::write(dir.join(name), contents).unwrap();
+    }
+
+    fn get_str<'a>(v: &'a serde_yaml::Value, path: &[&str]) -> Option<&'a str> {
+        let mut cur = v;
+        for k in path {
+            cur = cur.get(*k)?;
+        }
+        cur.as_str()
+    }
+
+    fn get_bool(v: &serde_yaml::Value, path: &[&str]) -> Option<bool> {
+        let mut cur = v;
+        for k in path {
+            cur = cur.get(*k)?;
+        }
+        cur.as_bool()
+    }
+
+    #[test]
+    fn yaml_deep_merge_overrides_scalar_in_nested_mapping() {
+        let mut base: serde_yaml::Value = serde_yaml::from_str(
+            "broker:\n  type: nats\n  url: nats://base:4222\n  persistence:\n    enabled: true\n",
+        )
+        .unwrap();
+        let over: serde_yaml::Value = serde_yaml::from_str(
+            "broker:\n  url: nats://override:4222\n  persistence:\n    enabled: false\n",
+        )
+        .unwrap();
+        yaml_deep_merge(&mut base, over);
+        // Override-only keys win.
+        assert_eq!(
+            get_str(&base, &["broker", "url"]),
+            Some("nats://override:4222")
+        );
+        assert_eq!(
+            get_bool(&base, &["broker", "persistence", "enabled"]),
+            Some(false)
+        );
+        // Base-only key survives.
+        assert_eq!(get_str(&base, &["broker", "type"]), Some("nats"));
+    }
+
+    #[test]
+    fn yaml_deep_merge_replaces_sequence_wholesale() {
+        let mut base: serde_yaml::Value = serde_yaml::from_str("items:\n- a\n- b\n- c\n").unwrap();
+        let over: serde_yaml::Value = serde_yaml::from_str("items:\n- x\n").unwrap();
+        yaml_deep_merge(&mut base, over);
+        let items = base.get("items").unwrap().as_sequence().unwrap();
+        assert_eq!(items.len(), 1, "sequences replace, not concatenate");
+        assert_eq!(items[0].as_str(), Some("x"));
+    }
+
+    #[test]
+    fn env_var_wholesale_replaces_base() {
+        let base = TempDir::new().unwrap();
+        write(
+            base.path(),
+            "broker.yaml",
+            "broker:\n  type: nats\n  url: nats://base\n",
+        );
+        let other = TempDir::new().unwrap();
+        write(
+            other.path(),
+            "broker.yaml",
+            "broker:\n  type: local\n  url: \"\"\n",
+        );
+        // SAFETY: tests serialised by env-var contention via the
+        // ENV_TEST_LOCK below. Setting unique-named vars keeps
+        // unrelated tests unaffected.
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        std::env::set_var(
+            "NEXO_TEST_BROKER_YAML_X",
+            other.path().join("broker.yaml").to_str().unwrap(),
+        );
+        let cfg: BrokerConfig = load_with_override(
+            base.path(),
+            None,
+            "NEXO_TEST_BROKER_YAML_X",
+            "broker.yaml",
+        )
+        .unwrap();
+        std::env::remove_var("NEXO_TEST_BROKER_YAML_X");
+        assert_eq!(cfg.broker.kind, crate::types::broker::BrokerKind::Local);
+    }
+
+    #[test]
+    fn override_dir_deep_merges_on_base() {
+        let base = TempDir::new().unwrap();
+        write(
+            base.path(),
+            "broker.yaml",
+            "broker:\n  type: nats\n  url: nats://base\n  persistence:\n    enabled: true\n",
+        );
+        let overlay = TempDir::new().unwrap();
+        write(
+            overlay.path(),
+            "broker.yaml",
+            "broker:\n  url: nats://override\n",
+        );
+        let cfg: BrokerConfig = load_with_override(
+            base.path(),
+            Some(overlay.path()),
+            "NEXO_TEST_NONEXISTENT_ENV_FOR_MERGE",
+            "broker.yaml",
+        )
+        .unwrap();
+        assert_eq!(cfg.broker.kind, crate::types::broker::BrokerKind::Nats);
+        assert_eq!(cfg.broker.url, "nats://override");
+        // Persistence stayed from base (override didn't touch it).
+        assert!(cfg.broker.persistence.enabled);
+    }
+
+    #[test]
+    fn missing_everywhere_returns_default() {
+        let base = TempDir::new().unwrap();
+        let cfg: BrokerConfig = load_with_override(
+            base.path(),
+            None,
+            "NEXO_TEST_NONEXISTENT_ENV_FOR_DEFAULT",
+            "broker.yaml",
+        )
+        .unwrap();
+        // Default = Local.
+        assert_eq!(cfg.broker.kind, crate::types::broker::BrokerKind::Local);
+    }
+
+    #[test]
+    fn env_var_pointing_at_missing_file_errors() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        std::env::set_var(
+            "NEXO_TEST_BROKER_YAML_BAD",
+            "/this/path/does/not/exist/broker.yaml",
+        );
+        let result: anyhow::Result<BrokerConfig> = load_with_override(
+            Path::new("/tmp/does-not-matter"),
+            None,
+            "NEXO_TEST_BROKER_YAML_BAD",
+            "broker.yaml",
+        );
+        std::env::remove_var("NEXO_TEST_BROKER_YAML_BAD");
+        assert!(result.is_err(), "missing env-pointed file must fail");
+        assert!(format!("{:?}", result.unwrap_err()).contains("file does not exist"));
+    }
+
+    // Env-var tests serialise so they don't observe each other's
+    // sets / unsets. Cargo runs unit tests in parallel by default.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
