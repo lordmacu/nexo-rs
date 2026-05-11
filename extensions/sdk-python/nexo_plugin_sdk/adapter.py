@@ -89,29 +89,46 @@ class PluginAdapter:
             raise PluginError("PluginAdapter.run() already invoked")
         self._started = True
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        # Fully-async stdin reader — no threadpool, so signal-driven
+        # cancellation (added in 31.4.c) is clean. The StreamReader
+        # limit is sized above max_frame_bytes so the explicit
+        # byte-cap check below is the one that fires for slightly
+        # oversized frames; truly absurd frames hit the limit and
+        # are dropped by readline() itself.
+        reader = asyncio.StreamReader(limit=self._max_frame_bytes + 64 * 1024)
+        protocol = asyncio.StreamReaderProtocol(reader)
+        transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
         try:
             while True:
-                line = await loop.run_in_executor(None, sys.stdin.readline)
-                if not line:
+                try:
+                    line_bytes = await reader.readline()
+                except ValueError as e:
+                    # readline() drops the oversized line from its
+                    # buffer before raising — safe to keep dispatching.
+                    err = WireError(f"oversized inbound frame dropped: {e}")
+                    sys.stderr.write(f"plugin: {err}\n")
+                    sys.stderr.flush()
+                    continue
+                if not line_bytes:
                     # EOF — host closed stdin.
                     break
-                byte_len = len(line.encode("utf-8"))
-                if byte_len > self._max_frame_bytes:
+                if len(line_bytes) > self._max_frame_bytes:
                     err = WireError(
-                        f"inbound frame {byte_len} bytes exceeds "
+                        f"inbound frame {len(line_bytes)} bytes exceeds "
                         f"max_frame_bytes {self._max_frame_bytes}"
                     )
                     sys.stderr.write(f"plugin: {err}\n")
                     sys.stderr.flush()
                     continue
-                line = line.strip()
+                line = line_bytes.decode("utf-8", "replace").strip()
                 if not line:
                     continue
                 stop = await self._handle_line(line)
                 if stop:
                     break
         finally:
+            transport.close()
             await self._drain_inflight()
             if self._enable_stdout_guard:
                 stdout_guard.uninstall_stdout_guard()
