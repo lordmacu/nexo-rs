@@ -33,26 +33,34 @@ deployment.
 
 ## 1. Install the binary
 
-Pick one. Pre-built `.deb` is the fastest path:
+Pick one — the one-liner is the fastest, no Rust toolchain needed:
 
 ```bash
-# Debian / Ubuntu (recommended for first try)
-curl -sSL https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs_amd64.deb \
-    -o nexo.deb
-sudo dpkg -i nexo.deb
+# Pre-built binary (Linux x86_64/aarch64, macOS Intel/Apple Silicon).
+# Detects your platform, verifies sha256, drops `nexo` on PATH.
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 nexo --version
 ```
 
-Other platforms:
+Other paths:
 
 ```bash
-# macOS / Linux from source (slower first build)
-git clone https://github.com/lordmacu/nexo-rs.git
-cd nexo-rs && cargo build --release
-./target/release/nexo --version
+# From crates.io (needs a Rust toolchain)
+cargo install nexo-rs
 
-# Termux (Android)
-pkg install nexo-rs   # add the apt repo first — see install-termux.md
+# Debian/Ubuntu (.deb), Fedora/RHEL (.rpm), Termux (aarch64 .deb) —
+# grab the file for your arch from the latest release, e.g.:
+#   https://github.com/lordmacu/nexo-rs/releases/latest
+sudo apt install ./nexo-rs_0.1.6_amd64.deb        # Debian/Ubuntu
+sudo dnf install ./nexo-rs-0.1.6-1.x86_64.rpm     # Fedora/RHEL
+pkg install ./nexo-rs_0.1.6_aarch64.deb           # Termux
+
+# Docker
+docker pull ghcr.io/lordmacu/nexo-rs:latest
+
+# From source (track main)
+git clone https://github.com/lordmacu/nexo-rs.git
+cd nexo-rs && cargo build --release && ./target/release/nexo --version
 ```
 
 → More installers: [Installation](./installation.md), [.deb](./install-deb.md), [.rpm](./install-rpm.md), [Termux](./install-termux.md), [Nix](./install-nix.md).
