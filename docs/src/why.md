@@ -24,9 +24,16 @@ nexo-rs is opinionated toward that shape.
   The release tarball you actually download is ~15 MB (xz-compressed);
   the `.deb` is ~18 MB, the `.rpm` ~25 MB. Runs on a fresh VPS, on
   Termux without root, or as a systemd unit.
-- **Production-grade by default.** NATS-backed event bus with disk
-  fallback. Per-agent capability sandboxes. Cosign-verified plugin
-  marketplace. Multi-tenant SaaS-ready.
+- **Production-grade by default.** Event bus with disk fallback —
+  NATS for multi-host, or a built-in `local` broker (stdio-bridge
+  for subprocess plugins, no external server) for single-host;
+  `nexo set-broker` flips between them. Per-agent capability
+  sandboxes. Cosign-verified plugin marketplace. Multi-tenant
+  SaaS-ready.
+- **Zero-config boot.** `nexo` runs against documented defaults
+  with no config dir — admin RPCs + health live, 0 agents. Add a
+  persona, a YAML, or `nexo init`'s 19 commented samples when
+  you're ready.
 
 ## Three layers of extensibility
 
@@ -51,14 +58,18 @@ When you're ready to add functionality, pick the right layer:
 ## How it compares
 
 The closest reference point is [OpenClaw](https://github.com/openclaw/openclaw)
-(TypeScript, Node). nexo-rs trades JS familiarity for:
+(TypeScript, Node). If that's where you're coming from, here's the
+trade: you give up JS familiarity, you get —
 
-- A single static Rust binary (vs Node + transitive deps)
-- A fault-tolerant NATS broker layer (vs in-memory only)
+- A single static Rust binary (vs Node + `node_modules`); pre-built
+  for Linux / macOS / Windows + `.deb` / `.rpm` / Termux
+- A fault-tolerant broker layer — NATS for multi-host *or* a local
+  stdio bridge with no external server (vs in-memory only)
+- Zero-config boot + `nexo init` documented YAML scaffolds
 - Per-agent capability sandboxes
-- Durable workflows + secrets audit
+- Durable workflows (TaskFlow) + secrets audit
 - Termux / mobile-first portability
-- Plugin SDKs in 4 languages (vs TypeScript only)
+- Plugin SDKs in 4 languages — Rust, Python, TypeScript, PHP (vs TS only)
 
 See [vs OpenClaw](./architecture/vs-openclaw.md) for the full
 side-by-side.
