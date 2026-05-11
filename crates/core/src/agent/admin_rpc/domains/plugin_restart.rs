@@ -9,6 +9,9 @@
 //! Error mapping follows the established admin-rpc convention:
 //!   - "plugin {id} not found" → `InvalidParams` (stale list)
 //!   - "plugin {id} is in-tree" → `InvalidParams` (use daemon restart)
+//!   - "not yet populated" → `InvalidParams` (boot-window race —
+//!     daemon still finishing wire_plugin_registry; SPA should
+//!     retry in 1-2s rather than show a generic 500)
 //!   - "restart timed out" → `Internal` (degraded state)
 //!   - other anyhow → `Internal`
 
@@ -58,7 +61,15 @@ pub async fn restart_plugin(
             // User-recoverable substrings (operator can fix
             // without escalation): map back to InvalidParams so
             // the SPA renders inline error instead of generic 500.
-            if msg.contains("not found") || msg.contains("is in-tree") {
+            // "not yet populated" covers the brief boot-window
+            // race where the admin RPC arrives BEFORE main.rs
+            // writes `wire.plugin_handles` into the
+            // SharedPluginHandles cell — operator should retry
+            // after 1-2s, not see a hard failure.
+            if msg.contains("not found")
+                || msg.contains("is in-tree")
+                || msg.contains("not yet populated")
+            {
                 AdminRpcResult::err(AdminRpcError::InvalidParams(msg))
             } else {
                 AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -167,5 +178,27 @@ mod tests {
         .await;
         let err = res.error.expect("err");
         assert_eq!(err.code(), -32603); // Internal
+    }
+
+    /// Phase 90 audit follow-up — boot-window race surfaces from
+    /// `LivePluginRestarter` as "plugin handles not yet populated;
+    /// daemon still booting". Genuinely user-recoverable (retry
+    /// 1-2s), so the handler must classify it as InvalidParams not
+    /// Internal so the SPA renders a transient toast instead of
+    /// the generic 500 modal.
+    #[tokio::test]
+    async fn restart_plugin_maps_not_yet_populated_to_invalid_params() {
+        let r = StubRestarter::default();
+        *r.next_err.lock().unwrap() = Some(
+            "plugin handles not yet populated; daemon still booting".into(),
+        );
+        let res = restart_plugin(
+            &r,
+            serde_json::json!({"plugin_id": "browser"}),
+        )
+        .await;
+        let err = res.error.expect("err");
+        assert_eq!(err.code(), -32602, "boot-window error must be user-recoverable");
+        assert!(err.to_string().contains("not yet populated"));
     }
 }

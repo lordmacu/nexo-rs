@@ -64,11 +64,57 @@ P0 (6/6 shipped):
   `mutation_subject_prefix`). 2 unit tests asserting the
   configured prefix wins over `LIFECYCLE_SUBJECT_PREFIX`.
 
-P1 (7 open — next wave): restore-applied report cleanup
-race, `lastRestartReport` UI surfacing, `not yet populated`
-error class, `LlmRegistry` shared cell, doc drift in
-memory-snapshot.md events table + admin-rpc.md capability
-table + plugin.toml capability declarations (cross-repo).
+P1 (7/7 shipped 2026-05-11):
+- ✅ ~~**P1.1 memory-snapshot.md events table**~~ — fixed 4
+  bogus payload shapes (gc/deleted/created/restored). Subjects
+  + payloads now match actual wire (kind discriminator + post-
+  flatten field list). Subscribers writing schema-strict
+  consumers no longer silently fail to parse.
+- ✅ ~~**P1.2 admin-rpc.md capability table**~~ — added 33
+  missing method/capability rows incl. `plugin_restart` shipped
+  today. Operators deciding what to grant now have a complete
+  reference (57 live methods across 17 capabilities).
+- ✅ ~~**P1.3 handler maps "not yet populated" to InvalidParams**~~ —
+  `domains/plugin_restart.rs:61` regex extended. Boot-window
+  race ("plugin handles not yet populated; daemon still
+  booting") now classified user-recoverable so the SPA can
+  render a transient retry toast instead of the generic 500
+  modal. New `restart_plugin_maps_not_yet_populated_to_invalid_params`
+  test asserts the -32602 code.
+- ✅ ~~**P1.4 LlmRegistry shared cell**~~ — single
+  `Arc<LlmRegistry>` constructed once at main.rs:1958, shared
+  across `LivePluginRestarter`, `RegistryLlmCompleter`, the
+  boot-time provider catalog snapshot, AND the daemon main
+  runtime registry (was rebuilt at main.rs:2357 — now removed,
+  shadow re-bind kept for clarity). Closes the silent-divergence
+  gap if a plugin-registered LLM factory ever lands between
+  the two prior construction sites.
+- ✅ ~~**P1.5 restore-applied report cleanup race**~~ —
+  `RestoreSnapshotModal` now captures the apply-success report
+  into local `appliedReport` state (instead of relying on the
+  store's `lastRestoreReport` which the unmount cleanup nukes).
+  Modal switches to a "Done" view rendering the full
+  RestoreReportTable + a Close button that triggers the parent
+  onApplied (close + refresh). Operator finally sees the
+  pre_snapshot_id, git_reset_oid, and restored DB list. 3 new
+  i18n keys (`done_title`, `done_intro`, `close`) en+es.
+- ✅ ~~**P1.6 lastRestartReport UI surfacing**~~ — `PluginsMain`
+  renders the `lastRestartReport` from `usePluginsDoctor` as a
+  dismissible success banner above the loaded plugins list
+  showing `plugin_id` + `previous_uptime_ms` + `new_pid` +
+  `restarted_at` (ISO timestamp). 5 new i18n keys
+  (`plugins.restart.report.{banner,previous_uptime,new_pid,restarted_at,dismiss}`)
+  en+es. Dismissible via X button → `clearLastRestartReport()`.
+- ✅ ~~**P1.7 plugin.toml declares plugin_restart + memory_snapshot**~~ —
+  cross-repo: `nexo-rs-plugin-admin/plugin.toml` declares both
+  capabilities under `[plugin.capabilities.admin]::required` so
+  the daemon refuses to spawn the plugin until the operator
+  grants them (fail-fast). Otherwise the Restart button +
+  snapshot create/restore landed -32004 capability_not_granted.
+
+P1 totals: 1 new backend test, 0 frontend tests added (pure UX
++ store changes verified manually + tsc clean), full mdbook
+build clean, full workspace build clean.
 
 P2 (14 open — polish): domain kill-switches dead code,
 manifest validation gaps (`max_attempts==0`,
