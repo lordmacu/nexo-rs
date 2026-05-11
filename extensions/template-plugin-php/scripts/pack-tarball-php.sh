@@ -19,13 +19,11 @@
 # Usage:
 #   bash scripts/pack-tarball-php.sh
 #
-# Env overrides for tests:
-#   SDK_SRC=/abs/path  Override the in-tree SDK source (default
-#                      ../sdk-php). Used by test_pack_tarball.
+# The SDK (`nexo/plugin-sdk`) and other prod deps are vendored by
+# `composer install --no-dev` from Packagist. Env overrides for tests:
 #   SKIP_COMPOSER=1    Skip `composer install`. Use when vendor/
-#                      already exists from a prior step or when
-#                      the test is providing a synthetic vendor
-#                      tree.
+#                      already exists from a prior step or when the
+#                      test is providing a synthetic vendor tree.
 
 set -euo pipefail
 
@@ -33,12 +31,6 @@ set -euo pipefail
 source "$(dirname "$0")/extract-plugin-meta.sh"
 
 TARGET="noarch"
-SDK_SRC="${SDK_SRC:-../sdk-php}"
-
-if [[ ! -d "$SDK_SRC" ]]; then
-  echo "::error::SDK source not found at $SDK_SRC. Adjust SDK_SRC env or check the relative path." >&2
-  exit 1
-fi
 
 # 1. Vendor production deps via Composer.
 if [[ -z "${SKIP_COMPOSER:-}" ]] && [[ -f composer.json ]]; then

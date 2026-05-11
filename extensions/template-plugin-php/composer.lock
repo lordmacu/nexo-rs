@@ -4,15 +4,21 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "500664923b0bef96e45c6f852d9838ab",
+    "content-hash": "24abd3252630fa6bd3ca351747dc1cdc",
     "packages": [
         {
             "name": "nexo/plugin-sdk",
-            "version": "0.1.0",
+            "version": "v0.1.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/lordmacu/nexo-plugin-sdk-php.git",
+                "reference": "0a8fea19bf7f7a934f73748d08a173a2a47c566a"
+            },
             "dist": {
-                "type": "path",
-                "url": "../sdk-php",
-                "reference": "4df3e108299e21c82453f132d6110c4db11b6ab3"
+                "type": "zip",
+                "url": "https://api.github.com/repos/lordmacu/nexo-plugin-sdk-php/zipball/0a8fea19bf7f7a934f73748d08a173a2a47c566a",
+                "reference": "0a8fea19bf7f7a934f73748d08a173a2a47c566a",
+                "shasum": ""
             },
             "require": {
                 "php": "^8.1",
@@ -24,13 +30,10 @@
                     "Nexo\\Plugin\\Sdk\\": "src/"
                 }
             },
-            "scripts": {
-                "test": [
-                    "php tests/run-all.php"
-                ]
-            },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
-                "MIT OR Apache-2.0"
+                "MIT",
+                "Apache-2.0"
             ],
             "authors": [
                 {
@@ -38,11 +41,20 @@
                     "email": "informacion@cristiangarcia.co"
                 }
             ],
-            "description": "PHP SDK for nexo subprocess plugins (Phase 31.5.c)",
-            "transport-options": {
-                "symlink": false,
-                "relative": true
-            }
+            "description": "PHP SDK for nexo subprocess plugins",
+            "homepage": "https://github.com/lordmacu/nexo-plugin-sdks/tree/main/php",
+            "keywords": [
+                "Agent",
+                "json-rpc",
+                "nexo",
+                "plugin",
+                "subprocess"
+            ],
+            "support": {
+                "issues": "https://github.com/lordmacu/nexo-plugin-sdks/issues",
+                "source": "https://github.com/lordmacu/nexo-plugin-sdk-php"
+            },
+            "time": "2026-05-11T13:19:14+00:00"
         },
         {
             "name": "yosymfony/parser-utils",
@@ -157,9 +169,9 @@
     ],
     "packages-dev": [],
     "aliases": [],
-    "minimum-stability": "dev",
+    "minimum-stability": "stable",
     "stability-flags": [],
-    "prefer-stable": true,
+    "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
         "php": "^8.1"
