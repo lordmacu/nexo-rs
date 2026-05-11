@@ -399,7 +399,7 @@ tokio-util = { workspace = true, optional = true }
 # `stt` feature — whisper.cpp wrapper. Default-features off to
 # skip the OpenBLAS auto-link (each microapp surfaces its own BLAS
 # preference via system libs if needed).
-whisper-rs = { version = "0.13", default-features = false, optional = true }
+whisper-rs = { version = "0.16", default-features = false, optional = true }
 # `stt-candle` feature — pure-Rust Whisper via HuggingFace Candle.
 # Defaults left ON for `candle-core` so the CPU backend stays
 # wired (turning defaults off would strip the CPU path; that's
