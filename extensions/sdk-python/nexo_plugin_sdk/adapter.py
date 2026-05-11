@@ -23,6 +23,7 @@ Wire format: ``nexo-plugin-contract.md``.
 
 import asyncio
 import json
+import signal
 import sys
 from typing import Any, Awaitable, Callable
 
@@ -34,6 +35,28 @@ from .manifest import read_manifest
 
 EventHandler = Callable[[str, Event, BrokerSender], Awaitable[None]]
 ShutdownHandler = Callable[[], Awaitable[None]]
+
+# Signals that trigger a graceful shutdown (drain in-flight handlers,
+# then exit 0). Mirrors the TS SDK's SIGTERM/SIGINT handling.
+_SHUTDOWN_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+def _safe_remove_asyncio_signal(loop: asyncio.AbstractEventLoop, sig: int) -> None:
+    try:
+        loop.remove_signal_handler(sig)
+    except (ValueError, RuntimeError):
+        pass
+
+
+def _safe_restore_signal(sig: int, previous: Any) -> None:
+    # signal.signal returns SIG_DFL/SIG_IGN/a callable, or None when a
+    # non-Python handler was installed (which we cannot restore).
+    if previous is None:
+        return
+    try:
+        signal.signal(sig, previous)
+    except (ValueError, OSError, TypeError):
+        pass
 
 
 class PluginAdapter:
@@ -84,6 +107,41 @@ class PluginAdapter:
     def manifest(self) -> dict[str, Any]:
         return self._manifest
 
+    def _install_signal_handlers(
+        self, loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
+    ) -> list[Callable[[], None]]:
+        """Register SIGTERM/SIGINT → ``stop_event.set()``. Returns a
+        list of cleanup callbacks to undo the registrations."""
+        cleanups: list[Callable[[], None]] = []
+        if not self._handle_process_signals:
+            return cleanups
+        for sig in _SHUTDOWN_SIGNALS:
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+                cleanups.append(
+                    (lambda s: lambda: _safe_remove_asyncio_signal(loop, s))(sig)
+                )
+            except (NotImplementedError, RuntimeError, ValueError):
+                # add_signal_handler is unavailable (Windows
+                # ProactorEventLoop, or not the main thread). Fall
+                # back to the threadsafe-callback bridge.
+                try:
+                    previous = signal.signal(
+                        sig,
+                        lambda *_a: loop.call_soon_threadsafe(stop_event.set),
+                    )
+                except (ValueError, OSError, RuntimeError):
+                    sys.stderr.write(
+                        f"plugin: signal {sig} not installable on this "
+                        "platform; graceful shutdown on signal disabled\n"
+                    )
+                    sys.stderr.flush()
+                    continue
+                cleanups.append(
+                    (lambda s, p: lambda: _safe_restore_signal(s, p))(sig, previous)
+                )
+        return cleanups
+
     async def run(self) -> None:
         if self._started:
             raise PluginError("PluginAdapter.run() already invoked")
@@ -91,18 +149,37 @@ class PluginAdapter:
 
         loop = asyncio.get_running_loop()
         # Fully-async stdin reader — no threadpool, so signal-driven
-        # cancellation (added in 31.4.c) is clean. The StreamReader
-        # limit is sized above max_frame_bytes so the explicit
-        # byte-cap check below is the one that fires for slightly
-        # oversized frames; truly absurd frames hit the limit and
-        # are dropped by readline() itself.
+        # cancellation is clean. The StreamReader limit is sized above
+        # max_frame_bytes so the explicit byte-cap check below is the
+        # one that fires for slightly oversized frames; truly absurd
+        # frames hit the limit and are dropped by readline() itself.
         reader = asyncio.StreamReader(limit=self._max_frame_bytes + 64 * 1024)
         protocol = asyncio.StreamReaderProtocol(reader)
         transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+
+        stop_event = asyncio.Event()
+        signal_cleanups = self._install_signal_handlers(loop, stop_event)
         try:
-            while True:
+            while not stop_event.is_set():
+                read_task = asyncio.ensure_future(reader.readline())
+                stop_task = asyncio.ensure_future(stop_event.wait())
                 try:
-                    line_bytes = await reader.readline()
+                    await asyncio.wait(
+                        {read_task, stop_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not read_task.done():
+                        read_task.cancel()
+                    if not stop_task.done():
+                        stop_task.cancel()
+                if stop_event.is_set():
+                    # Graceful shutdown via signal — drop any line just
+                    # read; the host is tearing us down. In-flight
+                    # handlers are drained in the finally below.
+                    break
+                try:
+                    line_bytes = read_task.result()
                 except ValueError as e:
                     # readline() drops the oversized line from its
                     # buffer before raising — safe to keep dispatching.
@@ -110,6 +187,8 @@ class PluginAdapter:
                     sys.stderr.write(f"plugin: {err}\n")
                     sys.stderr.flush()
                     continue
+                except asyncio.CancelledError:
+                    break
                 if not line_bytes:
                     # EOF — host closed stdin.
                     break
@@ -128,6 +207,8 @@ class PluginAdapter:
                 if stop:
                     break
         finally:
+            for undo in signal_cleanups:
+                undo()
             transport.close()
             await self._drain_inflight()
             if self._enable_stdout_guard:
