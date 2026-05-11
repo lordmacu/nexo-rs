@@ -8711,7 +8711,16 @@ fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
 }
 
 fn parse_args() -> CliArgs {
-    let mut config_dir = PathBuf::from("./config");
+    // Phase 92.9 — config dir precedence:
+    //   1. explicit `--config <dir>` flag (highest priority)
+    //   2. `NEXO_CONFIG_DIR` env var (set by dev-daemon.sh +
+    //      shippable shell helpers so `nexo set-broker local`
+    //      works from any cwd without typing the flag every
+    //      time)
+    //   3. `./config` relative to cwd (legacy default)
+    let mut config_dir = std::env::var("NEXO_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./config"));
     let mut positional: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
 
