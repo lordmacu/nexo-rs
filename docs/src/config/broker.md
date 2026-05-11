@@ -41,9 +41,23 @@ broker:
 
 ## Operational notes
 
-- **`type: local` for single-machine dev.** You don't need NATS running
-  just to try the agent. The local broker matches NATS subject
-  semantics, so everything works the same.
+- **`type: local` for single-machine dev (and small prod).** You don't
+  need NATS running just to try the agent. The local broker matches
+  NATS subject semantics, so everything works the same.
+- **Subprocess plugins work in `local` mode too (Phase 92).** When
+  `type: local`, the daemon derives a `stdio_bridge` transport and
+  pipes `broker.publish` / `broker.event` for the extracted
+  subprocess plugins (WhatsApp, Telegram, marketing) through the
+  stdio JSON-RPC channel it already uses for tool calls — no NATS
+  server required. `stdio_bridge` is daemon-derived; operators never
+  pick it in YAML. Full picture: [broker shapes](../architecture/broker-shapes.md).
+- **Switch at runtime with `nexo set-broker`.** Rewrites this file +
+  SIGHUPs the running daemon (~3 s blackout; in-flight messages
+  drained from the persistence layer):
+  ```bash
+  nexo set-broker nats --url nats://localhost:4222   # → multi-host
+  nexo set-broker local                              # → stdio bridge
+  ```
 - **Disk queue always on in production.** Even on a single machine.
   It's the guarantee against losing events on a NATS blip.
 - **`drain_on_reconnect: true` is FIFO.** See
@@ -51,5 +65,6 @@ broker:
 
 See also:
 
+- [Broker shapes (local / NATS / embedded)](../architecture/broker-shapes.md)
 - [Fault tolerance](../architecture/fault-tolerance.md)
 - [DLQ operations](../ops/dlq.md)
