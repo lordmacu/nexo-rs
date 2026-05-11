@@ -1,8 +1,10 @@
-# Phase 31.4 — runtime deps for the Python plugin template.
+# Runtime deps for the Python plugin template.
 #
-# In-tree dev path: pack-tarball-python.sh copies the SDK out of
-# `../sdk-python/nexo_plugin_sdk` directly. Once
-# `nexo-plugin-sdk` ships to PyPI (Phase 31.4 follow-up), uncomment
-# below + remove the in-tree copy step in pack-tarball-python.sh.
+# The plugin SDK ships on PyPI as `nexoai` (the `nexo-plugin-sdk` name
+# was taken); the importable module is `nexo_plugin_sdk`. Source repo:
+# https://github.com/lordmacu/nexo-plugin-sdks
 #
-# nexo-plugin-sdk == 0.1.0
+# `pack-tarball-python.sh` vendors these into `lib/` via
+# `pip install --target lib -r requirements.txt`.
+nexoai==0.2.0
+tomli; python_version < "3.11"
