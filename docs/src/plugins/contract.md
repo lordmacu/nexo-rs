@@ -1326,6 +1326,116 @@ $adapter = new PluginAdapter([
 $adapter->run();
 ```
 
+### 9.5 Tools — host-initiated `tool.invoke` (Phase 81.29)
+
+A plugin that declares `[plugin.extends].tools = ["myplugin_weather"]`
+in its manifest advertises a tool catalog at handshake (the
+`initialize` reply's `tools` array, §4.1.1) and handles one
+`tool.invoke` request per agent-loop tool call (§5.t). All four SDKs
+expose the same surface: a catalog of tool definitions, one dispatch
+handler (optionally with a context giving broker access mid-invocation),
+and a typed `-33401..-33405` error band.
+
+**Rust** — `crates/microapp-sdk` with feature `plugin`:
+
+```rust
+use nexo_microapp_sdk::plugin::{PluginAdapter, ToolDef, ToolInvocation, ToolInvocationError};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    PluginAdapter::new(include_str!("../nexo-plugin.toml"))?
+        .declare_tools(vec![ToolDef {
+            name: "myplugin_weather".into(),
+            description: "Current weather for a city".into(),
+            input_schema: serde_json::json!({
+                "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"]
+            }),
+        }])
+        .on_tool(|inv: ToolInvocation| async move {
+            let city = inv.args.get("city").and_then(|v| v.as_str())
+                .ok_or_else(|| ToolInvocationError::ArgumentInvalid("missing `city`".into()))?;
+            Ok(serde_json::json!({ "content": [{ "type": "text", "text": format!("Sunny in {city}") }], "is_error": false }))
+        })
+        .run_stdio().await?;
+    Ok(())
+}
+```
+
+**Python** — `nexoai`:
+
+```python
+import asyncio
+from nexo_plugin_sdk import PluginAdapter, ToolDef, ToolInvocation, ToolArgumentInvalid, text_result
+
+MANIFEST = open("nexo-plugin.toml").read()
+
+async def on_tool(inv: ToolInvocation):
+    city = (inv.args or {}).get("city")
+    if not city:
+        raise ToolArgumentInvalid("missing `city`")
+    return text_result(f"Sunny in {city}")
+
+async def main() -> None:
+    await PluginAdapter(
+        manifest_toml=MANIFEST,
+        tools=[ToolDef("myplugin_weather", "Current weather for a city",
+                       {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]})],
+        on_tool=on_tool,           # or on_tool_with_context=fn(inv, ctx) — ctx.broker = the on_event broker handle
+    ).run()
+
+asyncio.run(main())
+```
+
+**TypeScript** — `nexo-plugin-sdk`:
+
+```ts
+import { readFileSync } from "node:fs";
+import { PluginAdapter, ToolArgumentInvalidError, textResult } from "nexo-plugin-sdk";
+
+const adapter = new PluginAdapter({
+  manifestToml: readFileSync("nexo-plugin.toml", "utf-8"),
+  tools: [{ name: "myplugin_weather", description: "Current weather for a city",
+    inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } }],
+  onTool: (inv) => {
+    const city = (inv.args as { city?: string } | null)?.city;
+    if (!city) throw new ToolArgumentInvalidError("missing `city`");
+    return textResult(`Sunny in ${city}`);
+  },
+  // or onToolWithContext: (inv, ctx) => { ... ctx.broker.memoryRecall(...) ... }
+});
+await adapter.run();
+```
+
+**PHP** — `nexo/plugin-sdk`:
+
+```php
+<?php declare(strict_types=1);
+require __DIR__ . '/vendor/autoload.php';
+use Nexo\Plugin\Sdk\{PluginAdapter, Tool, ToolArgumentInvalid, ToolDef, ToolInvocation};
+
+$adapter = new PluginAdapter([
+    'manifestToml' => file_get_contents(__DIR__ . '/nexo-plugin.toml'),
+    'tools' => [new ToolDef('myplugin_weather', 'Current weather for a city',
+        ['type' => 'object', 'properties' => ['city' => ['type' => 'string']], 'required' => ['city']])],
+    'onTool' => function (ToolInvocation $inv) {
+        $city = $inv->args['city'] ?? null;
+        if (!$city) { throw new ToolArgumentInvalid('missing `city`'); }
+        return Tool::text("Sunny in {$city}");
+    },
+    // or 'onToolWithContext' => fn(ToolInvocation $inv, ToolContext $ctx) => /* $ctx->broker->memoryRecall(...) */
+]);
+$adapter->run();
+```
+
+Throwing one of the typed errors maps to the matching `-33401..-33405`
+code: `ToolNotFound` (-33401), `ToolArgumentInvalid` (-33402, carries
+`details`), `ToolExecutionFailed` (-33403 — also the catch-all for an
+uncaught generic exception), `ToolUnavailable` (-33404, carries
+`retry_after_ms`), `ToolDenied` (-33405). A `tool.invoke` arriving when
+no handler is registered replies `-32601`. Declaring a tool whose name
+is not in the manifest's `[plugin.extends].tools` is a hard failure at
+construction (the daemon would otherwise kill the plugin — see §4.1.1).
+
 ## 10. Versioning + compatibility
 
 This contract uses **semver**. The current version is `1.0.0`.
@@ -1358,8 +1468,10 @@ rejects plugins targeting a major version it does not support.
   `php/` (Packagist [`nexo/plugin-sdk`](https://packagist.org/packages/nexo/plugin-sdk),
   via the [`nexo-plugin-sdk-php`](https://github.com/lordmacu/nexo-plugin-sdk-php)
   mirror). All implement `initialize` / `broker.event` / `shutdown` /
-  `broker.publish` and the child→host calls `memory.recall` /
-  `llm.complete` (+ `llm.complete.delta` streaming).
+  `broker.publish`, the child→host calls `memory.recall` /
+  `llm.complete` (+ `llm.complete.delta` streaming), and the host→child
+  `tool.invoke` request + the `initialize`-reply tool catalog
+  (§4.1.1 / §5.t — Python `nexoai` ≥ 0.4.0, TypeScript / PHP ≥ 0.3.0).
 - **Go SDK**: not yet planned.
 
 ## 12. Out of contract scope

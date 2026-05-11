@@ -72,10 +72,48 @@ use Nexo\Plugin\Sdk\WireError;         // raised on malformed/oversized frames
 | `manifestToml: string` | ✅ | Body of `nexo-plugin.toml`. Read once at startup; the SDK validates `plugin.id` (regex `/^[a-z][a-z0-9_]{0,31}$/`), `plugin.version`, `plugin.name`, `plugin.description`. |
 | `serverVersion?: string` | ⬜ | Returned in the `initialize` reply. Default `"0.1.0"`. |
 | `onEvent?: callable(string, Event, BrokerSender): void` | ⬜ | Invoked for every `broker.event` notification. Runs in a Fiber so the dispatch loop continues. |
-| `onShutdown?: callable(): void` | ⬜ | Awaited before `{ok: true}` reply to the host's `shutdown` request. In-flight Fibers also drained first. |
+| `onShutdown?: callable(): void` | ⬜ | Awaited before `{ok: true}` reply to the host's `shutdown` request. In-flight Fibers (`onEvent` + `tool.invoke`) also drained first. |
+| `tools?: ToolDef[]` | ⬜ | `new ToolDef($name, $description, $inputSchema)[]` — the tool catalog advertised in the `initialize` reply's `tools` array (contract §4.1.1; serialized with the wire key `input_schema`). Every `$name` must appear in the manifest's `[plugin.extends].tools` — otherwise the constructor throws `ManifestError`. |
+| `onTool?: callable(ToolInvocation): mixed` | ⬜ | Dispatch handler for `tool.invoke` (contract §5.t). Runs in a Fiber tracked by the scheduler's drain set. Mutually exclusive with `onToolWithContext`. |
+| `onToolWithContext?: callable(ToolInvocation, ToolContext): mixed` | ⬜ | Like `onTool`, but `$ctx->broker` is the same `BrokerSender` `onEvent` gets — a tool body can `memoryRecall` / `llmComplete` mid-invocation. Wins over `onTool` when both are set. |
 | `enableStdoutGuard?: bool` | ⬜ default `true` | Installs an `ob_start` callback that diverts non-JSON `echo`/`print`/`printf`/`var_dump` output to stderr tagged with `[stdout-guard]`. |
 | `maxFrameBytes?: int` | ⬜ default `1048576` | Reject inbound frames larger than this with `WireError`; dispatch continues. |
 | `handleProcessSignals?: bool` | ⬜ default `true` | Listen for SIGTERM + SIGINT via `pcntl_async_signals` and trigger graceful shutdown (drain in-flight, exit 0). |
+
+## Tool dispatch (`tool.invoke`, contract §4.1.1 + §5.t)
+
+The tool classes live in `src/Tool.php` (loaded via the `files` autoload
+entry alongside `src/Host.php`):
+
+```php
+use Nexo\Plugin\Sdk\{PluginAdapter, Tool, ToolDef, ToolInvocation, ToolContext,
+    ToolNotFound, ToolArgumentInvalid, ToolExecutionFailed, ToolUnavailable, ToolDenied};
+
+$adapter = new PluginAdapter([
+    'manifestToml' => file_get_contents(__DIR__ . '/nexo-plugin.toml'),
+    'tools' => [new ToolDef('myplugin_weather', 'Current weather for a city',
+        ['type' => 'object', 'properties' => ['city' => ['type' => 'string']], 'required' => ['city']])],
+    'onToolWithContext' => function (ToolInvocation $inv, ToolContext $ctx): mixed {
+        if ($inv->toolName !== 'myplugin_weather') { throw new ToolNotFound($inv->toolName); }
+        $city = $inv->args['city'] ?? null;
+        if (!$city) { throw new ToolArgumentInvalid('missing `city`', ['field' => 'city']); }
+        // $ctx->broker is the onEvent broker handle — e.g. $ctx->broker->memoryRecall(['agentId' => $inv->agentId ?? '', 'query' => $city]);
+        return Tool::text("Sunny in {$city}");   // any JSON value is fine; this is the conventional shape
+    },
+    // or 'onTool' => fn(ToolInvocation $inv) => ... when you don't need the broker
+]);
+$adapter->run();
+```
+
+The handler's return value becomes the JSON-RPC `result` verbatim
+(non-encodable → `-33403`). Throwing `ToolNotFound` /
+`ToolArgumentInvalid` (`$details`) / `ToolExecutionFailed` /
+`ToolUnavailable` (`$retryAfterMs`) / `ToolDenied` maps to the matching
+`-33401..-33405` code (the code is carried via
+`parent::__construct($msg, $code)` like `RpcServerError` — read it with
+`getCode()`); an uncaught `\Throwable` maps to `-33403`; a `tool.invoke`
+with no handler registered replies `-32601`.
+(Packagist `nexo/plugin-sdk` ≥ 0.3.0.)
 
 ## Tarball convention (`noarch`)
 
