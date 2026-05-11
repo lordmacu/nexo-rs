@@ -51,6 +51,19 @@ enum Mode {
     DlqList,
     DlqReplay(String),
     DlqPurge,
+    /// Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+    /// edits `broker.yaml` in the daemon's config dir to switch
+    /// between `nats` and `local` transports without an operator
+    /// learning sed syntax. After the edit, sends SIGTERM to any
+    /// running daemon (matched by its `--config` argument) so the
+    /// supervisor loop (dev-daemon.sh or systemd) respawns and
+    /// picks up the new config. `--no-signal` skips the kill for
+    /// scripted workflows that want to control restart timing.
+    SetBroker {
+        kind: String,
+        url: Option<String>,
+        no_signal: bool,
+    },
     ExtList {
         json: bool,
     },
@@ -1438,6 +1451,13 @@ async fn main() -> Result<()> {
         Mode::DlqList => return run_dlq_list(&args.config_dir).await,
         Mode::DlqReplay(id) => return run_dlq_replay(&args.config_dir, &id).await,
         Mode::DlqPurge => return run_dlq_purge(&args.config_dir).await,
+        Mode::SetBroker {
+            kind,
+            url,
+            no_signal,
+        } => {
+            return run_set_broker(&args.config_dir, &kind, url.as_deref(), no_signal);
+        }
         Mode::ExtHelp => return run_ext_help(),
         Mode::ExtList { json } => return run_ext_cli(&args.config_dir, ExtCmd::List { json }),
         Mode::ExtInfo { id, json } => {
@@ -8834,6 +8854,21 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "dlq" && sub == "list" => Mode::DlqList,
         [cmd, sub] if cmd == "dlq" && sub == "purge" => Mode::DlqPurge,
         [cmd, sub, id] if cmd == "dlq" && sub == "replay" => Mode::DlqReplay(id.clone()),
+        // Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+        // Switch the broker transport in `broker.yaml` and (by default)
+        // kick the running daemon so its supervisor respawns with the
+        // new config.
+        [cmd, kind, ..] if cmd == "set-broker" => {
+            let url_idx = positional.iter().position(|a| a == "--url");
+            let url = url_idx
+                .and_then(|i| positional.get(i + 1))
+                .map(|s| s.to_string());
+            Mode::SetBroker {
+                kind: kind.clone(),
+                url,
+                no_signal: positional.iter().any(|a| a == "--no-signal"),
+            }
+        }
         [cmd] if cmd == "ext" => Mode::ExtHelp,
         [cmd, sub] if cmd == "ext" && sub == "list" => Mode::ExtList {
             json: has_json_flag,
@@ -12867,6 +12902,144 @@ async fn open_disk_queue(config_dir: &std::path::Path) -> Result<DiskQueue> {
     DiskQueue::new(path, max_pending)
         .await
         .with_context(|| format!("failed to open disk queue at {path}"))
+}
+
+/// Phase 92.9 — handler for `nexo set-broker <kind> [--url <url>]
+/// [--no-signal]`. Edits `broker.yaml` in `config_dir` so the
+/// operator switches between NATS and Local transports without
+/// learning sed syntax, then (by default) sends SIGTERM to the
+/// running daemon (matched by its `--config` arg) so the
+/// supervisor loop (dev-daemon.sh / systemd) respawns and picks
+/// up the new config.
+///
+/// Kinds accepted:
+///
+/// - `local` — single-host stdio bridge mode. Strips `url:`.
+/// - `nats`  — multi-host or single-host with NATS. `--url`
+///   required when not already set in the YAML (uses an
+///   operator-friendly default `nats://127.0.0.1:4222` when
+///   neither the YAML nor `--url` provide one).
+/// - `stdio_bridge` — REJECTED. This kind is daemon-derived
+///   from `Local` for subprocess plugins; setting it manually
+///   would break the daemon's broker startup. Print a clear
+///   error so operators don't try.
+fn run_set_broker(
+    config_dir: &std::path::Path,
+    kind: &str,
+    url: Option<&str>,
+    no_signal: bool,
+) -> Result<()> {
+    let broker_yaml = config_dir.join("broker.yaml");
+    if !broker_yaml.exists() {
+        anyhow::bail!(
+            "broker.yaml not found at {}; set --config to the daemon's config dir",
+            broker_yaml.display()
+        );
+    }
+    let normalized_kind = match kind {
+        "local" | "nats" => kind,
+        "stdio_bridge" => anyhow::bail!(
+            "kind `stdio_bridge` is daemon-derived from `local` for subprocess plugins; \
+             operator-facing kinds are `local` or `nats`."
+        ),
+        other => anyhow::bail!("unknown broker kind `{other}` (expected: local | nats)"),
+    };
+
+    let raw = std::fs::read_to_string(&broker_yaml)?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&raw)?;
+    let map = doc
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("broker.yaml top-level is not a mapping"))?;
+    let broker_key = serde_yaml::Value::String("broker".to_string());
+    let broker_map = map
+        .get_mut(&broker_key)
+        .and_then(|v| v.as_mapping_mut())
+        .ok_or_else(|| anyhow::anyhow!("broker.yaml missing top-level `broker:` mapping"))?;
+
+    // Set type
+    broker_map.insert(
+        serde_yaml::Value::String("type".to_string()),
+        serde_yaml::Value::String(normalized_kind.to_string()),
+    );
+
+    // Set url based on kind. `url_key` is rebuilt fresh per access
+    // so the borrow on `broker_map` doesn't linger across the
+    // serialize + post-write `println!` that also wants to inspect
+    // the map.
+    fn url_key() -> serde_yaml::Value {
+        serde_yaml::Value::String("url".to_string())
+    }
+    let final_url_for_log: String = match normalized_kind {
+        "nats" => {
+            let existing_url = broker_map
+                .get(&url_key())
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let final_url = match url {
+                Some(u) => u.to_string(),
+                None => match existing_url.filter(|s| s.starts_with("nats://")) {
+                    Some(s) => s,
+                    None => "nats://127.0.0.1:4222".to_string(),
+                },
+            };
+            broker_map.insert(url_key(), serde_yaml::Value::String(final_url.clone()));
+            final_url
+        }
+        "local" => {
+            // Local broker has no URL; set to empty string to keep
+            // the field present (the BrokerInner serde struct expects
+            // it for backwards compatibility with pre-92 readers).
+            broker_map.insert(url_key(), serde_yaml::Value::String(String::new()));
+            String::new()
+        }
+        _ => unreachable!(),
+    };
+
+    let serialized = serde_yaml::to_string(&doc)?;
+    std::fs::write(&broker_yaml, serialized)?;
+    println!(
+        "✓ broker.yaml updated: type={} url={}",
+        normalized_kind, final_url_for_log
+    );
+
+    if no_signal {
+        println!("  (--no-signal: skipping daemon kick)");
+        println!("  Restart the daemon manually to pick up the new config.");
+        return Ok(());
+    }
+
+    // Best-effort SIGTERM to any running daemon matching this config
+    // dir. `pgrep -f` would be more portable than parsing /proc but
+    // the proyecto target ships unix-only today; revisit when
+    // Windows is in scope.
+    let cfg_path = config_dir.canonicalize().unwrap_or_else(|_| config_dir.to_path_buf());
+    let needle = format!("--config {}", cfg_path.display());
+    let output = std::process::Command::new("pgrep")
+        .args(["-f", &needle])
+        .output();
+    let pids: Vec<i32> = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .filter(|&pid: &i32| pid != std::process::id() as i32)
+            .collect(),
+        _ => Vec::new(),
+    };
+    if pids.is_empty() {
+        println!("  (no running daemon matched `{needle}`; no signal sent)");
+        println!("  Start the daemon to pick up the new config.");
+        return Ok(());
+    }
+    for pid in &pids {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+    println!(
+        "  Sent SIGTERM to {} daemon process(es); supervisor loop should respawn.",
+        pids.len()
+    );
+    Ok(())
 }
 
 async fn run_dlq_list(config_dir: &std::path::Path) -> Result<()> {
