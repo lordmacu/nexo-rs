@@ -1782,16 +1782,34 @@ impl SubprocessNexoPlugin {
         // Validate returned manifest's id matches what the factory
         // was registered under. Defense against an out-of-tree
         // binary pretending to be a different plugin.
+        //
+        // Synthetic instance factories — `synthesize_instance_plugin`
+        // appends `.{instance}` to the base manifest id so each
+        // instance has its own factory slot in the registry. But the
+        // subprocess binary embeds the ORIGINAL manifest via
+        // `include_str!("../nexo-plugin.toml")` at compile time, so
+        // its initialize-reply reports the BASE id (`whatsapp`), not
+        // the synthesized `whatsapp.smoketest`. Accept the base id
+        // as a valid response when the factory was registered for an
+        // instance variant; the rest of the cached_manifest (broker
+        // allowlist, extends.tools, sandbox) still pins all the
+        // defense-in-depth invariants.
         let returned_id = result
             .pointer("/manifest/plugin/id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("initialize reply missing manifest.plugin.id"))?;
-        if returned_id != self.cached_manifest.plugin.id {
+        let expected_id = &self.cached_manifest.plugin.id;
+        let id_ok = returned_id == expected_id
+            || expected_id
+                .split_once('.')
+                .map(|(base, _instance)| base == returned_id)
+                .unwrap_or(false);
+        if !id_ok {
             cancel.cancel();
             kill_handle(&child_handle).await;
             anyhow::bail!(
                 "manifest id mismatch: factory expected `{}`, child reported `{}`",
-                self.cached_manifest.plugin.id,
+                expected_id,
                 returned_id
             );
         }
