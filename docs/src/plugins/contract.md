@@ -8,7 +8,7 @@
 | `contract_version` | `1.10.0` |
 | Status | Stable |
 | Authoritative reference | This document |
-| Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
+| Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). Python / TypeScript / PHP children: [`github.com/lordmacu/nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks). See §11. |
 
 This contract describes how an out-of-tree plugin binary
 communicates with the nexo daemon. A conforming plugin can be
@@ -1254,109 +1254,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn send_to_slack(_text: &str) {}
 ```
 
-### 9.2 Python (skeleton — Phase 31.4 will publish a real SDK)
+### 9.2 Python — `nexoai`
+
+`pip install nexoai` (the `nexo-plugin-sdk` name was taken on PyPI; the
+importable module stays `nexo_plugin_sdk`). Source:
+[`nexo-plugin-sdks/python/`](https://github.com/lordmacu/nexo-plugin-sdks/tree/main/python).
 
 ```python
-import json
-import sys
+import asyncio
+from nexo_plugin_sdk import PluginAdapter, Event
 
 MANIFEST = open("nexo-plugin.toml").read()
 
-def main():
-    for line in sys.stdin:
-        frame = json.loads(line)
-        if "id" in frame:
-            handle_request(frame)
-        else:
-            handle_notification(frame)
+async def on_event(topic: str, event: Event, broker) -> None:
+    # call back into the host (memory.recall §5.2 / llm.complete §5.3):
+    entries = await broker.memory_recall(agent_id="my_agent", query="user prefers concise answers", limit=5)
+    result = await broker.llm_complete(provider="minimax", model="minimax-m2.5",
+                                       messages=[{"role": "user", "content": "summarize: ..."}])
+    await broker.publish("plugin.inbound.slack",
+                         Event.new("plugin.inbound.slack", "slack", {"summary": result.content}))
 
-def handle_request(frame):
-    if frame["method"] == "initialize":
-        reply = {
-            "jsonrpc": "2.0",
-            "id": frame["id"],
-            "result": {
-                "manifest": parse_manifest(MANIFEST),
-                "server_version": "slack-0.2.0",
-            },
-        }
-        sys.stdout.write(json.dumps(reply) + "\n")
-        sys.stdout.flush()
-    elif frame["method"] == "shutdown":
-        sys.stdout.write(json.dumps({
-            "jsonrpc": "2.0",
-            "id": frame["id"],
-            "result": {"ok": True},
-        }) + "\n")
-        sys.stdout.flush()
-        sys.exit(0)
+async def main() -> None:
+    await PluginAdapter(manifest_toml=MANIFEST, on_event=on_event).run()
 
-def handle_notification(frame):
-    if frame["method"] == "broker.event":
-        topic = frame["params"]["topic"]
-        event = frame["params"]["event"]
-        # ... deliver event.payload to the external service ...
-        # Optionally publish back:
-        publish("plugin.inbound.slack", {"echo": event["payload"]})
-
-def publish(topic, payload):
-    note = {
-        "jsonrpc": "2.0",
-        "method": "broker.publish",
-        "params": {"topic": topic, "event": build_event(topic, payload)},
-    }
-    sys.stdout.write(json.dumps(note) + "\n")
-    sys.stdout.flush()
-
-main()
+asyncio.run(main())
 ```
 
-### 9.3 TypeScript / Node (skeleton — Phase 31.5)
+### 9.3 TypeScript / Node — `nexo-plugin-sdk`
+
+`npm install nexo-plugin-sdk`. Source:
+[`nexo-plugin-sdks/typescript/`](https://github.com/lordmacu/nexo-plugin-sdks/tree/main/typescript).
 
 ```ts
-import * as readline from "node:readline";
-import * as fs from "node:fs";
+import { readFileSync } from "node:fs";
+import { PluginAdapter, Event } from "nexo-plugin-sdk";
 
-const MANIFEST = fs.readFileSync("nexo-plugin.toml", "utf-8");
-const rl = readline.createInterface({ input: process.stdin });
-
-rl.on("line", (line) => {
-  const frame = JSON.parse(line);
-  if ("id" in frame) handleRequest(frame);
-  else handleNotification(frame);
+const adapter = new PluginAdapter({
+  manifestToml: readFileSync("nexo-plugin.toml", "utf-8"),
+  onEvent: async (topic, event, broker) => {
+    const entries = await broker.memoryRecall({ agentId: "my_agent", query: "user prefers concise answers", limit: 5 });
+    const result = await broker.llmComplete({ provider: "minimax", model: "minimax-m2.5",
+      messages: [{ role: "user", content: "summarize: ..." }] });
+    await broker.publish("plugin.inbound.slack",
+      Event.new("plugin.inbound.slack", "slack", { summary: result.content }));
+  },
 });
+await adapter.run();
+```
 
-function handleRequest(frame: any) {
-  if (frame.method === "initialize") {
-    write({
-      jsonrpc: "2.0",
-      id: frame.id,
-      result: { manifest: parseManifest(MANIFEST), server_version: "slack-0.2.0" },
-    });
-  } else if (frame.method === "shutdown") {
-    write({ jsonrpc: "2.0", id: frame.id, result: { ok: true } });
-    process.exit(0);
-  }
-}
+### 9.4 PHP — `nexo/plugin-sdk`
 
-function handleNotification(frame: any) {
-  if (frame.method === "broker.event") {
-    // ... deliver frame.params.event.payload ...
-    publish("plugin.inbound.slack", { echo: frame.params.event.payload });
-  }
-}
+`composer require nexo/plugin-sdk` (PHP ≥ 8.1 — uses Fibers). Source:
+[`nexo-plugin-sdks/php/`](https://github.com/lordmacu/nexo-plugin-sdks/tree/main/php)
+(mirrored to [`nexo-plugin-sdk-php`](https://github.com/lordmacu/nexo-plugin-sdk-php) for Packagist).
 
-function publish(topic: string, payload: unknown) {
-  write({
-    jsonrpc: "2.0",
-    method: "broker.publish",
-    params: { topic, event: buildEvent(topic, payload) },
-  });
-}
+```php
+<?php declare(strict_types=1);
+require __DIR__ . '/vendor/autoload.php';
+use Nexo\Plugin\Sdk\{PluginAdapter, BrokerSender, Event};
 
-function write(frame: unknown) {
-  process.stdout.write(JSON.stringify(frame) + "\n");
-}
+$adapter = new PluginAdapter([
+    'manifestToml' => file_get_contents(__DIR__ . '/nexo-plugin.toml'),
+    'onEvent' => function (string $topic, Event $event, BrokerSender $broker): void {
+        $entries = $broker->memoryRecall(['agentId' => 'my_agent', 'query' => 'user prefers concise answers', 'limit' => 5]);
+        $r = $broker->llmComplete(['provider' => 'minimax', 'model' => 'minimax-m2.5',
+            'messages' => [['role' => 'user', 'content' => 'summarize: ...']]]);
+        $broker->publish('plugin.inbound.slack', Event::new('plugin.inbound.slack', 'slack', ['summary' => $r->content]));
+        // streaming: $broker->llmCompleteStream($opts, fn(string $chunk) => /* ... */);
+    },
+]);
+$adapter->run();
 ```
 
 ## 10. Versioning + compatibility
@@ -1384,8 +1351,15 @@ rejects plugins targeting a major version it does not support.
   (`SubprocessNexoPlugin`) — Phase 81.14 + 81.14.b.
 - **Rust child SDK**: `crates/microapp-sdk/src/plugin.rs`
   (`PluginAdapter`, feature `plugin`) — Phase 81.15.a.
-- **Python SDK**: deferred to Phase 31.4.
-- **TypeScript / Node SDK**: deferred to Phase 31.5.
+- **Python / TypeScript / PHP child SDKs**:
+  [`github.com/lordmacu/nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks)
+  — `python/` (PyPI [`nexoai`](https://pypi.org/project/nexoai/)),
+  `typescript/` (npm [`nexo-plugin-sdk`](https://www.npmjs.com/package/nexo-plugin-sdk)),
+  `php/` (Packagist [`nexo/plugin-sdk`](https://packagist.org/packages/nexo/plugin-sdk),
+  via the [`nexo-plugin-sdk-php`](https://github.com/lordmacu/nexo-plugin-sdk-php)
+  mirror). All implement `initialize` / `broker.event` / `shutdown` /
+  `broker.publish` and the child→host calls `memory.recall` /
+  `llm.complete` (+ `llm.complete.delta` streaming).
 - **Go SDK**: not yet planned.
 
 ## 12. Out of contract scope
