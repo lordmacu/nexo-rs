@@ -128,15 +128,14 @@
         <div class="mt-12 max-w-2xl">
           <div class="text-sm text-ink-500 uppercase tracking-wider mb-2">Install</div>
           <div class="bg-ink-900/80 border border-ink-800 rounded-lg p-4 code-block text-sm overflow-x-auto">
-            <span class="text-ink-500"># Linux / macOS (auto-detects platform, no toolchain needed)</span><br/>
-            <span class="text-accent-400">curl</span> --proto '=https' --tlsv1.2 -LsSf <span class="text-ink-500">\</span><br/>
-            &nbsp;&nbsp;https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs-installer.sh <span class="text-ink-500">|</span> <span class="text-accent-400">sh</span><br/>
-            <br/>
-            <span class="text-ink-500"># Docker (multi-arch amd64 + arm64)</span><br/>
-            <span class="text-accent-400">docker pull</span> ghcr.io/lordmacu/nexo-rs:latest<br/>
+            <span class="text-ink-500"># Linux / macOS — auto-detects OS+arch, verifies sha256, no toolchain needed</span><br/>
+            <span class="text-accent-400">curl</span> -fsSL https://lordmacu.github.io/nexo-rs/install.sh <span class="text-ink-500">|</span> <span class="text-accent-400">bash</span><br/>
             <br/>
             <span class="text-ink-500"># From crates.io (Rust toolchain required)</span><br/>
-            <span class="text-accent-400">cargo install</span> nexo
+            <span class="text-accent-400">cargo install</span> nexo-rs<br/>
+            <br/>
+            <span class="text-ink-500"># Docker (multi-arch amd64 + arm64)</span><br/>
+            <span class="text-accent-400">docker pull</span> ghcr.io/lordmacu/nexo-rs:latest
           </div>
           <p class="mt-3 text-xs text-ink-500">
             Native binaries: Linux x86_64 + aarch64 (musl static), macOS
@@ -359,7 +358,7 @@
         <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Official plugins</div>
         <h2 class="text-4xl md:text-5xl font-bold mb-6">Channels + ops, already shipped.</h2>
         <p class="text-xl text-ink-300 leading-relaxed">
-          Five plugins maintained out-of-tree on their own GitHub repos + crates.io. Install with <code class="bg-ink-900 px-2 py-0.5 rounded text-base">cargo install</code> + drop the manifest under your <code class="bg-ink-900 px-2 py-0.5 rounded text-base">plugins.discovery.search_paths</code>. Pure-Rust + rustls on every cross-compile target (Linux musl, macOS, Windows MSVC, Android NDK / Termux).
+          Five plugins maintained out-of-tree on their own GitHub repos. One command: <code class="bg-ink-900 px-2 py-0.5 rounded text-base">nexo plugin install &lt;owner&gt;/&lt;repo&gt;</code> grabs the release tarball and drops it under <code class="bg-ink-900 px-2 py-0.5 rounded text-base">plugins.discovery.search_paths</code> (or build from source with <code class="bg-ink-900 px-2 py-0.5 rounded text-base">cargo install --git</code>). Pure-Rust + rustls on every cross-compile target (Linux musl, macOS, Windows MSVC, Android NDK / Termux).
         </p>
       </div>
 
@@ -645,7 +644,7 @@
               <td colspan="4" class="py-3 px-6 text-xs uppercase tracking-wider text-accent-400 font-semibold">Distribution</td>
             </tr>
             <tr class="border-t border-ink-800">
-              <td class="py-3 px-6"><strong>Single static binary</strong> via <code>cargo install</code> + Homebrew tap + GH Releases</td>
+              <td class="py-3 px-6"><strong>Single static binary</strong> via <code>install.sh</code> · <code>cargo install nexo-rs</code> · GH Releases (.deb / .rpm / Termux) · Docker (GHCR)</td>
               <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">musl × 2</span></td>
               <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">x86_64 + arm64</span></td>
               <td class="py-3 px-4 text-center text-green-400 font-semibold">✅<span class="block text-xs text-ink-500 font-normal">x86_64 MSVC</span></td>
