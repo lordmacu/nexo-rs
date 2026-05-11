@@ -1925,6 +1925,7 @@ mod tests {
 
     #[test]
     fn oauth_request_shape_prepends_claude_code_spoof() {
+        let _g = spoof_env_lock();
         use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
         let mut r = req_with_tools();
         r.system_prompt = Some("custom system text".into());
@@ -1959,6 +1960,7 @@ mod tests {
 
     #[test]
     fn build_body_promotes_string_system_when_subscription() {
+        let _g = spoof_env_lock();
         use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
         let mut r = req_with_tools();
         r.system_prompt = Some("legacy text".into());
@@ -1972,6 +1974,7 @@ mod tests {
 
     #[test]
     fn build_body_creates_system_array_when_subscription_and_no_user_system() {
+        let _g = spoof_env_lock();
         use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
         let mut r = req_with_tools();
         r.system_prompt = None;
