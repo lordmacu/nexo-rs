@@ -2718,6 +2718,7 @@ pub fn subprocess_plugin_factory_with_env(
 mod tests {
     use super::*;
     use nexo_plugin_manifest::EntrypointSection;
+    use uuid::Uuid;
 
     fn manifest_with_entrypoint(command: Option<&str>) -> PluginManifest {
         let toml_str = r#"
@@ -2961,7 +2962,7 @@ sleep 0.3
 sleep 5
 "#
         );
-        let dir = std::env::temp_dir().join(dir_name);
+        let dir = std::env::temp_dir().join(format!("{}-{}", dir_name, Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let script_path = dir.join("plugin.sh");
         std::fs::write(&script_path, script).unwrap();
@@ -3685,7 +3686,7 @@ sleep {crash_after_secs}
 exit {exit_code}
 "#
         );
-        let dir = std::env::temp_dir().join(dir_name);
+        let dir = std::env::temp_dir().join(format!("{}-{}", dir_name, Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let script_path = dir.join("plugin.sh");
         std::fs::write(&script_path, script).unwrap();
