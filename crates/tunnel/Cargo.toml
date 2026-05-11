@@ -17,7 +17,12 @@ tokio       = { workspace = true, features = ["process", "io-util", "macros", "r
 anyhow      = { workspace = true }
 tracing     = { workspace = true }
 thiserror   = { workspace = true }
-reqwest     = { workspace = true }
+# `stream` for `Response::bytes_stream()` (chunked cloudflared
+# download); `rustls-tls` because the workspace base reqwest has
+# `default-features = false` (no TLS backend). Both get unified in
+# at workspace level via the root bin's reqwest features, but a
+# standalone `cargo publish` of this crate must declare them itself.
+reqwest     = { workspace = true, features = ["stream", "rustls-tls"] }
 futures     = { workspace = true }
 directories = "5"
 flate2      = "1"
