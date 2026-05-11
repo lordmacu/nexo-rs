@@ -209,6 +209,17 @@ async fn register_remote_tool_handlers_after_init(
         Some(s) => s,
         None => return None,
     };
+    // Synthetic instance plugins (id of form `<base>.<instance>`)
+    // share the base plugin's tool catalog because the child binary
+    // embeds the base manifest. The base factory already registered
+    // every tool name; the instance variant must NOT re-register or
+    // it hits "already registered" and aborts init for the per-instance
+    // wiring (pairing slots, inbound binding routing). Skip remote
+    // tool handler registration for synthetic instances — the tools
+    // are reachable through the base plugin's handler anyway.
+    if plugin_id.contains('.') {
+        return None;
+    }
     match sub
         .register_remote_tool_handlers(scoped_tool_registry)
         .await
@@ -536,14 +547,25 @@ where
                                 }
                             }
                             Err(e) => {
-                                let error = e.to_string();
+                                // Walk the `std::error::Error::source` chain so
+                                // `PluginInitError::Other { source }` shows its
+                                // real cause (the wrapper's Display alone says
+                                // only "plugin `whatsapp` init failed").
+                                let mut chain = e.to_string();
+                                let mut src: Option<&dyn std::error::Error> =
+                                    std::error::Error::source(&e);
+                                while let Some(cause) = src {
+                                    use std::fmt::Write;
+                                    let _ = write!(&mut chain, " ← {cause}");
+                                    src = cause.source();
+                                }
                                 tracing::warn!(
                                     target: "plugins.init",
                                     plugin_id = %id,
-                                    %error,
+                                    error = %chain,
                                     "subprocess plugin init failed; continuing"
                                 );
-                                outcomes.insert(id, InitOutcome::Failed { error });
+                                outcomes.insert(id, InitOutcome::Failed { error: chain });
                             }
                         }
                     }
@@ -630,14 +652,25 @@ where
                         }
                     }
                     Err(e) => {
-                        let error = e.to_string();
+                        // Walk error source chain like the subprocess
+                        // path above so PluginInitError::Other surfaces
+                        // its real cause (Display alone says only
+                        // "plugin `<id>` init failed").
+                        let mut chain = e.to_string();
+                        let mut src: Option<&dyn std::error::Error> =
+                            std::error::Error::source(&e);
+                        while let Some(cause) = src {
+                            use std::fmt::Write;
+                            let _ = write!(&mut chain, " ← {cause}");
+                            src = cause.source();
+                        }
                         tracing::warn!(
                             target: "plugins.init",
                             plugin_id = %id,
-                            %error,
+                            error = %chain,
                             "plugin init failed; continuing"
                         );
-                        outcomes.insert(id, InitOutcome::Failed { error });
+                        outcomes.insert(id, InitOutcome::Failed { error: chain });
                     }
                 }
             }
