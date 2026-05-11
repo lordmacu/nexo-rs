@@ -8,6 +8,12 @@ Total wall-clock time on a fresh laptop: ~10 minutes. The first
 `cargo build` is the slow step — pre-built binaries skip it
 entirely.
 
+> **In a hurry?** Phase 92-95 added a much shorter path:
+> `nexo` alone now boots a working daemon with zero YAMLs +
+> zero external broker. See [zero-config quickstart](./zero-config.md)
+> for the 30-second version. This page covers the classical
+> full-control walkthrough.
+
 ---
 
 ## What you'll have at the end
@@ -53,16 +59,29 @@ pkg install nexo-rs   # add the apt repo first — see install-termux.md
 
 ---
 
-## 2. Start NATS
+## 2. Start NATS (optional)
 
-The broker. nexo-rs falls back to in-process queueing when NATS
-isn't reachable, but real deployments expect it.
+**Phase 92 onwards, NATS is optional.** Subprocess plugins
+bridge through the daemon's stdio JSON-RPC channel when
+`broker.yaml type: local`, so single-host dev deployments
+don't need an external broker server at all. Skip this step
+unless you're building a multi-host cluster.
+
+For multi-host / prod-like setups, start NATS:
 
 ```bash
 docker run -d --name nexo-nats -p 4222:4222 nats:2.10-alpine
+# OR native install — see broker-shapes architecture doc
 ```
 
-No Docker? Install the NATS server natively — see [broker.yaml docs](../config/broker.md).
+Then later, after the daemon is running:
+
+```bash
+nexo set-broker nats --url nats://localhost:4222
+```
+
+→ [Broker shapes](../architecture/broker-shapes.md) explains
+when to pick which.
 
 ---
 
@@ -106,7 +125,16 @@ you through QR pairing.
 
 ## 5. Drop a minimal `agents.yaml`
 
-Create `config/agents.d/ana.yaml`:
+If you want a quick scaffold of every YAML the daemon knows
+about (heavily commented, sane defaults already filled in):
+
+```bash
+nexo init --output ./config
+# Writes 19 sample YAMLs you can edit in place.
+# Or just the ones you need: nexo init --yaml broker,llm,agents
+```
+
+For this quickstart, create `config/agents.d/ana.yaml`:
 
 ```yaml
 agents:
