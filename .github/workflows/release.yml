@@ -510,6 +510,13 @@ jobs:
     container:
       image: ${{ matrix.image }}
       options: --user root
+    # Debian/Ubuntu base images make /bin/sh → dash, which rejects
+    # `set -o pipefail` and `[[ … ]]`. bash is Essential on Debian
+    # (always present), so force it for every run step. (The .rpm
+    # job is fine — Fedora/Rocky's /bin/sh is bash.)
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Install prerequisites + gh CLI
         env:
