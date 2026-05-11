@@ -532,6 +532,16 @@ enum Mode {
     /// Rust toolchain is available, otherwise print the installer
     /// one-liner.
     Update,
+    /// `nexo service install [--config <dir>]` — register the daemon
+    /// as an OS service so it auto-starts on boot/login (systemd user
+    /// unit on Linux, launchd LaunchAgent on macOS, a logon Scheduled
+    /// Task on Windows), then start it now.
+    ServiceInstall,
+    /// `nexo service uninstall` — stop + remove the OS service unit.
+    ServiceUninstall,
+    /// `nexo service status` — report whether the OS service is
+    /// installed / enabled / running.
+    ServiceStatus,
     /// Print version + (optionally) build provenance.
     /// Short form (`nexo --version` / `-V`) prints `nexo <pkg-version>`.
     /// Verbose form (`nexo version` or `nexo --version --verbose`)
@@ -1976,6 +1986,9 @@ async fn main() -> Result<()> {
         Mode::Stop => return run_daemon_stop().await,
         Mode::Restart => return run_daemon_restart(&args.config_dir).await,
         Mode::Update => return run_self_update().await,
+        Mode::ServiceInstall => return run_service_install(&args.config_dir).await,
+        Mode::ServiceUninstall => return run_service_uninstall().await,
+        Mode::ServiceStatus => return run_service_status().await,
         Mode::Run => {}
     }
 
@@ -9533,6 +9546,20 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "stop" => Mode::Stop,
         [cmd] if cmd == "restart" => Mode::Restart,
         [cmd] if cmd == "update" || cmd == "self-update" => Mode::Update,
+        [cmd, sub] if cmd == "service" => match sub.as_str() {
+            "install" | "enable" => Mode::ServiceInstall,
+            "uninstall" | "remove" | "disable" => Mode::ServiceUninstall,
+            "status" => Mode::ServiceStatus,
+            other => {
+                eprintln!("error: unknown `service` subcommand `{other}`");
+                eprintln!("usage: nexo service <install|uninstall|status>");
+                Mode::Help
+            }
+        },
+        [cmd] if cmd == "service" => {
+            eprintln!("usage: nexo service <install|uninstall|status>");
+            Mode::ServiceStatus
+        }
         [cmd] if cmd == "status" => Mode::Status {
             json: has_json_flag,
             endpoint: positional
@@ -9635,6 +9662,11 @@ fn print_usage() {
     println!("  agent --check-config                   Validate config and exit (no runtime)");
     println!("  agent reload                           Trigger a hot-reload on the running daemon");
     println!("  agent update                           Upgrade the nexo binary in place");
+    println!(
+        "  agent service install [--config <dir>] Register as an OS service (auto-start on boot)"
+    );
+    println!("  agent service uninstall                Remove the OS service unit");
+    println!("  agent service status                   Show OS service install/run state");
     println!(
         "  agent setup [<service>]                Interactive setup wizard (defaults to menu)"
     );
@@ -10074,6 +10106,305 @@ async fn run_self_update() -> Result<()> {
     println!("    curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash");
     println!("    # add `-s -- --no-plugins` to skip re-checking the bundled plugins");
     Ok(())
+}
+
+// ─── `nexo service` — register the daemon as an OS service ───────────
+
+#[cfg(target_os = "linux")]
+const SERVICE_KIND: &str = "systemd user unit";
+#[cfg(target_os = "macos")]
+const SERVICE_KIND: &str = "launchd LaunchAgent";
+#[cfg(target_os = "windows")]
+const SERVICE_KIND: &str = "logon Scheduled Task";
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+const SERVICE_KIND: &str = "(unsupported OS)";
+
+/// Run `prog args…` inheriting stdio; `true` iff it exited 0.
+fn run_ok(prog: &str, args: &[&str]) -> bool {
+    std::process::Command::new(prog)
+        .args(args)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Make `config_dir` absolute — a system service has no stable CWD,
+/// and the default config dir (`./config`) is relative.
+fn abs_config_dir(config_dir: &Path) -> PathBuf {
+    std::fs::canonicalize(config_dir).unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|c| c.join(config_dir))
+            .unwrap_or_else(|_| config_dir.to_path_buf())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_user_unit_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"));
+    base.join("systemd").join("user").join("nexo.service")
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_plist_path() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Library")
+        .join("LaunchAgents")
+        .join("com.lordmacu.nexo.plist")
+}
+
+#[cfg(windows)]
+const WINDOWS_TASK_NAME: &str = "nexo";
+
+/// `nexo service install` — write the OS service unit, enable it
+/// (auto-start on boot/login), and start it now.
+async fn run_service_install(config_dir: &Path) -> Result<()> {
+    let exe = std::env::current_exe().context("locating the nexo executable")?;
+    let cfg = abs_config_dir(config_dir);
+    println!("Installing nexo as an OS service ({SERVICE_KIND}) …");
+    println!("  exe:    {}", exe.display());
+    println!("  config: {}", cfg.display());
+
+    #[cfg(target_os = "linux")]
+    {
+        if !which_in_path("systemctl") {
+            eprintln!("systemd not available (no `systemctl` on PATH).");
+            eprintln!("Fallback: `nexo start` + a `@reboot nexo start` cron line.");
+            std::process::exit(1);
+        }
+        let unit = systemd_user_unit_path();
+        if let Some(p) = unit.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let body = format!(
+            "[Unit]\n\
+             Description=nexo-rs agent daemon\n\
+             After=network-online.target\n\
+             Wants=network-online.target\n\
+             \n\
+             [Service]\n\
+             Type=simple\n\
+             ExecStart={exe} --config {cfg}\n\
+             Restart=on-failure\n\
+             RestartSec=3\n\
+             \n\
+             [Install]\n\
+             WantedBy=default.target\n",
+            exe = exe.display(),
+            cfg = cfg.display(),
+        );
+        std::fs::write(&unit, body).with_context(|| format!("writing {}", unit.display()))?;
+        run_ok("systemctl", &["--user", "daemon-reload"]);
+        // Linger → runs without an active login session (may need
+        // admin on some distros; best-effort).
+        if let Ok(user) = std::env::var("USER") {
+            run_ok("loginctl", &["enable-linger", &user]);
+        }
+        println!();
+        if run_ok("systemctl", &["--user", "enable", "--now", "nexo.service"]) {
+            println!("✓ installed and started.  Unit: {}", unit.display());
+            println!("  status: nexo service status   ·   logs: journalctl --user -u nexo -f");
+            return Ok(());
+        }
+        eprintln!("⚠ unit written but `systemctl --user enable --now nexo.service` failed.");
+        std::process::exit(1);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist = launchd_plist_path();
+        if let Some(p) = plist.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let log = nexo_logfile();
+        if let Some(p) = log.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let body = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+             <plist version=\"1.0\">\n\
+             <dict>\n\
+             \x20 <key>Label</key><string>com.lordmacu.nexo</string>\n\
+             \x20 <key>ProgramArguments</key>\n\
+             \x20 <array>\n\
+             \x20   <string>{exe}</string>\n\
+             \x20   <string>--config</string>\n\
+             \x20   <string>{cfg}</string>\n\
+             \x20 </array>\n\
+             \x20 <key>RunAtLoad</key><true/>\n\
+             \x20 <key>KeepAlive</key><true/>\n\
+             \x20 <key>StandardOutPath</key><string>{log}</string>\n\
+             \x20 <key>StandardErrorPath</key><string>{log}</string>\n\
+             </dict>\n\
+             </plist>\n",
+            exe = exe.display(),
+            cfg = cfg.display(),
+            log = log.display(),
+        );
+        std::fs::write(&plist, body).with_context(|| format!("writing {}", plist.display()))?;
+        // Reload: unload (ignore errors) then load -w (persist).
+        let _ = std::process::Command::new("launchctl")
+            .arg("unload")
+            .arg(&plist)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        println!();
+        if run_ok("launchctl", &["load", "-w", &plist.to_string_lossy()]) {
+            println!("✓ installed and started.  Plist: {}", plist.display());
+            println!(
+                "  status: nexo service status   ·   logs: tail -f {}",
+                log.display()
+            );
+            return Ok(());
+        }
+        eprintln!("⚠ plist written but `launchctl load -w` failed.");
+        std::process::exit(1);
+    }
+
+    #[cfg(windows)]
+    {
+        let tr = format!(
+            "\"{}\" --config \"{}\"",
+            exe.to_string_lossy(),
+            cfg.to_string_lossy()
+        );
+        println!();
+        if run_ok(
+            "schtasks",
+            &[
+                "/Create",
+                "/F",
+                "/SC",
+                "ONLOGON",
+                "/RL",
+                "LIMITED",
+                "/TN",
+                WINDOWS_TASK_NAME,
+                "/TR",
+                &tr,
+            ],
+        ) {
+            let _ = run_ok("schtasks", &["/Run", "/TN", WINDOWS_TASK_NAME]);
+            println!("✓ installed (logon Scheduled Task `{WINDOWS_TASK_NAME}`) and started.");
+            println!("  status: nexo service status");
+            return Ok(());
+        }
+        eprintln!("⚠ `schtasks /Create` failed — check the output above.");
+        std::process::exit(1);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (exe, cfg);
+        eprintln!(
+            "`nexo service` isn't supported on this OS — use `nexo start` + your init system."
+        );
+        std::process::exit(1);
+    }
+}
+
+/// `nexo service uninstall` — stop + remove the OS service unit.
+async fn run_service_uninstall() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        if which_in_path("systemctl") {
+            run_ok("systemctl", &["--user", "disable", "--now", "nexo.service"]);
+        }
+        let unit = systemd_user_unit_path();
+        let removed = std::fs::remove_file(&unit).is_ok();
+        if which_in_path("systemctl") {
+            run_ok("systemctl", &["--user", "daemon-reload"]);
+        }
+        if removed {
+            println!("✓ removed {}", unit.display());
+        } else {
+            println!("nothing to remove ({} not found).", unit.display());
+        }
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let plist = launchd_plist_path();
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", "-w"])
+            .arg(&plist)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if std::fs::remove_file(&plist).is_ok() {
+            println!("✓ removed {}", plist.display());
+        } else {
+            println!("nothing to remove ({} not found).", plist.display());
+        }
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        if run_ok("schtasks", &["/Delete", "/F", "/TN", WINDOWS_TASK_NAME]) {
+            println!("✓ removed Scheduled Task `{WINDOWS_TASK_NAME}`.");
+        } else {
+            println!("nothing to remove (task `{WINDOWS_TASK_NAME}` not found).");
+        }
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        eprintln!("`nexo service` isn't supported on this OS.");
+        std::process::exit(1);
+    }
+}
+
+/// `nexo service status` — report install + run state.
+async fn run_service_status() -> Result<()> {
+    println!("nexo service ({SERVICE_KIND}):");
+    #[cfg(target_os = "linux")]
+    {
+        let unit = systemd_user_unit_path();
+        println!(
+            "  unit file: {}  ({})",
+            unit.display(),
+            if unit.exists() { "present" } else { "absent" }
+        );
+        if which_in_path("systemctl") {
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "--no-pager", "status", "nexo.service"])
+                .status();
+        } else {
+            println!("  (systemctl not on PATH)");
+        }
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let plist = launchd_plist_path();
+        println!(
+            "  plist: {}  ({})",
+            plist.display(),
+            if plist.exists() { "present" } else { "absent" }
+        );
+        let _ = std::process::Command::new("launchctl")
+            .args(["list", "com.lordmacu.nexo"])
+            .status();
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("schtasks")
+            .args(["/Query", "/TN", WINDOWS_TASK_NAME, "/V", "/FO", "LIST"])
+            .status();
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        println!("  (unsupported OS)");
+        Ok(())
+    }
 }
 
 /// Lightweight PATH walker — duplicated locally because pulling
