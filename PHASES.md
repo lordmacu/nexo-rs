@@ -4653,6 +4653,137 @@ operators see that in the log.
 
 ---
 
+### Phase 94 — Config injection: env vars + override-dir layer   ✅
+
+**Goal:** Operator can override any YAML at runtime via a
+per-file env var (12-factor / Docker secret style) OR layer an
+entire override directory over the canonical config dir
+(Kustomize style). Both methods compose with the Phase 93
+zero-config defaults so a daemon can boot with no YAMLs at all,
+or with selective overrides, or with a full base + overlay
+config stack — all without rebuilding the binary.
+
+**Status:** ✅ shipped 2026-05-11 (commits `7f3db3e` for the
+loader layer, `c4f535d` for the CLI wiring).
+
+**Precedence per YAML:**
+
+```
+1. NEXO_<NAME>_YAML env var      → wholesale replace
+2. <override-from>/<filename>    → deep-merge on top of base
+3. <config-dir>/<filename>       → base config
+4. Default::default()             → Phase 93 zero-config fallback
+```
+
+**What ships:**
+
+- `nexo_config::load_with_override::<T>(base_dir, override_dir,
+  env_var, filename) -> Result<T>` resolver — implements the
+  4-level precedence chain with `tracing::info!` at each
+  resolved source so operators can audit which layer won.
+- `yaml_deep_merge(&mut base, override)` — recursive
+  Mapping-aware merge. Mappings merge per-key (override wins
+  ties; nested mappings recurse); Sequences + scalars replace
+  wholesale. Tests cover both shapes.
+- `AppConfig::load_with_overrides(dir, Option<&override_dir>)`
+  threads the resolver through the 4 historically-required
+  YAMLs (agents / broker / llm / memory). `AppConfig::load`
+  remains as a backwards-compat thin wrapper that calls
+  `load_with_overrides(dir, None)`.
+- CLI flag `--override-from <dir>` + env var
+  `NEXO_OVERRIDE_FROM` wired through `CliArgs` →
+  daemon startup → `AppConfig::load_with_overrides`.
+- 4 env vars supported today (one per required YAML):
+  `NEXO_AGENTS_YAML`, `NEXO_BROKER_YAML`, `NEXO_LLM_YAML`,
+  `NEXO_MEMORY_YAML`. Follow-up `94.followup-optional-yamls`
+  extends to the 10 optional top-level + 5 plugin subdir
+  files.
+
+**Verified manually:**
+
+```bash
+# Wholesale env replace
+$ NEXO_BROKER_YAML=/tmp/test.yaml nexo
+   INFO  nexo_config: config loaded from env-var override
+                      env_var=NEXO_BROKER_YAML
+                      path=/tmp/test.yaml
+
+# Layered override
+$ nexo --config /etc/nexo --override-from /run/secrets
+   INFO  nexo_config: config loaded with override-dir deep-merge
+                      on top of base
+                      base=/etc/nexo/broker.yaml
+                      override=/run/secrets/broker.yaml
+```
+
+**Test coverage (nexo-config phase94_tests):**
+
+- `yaml_deep_merge_overrides_scalar_in_nested_mapping`
+- `yaml_deep_merge_replaces_sequence_wholesale`
+- `env_var_wholesale_replaces_base`
+- `override_dir_deep_merges_on_base`
+- `missing_everywhere_returns_default`
+- `env_var_pointing_at_missing_file_errors`
+
+6/6 pass.
+
+**Composability — the three Phase 92/93/94 ergonomics layers
+working together:**
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Phase 93: daemon zero-config                              │
+│    No YAMLs on disk → AppConfig::default_baked_in()        │
+│    (0 agents, BrokerKind::Local, …) — daemon boots.        │
+│                          ↑                                 │
+│                          │  fallback when nothing above    │
+│  Phase 94: env var override                                │
+│    NEXO_<NAME>_YAML=/path → wholesale replace one YAML.    │
+│                          ↑                                 │
+│                          │  loses to higher precedence     │
+│  Phase 94: override dir layer                              │
+│    --override-from <dir> → deep-merge per-field on base.   │
+│                          ↑                                 │
+│                          │  base layer                     │
+│  Pre-Phase-92: --config dir                                │
+│    Canonical YAML files on disk.                           │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Operator use cases:**
+
+- **Standalone install** (`.deb` / `.rpm` / `.exe`): just run
+  `nexo`. Phase 93 defaults take over; no config dir needed.
+- **Docker** + K8s secret mounted at one path:
+  `docker run -e NEXO_LLM_YAML=/run/secrets/llm.yaml nexo`.
+- **Production cluster** with ConfigMap base + Secret overlay:
+  `nexo --config /etc/nexo --override-from /run/secrets`.
+- **CI test** swapping just the broker config without
+  touching the rest: `NEXO_BROKER_YAML=/tmp/test.yaml nexo`.
+
+**Follow-ups parked:**
+
+- `94.followup-optional-yamls` — extend the resolver to the
+  10 optional top-level YAMLs (`extensions.yaml`, `mcp.yaml`,
+  `runtime.yaml`, `pollers.yaml`, `taskflow.yaml`,
+  `transcripts.yaml`, `pairing.yaml`, `webhook_receiver.yaml`,
+  `mcp_server.yaml`) + 5 plugin subdir YAMLs (`plugins/
+  whatsapp.yaml`, `telegram.yaml`, `email.yaml`,
+  `browser.yaml`, `discovery.yaml`). Today only the 4 required
+  configs honor env/override layers.
+- `94.followup-cli-set-llm` — operator-facing CLI shortcuts
+  (`nexo set-llm-provider <name> --api-key <k>`,
+  `nexo set-agent <id> --model <provider:model>`, etc.)
+  that emit YAML edits via the same resolver path
+  `set-broker` already uses.
+- `94.followup-config-merge-debug-rpc` — admin RPC
+  `nexo/admin/config/effective` that returns the resolved
+  AppConfig as JSON with `source: env|override|base|default`
+  per field, so operators can audit at runtime which layer
+  contributed which value.
+
+---
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47
