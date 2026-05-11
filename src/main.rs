@@ -8713,14 +8713,25 @@ fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
 fn parse_args() -> CliArgs {
     // Phase 92.9 — config dir precedence:
     //   1. explicit `--config <dir>` flag (highest priority)
-    //   2. `NEXO_CONFIG_DIR` env var (set by dev-daemon.sh +
-    //      shippable shell helpers so `nexo set-broker local`
-    //      works from any cwd without typing the flag every
-    //      time)
-    //   3. `./config` relative to cwd (legacy default)
+    //   2. `NEXO_CONFIG_DIR` env var (dev-daemon.sh exports it
+    //      so `nexo set-broker local` works from any cwd
+    //      without typing the flag)
+    //   3. `./config` if present in cwd (legacy default for
+    //      operators with an existing project layout)
+    //   4. XDG default — `$XDG_CONFIG_HOME/nexo` or
+    //      `$HOME/.config/nexo`. Auto-created by helpers like
+    //      `set-broker` when missing so `nexo set-broker local`
+    //      runs anywhere with zero setup.
     let mut config_dir = std::env::var("NEXO_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("./config"));
+        .unwrap_or_else(|_| {
+            let cwd_default = PathBuf::from("./config");
+            if cwd_default.exists() {
+                cwd_default
+            } else {
+                default_xdg_config_dir()
+            }
+        });
     let mut positional: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
 
@@ -12932,6 +12943,25 @@ async fn open_disk_queue(config_dir: &std::path::Path) -> Result<DiskQueue> {
 ///   from `Local` for subprocess plugins; setting it manually
 ///   would break the daemon's broker startup. Print a clear
 ///   error so operators don't try.
+/// Phase 92.9 — default XDG-spec config dir for `nexo` when no
+/// `--config` flag and no `NEXO_CONFIG_DIR` env are set.
+/// Respects `XDG_CONFIG_HOME` if exported, else falls back to
+/// `$HOME/.config/nexo`. Returns `PathBuf::from("./config")` when
+/// even `$HOME` is unset (CI containers, exotic environments).
+fn default_xdg_config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("nexo");
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".config").join("nexo");
+        }
+    }
+    PathBuf::from("./config")
+}
+
 fn run_set_broker(
     config_dir: &std::path::Path,
     kind: &str,
@@ -12939,9 +12969,32 @@ fn run_set_broker(
     no_signal: bool,
 ) -> Result<()> {
     let broker_yaml = config_dir.join("broker.yaml");
+    // Phase 92.9 — tolerate missing config dir + missing broker.yaml.
+    // Create both with sane defaults so `nexo set-broker local` Just
+    // Works from any cwd, no `--config` setup required. The default
+    // YAML has `persistence.enabled: true` matching dev-daemon.sh's
+    // seed; operators that want different limits / paths edit the
+    // file afterwards.
     if !broker_yaml.exists() {
-        anyhow::bail!(
-            "broker.yaml not found at {}; set --config to the daemon's config dir",
+        std::fs::create_dir_all(config_dir).with_context(|| {
+            format!("creating config dir {}", config_dir.display())
+        })?;
+        let default_yaml = r#"broker:
+  type: local
+  url: ""
+  persistence:
+    enabled: true
+    path: ./data/queue/broker.db
+  limits:
+    max_payload: 4MB
+    max_pending: 10000
+schema_version: 11
+"#;
+        std::fs::write(&broker_yaml, default_yaml).with_context(|| {
+            format!("seeding default broker.yaml at {}", broker_yaml.display())
+        })?;
+        println!(
+            "  (seeded default broker.yaml at {} — local mode with persistence)",
             broker_yaml.display()
         );
     }
