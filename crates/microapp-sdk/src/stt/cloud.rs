@@ -24,7 +24,7 @@
 //! Works inside a WASM SDK build that has `stt-cloud` enabled
 //! and `stt-candle` (the local backend) gated out.
 
-#![cfg(feature = "stt-cloud")]
+#![cfg(feature = "stt-cloud-wasm")]
 // Phase 91.x.wasm.phase-4 module — allow brief builder-method
 // docs to live in the trait + outer-section comments rather
 // than per-fn. The crate-level `deny(missing_docs)` would
@@ -66,6 +66,14 @@ pub mod local_candle;
 /// (`audio/ogg`, `audio/mpeg`, ...). Some providers ignore it
 /// and rely on the filename extension; we pass it through
 /// either way so the multipart upload is correctly tagged.
+///
+/// Phase 91.x.wasm.phase-4c.3 — on wasm32 we drop the
+/// `Send + Sync` bounds + use `async_trait(?Send)` because
+/// reqwest's browser fetch backend returns futures holding
+/// `Rc<RefCell<...>>` (js-sys types) that can't cross thread
+/// boundaries. Wasm32 is single-threaded so the bounds were
+/// only there for native multi-threaded runtimes.
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 pub trait SttProvider: Send + Sync + fmt::Debug {
     async fn transcribe(
@@ -78,6 +86,25 @@ pub trait SttProvider: Send + Sync + fmt::Debug {
     /// Display-friendly name for the provider, used in logs +
     /// the `CompositeProvider` fallback chain when reporting
     /// which leg actually produced the transcript.
+    fn name(&self) -> &'static str;
+}
+
+/// Phase 91.x.wasm.phase-4c.3 — wasm32 variant of [`SttProvider`]
+/// without `Send + Sync` bounds + with `async_trait(?Send)`
+/// applied. Required because reqwest's wasm32 backend returns
+/// futures holding `Rc<RefCell<...>>` which can't be Send.
+/// Single-threaded execution model on wasm32 means the bounds
+/// were a no-op anyway.
+#[async_trait(?Send)]
+#[cfg(target_arch = "wasm32")]
+pub trait SttProvider: fmt::Debug {
+    async fn transcribe(
+        &self,
+        audio_bytes: Vec<u8>,
+        audio_mime: &str,
+        lang_hint: Option<&str>,
+    ) -> Result<String, SttError>;
+
     fn name(&self) -> &'static str;
 }
 
@@ -243,7 +270,8 @@ impl CompositeProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SttProvider for CompositeProvider {
     async fn transcribe(
         &self,

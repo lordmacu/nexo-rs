@@ -1,0 +1,11 @@
+# plugins/discovery.yaml — out-of-tree plugin walker (Phase 81.5)
+# Where the daemon looks for `plugin.toml` manifests at boot.
+# Each match becomes a candidate plugin (init runs at startup).
+discovery:
+  search_paths:
+    # - /var/lib/nexo/plugins
+    # - ./plugins
+  disabled: []
+  allowlist: []
+  follow_symlinks: false
+schema_version: 11

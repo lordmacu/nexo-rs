@@ -80,7 +80,7 @@
 // through `build_openai_multipart_body` instead of
 // `reqwest::multipart::Form`.
 #![cfg(all(
-    feature = "stt-cloud",
+    feature = "stt-cloud-wasm",
     feature = "stt-cloud-anthropic",
     not(target_arch = "wasm32"),
 ))]

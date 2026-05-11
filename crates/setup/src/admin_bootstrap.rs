@@ -62,6 +62,77 @@ fn agent_events_enabled() -> bool {
     }
 }
 
+/// Phase 90 audit fix — per-domain admin RPC kill switches.
+///
+/// Maps each operator-grantable capability to its
+/// `NEXO_MICROAPP_ADMIN_<DOMAIN>_ENABLED` env var. When the env
+/// var is set to `0` / `false` / `off` (anything explicitly
+/// "off"-ish), the capability is stripped from every microapp's
+/// grant set. Capabilities whose env var is unset OR set to a
+/// truthy value pass through unchanged.
+///
+/// Mirrors the INVENTORY entries in `capabilities.rs` so the
+/// operator-visible `agent doctor capabilities` reading and the
+/// runtime gating stay in sync.
+const ADMIN_DOMAIN_KILL_SWITCHES: &[(&str, &str)] = &[
+    ("agents_crud", "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED"),
+    ("credentials_crud", "NEXO_MICROAPP_ADMIN_CREDENTIALS_ENABLED"),
+    ("pairing_initiate", "NEXO_MICROAPP_ADMIN_PAIRING_ENABLED"),
+    ("llm_keys_crud", "NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED"),
+    ("channels_crud", "NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED"),
+    ("skills_crud", "NEXO_MICROAPP_ADMIN_SKILLS_ENABLED"),
+    ("tenants_crud", "NEXO_MICROAPP_ADMIN_TENANTS_ENABLED"),
+    ("secrets_write", "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED"),
+    ("auth_rotate", "NEXO_MICROAPP_ADMIN_AUTH_ENABLED"),
+];
+
+fn is_off_value(v: &str) -> bool {
+    matches!(v.trim(), "0" | "false" | "FALSE" | "off" | "OFF")
+}
+
+/// Strip from `grants` every capability whose
+/// [`ADMIN_DOMAIN_KILL_SWITCHES`] env var resolves (via
+/// `env_get`) to an "off" value. Returns `(microapp_id,
+/// capability, env_var)` tuples documenting each strip so the
+/// caller can emit operator-visible warnings.
+///
+/// Unset env vars (returning `None`) are treated as "ON" — the
+/// documented default behaviour matches the INVENTORY
+/// description ("Default ON (no env var set behaves as `1`)").
+fn apply_admin_domain_kill_switches<F>(
+    grants: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
+    env_get: F,
+) -> Vec<(String, String, &'static str)>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let mut killed: Vec<&'static str> = Vec::new();
+    for (cap, env_var) in ADMIN_DOMAIN_KILL_SWITCHES {
+        if let Some(v) = env_get(env_var) {
+            if is_off_value(&v) {
+                killed.push(cap);
+            }
+        }
+    }
+    if killed.is_empty() {
+        return Vec::new();
+    }
+    let mut stripped: Vec<(String, String, &'static str)> = Vec::new();
+    for (microapp_id, caps) in grants.iter_mut() {
+        for killed_cap in &killed {
+            if caps.remove(*killed_cap) {
+                let env_var = ADMIN_DOMAIN_KILL_SWITCHES
+                    .iter()
+                    .find(|(c, _)| c == killed_cap)
+                    .map(|(_, e)| *e)
+                    .unwrap_or("");
+                stripped.push((microapp_id.clone(), (*killed_cap).to_string(), env_var));
+            }
+        }
+    }
+    stripped
+}
+
 /// One bootstrapped microapp: the router that the spawn loop
 /// passes via `StdioSpawnOptions::admin_router`, plus the
 /// deferred writer that boot binds post-spawn.
@@ -434,7 +505,30 @@ impl AdminRpcBootstrap {
         for warn in &report.warns {
             tracing::warn!(detail = ?warn, "admin capability boot warning");
         }
-        let capability_set = CapabilitySet::from_grants(report.grants);
+        // Phase 90 audit fix — apply per-domain kill switches
+        // declared in `crates/setup/src/capabilities.rs::INVENTORY`.
+        // When the operator exports
+        // `NEXO_MICROAPP_ADMIN_<DOMAIN>_ENABLED=0` the matching
+        // capability is stripped from every microapp's grant set
+        // BEFORE the dispatcher CapabilitySet is built, so the
+        // verb returns `CapabilityNotGranted -32004` regardless
+        // of the operator-edited `extensions.yaml.<id>.capabilities_grant`.
+        // Previously the INVENTORY entries were reported by
+        // `agent doctor capabilities` but had zero functional
+        // effect (silent operator-misleading bug).
+        let mut effective_grants = report.grants.clone();
+        let stripped =
+            apply_admin_domain_kill_switches(&mut effective_grants, |k| std::env::var(k).ok());
+        for (microapp_id, capability, env_var) in &stripped {
+            tracing::warn!(
+                target: "admin.boot.kill_switch",
+                microapp_id = %microapp_id,
+                capability = %capability,
+                env_var = %env_var,
+                "admin capability stripped by domain kill switch"
+            );
+        }
+        let capability_set = CapabilitySet::from_grants(effective_grants);
 
         // Phase 82.12 — validate http_server bind policy. Each
         // extension that declares a non-loopback bind must have
@@ -1674,5 +1768,174 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows.len(), 1, "Tee[Broadcast, Log] persists emit");
+    }
+
+    // ── Phase 90 audit fix — domain kill-switch coverage ─────
+
+    fn make_grants(items: &[(&str, &[&str])]) -> std::collections::HashMap<String, std::collections::HashSet<String>> {
+        items
+            .iter()
+            .map(|(id, caps)| {
+                (
+                    (*id).to_string(),
+                    caps.iter().map(|c| (*c).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Empty env — every capability passes through. Verifies the
+    /// happy path doesn't accidentally strip grants in the
+    /// absence of any kill-switch env.
+    #[test]
+    fn kill_switches_unset_passes_grants_through() {
+        let mut grants = make_grants(&[
+            ("admin", &["agents_crud", "skills_crud", "memory_snapshot"]),
+            ("creator", &["channels_crud"]),
+        ]);
+        let stripped = apply_admin_domain_kill_switches(&mut grants, |_| None);
+        assert!(stripped.is_empty());
+        assert!(grants["admin"].contains("agents_crud"));
+        assert!(grants["admin"].contains("skills_crud"));
+        assert!(grants["creator"].contains("channels_crud"));
+    }
+
+    /// Env values like "1" / "true" / unrelated text mean ON.
+    /// Only the explicit "off"-ish set strips.
+    #[test]
+    fn kill_switches_truthy_value_passes_grants_through() {
+        let mut grants = make_grants(&[("admin", &["agents_crud"])]);
+        let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
+            if k == "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED" {
+                Some("1".into())
+            } else {
+                None
+            }
+        });
+        assert!(stripped.is_empty());
+        assert!(grants["admin"].contains("agents_crud"));
+    }
+
+    /// Single domain off → matching capability stripped, others intact.
+    #[test]
+    fn kill_switches_single_domain_off_strips_one_cap() {
+        let mut grants = make_grants(&[(
+            "admin",
+            &["agents_crud", "skills_crud", "channels_crud"],
+        )]);
+        let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
+            if k == "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED" {
+                Some("0".into())
+            } else {
+                None
+            }
+        });
+        assert_eq!(stripped.len(), 1);
+        assert_eq!(stripped[0].0, "admin");
+        assert_eq!(stripped[0].1, "agents_crud");
+        assert_eq!(stripped[0].2, "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED");
+        assert!(!grants["admin"].contains("agents_crud"));
+        assert!(grants["admin"].contains("skills_crud"));
+        assert!(grants["admin"].contains("channels_crud"));
+    }
+
+    /// Multiple domains off → all matching caps stripped from
+    /// every microapp; unrelated grants survive.
+    #[test]
+    fn kill_switches_multiple_domains_off_strip_all_matches() {
+        let mut grants = make_grants(&[
+            ("admin", &["agents_crud", "skills_crud", "memory_snapshot"]),
+            ("creator", &["agents_crud", "channels_crud"]),
+        ]);
+        let stripped = apply_admin_domain_kill_switches(&mut grants, |k| match k {
+            "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED"
+            | "NEXO_MICROAPP_ADMIN_SKILLS_ENABLED" => Some("0".into()),
+            _ => None,
+        });
+        assert_eq!(stripped.len(), 3, "expected 3 stripped (admin x2 + creator x1)");
+        assert!(!grants["admin"].contains("agents_crud"));
+        assert!(!grants["admin"].contains("skills_crud"));
+        assert!(grants["admin"].contains("memory_snapshot"));
+        assert!(!grants["creator"].contains("agents_crud"));
+        assert!(grants["creator"].contains("channels_crud"));
+    }
+
+    /// All "off" variants ("0", "false", "FALSE", "off", "OFF")
+    /// are recognised. Empty + whitespace + arbitrary truthy
+    /// strings stay ON.
+    #[test]
+    fn kill_switches_off_value_aliases() {
+        for v in ["0", "false", "FALSE", "off", "OFF"] {
+            let mut grants = make_grants(&[("admin", &["secrets_write"])]);
+            let stripped =
+                apply_admin_domain_kill_switches(&mut grants, |k| {
+                    if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
+                        Some(v.into())
+                    } else {
+                        None
+                    }
+                });
+            assert_eq!(stripped.len(), 1, "value `{v}` must strip");
+        }
+        for v in ["", "  ", "1", "true", "yes", "anything"] {
+            let mut grants = make_grants(&[("admin", &["secrets_write"])]);
+            let stripped =
+                apply_admin_domain_kill_switches(&mut grants, |k| {
+                    if k == "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED" {
+                        Some(v.into())
+                    } else {
+                        None
+                    }
+                });
+            assert!(
+                stripped.is_empty(),
+                "value `{v}` must NOT strip (only explicit off-ish strip)"
+            );
+        }
+    }
+
+    /// Stripping a capability the microapp never had is a no-op
+    /// (no spurious "stripped" entries).
+    #[test]
+    fn kill_switches_no_op_when_grant_absent() {
+        let mut grants = make_grants(&[("admin", &["channels_crud"])]);
+        let stripped = apply_admin_domain_kill_switches(&mut grants, |k| {
+            if k == "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED" {
+                Some("0".into())
+            } else {
+                None
+            }
+        });
+        assert!(
+            stripped.is_empty(),
+            "agents kill switch must NOT touch a microapp without agents_crud grant"
+        );
+        assert!(grants["admin"].contains("channels_crud"));
+    }
+
+    /// All 9 capability → env-var mappings are present in
+    /// `ADMIN_DOMAIN_KILL_SWITCHES`. Catches a future drop /
+    /// rename via mismatch with the INVENTORY.
+    #[test]
+    fn kill_switches_inventory_covers_9_capabilities() {
+        let caps: std::collections::HashSet<&str> =
+            ADMIN_DOMAIN_KILL_SWITCHES.iter().map(|(c, _)| *c).collect();
+        for expected in [
+            "agents_crud",
+            "credentials_crud",
+            "pairing_initiate",
+            "llm_keys_crud",
+            "channels_crud",
+            "skills_crud",
+            "tenants_crud",
+            "secrets_write",
+            "auth_rotate",
+        ] {
+            assert!(
+                caps.contains(expected),
+                "ADMIN_DOMAIN_KILL_SWITCHES must include `{expected}`"
+            );
+        }
+        assert_eq!(caps.len(), 9, "exactly 9 capabilities are kill-switched");
     }
 }

@@ -40,6 +40,7 @@ use tokio::io::AsyncWriteExt;
 
 pub mod error;
 pub mod extract;
+pub mod extract_contract;
 pub mod extract_error;
 pub mod trusted_keys;
 pub mod verify;
@@ -50,6 +51,7 @@ pub use extract::{
     extract_verified_tarball, ExtractInput, ExtractLimits, ExtractedPlugin, MAX_ENTRIES,
     MAX_ENTRY_BYTES, MAX_EXTRACTED_BYTES, MAX_TARBALL_BYTES,
 };
+pub use extract_contract::{ExtractContract, PluginExtractContract};
 pub use extract_error::ExtractError;
 pub use trusted_keys::{AuthorPolicy, TrustMode, TrustedKeysConfig};
 pub use verify::{discover_cosign_binary, verify_plugin_signature, VerifiedSignature, VerifyInput};
@@ -57,8 +59,13 @@ pub use verify_error::VerifyError;
 
 /// Parsed `<owner>/<repo>@<tag>` coordinates. `tag` defaults to
 /// `latest` when the user omits it.
+///
+/// Renamed from `PluginCoords` during the `cody-cli-install`
+/// wave once the same struct started serving non-plugin
+/// artifacts (persona packs). The legacy name is kept as a
+/// deprecated type alias below for backward compatibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginCoords {
+pub struct RepoCoords {
     /// GitHub repo owner (user or org).
     pub owner: String,
     /// GitHub repo name.
@@ -68,7 +75,17 @@ pub struct PluginCoords {
     pub tag: String,
 }
 
-impl PluginCoords {
+/// Legacy alias preserved so existing callers
+/// (`src/plugin_install.rs`, `src/plugin_admin.rs`) keep
+/// compiling while downstream migrations land. Prefer
+/// [`RepoCoords`] in new code.
+#[deprecated(
+    since = "0.2.0",
+    note = "renamed to `RepoCoords`; the same coords serve plugins and personas now"
+)]
+pub type PluginCoords = RepoCoords;
+
+impl RepoCoords {
     /// Parse `<owner>/<repo>` or `<owner>/<repo>@<tag>`. Tag
     /// defaults to `"latest"` when `@<tag>` is absent.
     pub fn parse(s: &str) -> Result<Self, InstallError> {
@@ -180,11 +197,51 @@ pub struct InstalledTarball {
     pub size_bytes: u64,
 }
 
+/// Generic resolve result carrying the typed manifest produced
+/// by an [`ExtractContract`]. Contracts are free to attach any
+/// in-process meaning to `manifest`; the resolver only stores
+/// it. URL/size/signing fields are pre-resolved so the caller
+/// can call [`download_and_verify_url`] without re-querying the
+/// release JSON.
+///
+/// Introduced for the `cody-cli-install` wave so persona-installer
+/// can share the resolve+download pipeline without duplicating
+/// the GitHub Releases plumbing.
+#[derive(Debug, Clone)]
+pub struct ResolvedReleaseTyped<M> {
+    /// The typed manifest produced by [`ExtractContract::parse_manifest`].
+    pub manifest: M,
+    /// Coords echoed back so callers building entries don't have
+    /// to thread them separately.
+    pub coords: RepoCoords,
+    /// Semver parsed from the release `tag_name` (`v` stripped).
+    pub version: semver::Version,
+    /// Target triple actually matched. May differ from the
+    /// caller's request when the resolver fell back to the
+    /// `noarch` tarball.
+    pub target: String,
+    /// URL of the matched tarball asset.
+    pub tarball_url: String,
+    /// Size of the matched tarball asset in bytes (from the
+    /// release JSON; not authoritative — verify against the
+    /// downloaded body).
+    pub tarball_size: u64,
+    /// URL of the manifest asset (re-exposed so callers can
+    /// echo it into their entry types).
+    pub manifest_url: String,
+    /// URL of the per-tarball `.sha256` asset (single line of
+    /// hex). Used by [`download_and_verify_url`] to obtain the
+    /// expected digest at install time.
+    pub sha256_url: String,
+    /// Optional cosign material (Phase 31.3 enforces).
+    pub signing: Option<nexo_ext_registry::ExtSigning>,
+}
+
 /// Fetch a release JSON from GitHub. Wraps the raw JSON in our
 /// `ReleaseResponse` for the resolver to consume.
 async fn fetch_release_raw(
     client: &reqwest::Client,
-    coords: &PluginCoords,
+    coords: &RepoCoords,
     api_base: &str,
 ) -> Result<ReleaseResponse, InstallError> {
     let url = coords.release_api_url(api_base);
@@ -209,23 +266,29 @@ async fn fetch_release_raw(
     Ok(json)
 }
 
-/// Resolve a plugin's release into a downloadable entry.
+/// Resolve a release into a downloadable entry parameterized
+/// by an [`ExtractContract`]. The contract decides which
+/// manifest asset to fetch and how to parse it; everything
+/// else (semver from tag, tarball naming with `<id>-<version>-
+/// <target>.tar.gz` shape, `noarch` fallback, sha256 sibling
+/// lookup, cosign material) is shared across all contracts.
 ///
 /// Steps:
 /// 1. Fetch the release JSON.
-/// 2. Locate the `nexo-plugin.toml` asset.
-/// 3. Download + parse the manifest to learn `plugin.id`.
-/// 4. Find the tarball asset matching the requested `target`
-///    using the naming convention
-///    `<id>-<version>-<target>.tar.gz`.
-/// 5. Find the matching `.sha256` asset.
-/// 6. Build an `ExtEntry` with one download.
-pub async fn resolve_release(
+/// 2. Parse semver from `tag_name` (strip leading `v`).
+/// 3. Locate the manifest asset by `contract.manifest_asset_name()`.
+/// 4. Download + parse the manifest via `contract.parse_manifest()`.
+/// 5. Extract id via `contract.manifest_id()` for tarball naming.
+/// 6. Find the tarball asset for `target`, fall back to `noarch`.
+/// 7. Find the matching `.sha256` asset.
+/// 8. Locate optional cosign material.
+pub async fn resolve_release_with_contract<C: ExtractContract>(
+    contract: &C,
     client: &reqwest::Client,
-    coords: &PluginCoords,
+    coords: &RepoCoords,
     target: &str,
     api_base: &str,
-) -> Result<ResolvedInstall, InstallError> {
+) -> Result<ResolvedReleaseTyped<C::Manifest>, InstallError> {
     let release = fetch_release_raw(client, coords, api_base).await?;
     let version_str = release.tag_name.trim_start_matches('v').to_string();
     let version = semver::Version::parse(&version_str).map_err(|e| InstallError::ReleaseShape {
@@ -237,21 +300,22 @@ pub async fn resolve_release(
         ),
     })?;
 
-    // Locate the manifest asset.
+    // Locate the manifest asset (filename declared by contract).
+    let manifest_asset_name = contract.manifest_asset_name();
     let manifest_asset = release
         .assets
         .iter()
-        .find(|a| a.name == "nexo-plugin.toml")
+        .find(|a| a.name == manifest_asset_name)
         .ok_or_else(|| InstallError::ReleaseShape {
             owner: coords.owner.clone(),
             repo: coords.repo.clone(),
             reason: format!(
-                "release `{}` is missing required asset `nexo-plugin.toml`",
+                "release `{}` is missing required asset `{manifest_asset_name}`",
                 release.tag_name
             ),
         })?;
 
-    // Fetch manifest, parse to extract plugin.id.
+    // Fetch manifest bytes, hand off to contract for typed parse.
     let manifest_bytes = client
         .get(&manifest_asset.browser_download_url)
         .header("User-Agent", "nexo-ext-installer")
@@ -261,32 +325,20 @@ pub async fn resolve_release(
         .bytes()
         .await
         .map_err(|e| InstallError::Http(format!("read manifest body: {e}")))?;
-    let manifest: nexo_plugin_manifest::PluginManifest =
-        toml::from_str(std::str::from_utf8(&manifest_bytes).map_err(|e| {
-            InstallError::ReleaseShape {
-                owner: coords.owner.clone(),
-                repo: coords.repo.clone(),
-                reason: format!("manifest is not valid UTF-8: {e}"),
-            }
-        })?)
-        .map_err(|e| InstallError::ReleaseShape {
-            owner: coords.owner.clone(),
-            repo: coords.repo.clone(),
-            reason: format!("manifest parse failed: {e}"),
-        })?;
-    let plugin_id = manifest.plugin.id.clone();
+    let manifest = contract.parse_manifest(&manifest_bytes, coords)?;
+    let pkg_id = contract.manifest_id(&manifest);
 
     // Find the tarball asset for the requested target. Phase 31.4
     // adds `noarch` as a fallback target name so portable plugins
     // (Python, TypeScript) can publish a single asset that all
     // daemons accept.
-    let per_target_name = format!("{plugin_id}-{version_str}-{target}.tar.gz");
-    let noarch_name = format!("{plugin_id}-{version_str}-noarch.tar.gz");
-    let (tarball_asset, tarball_name) =
+    let per_target_name = format!("{pkg_id}-{version_str}-{target}.tar.gz");
+    let noarch_name = format!("{pkg_id}-{version_str}-noarch.tar.gz");
+    let (tarball_asset, tarball_name, matched_target) =
         match release.assets.iter().find(|a| a.name == per_target_name) {
-            Some(a) => (a, per_target_name),
+            Some(a) => (a, per_target_name, target.to_string()),
             None => match release.assets.iter().find(|a| a.name == noarch_name) {
-                Some(a) => (a, noarch_name),
+                Some(a) => (a, noarch_name, "noarch".to_string()),
                 None => {
                     let available: Vec<String> = release
                         .assets
@@ -295,7 +347,7 @@ pub async fn resolve_release(
                         .map(|a| a.name.clone())
                         .collect();
                     return Err(InstallError::TargetNotFound {
-                        id: plugin_id.clone(),
+                        id: pkg_id.clone(),
                         version: version.clone(),
                         target: target.to_string(),
                         available,
@@ -333,21 +385,64 @@ pub async fn resolve_release(
         _ => None,
     };
 
+    Ok(ResolvedReleaseTyped {
+        manifest,
+        coords: coords.clone(),
+        version,
+        target: matched_target,
+        tarball_url: tarball_asset.browser_download_url.clone(),
+        tarball_size: tarball_asset.size,
+        manifest_url: manifest_asset.browser_download_url.clone(),
+        sha256_url: sha256_asset.browser_download_url.clone(),
+        signing,
+    })
+}
+
+/// Resolve a plugin's release into a downloadable entry. Thin
+/// adapter over [`resolve_release_with_contract`] using
+/// [`PluginExtractContract`]; preserved for backward compat
+/// with all existing callers (`src/plugin_install.rs`,
+/// `src/plugin_admin.rs`).
+///
+/// Steps:
+/// 1. Fetch the release JSON.
+/// 2. Locate the `nexo-plugin.toml` asset.
+/// 3. Download + parse the manifest to learn `plugin.id`.
+/// 4. Find the tarball asset matching the requested `target`
+///    using the naming convention
+///    `<id>-<version>-<target>.tar.gz`.
+/// 5. Find the matching `.sha256` asset.
+/// 6. Build an `ExtEntry` with one download.
+pub async fn resolve_release(
+    client: &reqwest::Client,
+    coords: &RepoCoords,
+    target: &str,
+    api_base: &str,
+) -> Result<ResolvedInstall, InstallError> {
+    let resolved =
+        resolve_release_with_contract(&PluginExtractContract, client, coords, target, api_base)
+            .await?;
+
     // Per Option B's decentralized model, every release defaults
     // to `tier = community`. Operator's trusted_keys.toml decides
     // which authors' cosign keys count as "verified" at install
     // time (Phase 31.3).
+    //
+    // `downloads[0].target` echoes the *requested* target rather
+    // than the matched asset's flavor (`noarch` vs per-target).
+    // Preserves pre-refactor behavior; the typed `resolved.target`
+    // field exposes the truth to contract-aware callers.
     let entry = ExtEntry {
-        id: plugin_id,
-        version,
-        name: manifest.plugin.name.clone(),
-        description: manifest.plugin.description.clone(),
+        id: resolved.manifest.plugin.id.clone(),
+        version: resolved.version,
+        name: resolved.manifest.plugin.name.clone(),
+        description: resolved.manifest.plugin.description.clone(),
         homepage: format!("https://github.com/{}/{}", coords.owner, coords.repo),
         tier: nexo_ext_registry::ExtTier::Community,
-        min_nexo_version: manifest.plugin.min_nexo_version.clone(),
+        min_nexo_version: resolved.manifest.plugin.min_nexo_version.clone(),
         downloads: vec![nexo_ext_registry::ExtDownload {
             target: target.to_string(),
-            url: tarball_asset.browser_download_url.clone(),
+            url: resolved.tarball_url,
             // Placeholder: actual sha256 hex is read from the
             // `.sha256` asset at download time. Putting the
             // GitHub asset URL here would be wrong (URLs aren't
@@ -355,30 +450,41 @@ pub async fn resolve_release(
             // overrides with the fetched value before the
             // expected/got compare.
             sha256: "from_sha256_asset_at_download".to_string(),
-            size_bytes: tarball_asset.size,
+            size_bytes: resolved.tarball_size,
         }],
-        manifest_url: manifest_asset.browser_download_url.clone(),
-        signing,
+        manifest_url: resolved.manifest_url,
+        signing: resolved.signing,
         authors: Vec::new(),
     };
 
     Ok(ResolvedInstall {
         entry,
         download_index: 0,
-        sha256_url: sha256_asset.browser_download_url.clone(),
+        sha256_url: resolved.sha256_url,
     })
 }
 
-/// Download the resolved tarball, fetch the expected sha256
-/// from its `.sha256` sibling, stream-verify the downloaded
-/// bytes' digest matches. Aborts and removes the partial file
-/// if the digest doesn't match.
-pub async fn download_and_verify(
+/// URL-based download+verify primitive. Fetches the expected
+/// sha256 from `sha256_url`, streams the tarball from
+/// `tarball_url` to `dest_path`, and rejects on mismatch
+/// (cleaning up the partial file). Returns the byte count.
+///
+/// Decoupled from [`ResolvedInstall`] so `persona-installer`
+/// (Phase F3) can drive download without constructing an
+/// `ExtEntry`. Plugin path uses [`download_and_verify`] which
+/// is now a thin wrapper.
+///
+/// `pkg_id_for_errors` is echoed verbatim into
+/// [`InstallError::Sha256Invalid`] / [`InstallError::Sha256Mismatch`]
+/// so CLI output references the package the operator asked
+/// for, not a generic "tarball" string.
+pub async fn download_and_verify_url(
     client: &reqwest::Client,
-    resolved: &ResolvedInstall,
+    tarball_url: &str,
+    sha256_url: &str,
+    pkg_id_for_errors: &str,
     dest_path: &Path,
-) -> Result<InstalledTarball, InstallError> {
-    let download = &resolved.entry.downloads[resolved.download_index];
+) -> Result<u64, InstallError> {
     if let Some(parent) = dest_path.parent() {
         if !parent.as_os_str().is_empty() {
             tokio::fs::create_dir_all(parent)
@@ -391,7 +497,7 @@ pub async fn download_and_verify(
     // single line of lowercase hex (64 chars) with optional
     // trailing whitespace.
     let expected_sha = client
-        .get(&resolved.sha256_url)
+        .get(sha256_url)
         .header("User-Agent", "nexo-ext-installer")
         .send()
         .await
@@ -405,13 +511,13 @@ pub async fn download_and_verify(
         .to_lowercase();
     if expected_sha.len() != 64 || !expected_sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(InstallError::Sha256Invalid {
-            id: resolved.entry.id.clone(),
+            id: pkg_id_for_errors.to_string(),
             got: expected_sha,
         });
     }
 
     let response = client
-        .get(&download.url)
+        .get(tarball_url)
         .header("User-Agent", "nexo-ext-installer")
         .send()
         .await
@@ -455,11 +561,33 @@ pub async fn download_and_verify(
     if computed != expected_sha {
         let _ = tokio::fs::remove_file(dest_path).await;
         return Err(InstallError::Sha256Mismatch {
-            id: resolved.entry.id.clone(),
+            id: pkg_id_for_errors.to_string(),
             expected: expected_sha,
             got: computed,
         });
     }
+    Ok(size)
+}
+
+/// Download the resolved tarball, fetch the expected sha256
+/// from its `.sha256` sibling, stream-verify the downloaded
+/// bytes' digest matches. Aborts and removes the partial file
+/// if the digest doesn't match. Thin wrapper over
+/// [`download_and_verify_url`].
+pub async fn download_and_verify(
+    client: &reqwest::Client,
+    resolved: &ResolvedInstall,
+    dest_path: &Path,
+) -> Result<InstalledTarball, InstallError> {
+    let download = &resolved.entry.downloads[resolved.download_index];
+    let size = download_and_verify_url(
+        client,
+        &download.url,
+        &resolved.sha256_url,
+        &resolved.entry.id,
+        dest_path,
+    )
+    .await?;
     Ok(InstalledTarball {
         tarball_path: dest_path.to_path_buf(),
         entry: resolved.entry.clone(),
@@ -477,7 +605,7 @@ pub async fn install_plugin(
     dest_path: &Path,
     api_base: &str,
 ) -> Result<InstalledTarball, InstallError> {
-    let coords = PluginCoords::parse(coords)?;
+    let coords = RepoCoords::parse(coords)?;
     let resolved = resolve_release(client, &coords, target, api_base).await?;
     download_and_verify(client, &resolved, dest_path).await
 }
@@ -512,7 +640,7 @@ mod tests {
 
     #[test]
     fn parse_coords_default_tag_latest() {
-        let c = PluginCoords::parse("alice/plugin-x").unwrap();
+        let c = RepoCoords::parse("alice/plugin-x").unwrap();
         assert_eq!(c.owner, "alice");
         assert_eq!(c.repo, "plugin-x");
         assert_eq!(c.tag, "latest");
@@ -520,7 +648,7 @@ mod tests {
 
     #[test]
     fn parse_coords_with_tag() {
-        let c = PluginCoords::parse("alice/plugin-x@v0.2.0").unwrap();
+        let c = RepoCoords::parse("alice/plugin-x@v0.2.0").unwrap();
         assert_eq!(c.owner, "alice");
         assert_eq!(c.repo, "plugin-x");
         assert_eq!(c.tag, "v0.2.0");
@@ -528,21 +656,21 @@ mod tests {
 
     #[test]
     fn parse_coords_rejects_bad_shapes() {
-        assert!(PluginCoords::parse("no-slash").is_err());
-        assert!(PluginCoords::parse("/empty-owner").is_err());
-        assert!(PluginCoords::parse("alice/").is_err());
-        assert!(PluginCoords::parse("alice/plugin@").is_err());
-        assert!(PluginCoords::parse("alice/plugin space@v1").is_err());
+        assert!(RepoCoords::parse("no-slash").is_err());
+        assert!(RepoCoords::parse("/empty-owner").is_err());
+        assert!(RepoCoords::parse("alice/").is_err());
+        assert!(RepoCoords::parse("alice/plugin@").is_err());
+        assert!(RepoCoords::parse("alice/plugin space@v1").is_err());
     }
 
     #[test]
     fn release_api_url_branches_on_tag() {
-        let c = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let c = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         assert_eq!(
             c.release_api_url("https://api.github.com"),
             "https://api.github.com/repos/alice/x/releases/tags/v0.2.0"
         );
-        let c2 = PluginCoords::parse("alice/x").unwrap();
+        let c2 = RepoCoords::parse("alice/x").unwrap();
         assert_eq!(
             c2.release_api_url("https://api.github.com"),
             "https://api.github.com/repos/alice/x/releases/latest"
@@ -625,7 +753,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/slack-plugin@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/slack-plugin@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
             .await
@@ -664,7 +792,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri()).await {
             Err(InstallError::ReleaseShape { reason, .. }) => {
@@ -706,7 +834,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         match resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri()).await {
             Err(InstallError::TargetNotFound { available, .. }) => {
@@ -744,7 +872,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
             .await
@@ -782,7 +910,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
             .await
@@ -835,7 +963,7 @@ nexo_capabilities = ["broker"]
             .mount(&server)
             .await;
 
-        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
         let client = reqwest::Client::new();
         let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
             .await
@@ -848,5 +976,152 @@ nexo_capabilities = ["broker"]
             other => panic!("expected Sha256Mismatch, got {other:?}"),
         }
         assert!(!dest.exists(), "partial file must be removed on mismatch");
+    }
+
+    // ─── ExtractContract abstraction tests ─────────────────────
+    //
+    // Exercise `resolve_release_with_contract` with a synthetic
+    // contract that consumes a non-plugin manifest filename +
+    // schema. Proves the resolver doesn't smuggle the
+    // `nexo-plugin.toml` assumption anywhere — the persona-installer
+    // crate (Phase F3) will plug in its own contract analogously.
+
+    #[derive(Debug, serde::Deserialize)]
+    struct TestPersonaManifest {
+        id: String,
+        #[allow(dead_code)]
+        name: String,
+    }
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct TestPersonaContract;
+
+    impl ExtractContract for TestPersonaContract {
+        type Manifest = TestPersonaManifest;
+
+        fn manifest_asset_name(&self) -> &'static str {
+            "test-persona.toml"
+        }
+
+        fn parse_manifest(
+            &self,
+            bytes: &[u8],
+            coords: &RepoCoords,
+        ) -> Result<Self::Manifest, InstallError> {
+            let text = std::str::from_utf8(bytes).map_err(|e| InstallError::ReleaseShape {
+                owner: coords.owner.clone(),
+                repo: coords.repo.clone(),
+                reason: format!("test-persona manifest is not valid UTF-8: {e}"),
+            })?;
+            toml::from_str::<Self::Manifest>(text).map_err(|e| InstallError::ReleaseShape {
+                owner: coords.owner.clone(),
+                repo: coords.repo.clone(),
+                reason: format!("test-persona manifest parse failed: {e}"),
+            })
+        }
+
+        fn manifest_id(&self, m: &Self::Manifest) -> String {
+            m.id.clone()
+        }
+    }
+
+    /// Custom contract end-to-end: synthetic `test-persona.toml`
+    /// asset is located, parsed via the contract, and the
+    /// matching tarball + sha256 are resolved using the contract-
+    /// supplied id.
+    #[tokio::test]
+    async fn resolve_release_with_contract_serves_custom_manifest_filename() {
+        let server = MockServer::start().await;
+
+        let manifest_body = r#"id = "cody"
+name = "Cody Persona"
+"#;
+        let manifest_url = format!("{}/persona-toml", server.uri());
+        let tarball_url = format!("{}/persona-tar", server.uri());
+        let sha_url = format!("{}/persona-sha", server.uri());
+
+        let release = json!({
+            "tag_name": "v0.2.0",
+            "assets": [
+                {"name": "test-persona.toml", "browser_download_url": manifest_url, "size": manifest_body.len()},
+                {"name": "cody-0.2.0-noarch.tar.gz", "browser_download_url": tarball_url, "size": 42},
+                {"name": "cody-0.2.0-noarch.tar.gz.sha256", "browser_download_url": sha_url, "size": 64}
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/repos/lordmacu/nexo-persona-cody/releases/tags/v0.2.0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(release))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/persona-toml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(manifest_body))
+            .mount(&server)
+            .await;
+
+        let coords = RepoCoords::parse("lordmacu/nexo-persona-cody@v0.2.0").unwrap();
+        let client = reqwest::Client::new();
+        let resolved = resolve_release_with_contract(
+            &TestPersonaContract,
+            &client,
+            &coords,
+            "x86_64-unknown-linux-gnu",
+            &server.uri(),
+        )
+        .await
+        .expect("contract resolve");
+
+        assert_eq!(resolved.manifest.id, "cody");
+        assert_eq!(resolved.version.to_string(), "0.2.0");
+        assert_eq!(resolved.target, "noarch", "noarch fallback wins when per-target absent");
+        assert_eq!(resolved.tarball_url.as_str(), tarball_url);
+        assert_eq!(resolved.sha256_url.as_str(), sha_url);
+        assert!(resolved.signing.is_none(), "no cosign assets in fixture");
+    }
+
+    /// Contract-driven manifest filename mismatch: release ships
+    /// `nexo-plugin.toml` but our contract asks for
+    /// `test-persona.toml`. Resolver must fail with
+    /// `ReleaseShape` mentioning the *contract's* filename, not
+    /// the plugin one.
+    #[tokio::test]
+    async fn resolve_release_with_contract_errors_when_contract_manifest_absent() {
+        let server = MockServer::start().await;
+        let release = json!({
+            "tag_name": "v0.2.0",
+            "assets": [
+                {"name": "nexo-plugin.toml", "browser_download_url": "https://example.com/m", "size": 100}
+                // no test-persona.toml
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/repos/alice/x/releases/tags/v0.2.0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(release))
+            .mount(&server)
+            .await;
+
+        let coords = RepoCoords::parse("alice/x@v0.2.0").unwrap();
+        let client = reqwest::Client::new();
+        match resolve_release_with_contract(
+            &TestPersonaContract,
+            &client,
+            &coords,
+            "x86_64-unknown-linux-gnu",
+            &server.uri(),
+        )
+        .await
+        {
+            Err(InstallError::ReleaseShape { reason, .. }) => {
+                assert!(
+                    reason.contains("test-persona.toml"),
+                    "error must mention contract-supplied filename, got: {reason}"
+                );
+                assert!(
+                    !reason.contains("nexo-plugin.toml"),
+                    "error must NOT leak the plugin filename, got: {reason}"
+                );
+            }
+            other => panic!("expected ReleaseShape error, got {other:?}"),
+        }
     }
 }

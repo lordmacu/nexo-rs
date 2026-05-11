@@ -62,6 +62,7 @@ nexo-rs is opinionated toward that shape.
 | MCP | Client (stdio + HTTP), agent as MCP server, hot-reload |
 | TaskFlow | Durable multi-step flow runtime with wait/resume |
 | Soul | Identity, MEMORY.md, dreaming, workspace-git, transcripts |
+| Personas | Out-of-tree agent definitions installed via `nexo persona install <owner>/<repo>` (v2 manifest, GitHub Releases). [Cody](https://github.com/lordmacu/nexo-persona-cody) is the reference pack. |
 
 ## Who it is for
 
@@ -83,10 +84,38 @@ nexo-rs is opinionated toward that shape.
   Telegram like Telegram. The runtime surfaces channels, not
   uniforms them.
 
+## Three minutes to a running agent
+
+```bash
+# 1. Install nexo-rs (one-liner; needs Rust toolchain):
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
+
+# 2. Install the Cody programmer-pair persona (or any other v2 pack):
+nexo persona install lordmacu/nexo-persona-cody
+
+# 3. Boot. Daemon picks up the persona automatically.
+nexo daemon
+```
+
+`nexo daemon` works against `Default::default()` for every YAML
+when no config dir exists; `nexo persona install` lays down a
+ready-to-run agent + plugin bindings under
+`<state_dir>/personas/`. To tune from a documented baseline
+instead of the bare defaults, run `nexo init` first to scaffold
+19 commented sample YAMLs. Other install channels (Docker, Nix,
+native packages, Termux): see the
+[installation guide](./getting-started/installation.md).
+
+Build your own persona pack? See
+[Installing personas](./personas/install.md) for the v2 manifest
+shape + GitHub Releases wire convention.
+
 ## Next
 
+- [Zero-config quickstart (30s)](./getting-started/zero-config.md)
 - [Installation](./getting-started/installation.md)
-- [Quick start](./getting-started/quickstart.md)
+- [Quick start (10min walkthrough)](./getting-started/quickstart.md)
+- [Installing personas](./personas/install.md)
 - [Architecture overview](./architecture/overview.md)
 - [API reference (rustdoc)](./api-reference.md) — every public type in
   the workspace

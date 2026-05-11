@@ -6,10 +6,3 @@ telegram:
     interval_ms: 1000
   allow_agents:
   - kate
-- instance: cody_nexo_bot
-  token: ${file:./secrets/cody_nexo_bot_telegram_token.txt}
-  polling:
-    enabled: true
-    interval_ms: 1000
-  allow_agents:
-  - cody

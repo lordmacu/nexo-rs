@@ -174,20 +174,42 @@ reconnect. No events lost.
 ## Quick start
 
 ```bash
-# 1. Install the binary (Linux x86_64 / aarch64, no Rust toolchain needed)
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs-installer.sh | sh
+# 1. Install (one-liner; needs Rust toolchain — installer
+#    delegates to `cargo install --git` until Phase 27.2
+#    ships pre-built binaries):
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
+# OR Docker:
+#   docker pull ghcr.io/lordmacu/nexo-rs:latest
 
-# 2. Pair channels, pick an LLM provider
-nexo setup
-
-# 3. Run
-nexo --config ./config
+# 2. Run — Phase 92-95: zero config, no NATS server needed
+nexo
 ```
 
-`nexo setup` is interactive — pairs WhatsApp via QR, asks for your
-LLM API key, walks the Google OAuth consent if you want Gmail. It
-tells you exactly what's missing instead of failing silently.
+That's it for a smoke test. The daemon boots with sane
+defaults (broker=local, sqlite memory, 0 agents) and serves
+admin RPCs + health. From here, three paths to fill it in:
+
+```bash
+# A) Scaffold sample YAMLs (heavily commented)
+nexo init                       # all 19 templates to ~/.config/nexo/
+nexo init --yaml broker,llm     # just the ones you want
+vi ~/.config/nexo/llm.yaml      # edit, set ${MINIMAX_API_KEY} env
+nexo
+
+# B) Switch broker at runtime (no YAML editing)
+sudo systemctl start nats-server
+nexo set-broker nats --url nats://localhost:4222
+
+# C) Interactive wizard (classical path)
+nexo setup                       # pairs WhatsApp, asks for API key,
+                                  # walks Google OAuth for Gmail
+```
+
+`nexo setup` is interactive — pairs WhatsApp via QR, asks for
+your LLM API key, walks the Google OAuth consent if you want
+Gmail. Use it when you want a guided walkthrough; otherwise
+edit `nexo init`'s scaffolded YAMLs by hand or call admin RPCs
+from the operator UI.
 
 > **Platform support**: Linux x86_64 + aarch64 (musl static), macOS
 > Intel + Apple Silicon, Windows x86_64, plus a multi-arch container
@@ -212,9 +234,21 @@ cargo build --release
 ./target/release/nexo --config ./config
 ```
 
-NATS bus runs out-of-the-box on the embedded local fallback; opt
-into a real NATS instance via `config/broker.yaml` for multi-host
-deployments (`docker run -p 4222:4222 nats:2.10-alpine` to start).
+NATS bus is **optional post-Phase-92**. Subprocess plugins
+(WhatsApp, Telegram, marketing) bridge through the daemon's
+stdio JSON-RPC channel when `broker.yaml type: local`, so
+single-host dev + small-prod setups need no external broker.
+
+Switch to a real NATS instance for multi-host clusters:
+
+```bash
+sudo systemctl start nats-server          # or docker run nats:2.10-alpine
+nexo set-broker nats --url nats://localhost:4222
+# Daemon respawns ~3s later, picks up the new transport.
+```
+
+See [broker shapes](./docs/src/architecture/broker-shapes.md)
+for when to pick which.
 
 ## Configuration
 

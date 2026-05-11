@@ -1,0 +1,54 @@
+# broker.yaml — event broker transport selection
+#
+# Default (Phase 93 zero-config): type=local, persistence on.
+# Use `nexo set-broker <kind>` to switch at runtime.
+# See `proyecto/docs/src/architecture/broker-shapes.md` for the
+# three deployment shapes (local single-host, nats cluster,
+# embedded mobile).
+
+broker:
+  # type: `local` | `nats` | `stdio_bridge` (daemon-derived only)
+  #
+  # - `local`   — tokio::mpsc in-process. Subprocess plugins
+  #               bridge via stdio (Phase 92). Default. No infra.
+  # - `nats`    — connect to a NATS server. Multi-host clusters,
+  #               prod-like setups. Operator runs `nats-server`.
+  # - `stdio_bridge` — operator-NEVER picks this. The daemon
+  #               derives it for subprocess plugins when its own
+  #               broker is `local`. Setting it manually here
+  #               errors at boot.
+  type: local
+
+  # url: required + non-empty when type=nats; ignored otherwise.
+  # Empty string keeps Phase 92.9's `set-broker local` round-trip
+  # clean (the field exists but is meaningless).
+  url: ""
+
+  # auth: NATS-side credentials. Off by default; flip when the
+  # NATS cluster requires NKEY auth.
+  auth:
+    enabled: false
+    nkey_file: null
+
+  # persistence: SQLite-backed disk queue that catches events
+  # while the broker is offline (NATS disconnected) and drains
+  # on reconnect. Same backing store regardless of broker type
+  # — protects single-host deployments too.
+  persistence:
+    enabled: true
+    path: ./data/queue/broker.db
+
+  # limits: hard caps on per-frame payload size + queue depth
+  # to protect the host from runaway publishers.
+  limits:
+    max_payload: 4MB
+    max_pending: 10000
+
+  # fallback: behavior when the broker is unreachable.
+  # `local_queue` is the only mode today; other modes (e.g.
+  # `drop`, `error`) are tracked as a follow-up.
+  fallback:
+    mode: local_queue
+    drain_on_reconnect: true
+
+schema_version: 11

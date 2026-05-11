@@ -1,0 +1,22 @@
+# plugins/email.yaml — Email plugin (IMAP + SMTP)
+# Absent file → email subsystem off.
+email:
+  accounts: []
+  # Example:
+  # accounts:
+  #   - id: primary
+  #     instance: primary
+  #     imap:
+  #       host: imap.example.com
+  #       port: 993
+  #       username: bot@example.com
+  #       password: "${IMAP_PASSWORD}"
+  #       tls: true
+  #     smtp:
+  #       host: smtp.example.com
+  #       port: 587
+  #       username: bot@example.com
+  #       password: "${SMTP_PASSWORD}"
+  #       tls: starttls
+  #     poll_interval: 60s
+schema_version: 11

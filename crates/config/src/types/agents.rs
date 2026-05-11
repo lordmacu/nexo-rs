@@ -30,9 +30,10 @@ where
     Ok(opt)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
+    #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 

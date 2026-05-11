@@ -2,6 +2,394 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Cody mapping deep-dive 2026-05-11 — Phase A deudas — shipped
+
+Audit-driven 5-fix wave on Cody's surrounding infrastructure
+(deuda surfaced by exhaustive mapping of "Cody = chat-only?
+no, programmer-pair dispatching Claude Code subprocesses via
+~37K LOC of Phases 67/70-74 substrate"). All fixes are
+framework-generic improvements; they happen to make Cody more
+honest, not Cody-specific.
+
+A (5/5 shipped 2026-05-11):
+- ✅ ~~**A.1 add_hook + remove_hook handlers**~~ —
+  `crates/core/src/agent/dispatch_handlers.rs` — declared in
+  WRITE_TOOL_NAMES + referenced by Cody's system prompt but
+  never registered. Calls fell through as "unknown tool".
+  Bridged straight to `HookRegistry::add_unique` (idempotent
+  duplicate-id rejection with `reason` field) and
+  `HookRegistry::remove` (probe-then-remove pattern returns
+  `removed: false` instead of erroring on missing). Goal id
+  parsed via shared `parse_goal_id(&str) -> Result<GoalId>`
+  helper. 5 e2e tests asserting attach + duplicate idempotency
+  + empty-id reject + remove flow + invalid-uuid reject.
+- ✅ ~~**A.2 register chain + parallel handlers**~~ —
+  `program_phase_chain` + `program_phase_parallel` functions
+  existed in `nexo-dispatch-tools::chain.rs` but
+  `register_dispatch_tools_into` never exposed them as
+  handlers. Wired ProgramPhaseChainHandler +
+  ProgramPhaseParallelHandler with self-modify guards
+  matching the existing ProgramPhaseHandler. Chain handler
+  binds the synthesised `chain_hooks` to the freshly-spawned
+  goal via `dispatch.hooks.add_unique` so subsequent phases
+  fire when the previous one's Done transition lands.
+- ✅ ~~**A.3 PreflightHandler.llm_ready uses LlmRegistry**~~ —
+  was hardcoded `provider == "anthropic" || provider == "minimax"`,
+  giving DeepSeek/Gemini/OpenAI agents an engaging-but-false
+  `llm_ready: false`. Threaded the daemon's shared
+  `Arc<LlmRegistry>` (Phase 90 P1.4 follow-up) into
+  `DispatchToolContext.llm_registry: Option<Arc<LlmRegistry>>`,
+  preflight now consults `reg.names().iter().any(|n| n == provider)`.
+  Falls back to legacy hardcode when registry unwired (test
+  contexts). `boot_dispatch_ctx_if_enabled` parameter list
+  extended to thread the Arc from main.rs.
+- ✅ ~~**A.4 self-modify env-var name reconcile**~~ —
+  `dispatch_handlers.rs:178` error msg said
+  `NEXO_ALLOW_SELF_MODIFY=1` to enable but `src/main.rs:7317`
+  reads `NEXO_DISALLOW_SELF_MODIFY` (default ON, env var
+  DISABLES). Operator following error msg exported wrong env
+  var. Doc string also mis-described the default as `false`.
+  Fixed both — message + docstring now reflect production
+  reality (default ON + `NEXO_DISALLOW_SELF_MODIFY=1` flips
+  off for production / frozen-binary deploys).
+- ✅ ~~**A.5 AnthropicAuth identity spoof opt-out**~~ —
+  `crates/llm/src/anthropic.rs::prepend_claude_code_spoof` was
+  always-on for Bearer auth (OAuth + setup-token). Microapp
+  future using Anthropic API plain would identify falsely as
+  Claude Code. Added `should_spoof_claude_code()` helper
+  reading `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF` env (default
+  OFF — spoof stays ON). 4 unit tests covering default-on +
+  truthy-value-aliases + empty/unrelated-keep-on +
+  build_body_skips-when-set, all serialised via static Mutex
+  guard (env is process-global). New INVENTORY entry in
+  `crates/setup/src/capabilities.rs` so `agent doctor
+  capabilities` reports the toggle with Risk::Medium effect
+  description warning operators about subscription terms
+  before disabling.
+
+A totals: 14 new tests (4 anthropic + 5 add_hook/remove_hook
++ 5 reused/extended for chain+parallel registration), 0
+regressions, full workspace build clean.
+
+Phase B shipped 2026-05-11:
+
+- ✅ ~~**B Phase: extract `nexo-persona-cody/` sibling repo**~~ —
+  new public GitHub repo `lordmacu/nexo-persona-cody` (MIT) shipping:
+  `persona.toml` v1 manifest + `agents.d/cody.yaml` (391 LOC moved
+  verbatim from `proyecto/config/agents.d/cody.yaml`) +
+  `plugins/telegram.partial.yaml` (cody_nexo_bot block) +
+  `secrets/*.template` + `data/workspace/cody/` Phase 1 starter +
+  `install.sh` (idempotent bash 4+, --dry-run/--reinstall/--config-dir/
+  --help, exit codes 0/1/2/3/4/5 per spec) + README + CHANGELOG +
+  LICENSE. Forge formal: brainstorm → spec → plan → ejecutar.
+- proyecto-side cleanup commit (cody-extraction-2026-05-11 branch):
+  banner `// ─── Cody-flow handlers ───` → `Programmer-pair handlers`
+  with header explaining the generalisation; `cody.yaml` removal from
+  disk (was always gitignored, no `git rm` needed); `telegram.yaml`
+  cody_nexo_bot block removed; `config/agents.d/README.md` pointer
+  added explaining the persona-pack pattern.
+
+### `cody-cli-install` follow-up wave (queued, deferred)
+
+The Phase B execution surfaced an architectural question: should
+persona installation mirror the existing
+`nexo plugin install <owner>/<repo>` CLI flow (Phase 31.1.c) instead
+of using a shell script? Per the operator's call, **both modes will
+coexist**:
+
+- **`./install.sh`** (v0.1.x, shipped today) — for airgapped hosts,
+  CI pipelines that skip daemon state, and inner-loop dev. Stays.
+- **`nexo persona install <owner>/<repo>`** (v0.2.x, deferred wave)
+  — mirror of `nexo plugin install`: GitHub Releases tarball
+  download + sha256 + optional cosign verify + extract to
+  `personas.discovery.search_paths[0]` + boot-time auto-discovery.
+
+Implementation rough-sized (~1-2 days new framework code):
+- `crates/persona-installer/` mirroring `nexo-ext-installer` (resolve/
+  download/verify/extract pipeline). Reuse the cosign + sha256 plumbing.
+- New `nexo persona {install, list, remove, run}` subcommands in
+  `src/main.rs` mirroring `Mode::PluginInstall` family.
+- `cfg.personas.discovery.search_paths` config addition (mirror
+  `cfg.plugins.discovery`).
+- Boot-time persona discovery + agents.d auto-merge pipeline.
+- GitHub Release tarball pipeline for `nexo-persona-cody` (cargo-dist
+  or manual `gh release upload <tarball>`).
+- v0.2.0 bump on the persona pack, CHANGELOG entry, README cleanup.
+
+Tracking item: `cody-cli-install` — start with
+`/forge brainstorm cody-cli-install` when bandwidth allows.
+
+**Wave progress** (atomic phases F1-F9, ~21h total, 15 commits
+across 7 branches; brainstorm + spec + plan approved
+2026-05-11, ejecutar in flight on session 2026-05-11.b):
+
+| # | Scope | Est | Status |
+|---|-------|-----|--------|
+| F0 | `BrokerKind::StdioBridge` blocker fix | — | ✅ no-op (already shipped via commit `1cb39ab`) |
+| F1 | `nexo-ext-installer` parameterized refactor (`PluginCoords`→`RepoCoords` + `ExtractContract` trait + `resolve_release_with_contract`) | 2h | ✅ shipped session 2026-05-11.b |
+| F2 | NEW `crates/persona-manifest` v2 schema + 12 unit tests | 2h | ✅ shipped session 2026-05-11.b |
+| F3 | NEW `crates/persona-installer` orchestrator + admin + lifecycle | 4h | ✅ shipped session 2026-05-11.b |
+| F4 | wiremock integration tests (11 install + 5 admin scenarios) | 2h | ✅ shipped session 2026-05-11.b |
+| F5 | boot-time persona discovery + wire to `AgentConfig` (config section + main.rs hook + InMemoryPersonaAdmin cell; admin RPC routes deferred to F6, agent_configs merge into AgentsDirectory deferred to F5.b follow-up) | 3h | ✅ shipped session 2026-05-11.b |
+| F6 | CLI surface — 7 `Mode` variants (`PersonaInstall`/`List`/`Remove`/etc.) | 2h | ✅ shipped session 2026-05-11.b (all 7 subcommands fully wired; F6.b stubs replaced with real impls in same session) |
+| F7 | `NEXO_DISABLE_BUNDLED_PERSONAS` INVENTORY + `docs/personas/install.md` | 1.5h | ✅ shipped session 2026-05-11.b |
+| F8 | `nexo-persona-cody` v0.2.0 release prep + GH workflow CI | 2.5h | ⬜ |
+| F9 | end-to-end validation — install/list/remove + lifecycle topics | 1.5h | ⬜ |
+
+Cut points: Session A = F1-F3 (~8h, foundation); Session B =
+F4-F7 (~8.5h, tests + CLI + docs); Session C = F8-F9 (~4h,
+persona repo v0.2.0 + e2e).
+
+**F6.b sub-followup**: ✅ shipped same session 2026-05-11.b.
+All 3 CLI subcommands now fully implemented:
+
+- `nexo persona get <id>` — prints id / version / description /
+  homepage / install_root + every contributes path resolved to
+  absolute. JSON variant returns the typed manifest sections
+  (requires + meta) verbatim.
+- `nexo persona upgrade <id>` — extracts source GitHub repo
+  from `manifest.persona.homepage`, peeks the resolved
+  `latest` version via the F1 contract resolver, refuses to
+  downgrade, runs install_persona when newer. Idempotent on
+  same-version (no_op response).
+- `nexo persona run <path>` — `PersonaRunOverride` struct +
+  `resolve_local_persona()` + `apply_persona_run_override()`
+  mirror of plugin_run.rs's pattern. Stamps
+  `args.persona_run_override` then falls through to daemon
+  boot, which prepends the pack's parent dir to
+  cfg.personas.discovery.search_paths so the F5 discovery
+  picks it up.
+
+Touchpoints: src/persona_cli.rs (~310 LOC added), src/main.rs
+(handler match arms swapped + persona_run_override field on
+CliArgs + 9 CliArgs construction sites updated + apply hook
+right before plugin_run_override apply).
+
+### Audit 2026-05-10 — admin wave P0 fixes — shipped
+
+Comprehensive audit of all admin work shipped in the
+2026-05-10 wave (Phase 90.x.memory-snapshot.create-restore
++ Phase 81.21.b.b auto-respawn + manual restart RPC + cell
+wiring + uptime telemetry + Phase 27.2 capability inventory).
+Four parallel agents reviewed adapters, frontend, lifecycle
+events + capability gating, and test coverage. P0 = data
+corruption / silent multi-tenant / build-impacting bugs.
+
+P0 (6/6 shipped):
+- ✅ ~~**P0.1 HttpError surfaces daemon body**~~ —
+  `nexo-rs-plugin-admin/frontend/src/api/client.ts` — error
+  body now reaches stores via `.message` instead of
+  collapsing to literal `HTTP <status>`. Boot-window
+  ("plugin handles not yet populated"), restart timeout,
+  snapshot tenant-mismatch, encryption errors all visible
+  in UI. 8 unit tests in `tests/api/http-error.test.ts`.
+- ✅ ~~**P0.2 memory store reads activeTenantId**~~ —
+  `frontend/src/store/memory.ts` — list / create / delete
+  no longer hardcode `tenant:"default"`. New `currentTenant()`
+  helper reads `useTenantStore.getState().activeTenantId`
+  at call time so rail switches take effect immediately.
+  `runRestore` keeps caller-supplied tenant precedence so
+  `RestoreSnapshotModal` can defend against mid-flight
+  switches by passing `snapshot.tenant`. 6 unit tests in
+  `tests/store/memory-tenant.test.ts`.
+- ✅ ~~**P0.3 + P0.4 delete idempotency + cross-tenant guard**~~ —
+  `crates/setup/src/admin_adapters.rs::LiveMemorySnapshotReader::delete`
+  — typed match on `SnapshotError::NotFound` → `Ok(())`
+  satisfies the trait's idempotency contract (concurrent
+  delete + stale UI list no longer surface as `Internal -32603`).
+  Added defense-in-depth tenant guard mirroring `restore()`:
+  `list+find+meta.tenant assert` before reaching disk. Mock
+  `delete()` enriched to track `delete_calls` + return
+  `NotFound` when id missing. 3 new tests
+  (`live_delete_happy_path_removes_bundle`,
+  `live_delete_is_idempotent_on_missing_id`,
+  `live_delete_rejects_tenant_mismatch`).
+- ✅ ~~**P0.5 concurrent restart race mutex**~~ —
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`
+  — added `restart_lock: Arc<tokio::sync::Mutex<()>>` field
+  on `SubprocessNexoPlugin`. `force_restart()` acquires it
+  via `lock_owned().await` before the 11-step cascade so
+  two simultaneous operator restarts serialize cleanly
+  instead of orphaning one's child. New
+  `concurrent_force_restart_serializes_via_restart_lock`
+  test asserts both calls succeed, spawn distinct PIDs,
+  and publish exactly two `restarted_manually` events.
+  Existing 4 force_restart tests remain green.
+- ✅ ~~**P0.6 lifecycle subject_prefix configurable**~~ —
+  `crates/memory-snapshot/src/events.rs` — added
+  `subject_with_prefix(&str)` helpers on `LifecycleEvent`
+  + `MutationEvent` (back-compat: `subject()` calls them
+  with the const default). `BrokerEventPublisher` in
+  `proyecto/src/main.rs` now holds `lifecycle_prefix` +
+  `mutation_prefix` from `EventsSection` and uses them on
+  every publish, fixing the silently-dead YAML knob
+  (`memory.snapshot.events.lifecycle_subject_prefix` /
+  `mutation_subject_prefix`). 2 unit tests asserting the
+  configured prefix wins over `LIFECYCLE_SUBJECT_PREFIX`.
+
+P1 (7/7 shipped 2026-05-11):
+- ✅ ~~**P1.1 memory-snapshot.md events table**~~ — fixed 4
+  bogus payload shapes (gc/deleted/created/restored). Subjects
+  + payloads now match actual wire (kind discriminator + post-
+  flatten field list). Subscribers writing schema-strict
+  consumers no longer silently fail to parse.
+- ✅ ~~**P1.2 admin-rpc.md capability table**~~ — added 33
+  missing method/capability rows incl. `plugin_restart` shipped
+  today. Operators deciding what to grant now have a complete
+  reference (57 live methods across 17 capabilities).
+- ✅ ~~**P1.3 handler maps "not yet populated" to InvalidParams**~~ —
+  `domains/plugin_restart.rs:61` regex extended. Boot-window
+  race ("plugin handles not yet populated; daemon still
+  booting") now classified user-recoverable so the SPA can
+  render a transient retry toast instead of the generic 500
+  modal. New `restart_plugin_maps_not_yet_populated_to_invalid_params`
+  test asserts the -32602 code.
+- ✅ ~~**P1.4 LlmRegistry shared cell**~~ — single
+  `Arc<LlmRegistry>` constructed once at main.rs:1958, shared
+  across `LivePluginRestarter`, `RegistryLlmCompleter`, the
+  boot-time provider catalog snapshot, AND the daemon main
+  runtime registry (was rebuilt at main.rs:2357 — now removed,
+  shadow re-bind kept for clarity). Closes the silent-divergence
+  gap if a plugin-registered LLM factory ever lands between
+  the two prior construction sites.
+- ✅ ~~**P1.5 restore-applied report cleanup race**~~ —
+  `RestoreSnapshotModal` now captures the apply-success report
+  into local `appliedReport` state (instead of relying on the
+  store's `lastRestoreReport` which the unmount cleanup nukes).
+  Modal switches to a "Done" view rendering the full
+  RestoreReportTable + a Close button that triggers the parent
+  onApplied (close + refresh). Operator finally sees the
+  pre_snapshot_id, git_reset_oid, and restored DB list. 3 new
+  i18n keys (`done_title`, `done_intro`, `close`) en+es.
+- ✅ ~~**P1.6 lastRestartReport UI surfacing**~~ — `PluginsMain`
+  renders the `lastRestartReport` from `usePluginsDoctor` as a
+  dismissible success banner above the loaded plugins list
+  showing `plugin_id` + `previous_uptime_ms` + `new_pid` +
+  `restarted_at` (ISO timestamp). 5 new i18n keys
+  (`plugins.restart.report.{banner,previous_uptime,new_pid,restarted_at,dismiss}`)
+  en+es. Dismissible via X button → `clearLastRestartReport()`.
+- ✅ ~~**P1.7 plugin.toml declares plugin_restart + memory_snapshot**~~ —
+  cross-repo: `nexo-rs-plugin-admin/plugin.toml` declares both
+  capabilities under `[plugin.capabilities.admin]::required` so
+  the daemon refuses to spawn the plugin until the operator
+  grants them (fail-fast). Otherwise the Restart button +
+  snapshot create/restore landed -32004 capability_not_granted.
+
+P1 totals: 1 new backend test, 0 frontend tests added (pure UX
++ store changes verified manually + tsc clean), full mdbook
+build clean, full workspace build clean.
+
+P2 (12/12 shipped 2026-05-11):
+- ✅ ~~**P2.1 supervisor.md doc drift**~~ — events table now
+  includes `restarted_manually` row + clarified
+  `total_uptime_ms` is real (was always 0); `gave_up.last_exit_code = -1`
+  spawn-failure sentinel documented; "no manual restart RPC"
+  stale follow-up bullet removed (RPC shipped today).
+- ✅ ~~**P2.2 lifecycle golden expansion + `new_pid` assert**~~ —
+  broker payload now includes `new_pid` (was only in
+  `PluginsRestartResponse` wire shape). New
+  `lifecycle_payload_shape_restarted_manually` golden asserts
+  source / plugin_id / previous_uptime_ms / restarted_at_ms /
+  new_pid present + no extraneous fields. Existing
+  `force_restart_publishes_restarted_manually_event` extended to
+  match `report.new_pid` against the published payload.
+- ✅ ~~**P2.3 manifest validation gaps**~~ — added 3
+  `ManifestError` variants + bounds:
+  `SupervisorMaxAttemptsZero` (only enforced when respawn=true),
+  `SupervisorBackoffMsBelowFloor` (min 100ms — prevents tight
+  retry loops bypassing exponential schedule),
+  `SupervisorBackoffMsExceedsCap` (max 300_000ms — keeps
+  reset-counter heuristic meaningful). 5 new tests including
+  the regression net for the `respawn=false` skip path.
+- ✅ ~~**P2.4 capability-gate denial tests for 7 verbs**~~ —
+  `dispatcher.rs::tests` mirrors
+  `dispatch_tenants_list_denies_when_capability_not_granted`
+  for memory/{query,list_snapshots,delete_snapshot,
+  create_snapshot,restore_snapshot} + plugins/{doctor,restart}.
+  Each asserts `capability` field on `CapabilityNotGranted -32004`
+  matches the `capability_for_method` mapping. Shared
+  `assert_capability_gate_denies` helper. 7 tests.
+- ✅ ~~**P2.5 dispatcher slot-not-wired tests for 7 verbs**~~ —
+  parallel coverage: with capability granted but the slot
+  field still `None`, the dispatcher returns `Internal -32603`
+  whose message contains the documented `<domain> domain not
+  configured` substring. Microapps can detect wire-up gaps
+  reliably. Shared `assert_slot_not_wired_internal_contains`
+  helper. 7 tests.
+- ✅ ~~**P2.6 domain kill-switches implemented**~~ — operator
+  can now export `NEXO_MICROAPP_ADMIN_<DOMAIN>_ENABLED=0`
+  (any of agents/credentials/pairing/llm_keys/channels/skills/
+  tenants/secrets/auth) and the matching capability is
+  stripped from every microapp's grant set BEFORE the
+  dispatcher CapabilitySet is built — the verb returns
+  `CapabilityNotGranted -32004` regardless of operator-edited
+  YAML. New `apply_admin_domain_kill_switches` helper +
+  `ADMIN_DOMAIN_KILL_SWITCHES` table (9 entries) +
+  `tracing::warn!` per stripped grant. Closes the silent
+  operator-misleading bug where INVENTORY entries reported
+  "disabled" but had zero functional effect. 7 tests
+  including the off-value-aliases sweep + the inventory-
+  matches-INVENTORY contract test.
+- ✅ ~~**P2.7 i18n drift test**~~ — runtime guard against type-
+  widening drift in en/es catalogs. Asserts identical key sets
+  via Set diff, identical key counts, all wave 90.x audit-fix
+  keys present in both, all values non-empty. 4 vitest
+  assertions in `tests/i18n-drift.test.ts`.
+- ✅ ~~**P2.8 confirm-prefix shared helper**~~ — new
+  `frontend/src/lib/confirmPrefix.ts` exposes
+  `confirmPrefix(id, n=8)` + `confirmPrefixMatches(typed, id, n)`.
+  RestartPluginModal + RestoreSnapshotModal both refactored
+  to use it. Helper handles the short-id edge case the
+  `Math.min(8, len)` defensive line was guarding against.
+  11 vitest assertions for the helper.
+- ✅ ~~**P2.9 modal Escape + backdrop-close**~~ — new
+  `frontend/src/lib/useDialogClose.ts` exposes `useEscapeKey`
+  + `useBackdropClose` hooks. Wired into all 4 modals
+  (CreateSnapshot, RestoreSnapshot, RestartPlugin,
+  TenantCreate). Disabled mid-flight so a stray click
+  during a destructive RPC can't lose spinner + error
+  state. RestoreSnapshotModal's hook routes to
+  `handleDoneClose` when the post-apply view is showing
+  (so dismissing fires the same refresh path as the Close
+  button).
+- ✅ ~~**P2.10 snapshot list expand**~~ — `MemoryMain` now
+  defaults to the 5 most recent snapshots with a
+  "Show {count} more" button when more exist; expanding
+  shows all + a "Collapse" button. Operators with > 5
+  snapshots can restore / delete older bundles from the
+  UI without dropping to CLI. 2 new i18n keys
+  (`memory.snapshots.show_all`, `memory.snapshots.collapse`)
+  en+es.
+- ✅ ~~**P2.11 PluginsDoctor 5/9 fields render**~~ — the
+  `PluginDiscoveryReport` fields previously stuck behind
+  `agent doctor plugins --json` now surface in the UI:
+  duplicates as a 5th summary tile;
+  `unmet_required_capabilities` as a danger-toned section
+  rendered as JSON (open shape); `contributed_agents_per_plugin`
+  + `contributed_skills_per_plugin` as a side-by-side
+  contributions section; `plugin_capability_gates` as a
+  per-plugin JSON list with the operator-flippable env-var
+  contracts. 7 new i18n keys en+es.
+- ✅ ~~**P2.12 frontend vitest coverage**~~ — added
+  `RestartPluginModal` component test
+  (`tests/components/restart-plugin-modal.test.tsx`)
+  covering the destructive confirm-prefix safety gate
+  end-to-end: prefix-empty disables, wrong-prefix disables,
+  exact-match enables, click sends the right plugin id,
+  disabled-button no-op, short-id defensive variant. 6
+  test cases. Locale pinned to `en` so role-name matchers
+  hit the canonical English catalog (default es).
+
+P2 totals: 33 new tests (24 backend + 9 frontend), 0
+regressions, mdbook clean, full workspace build clean.
+
+P3 (6 open — observability + nits): `tracing::info!` on
+destructive paths, metrics counters, `gave_up.last_exit_code = -1`
+sentinel docs, plugin.id NATS-subject-safety validation,
+`_all` magic segment, fixture state leakage RAII guards.
+
+24 new tests (10 backend + 14 frontend), 0 regressions.
+
 ### Phase 91 — STT pure-Rust migration via Candle — shipped 11/12, follow-ups open
 
 Phase 91 shipped 2026-05-10 across the 11 substantive sub-phases
@@ -77,7 +465,7 @@ for the detailed close-out.
   `91.x.wasm.phase-4c` / `phase-4e` below.
 
 - 🔄 **91.x.wasm.phase-4c — WASM transport for the cloud STT
-  legs** — phase-4c.2 shipped 2026-05-10; phase-4c.3 deferred.
+  legs** — phase-4c.2 + phase-4c.3 shipped; phase-4c.4 deferred.
   - ✅ ~~**phase-4c.2 — hand-assembled multipart body**~~
     shipped — REST legs (OpenAI + Groq) no longer use
     `reqwest::multipart::Form` (native-only). Replaced with
@@ -85,48 +473,57 @@ for the detailed close-out.
     `Vec<u8>`, submitted via cross-platform `.body(Vec<u8>)`).
     6 new unit tests verify byte-exact framing including
     binary-audio passthrough + BCP-47 region subtag strip +
-    language auto-detect omission. The `anthropic` module
-    carries its own `cfg(not(wasm32))` gate so wasm builds
-    enabling `stt-cloud-anthropic` get a no-op feature
-    instead of a compile error (defense in depth — the parent
-    `cloud` gate still blocks wasm but the module is
-    independently safe).
-  - ⬜ **phase-4c.3 — reqwest `rustls-tls` feature split** —
-    the remaining wasm32 blocker. reqwest 0.12's `rustls-tls`
-    feature pulls `rustls` which doesn't compile for wasm32
-    (the browser fetch API handles TLS without a TLS feature).
-    The microapp-sdk's optional reqwest declaration carries
-    `["json", "rustls-tls"]` in `[dependencies]`; Cargo
-    rejects splitting features per-target on a single optional
-    dep (`duplicate key` error). Three unblock options:
-    (a) sub-feature `stt-cloud-native-tls = ["stt-cloud",
-        "reqwest?/rustls-tls"]` so base `stt-cloud` is
-        wasm-compatible and consumers explicitly enable
-        rustls on native;
-    (b) split into two optional crates with different
-        package names (e.g. `reqwest-native` / `reqwest-wasm`)
-        — Cargo's separate-package workaround for per-target
-        features;
-    (c) drop the optional flag and use feature-gated `dep:`
-        references instead — more invasive but clean.
-    Estimated cost: ~1-2 h once a microapp demands wasm cloud
-    STT. The internal refactors (phase-4c.2 multipart, the
-    anthropic cfg) make the eventual ungate trivial — only
-    the Cargo feature split blocks today.
+    language auto-detect omission.
+  - ✅ ~~**phase-4c.3 — workspace-level reqwest split**~~
+    shipped 2026-05-11 (commit `c4149c3`). REST cloud STT
+    now compiles cleanly for wasm32. Three structural changes:
+    (1) workspace.dependencies.reqwest trimmed to wasm-clean
+        baseline `["json", "charset"]`; native-only features
+        moved to consumer crates via additive declarations
+        (9 crates updated: cdp, ext-installer, core,
+        extensions, llm-auth, llm, memory, setup + daemon
+        binary which re-adds `macos-system-configuration` for
+        proxy detection);
+    (2) SDK reqwest moved from shared `[dependencies]` into
+        per-target blocks — `["json"]` on wasm32, `["json",
+        "rustls-tls"]` on native. Cargo's duplicate-key rule
+        only fires when the same dep is in both the shared
+        table and a per-target block; with shared decl
+        removed, per-target blocks are independent
+        declarations Cargo accepts cleanly;
+    (3) SttProvider trait split per target — wasm32 variant
+        drops `Send + Sync` + uses `async_trait(?Send)`
+        because reqwest's wasm-bindgen fetch backend returns
+        futures holding `Rc<RefCell<js_sys::futures::Inner>>`
+        which can't be Send. Single-threaded execution on
+        wasm32 means the bounds were a native-only thing.
+
+    Verified via `cargo tree -p nexo-microapp-sdk --target
+    wasm32-unknown-unknown --features stt-cloud-wasm
+    --invert reqwest`:
+
+      reqwest v0.12.28
+      └── nexo-microapp-sdk
+
+    Before phase-4c.3: "nothing to print" — reqwest never
+    entered the wasm32 graph. After: linked correctly.
+
+    Native suite unchanged: 39/39 cloud tests pass.
   - ⬜ **phase-4c.4 — Anthropic voice_stream WASM transport** —
-    after phase-4c.3 unblocks the parent gate, the
-    `AnthropicVoiceStream` impl still needs a `gloo-net::
-    websocket::futures::WebSocket` swap-in (tokio-tungstenite
-    is native-only). Design path: split
-    `AnthropicVoiceStream::transcribe` into a generic
-    `transcribe_protocol<Sink, Stream>` method + two cfg-gated
-    thin opener fns (`open_ws_native` / `open_ws_wasm`); the
-    protocol state machine (KeepAlive heartbeat, 4-trigger
-    finalize, event parser) stays identical across both
-    targets. Wrap the KeepAlive heartbeat in
+    still deferred. The voice_stream WebSocket leg
+    (`AnthropicVoiceStream`) carries its own `cfg(not(wasm32))`
+    gate because tokio-tungstenite drags TCP types absent on
+    wasm32. Browser microapps demanding voice_stream need a
+    `gloo-net::websocket::futures::WebSocket` swap-in. Design
+    path: split `transcribe` into a generic
+    `transcribe_protocol<Sink, Stream>` method + two
+    cfg-gated thin opener fns (`open_ws_native` /
+    `open_ws_wasm`). KeepAlive heartbeat wrapped in
     `wasm_bindgen_futures::spawn_local` on wasm
-    (`tokio::spawn` requires multi-threaded runtime that wasm
-    doesn't have). Estimated cost: ~4-6 h.
+    (`tokio::spawn` needs the multi-threaded runtime which
+    wasm doesn't have). Estimated cost: ~4-6 h. The protocol
+    state machine (KeepAlive heartbeat, 4-trigger finalize,
+    event parser) is target-agnostic and stays identical.
 
 - ⬜ **91.x.wasm.phase-4b.streaming — full push-to-talk live
   transcription** — phase-4b ships the one-shot path (buffer →

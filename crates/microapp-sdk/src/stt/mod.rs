@@ -79,24 +79,25 @@ pub mod transcribe_candle;
 // Groq Whisper-large-v3, Anthropic voice_stream)
 // + `CompositeProvider` fallback chain.
 //
-// Phase 91.x.wasm.phase-4c — one of the two wasm32 blockers
-// identified during the spike is now fixed: the REST legs no
-// longer use `reqwest::multipart::Form` (native-only); they
-// build the multipart body by hand via
-// `build_openai_multipart_body` and submit it through
-// `.body(Vec<u8>)` (cross-platform). The remaining blocker is
-// reqwest's `rustls-tls` feature: rustls doesn't compile for
-// wasm32 — the browser fetch API handles TLS without a TLS
-// feature. Splitting `rustls-tls` behind a sub-feature
-// (e.g. `stt-cloud-native-tls`) so wasm builds can opt out is
-// filed as Phase 91.x.wasm.phase-4c.3.
+// Phase 91.x.wasm.phase-4c.3 — workspace pin trimmed so
+// resolver-2 doesn't unify wasm-broken reqwest features into
+// the SDK wasm32 graph. With that done, the cloud REST legs
+// compile cleanly on `wasm32-unknown-unknown` via reqwest's
+// browser fetch backend. Two routes:
 //
-// Until phase-4c.3 lands, the cloud module stays gated on
-// `not(wasm32)` at the parent. The internal refactors (hand-
-// assembled multipart body, `anthropic` carrying its own
-// `not(wasm32)` cfg) make the eventual ungate trivial — only
-// the Cargo feature split blocks today.
-#[cfg(all(feature = "stt-cloud", not(target_arch = "wasm32")))]
+//   - `stt-cloud-wasm` — wasm-compatible base (no rustls-tls)
+//   - `stt-cloud` — native default (stacks rustls-tls on top)
+//
+// Either feature enables this module. Inner submodules carry
+// per-target cfg gates for native-only transports:
+//
+//   - `local_candle` — needs Candle inference (`stt-candle`
+//     feature; Candle deps don't compile for wasm32)
+//   - `anthropic` — tokio-tungstenite drags TCP types absent
+//     on wasm32; carries its own `cfg(not(wasm32))`. Phase
+//     91.x.wasm.phase-4c.4 swaps tokio-tungstenite for
+//     gloo-net when a browser microapp demands voice_stream.
+#[cfg(feature = "stt-cloud-wasm")]
 pub mod cloud;
 
 use std::path::PathBuf;

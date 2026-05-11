@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use nexo_ext_installer::{
     discover_cosign_binary, download_and_verify, extract_verified_tarball, resolve_release,
     verify_plugin_signature, AuthorPolicy, ExtractError, ExtractInput, ExtractLimits, InstallError,
-    PluginCoords, ResolvedInstall, TrustMode, TrustedKeysConfig, VerifyError, VerifyInput,
+    RepoCoords, ResolvedInstall, TrustMode, TrustedKeysConfig, VerifyError, VerifyInput,
     DEFAULT_GITHUB_API_BASE,
 };
 use serde::Serialize;
@@ -371,7 +371,7 @@ pub async fn run_plugin_install(
     let state_dir = nexo_project_tracker::state::nexo_state_dir();
 
     // Coords parse.
-    let coords = match PluginCoords::parse(&coords_str) {
+    let coords = match RepoCoords::parse(&coords_str) {
         Ok(c) => c,
         Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
     };

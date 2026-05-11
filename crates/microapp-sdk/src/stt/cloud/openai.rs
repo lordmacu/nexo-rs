@@ -11,7 +11,7 @@
 //! SDK takes any operator-supplied string so a microapp can
 //! source it from its own secrets store).
 
-#![cfg(feature = "stt-cloud")]
+#![cfg(feature = "stt-cloud-wasm")]
 
 use async_trait::async_trait;
 
@@ -55,7 +55,8 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SttProvider for OpenAiProvider {
     async fn transcribe(
         &self,

@@ -256,6 +256,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     },
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Phase 90 audit fix (Cody A.5) — when `1`, the Anthropic LLM client SKIPS the Claude-Code identity system block normally prepended to Bearer-auth (OAuth + setup-token) requests. Default OFF (spoof active) keeps existing subscription tokens working out-of-the-box. Flip ON for microapps that want honest `<microapp> via Anthropic` identification — but audit your acceptable use first; bypassing the identity check on a non-Claude-Code workload may violate your subscription's terms. Has zero effect for plain API-key auth.",
+        hint: "export NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF=1  # disable spoof",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_PROCESSING_PENDING_QUEUE_CAP",
         // Numeric cap rendered as a Boolean toggle entry: the
         // inventory cares whether the operator is overriding
@@ -487,6 +495,29 @@ const INVENTORY: &[CapabilityToggle] = &[
                  host network are rejected at validation time \
                  unless this flag is set.",
         hint: "export NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1",
+    },
+    // ── Phase F7 of `cody-cli-install` — persona discovery kill switch.
+    // Default OFF: persona discovery runs at boot and registers any
+    // persona pack found under cfg.personas.discovery.search_paths.
+    // Set to 1 to skip discovery entirely (admin RPC `persona list`
+    // returns empty; agent_configs from packs are NOT merged into
+    // the agents directory). Useful for hardened deployments that
+    // want to refuse all out-of-tree persona packs at the daemon
+    // level even if the search_paths config still references dirs.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_DISABLE_BUNDLED_PERSONAS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Phase F7 of cody-cli-install — kill switch for \
+                 boot-time persona discovery. When set to 1/true/on, \
+                 the daemon skips the `discover_personas` walk + \
+                 leaves the InMemoryPersonaAdmin cell empty regardless \
+                 of `cfg.personas.discovery.search_paths`. \
+                 `nexo persona install/list/remove` still work against \
+                 the on-disk dirs (the CLI re-runs discovery itself); \
+                 only the daemon's in-memory catalog is suppressed.",
+        hint: "export NEXO_DISABLE_BUNDLED_PERSONAS=1  # to disable",
     },
 ];
 
@@ -1061,6 +1092,13 @@ mod drift_tests {
         "MOCK_CANCELLED_LOG",
         "MOCK_SAMPLING_LOG",
         "MOCK_SETLEVEL_LOG",
+        // Phase 27.2 — `crates/test-fixtures/mock-subprocess-plugin/`
+        // is a synthetic subprocess plugin used by the daemon-side
+        // spawn-shape e2e test (`subprocess_flip_e2e.rs`). When this
+        // env var is set to "1" the binary echoes its env to stdout
+        // for the test to assert. Pure test fixture, no production
+        // code path reads it.
+        "MOCK_SUBPROCESS_PLUGIN_ECHO_ENV",
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.

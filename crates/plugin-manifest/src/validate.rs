@@ -125,6 +125,28 @@ fn validate_supervisor(
             max: super::manifest::SUPERVISOR_STDERR_TAIL_MAX,
         });
     }
+
+    // Phase 90 audit fix — supervisor knob bounds. Only enforced
+    // when `respawn = true`; if the operator explicitly disabled
+    // auto-respawn, max_attempts/backoff_ms are inert and a
+    // historical 0 default in the manifest is harmless.
+    if supervisor.respawn {
+        if supervisor.max_attempts == 0 {
+            errors.push(ManifestError::SupervisorMaxAttemptsZero);
+        }
+        if supervisor.backoff_ms < super::manifest::SUPERVISOR_BACKOFF_MS_MIN {
+            errors.push(ManifestError::SupervisorBackoffMsBelowFloor {
+                value: supervisor.backoff_ms,
+                min: super::manifest::SUPERVISOR_BACKOFF_MS_MIN,
+            });
+        }
+        if supervisor.backoff_ms > super::manifest::SUPERVISOR_BACKOFF_MS_MAX {
+            errors.push(ManifestError::SupervisorBackoffMsExceedsCap {
+                value: supervisor.backoff_ms,
+                max: super::manifest::SUPERVISOR_BACKOFF_MS_MAX,
+            });
+        }
+    }
 }
 
 /// Phase 81.22 — sandbox section validator. Skips entirely when
@@ -227,7 +249,23 @@ fn validate_min_nexo_version(
     current: &Version,
     errors: &mut Vec<ManifestError>,
 ) {
-    if !req.matches(current) {
+    // Strip any pre-release tag from `current` before matching.
+    // The `semver` crate (v1.x) follows Cargo's pre-release rules:
+    // a `VersionReq` only matches a pre-release version when at
+    // least one comparator explicitly mentions the same
+    // (major, minor, patch) tuple. So a daemon built as
+    // `0.1.6-rc3` would fail every `min_nexo_version` whose
+    // comparator doesn't pin that exact triple — including the
+    // catch-all `>=0.0.0`. For `min_nexo_version` the operator
+    // intent is purely "daemon is at least X.Y.Z"; release-cycle
+    // semantics (rc/alpha/beta) are irrelevant. Strip the tag and
+    // match against the bare release version.
+    let comparable = if current.pre.is_empty() {
+        current.clone()
+    } else {
+        Version::new(current.major, current.minor, current.patch)
+    };
+    if !req.matches(&comparable) {
         errors.push(ManifestError::MinNexoVersionMismatch {
             required: req.to_string(),
             current: current.to_string(),
@@ -941,5 +979,105 @@ expose = ["wrong_prefix"]
         assert!(!errs
             .iter()
             .any(|e| matches!(e, ManifestError::SandboxHostNetworkWithoutCapability)));
+    }
+
+    // ── Phase 90 audit fix — supervisor knob bounds ───────────
+
+    fn manifest_with_supervisor_block(body: &str) -> PluginManifest {
+        let toml = format!(
+            "{}\n[plugin.supervisor]\n{}\n",
+            base_manifest_toml(),
+            body
+        );
+        parse(&toml)
+    }
+
+    #[test]
+    fn supervisor_rejects_max_attempts_zero_when_respawn_enabled() {
+        // max_attempts = 0 + respawn = true is the silent
+        // equivalent of respawn = false (gave_up fires on first
+        // crash with attempts: 0). Force the operator to use the
+        // explicit `respawn = false` instead.
+        let m = manifest_with_supervisor_block(
+            "respawn = true\nmax_attempts = 0\nbackoff_ms = 1000",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs
+                .iter()
+                .any(|e| matches!(e, ManifestError::SupervisorMaxAttemptsZero)),
+            "expected SupervisorMaxAttemptsZero, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn supervisor_rejects_backoff_ms_below_floor_when_respawn_enabled() {
+        let m = manifest_with_supervisor_block(
+            "respawn = true\nmax_attempts = 3\nbackoff_ms = 50",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::SupervisorBackoffMsBelowFloor { value: 50, min: 100 }
+            )),
+            "expected SupervisorBackoffMsBelowFloor, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn supervisor_rejects_backoff_ms_above_cap_when_respawn_enabled() {
+        let m = manifest_with_supervisor_block(
+            "respawn = true\nmax_attempts = 3\nbackoff_ms = 600000",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::SupervisorBackoffMsExceedsCap {
+                    value: 600_000,
+                    max: 300_000,
+                }
+            )),
+            "expected SupervisorBackoffMsExceedsCap, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn supervisor_skips_bounds_when_respawn_disabled() {
+        // respawn = false — supervisor knobs are inert. Even an
+        // out-of-range backoff_ms / max_attempts = 0 must NOT
+        // emit an error so historical manifests with stale values
+        // don't break on upgrade.
+        let m = manifest_with_supervisor_block(
+            "respawn = false\nmax_attempts = 0\nbackoff_ms = 999999",
+        );
+        let mut errs = Vec::new();
+        run_all(&m, &current(), &mut errs);
+        let supervisor_errs: Vec<&ManifestError> = errs
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    ManifestError::SupervisorMaxAttemptsZero
+                        | ManifestError::SupervisorBackoffMsBelowFloor { .. }
+                        | ManifestError::SupervisorBackoffMsExceedsCap { .. }
+                )
+            })
+            .collect();
+        assert!(
+            supervisor_errs.is_empty(),
+            "respawn=false must skip supervisor bounds: got {supervisor_errs:?}"
+        );
+    }
+
+    #[test]
+    fn supervisor_accepts_default_values_with_respawn_enabled() {
+        // Default backoff_ms (1000) + max_attempts (3) sit
+        // comfortably inside the bounds. Sanity check so a future
+        // tightening of the bounds doesn't accidentally break the
+        // builtin defaults.
+        let m = manifest_with_supervisor_block("respawn = true");
+        m.validate(&current()).unwrap();
     }
 }

@@ -58,13 +58,30 @@ audit logs, dashboards, or alerts.
 | `plugin.lifecycle.<id>.respawning` | Before each backoff sleep | `{plugin_id, attempt: u32 (1-indexed), backoff_ms: u64}` |
 | `plugin.lifecycle.<id>.respawned` | After successful re-handshake | `{plugin_id, attempt, total_uptime_ms}` |
 | `plugin.lifecycle.<id>.gave_up` | After `attempts >= max_attempts` | `{plugin_id, attempts, last_exit_code, stderr_tail}` |
+| `plugin.lifecycle.<id>.restarted_manually` | After `force_restart` completes | `{plugin_id, previous_uptime_ms: u64, restarted_at_ms: i64, new_pid?: u32}` |
 
 `source` field on every event = `"plugin.supervisor"`.
 `stderr_tail` is chronological (oldest first), capped at the
 manifest's `stderr_tail_lines`.
 
-`respawned.total_uptime_ms` is currently always `0` — real per-Inner
-uptime telemetry is a deferred follow-up.
+`respawned.total_uptime_ms` carries the previous Inner's uptime
+in milliseconds (Phase 90 audit fix — was always 0). Subscribers
+diffing crashed→respawned timestamps can now consume the field
+directly.
+
+`gave_up.last_exit_code = -1` (sentinel) indicates a spawn
+failure — the supervisor never reached the handshake. A real
+child exit code (e.g. 1, 127, 139) means the child started but
+crashed; the per-attempt `stderr_tail` carries forensics. Spawn-
+failure paths emit an empty `stderr_tail` because there was no
+process to read from.
+
+`restarted_manually` is published only by operator-initiated
+`nexo/admin/plugins/restart` calls. Auto-respawn cycles emit
+`crashed`+`respawning`+`respawned`/`gave_up` instead.
+`new_pid` is `Some` when Tokio could read the freshly spawned
+child's PID (almost always the case); `None` for pathological
+spawns where `Child::id()` returned None.
 
 ## Auto-respawn flow
 
@@ -212,12 +229,6 @@ SubprocessNexoPlugin::force_restart()
 
 ## Limitations + open follow-ups
 
-- **No manual restart RPC** — `nexo/admin/plugins/restart {id}`
-  is a deferred follow-up. Today operators restart the daemon
-  to recover from `gave_up`.
-- **Real uptime telemetry** — `respawned.total_uptime_ms`
-  always 0. Operators wanting per-cycle uptime should subscribe
-  to `crashed` + `respawned` events and diff timestamps.
 - **No Prometheus counter** — `nexo_plugin_respawn_total{plugin_id, outcome}`
   pending the general metrics pipeline.
 - **No multi-recipient encrypt for stderr_tail** — captured

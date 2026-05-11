@@ -1,0 +1,7 @@
+# taskflow.yaml — TaskFlow runtime knobs
+# Workflow orchestration layer. Always populated; defaults sane.
+taskflow:
+  enabled: true
+  max_concurrent_runs: 100
+  run_timeout: 30m
+schema_version: 11

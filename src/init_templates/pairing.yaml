@@ -1,0 +1,8 @@
+# pairing.yaml — pairing subsystem path overrides
+# Absent → daemon uses hardcoded defaults under ~/.nexo/.
+pairing:
+  # store_path: SQLite DB tracking active pairing sessions.
+  store_path: ./data/pairing.db
+  # secret_path: HMAC key for pairing challenge tokens.
+  secret_path: ~/.nexo/secret/pairing.key
+schema_version: 11
