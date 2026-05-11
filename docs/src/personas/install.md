@@ -40,13 +40,10 @@ nexo persona remove cody --yes       # actually removes
 | `nexo persona install <owner>/<repo>[@<tag>]` | Resolve + verify + extract a v2 persona pack. |
 | `nexo persona list` | Walk every configured search path, render every installed persona. |
 | `nexo persona remove <id> [--yes]` | Atomic removal of the install dir for `<id>`. |
-| `nexo persona get <id>` | **Stub** — `cat <install_root>/persona.toml` meanwhile. |
-| `nexo persona upgrade <id>` | **Stub** — re-run `install` with a newer tag. |
-| `nexo persona run <path>` | **Stub** — inner-loop dev (deferred). |
+| `nexo persona get <id>` | Print the full manifest + computed contributes paths for `<id>`. |
+| `nexo persona upgrade <id>` | Re-resolve the installed persona's source repo at `latest` + install if newer. Refuses to downgrade. |
+| `nexo persona run <path>` | Inner-loop dev: validate a local persona pack + boot the daemon with its parent dir prepended to `personas.discovery.search_paths`. Mirror of `nexo plugin run`. |
 | `nexo persona help` | Print the help text inline. |
-
-The three stubs print an actionable `error: ...` message on stderr
-and exit non-zero; tracking item: FOLLOWUPS.md `cody-cli.F6.b`.
 
 ## Flags
 
@@ -70,6 +67,52 @@ and exit non-zero; tracking item: FOLLOWUPS.md `cody-cli.F6.b`.
 |------|--------|
 | `--yes` | Required — without it the command prints what it WOULD remove and exits 0. |
 | `--json` | Same JSON envelope as `install`. |
+
+### `get`
+
+Prints id / version / description / homepage / install_root + every
+`contributes.agent_configs` and `contributes.plugin_configs_partial`
+path resolved to absolute. JSON variant returns the full manifest
+sections (`requires`, `meta`) too — CI can grep specific fields
+without re-parsing the on-disk TOML.
+
+| Flag | Effect |
+|------|--------|
+| `--json` | Emit the typed manifest payload as JSON instead of human lines. |
+
+### `upgrade`
+
+Inspects `cfg.personas.discovery.search_paths`, finds the installed
+persona by id, extracts its source GitHub repo from
+`manifest.persona.homepage`, hits the GitHub Releases API at
+`/releases/latest`, and re-runs the install pipeline if the resolved
+version is **strictly newer** than the on-disk one. Refuses to
+downgrade (use `nexo persona install <coords>@<tag>` to pin if
+intentional).
+
+| Flag | Effect |
+|------|--------|
+| `--json` | Same JSON envelope as `install`. |
+
+### `run`
+
+Inner-loop dev — point the daemon at a local persona pack without
+going through the install + verify pipeline. Validates the path's
+`persona.toml`, prepends the pack's **parent dir** to
+`cfg.personas.discovery.search_paths` (so the boot-time F5
+discovery picks it up as `<parent>/<id>-<version>/`), then falls
+through to the daemon boot path.
+
+```bash
+# Develop a persona locally:
+mkdir -p /tmp/dev/cody-0.99.0
+$EDITOR /tmp/dev/cody-0.99.0/persona.toml
+nexo persona run /tmp/dev/cody-0.99.0
+```
+
+| Flag | Effect |
+|------|--------|
+| `--json` | Emit the override payload as JSON before daemon boot starts streaming logs. |
 
 ## Configuration — `personas/discovery.yaml`
 
