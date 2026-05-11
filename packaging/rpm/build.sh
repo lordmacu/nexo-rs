@@ -96,13 +96,23 @@ fi
 
 # `NEXO_RPMBUILD_NODEPS=1` lets CI on apt-only runners skip the
 # `BuildRequires:` check for `systemd-rpm-macros` (no apt
-# equivalent). The CI workflow places `/etc/rpm/macros.d/
-# macros.systemd` with hand-rolled definitions of the three macros
-# this spec calls, so the spec's macros still expand correctly —
-# only the rpmdb-based dependency assertion is skipped.
+# equivalent). On such runners the systemd path macros (`%_unitdir`
+# etc.) and scriptlet macros (`%systemd_post` …) that `nexo-rs.spec`
+# uses are not in rpm's macropath, so `%{_unitdir}` would stay a
+# literal string and `%files` rejects it. `NEXO_RPM_DEFINES` carries
+# `name=value` pairs (one per line) that we forward to rpmbuild as
+# `--define`, which is always honoured regardless of macropath. On
+# Fedora (where systemd-rpm-macros is installed) leave both env vars
+# unset and the spec's macros expand natively.
 RPMBUILD_EXTRA=()
 if [ "${NEXO_RPMBUILD_NODEPS:-0}" = "1" ]; then
     RPMBUILD_EXTRA+=(--nodeps)
+fi
+if [ -n "${NEXO_RPM_DEFINES:-}" ]; then
+    while IFS= read -r def; do
+        [ -n "$def" ] || continue
+        RPMBUILD_EXTRA+=(--define "$def")
+    done <<< "$NEXO_RPM_DEFINES"
 fi
 
 rpmbuild --define "_topdir $RPM_TOP" \
