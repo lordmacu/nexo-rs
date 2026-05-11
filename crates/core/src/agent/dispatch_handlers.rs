@@ -47,9 +47,10 @@ use super::tool_registry::{ToolHandler, ToolRegistry};
 /// `Arc` through `AgentContext::dispatch`.
 pub struct DispatchToolContext {
     /// Hot-swappable tracker. The runtime can install a fresh
-    /// `FsProjectTracker` mid-conversation when Cody calls
-    /// `set_active_workspace` or `init_project`. Day-to-day reads
-    /// stay lock-free thanks to `MutableTracker`'s `ArcSwap`.
+    /// `FsProjectTracker` mid-conversation when a programmer-pair
+    /// agent calls `set_active_workspace` or `init_project`. Day-
+    /// to-day reads stay lock-free thanks to `MutableTracker`'s
+    /// `ArcSwap`.
     pub tracker: Arc<MutableTracker>,
     pub orchestrator: Arc<DriverOrchestrator>,
     pub registry: Arc<AgentRegistry>,
@@ -93,8 +94,8 @@ pub struct DispatchToolContext {
     /// parent's acceptance passes. The audit reports findings
     /// (bugs, incomplete followups, missing tests) without
     /// fixing them — the operator decides which to dispatch as
-    /// fix-goals. Default `true` for the canonical Cody flow;
-    /// set to `false` for noisy throwaway runs.
+    /// fix-goals. Default `true` for the canonical programmer-pair
+    /// flow; set to `false` for noisy throwaway runs.
     pub audit_before_done: bool,
     /// Chainer used by hook dispatcher to spawn DispatchPhase /
     /// DispatchAudit goals. `None` keeps hook chaining disabled
@@ -1012,7 +1013,13 @@ impl ToolHandler for FollowupDetailHandler {
     }
 }
 
-// ─── Cody-flow handlers (preflight + workspace ops) ─────────
+// ─── Programmer-pair handlers (preflight + workspace ops) ───
+//
+// Generic `preflight` / `set_active_workspace` / `init_project`
+// tools shared across any agent with `dispatch_policy.mode = full`.
+// Originally written for the `cody` agent (now extracted to the
+// `nexo-persona-cody` sibling repo), but the code never branched
+// on agent_id — these handlers serve every programmer-pair agent.
 
 pub struct PreflightHandler;
 
@@ -1601,7 +1608,7 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
         ),
         InterruptAgentHandler,
     );
-    // Cody-flow tools.
+    // Programmer-pair flow tools.
     registry.register(
         def(
             "preflight",

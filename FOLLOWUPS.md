@@ -71,9 +71,53 @@ A totals: 14 new tests (4 anthropic + 5 add_hook/remove_hook
 + 5 reused/extended for chain+parallel registration), 0
 regressions, full workspace build clean.
 
-Phase B (extract `nexo-persona-cody/` out-of-tree config repo)
-queued — separate forge brainstorm/spec/plan flow per audit
-recommendation.
+Phase B shipped 2026-05-11:
+
+- ✅ ~~**B Phase: extract `nexo-persona-cody/` sibling repo**~~ —
+  new public GitHub repo `lordmacu/nexo-persona-cody` (MIT) shipping:
+  `persona.toml` v1 manifest + `agents.d/cody.yaml` (391 LOC moved
+  verbatim from `proyecto/config/agents.d/cody.yaml`) +
+  `plugins/telegram.partial.yaml` (cody_nexo_bot block) +
+  `secrets/*.template` + `data/workspace/cody/` Phase 1 starter +
+  `install.sh` (idempotent bash 4+, --dry-run/--reinstall/--config-dir/
+  --help, exit codes 0/1/2/3/4/5 per spec) + README + CHANGELOG +
+  LICENSE. Forge formal: brainstorm → spec → plan → ejecutar.
+- proyecto-side cleanup commit (cody-extraction-2026-05-11 branch):
+  banner `// ─── Cody-flow handlers ───` → `Programmer-pair handlers`
+  with header explaining the generalisation; `cody.yaml` removal from
+  disk (was always gitignored, no `git rm` needed); `telegram.yaml`
+  cody_nexo_bot block removed; `config/agents.d/README.md` pointer
+  added explaining the persona-pack pattern.
+
+### `cody-cli-install` follow-up wave (queued, deferred)
+
+The Phase B execution surfaced an architectural question: should
+persona installation mirror the existing
+`nexo plugin install <owner>/<repo>` CLI flow (Phase 31.1.c) instead
+of using a shell script? Per the operator's call, **both modes will
+coexist**:
+
+- **`./install.sh`** (v0.1.x, shipped today) — for airgapped hosts,
+  CI pipelines that skip daemon state, and inner-loop dev. Stays.
+- **`nexo persona install <owner>/<repo>`** (v0.2.x, deferred wave)
+  — mirror of `nexo plugin install`: GitHub Releases tarball
+  download + sha256 + optional cosign verify + extract to
+  `personas.discovery.search_paths[0]` + boot-time auto-discovery.
+
+Implementation rough-sized (~1-2 days new framework code):
+- `crates/persona-installer/` mirroring `nexo-ext-installer` (resolve/
+  download/verify/extract pipeline). Reuse the cosign + sha256 plumbing.
+- New `nexo persona {install, list, remove, run}` subcommands in
+  `src/main.rs` mirroring `Mode::PluginInstall` family.
+- `cfg.personas.discovery.search_paths` config addition (mirror
+  `cfg.plugins.discovery`).
+- Boot-time persona discovery + agents.d auto-merge pipeline.
+- GitHub Release tarball pipeline for `nexo-persona-cody` (cargo-dist
+  or manual `gh release upload <tarball>`).
+- v0.2.0 bump on the persona pack, CHANGELOG entry, README cleanup.
+
+Tracking item: `cody-cli-install` — start with
+`/forge brainstorm cody-cli-install` when bandwidth allows.
 
 ### Audit 2026-05-10 — admin wave P0 fixes — shipped
 
