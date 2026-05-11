@@ -60,10 +60,12 @@ install -d -m 0750 %{buildroot}%{_sysconfdir}/nexo-rs
 install -d -m 0750 %{buildroot}%{_sharedstatedir}/nexo-rs
 install -d -m 0750 %{buildroot}%{_localstatedir}/log/nexo-rs
 
-install -d -m 0755 %{buildroot}%{_defaultdocdir}/%{name}
-install -m 0644 README.md %{buildroot}%{_defaultdocdir}/%{name}/
-install -m 0644 LICENSE-APACHE %{buildroot}%{_defaultdocdir}/%{name}/copyright-apache
-install -m 0644 LICENSE-MIT %{buildroot}%{_defaultdocdir}/%{name}/copyright-mit
+# README + licenses are packaged via the `%doc`/`%license` macros
+# in `%files` (rpm copies them from the build dir into
+# /usr/share/doc/%{name}-%{version}/ and /usr/share/licenses/…).
+# Don't `install` them manually too — that lands a second copy in
+# /usr/share/doc/%{name}/ that no `%files` glob covers, and
+# rpmbuild aborts with "Installed (but unpackaged) file(s) found".
 
 %pre
 getent group nexo >/dev/null || groupadd --system nexo
