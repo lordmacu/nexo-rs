@@ -87,6 +87,39 @@ pub enum ManifestError {
     )]
     SupervisorStderrTailExceedsCap { value: usize, max: usize },
 
+    /// Phase 90 audit fix — `max_attempts = 0` is silently
+    /// equivalent to `respawn = false` (the supervisor publishes
+    /// `gave_up` with `attempts: 0` on the very first crash). Use
+    /// `respawn = false` for "do not auto-respawn"; reserve
+    /// `max_attempts` for the bounded retry count.
+    #[error(
+        "supervisor.max_attempts must be >= 1 when respawn = true; \
+         set respawn = false to disable auto-respawn"
+    )]
+    SupervisorMaxAttemptsZero,
+
+    /// Phase 90 audit fix — `backoff_ms = 0` produces a tight
+    /// retry loop (the documented exponential schedule starts from
+    /// the base; with base = 0 every attempt's wait is 0). Force a
+    /// minimum that gives the failing dependency time to recover.
+    #[error(
+        "supervisor.backoff_ms must be >= {min}; \
+         a smaller base produces a tight retry loop \
+         that bypasses the documented exponential schedule"
+    )]
+    SupervisorBackoffMsBelowFloor { value: u64, min: u64 },
+
+    /// Phase 90 audit fix — `backoff_ms` upper bound. The
+    /// reset-counter heuristic (`base * max_attempts * 2`) saturates
+    /// at very large bases, effectively disabling the per-window
+    /// counter reset. Cap so the heuristic stays meaningful.
+    #[error(
+        "supervisor.backoff_ms `{value}` exceeds cap `{max}`. \
+         A larger base saturates the reset-counter heuristic and \
+         disables per-window recovery."
+    )]
+    SupervisorBackoffMsExceedsCap { value: u64, max: u64 },
+
     /// Phase 81.28 — entry in `[plugin.extends].<section>` does
     /// not match the id regex (`^[a-z][a-z0-9_]{0,31}$`).
     #[error("[plugin.extends].{section} id `{id}` invalid: {reason}")]
