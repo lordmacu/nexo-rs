@@ -8,9 +8,13 @@ match the [TypeScript](./typescript-sdk.md) and [PHP](./php-sdk.md)
 SDKs (sub-phase 31.4.c).
 
 Reference template:
-[`extensions/template-plugin-python/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-python).
-The SDK package itself lives at
-[`extensions/sdk-python/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/sdk-python).
+[`extensions/template-plugin-python/`](https://github.com/lordmacu/nexo-rs/tree/main/extensions/template-plugin-python)
+(or run `nexo plugin new --lang python`). The SDK package lives in the
+[`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks) repo
+(`python/` subdir) and ships on PyPI as
+[`nexoai`](https://pypi.org/project/nexoai/) — `pip install nexoai`
+(the `nexo-plugin-sdk` name was taken; the importable module is still
+`nexo_plugin_sdk`).
 
 ## Why subprocess + Python instead of an embedded interpreter
 
@@ -177,8 +181,10 @@ python3 -m unittest extensions/template-plugin-python/tests/test_pack_tarball.py
 
 ## SDK tests
 
+In a clone of [`nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks):
+
 ```bash
-cd extensions/sdk-python
+cd python
 PYTHONPATH=. python3 -m unittest discover -v tests/
 ```
 
