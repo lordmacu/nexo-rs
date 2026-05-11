@@ -4559,6 +4559,100 @@ legitimate steady-state mode for single-host deployments.
 
 ---
 
+### Phase 93 — Daemon zero-config boot   ✅
+
+**Goal:** `nexo` runs as a daemon out of the box with literally
+zero YAML files on disk. The four historically-required configs
+(agents / broker / llm / memory) collapse to `Default::default()`
+when missing; the missing config dir itself short-circuits to
+`AppConfig::default_baked_in()` with a single WARN log. Removes
+the operator-side burden of seeding YAMLs just to boot the
+daemon — first-time installs from `.deb` / `.rpm` / `.exe` /
+Termux can `nexo` straight away and exercise admin RPCs to
+populate state.
+
+**Status:** ✅ shipped 2026-05-11 (commit `bdda502`).
+
+**Why this matters:**
+
+- **Distribution UX** — `.deb` postinst no longer needs a
+  `mkdir /etc/nexo && cp default/*.yaml /etc/nexo/` step.
+  The package drops the binary + systemd unit and that's it.
+- **Onboarding speed** — the existing operator UX of "follow
+  the wizard, fill out 4 YAMLs by hand, restart" becomes "run
+  daemon, open UI, click through wizard, admin RPCs upsert
+  the config".
+- **Embedded targets** (Phase 90) — Android / iOS / WASM glue
+  doesn't have to ship sample YAMLs in app assets; the
+  daemon side already has sane defaults baked in.
+- **CI tests** — daemon-up smoke tests can spawn against
+  `/tmp/empty-dir/` (or no config arg at all under XDG).
+  No fixture scaffolding required.
+
+**What ships:**
+
+- `AgentsConfig`, `BrokerConfig` (+`BrokerInner`), `LlmConfig`,
+  `MemoryConfig` derive `Default`. Nested types
+  (`ShortTermConfig`, `LongTermConfig`) get manual `impl
+  Default` using their existing `default_*()` field functions
+  so the wire shape is unchanged.
+- New helper
+  `nexo_config::load_optional_or_default<T: Default>(dir,
+  filename) -> Result<T>` — file exists ⇒ delegate to
+  `load_required` (env-var resolution + schema strip
+  unchanged); file missing ⇒ emit one WARN line per file,
+  return `T::default()`.
+- `AppConfig::load` swaps the four `load_required` calls for
+  `load_optional_or_default` AND short-circuits at the top
+  with a single WARN when the config dir itself doesn't
+  exist (returns `default_baked_in()` to avoid spamming a WARN
+  per nested file lookup).
+- New private `AppConfig::default_baked_in()` constructor
+  bundles the four Default configs + None / Default for every
+  optional subsystem.
+- `nexo-config` Cargo.toml gains `tracing = { workspace }` for
+  the WARN logs (the crate was previously silent-or-bail; now
+  it tells operators what's being inferred).
+
+**Verified manually:**
+
+```bash
+$ XDG_CONFIG_HOME=/tmp/phase93-zerocfg nexo
+WARN  nexo_config: config dir not found — booting with
+                   Default::default() for every YAML
+                   (0 agents, BrokerKind::Local, 0 llm providers,
+                   sqlite memory at default path)
+INFO  nexo: broker ready kind=Local url=
+INFO  nexo: long-term memory ready path=./data/memory.db
+INFO  plugins.discovery: plugin registry wire complete
+                          loaded=0 invalid=0
+INFO  nexo: pairing initialised
+INFO  nexo: dispatch boot: no agent declares
+                          dispatch_capability=full — driver stays
+                          unwired
+```
+
+Daemon stays up serving admin RPCs + health endpoint even with
+zero agents. LLM tool calls fail loud (no providers) and
+operators see that in the log.
+
+**Pairs with:**
+- Phase 92.9 `nexo set-broker` subcommand — operator switches
+  broker mode without writing YAML by hand.
+- Phase 92.9 `NEXO_CONFIG_DIR` + XDG-spec config dir discovery
+  — `nexo` finds its config without `--config` when one
+  exists in the canonical XDG location.
+
+**Follow-ups (not yet planned):**
+- `93.followup-deb-postinst` — strip the YAML-seeding from
+  `.deb` / `.rpm` package scripts now that the daemon doesn't
+  require them.
+- `93.followup-zero-config-tests` — unit + integration
+  coverage of `load_optional_or_default` + the
+  `default_baked_in()` path.
+
+---
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47
