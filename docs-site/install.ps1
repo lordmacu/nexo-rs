@@ -177,7 +177,7 @@ function Install-Plugins {
     Write-Host "─────────────────────────────────────────────────────────────"
     Write-Host "  Installing bundled plugins + persona"
     Write-Host "─────────────────────────────────────────────────────────────"
-    foreach ($p in @($Plugins + 'nexo-plugin-admin')) { Install-OnePlugin $nexo $p }
+    foreach ($p in @($Plugins + 'nexo-rs-plugin-admin')) { Install-OnePlugin $nexo $p }
     if ($Persona) {
         Write-Host "→ persona $Persona"
         & $nexo persona install $Persona
