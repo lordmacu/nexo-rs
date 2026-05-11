@@ -44,6 +44,8 @@ Ext subcommand has its own richer code table — see below.
 | Subcommand | Purpose |
 |------------|---------|
 | *(default)* | Run the agent daemon |
+| [`init`](#init) | Scaffold sample YAMLs (Phase 95) |
+| [`set-broker`](#set-broker) | Switch broker.yaml between `local` and `nats` (Phase 92.9) |
 | [`setup`](#setup) | Interactive credential wizard |
 | [`status`](#status) | Query running agent instances |
 | [`dlq`](#dlq) | Dead-letter queue inspection |
@@ -73,6 +75,67 @@ local fallback), starts metrics (`:9090`), health (`:8080`), and admin
   failed to initialize
 
 **Logs to:** stderr. See [Logging](../ops/logging.md).
+
+---
+
+## `init`
+
+Scaffold sample YAMLs into the config dir. Templates are baked
+into the binary at compile time (`include_str!`), so this works
+on a fresh install with zero network access.
+
+```bash
+agent init                                       # all 19 templates → ${XDG_CONFIG_HOME:-~/.config}/nexo
+agent init --output /etc/nexo-rs                 # custom dir
+agent init --yaml broker,llm                     # shorthand: only those two
+agent init --yaml plugins/whatsapp               # plugin subdir templates
+agent init --force                               # overwrite existing files
+agent init --stdout --yaml broker                # print one template to stdout (no file write)
+```
+
+**Yaml filter shorthand**: bare names (`broker`, `agents`, `llm`,
+`memory`, `extensions`, `mcp`, `mcp_server`, `runtime`, `pollers`,
+`taskflow`, `transcripts`, `pairing`, `webhook_receiver`) resolve
+to top-level YAMLs. Plugin subdir templates: `plugins/whatsapp`,
+`plugins/telegram`, `plugins/email`, `plugins/browser`,
+`plugins/discovery`. Persona templates: `personas/discovery`.
+
+Exit codes: `0` on write, `1` on filter mismatch, `2` if `--force`
+not passed and target exists.
+
+Postinst scripts in the `.deb` / `.rpm` / Termux packages call
+`agent init --output <CONFIG_DIR>` automatically on first install
+so a fresh-from-package operator never starts from a blank dir.
+
+---
+
+## `set-broker`
+
+Switch the broker mode without editing `broker.yaml` by hand.
+Rewrites `broker.yaml` to the requested kind, then (by default)
+sends `SIGHUP` to every running daemon that loaded this config
+dir — the daemon respawns with the new broker (~3s blackout for
+in-flight messages, drained from the persistence layer).
+
+```bash
+agent set-broker local                                # stdio bridge (no NATS server)
+agent set-broker nats --url nats://localhost:4222     # multi-host mode
+agent set-broker local --no-signal                    # edit YAML only, daemon stays on old broker until restart
+agent --config /etc/nexo-rs set-broker nats --url nats://10.0.0.5:4222
+```
+
+`local` mode uses the daemon-derived `stdio_bridge` transport for
+subprocess plugins — no NATS server required. `nats` mode requires
+a reachable NATS server at `--url`; subprocess plugins inherit
+`NEXO_BROKER_URL` and connect via `async-nats`.
+
+See [broker shapes](../architecture/broker-shapes.md) for the full
+architectural picture and [zero-config quickstart](../getting-started/zero-config.md)
+for the typical operator flow.
+
+Exit codes: `0` on success, `1` if `nats` requested without `--url`
+or YAML write failed, `2` if no daemon matched (YAML still updated;
+user must start the daemon manually).
 
 ---
 
