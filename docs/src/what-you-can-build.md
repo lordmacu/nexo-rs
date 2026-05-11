@@ -177,6 +177,35 @@ all their tenants.
 
 ---
 
+## Personas — pre-built agent packs
+
+Persona packs bundle a ready-to-run agent (system prompt + plugin
+bindings + workspace seed + secrets templates) you install with one
+command. Distinct from plugins (plugins register CODE; personas
+register CONFIG). Authored against the v2 manifest schema, published
+as GitHub Releases, installed via `nexo persona install`.
+
+```bash
+# Browse + install:
+nexo persona install lordmacu/nexo-persona-cody
+nexo persona list
+```
+
+Available today:
+
+| Pack | Persona | Channels | Use case |
+|------|---------|----------|----------|
+| [`lordmacu/nexo-persona-cody`](https://github.com/lordmacu/nexo-persona-cody) | **Cody** — programmer pair | Telegram, WhatsApp | Drives Claude Code goals from chat. Reads PHASES.md, dispatches one phase at a time, audits the diff before declaring done. Self-modify by default (with git-worktree isolation); production opts out via `NEXO_DISALLOW_SELF_MODIFY=1`. |
+
+More on the way — see the [Cody README](https://github.com/lordmacu/nexo-persona-cody)
+for the v2 manifest shape if you want to publish your own. Inner-
+loop dev with `nexo persona run /path/to/local/pack` boots the
+daemon against an unpackaged dir.
+
+→ [Installing personas (full guide)](./personas/install.md)
+
+---
+
 ## Specialized agents
 
 ### Browser scraping agent — URL → structured data
