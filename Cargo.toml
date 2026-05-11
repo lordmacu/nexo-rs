@@ -104,11 +104,6 @@ members = [
     # the directory out of the repo and switch to the crates.io
     # version per the template's README.
     "extensions/template-mcp-server",
-    # Phase 83.7 — microapp template (Rust) — copy + rename to
-    # bootstrap a domain-specific microapp using the
-    # `nexo-microapp-sdk` builder API. README points authors at
-    # `docs/src/microapps/contract.md` for porting to other langs.
-    "extensions/template-microapp-rust",
     # Phase 80.9 fixture — minimal MCP server with channel
     # capabilities for end-to-end testing of the channels
     # surface. Operator-facing fixture, not a template.
@@ -119,20 +114,24 @@ members = [
     # tarballs via `[package.metadata.dist] dist = false`.
     "crates/test-fixtures/mock-subprocess-plugin",
 ]
-# Keep standalone extension templates out of the agent workspace so they don't
-# inherit our deps or lockfile. Users copy them verbatim and build separately.
+# Keep standalone extension templates out of the agent workspace so
+# they don't inherit our deps or lockfile — `cp -r` (or `nexo plugin
+# new`) yields a project that builds straight away, no path-dep
+# surgery, no `[lints] workspace = true` to strip. Their `nexo-*`
+# deps point at the published crates.io versions.
 #
-# `template-plugin-rust` moved here from `[workspace.members]`:
+# `template-plugin-rust` additionally MUST be excluded because
 # `nexo-rs`'s `src/plugin_new.rs` embeds its directory via
-# `include_dir!`, and cargo unconditionally drops workspace-member
-# directories from the parent crate's `.crate` tarball — so a
-# `cargo install nexo-rs` would proc-macro-panic on a missing dir.
-# As a non-member it's pulled into the tarball by `[package].include`
-# below; it still builds standalone (its deps are `path = "../../crates/…"`,
-# which resolve from this location too — same depth from the repo root).
+# `include_dir!`, and cargo drops workspace-member directories from
+# the parent crate's `.crate` tarball — a `cargo install nexo-rs`
+# would proc-macro-panic on the missing dir. As a non-member it's
+# pulled into the tarball by `[package].include` below (and it ships
+# its manifest as `_Cargo.toml` so cargo doesn't see a nested package
+# either; the scaffolder renames it back to `Cargo.toml`).
 exclude = [
     "extensions/template-rust",
     "extensions/template-plugin-rust",
+    "extensions/template-microapp-rust",
 ]
 resolver = "2"
 

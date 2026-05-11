@@ -34,8 +34,8 @@ output of the same quickstart, scaled up to 12 tools.
 
 | Tool | Version | Why |
 |------|---------|-----|
-| Rust toolchain | 1.74+ (`rustup` recommended) | Build the plugin binary. |
-| `nexo` CLI | 0.1.5+ on PATH | `plugin new` (Phase 31.6), `plugin run` (31.7), `plugin install` (31.1.c). |
+| Rust toolchain | 1.80+ (`rustup` recommended) | Build the plugin binary. |
+| `nexo` CLI | 0.1.6+ on PATH | `plugin new`, `plugin run`, `plugin install`. |
 | `git` | any | Push to GitHub. |
 | GitHub account + a repo you can push to | — | Releases host the install artifacts. |
 | `cosign` (optional) | 2.x | Sign releases for operators on `--require-signature`. Skip until step 9. |
@@ -43,15 +43,16 @@ output of the same quickstart, scaled up to 12 tools.
 Verify each:
 
 ```bash
-cargo --version          # cargo 1.74+
-nexo --version           # 0.1.5+
+cargo --version          # cargo 1.80+
+nexo --version           # nexo 0.1.6+
 git --version
 gh auth status           # if using `gh` CLI for the repo create
 ```
 
-If `nexo` is not yet on PATH, build it from the daemon workspace
-once with `cargo install --path . --bin nexo` from your
-`nexo-rs` checkout and make sure `~/.cargo/bin` is on PATH.
+If `nexo` is not yet on PATH:
+`curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash`
+(or `cargo install nexo-rs`) — then make sure `~/.cargo/bin` is on
+PATH.
 
 ## 1. Scaffold
 
@@ -76,8 +77,7 @@ Flags that matter:
   README + CI workflow's release URL.
 - `--description "..."` — optional one-liner; flows into the
   manifest + README + Cargo description.
-- `--git-init` — runs `git init` for you and stages the initial
-  commit.
+- `--git` — runs `git init` for you and stages the initial commit.
 - `--dest /custom/path` — emit elsewhere (default is
   `./<id>/`).
 

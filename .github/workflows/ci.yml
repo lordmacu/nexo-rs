@@ -109,19 +109,24 @@ jobs:
       # share temp dirs.
       - working-directory: proyecto
         run: cargo test --workspace --locked --features config-self-edit -- --test-threads=1
-      # `extensions/template-plugin-rust/` is no longer a workspace
-      # member (it ships its manifest as `_Cargo.toml` so
-      # `cargo install nexo-rs` can embed the directory), so
-      # `cargo build --workspace` above doesn't cover it. Build it
-      # the way an operator would: `nexo plugin new` materializes
-      # `_Cargo.toml` → `Cargo.toml`, then `cargo build` resolves
+      # The Rust plugin / microapp templates are no longer workspace
+      # members (`template-plugin-rust` ships its manifest as
+      # `_Cargo.toml` so `cargo install nexo-rs` can embed the dir),
+      # so `cargo build --workspace` above doesn't cover them. Build
+      # each the way an operator would — a fresh copy that resolves
       # `nexo-microapp-sdk` / `nexo-broker` from crates.io.
       - name: Build the Rust plugin template standalone
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
           cp -r proyecto/extensions/template-plugin-rust/. "$tmp/"
-          mv "$tmp/_Cargo.toml" "$tmp/Cargo.toml"
+          mv "$tmp/_Cargo.toml" "$tmp/Cargo.toml"   # `nexo plugin new` does this
+          ( cd "$tmp" && cargo build )
+      - name: Build the Rust microapp template standalone
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cp -r proyecto/extensions/template-microapp-rust/. "$tmp/"
           ( cd "$tmp" && cargo build )
 
   cross-arm64:
