@@ -13,9 +13,10 @@
 #      pre-built binary for your platform, then to `cargo install --git`
 #      if crates.io is unreachable.
 #   3. Installs the bundled channel plugins (whatsapp, telegram, email,
-#      browser) and `nexo-plugin-admin` (the admin web UI behind
-#      `nexo admin`). Best-effort — a failed plugin never aborts the
-#      install. Skip the whole step with --no-plugins.
+#      browser), `nexo-plugin-admin` (the admin web UI behind
+#      `nexo admin`), and a default persona pack (a ready-to-run agent).
+#      Best-effort — a failed plugin never aborts the install. Skip the
+#      whole step with --no-plugins, or just the persona with --no-persona.
 #
 # Pre-built targets: Linux x86_64 / aarch64 (static musl), macOS
 # Intel / Apple Silicon. Windows users: download the .zip from
@@ -48,12 +49,18 @@ INSTALL_PLUGINS=1
 # channel set with NEXO_PLUGINS="a b c"; use --no-plugins to skip all.
 PLUGINS="${NEXO_PLUGINS:-nexo-plugin-whatsapp nexo-plugin-telegram nexo-plugin-email nexo-plugin-browser}"
 
+# Default persona pack — a ready-to-run agent so the daemon does
+# something useful on first boot. Set NEXO_PERSONA="" or pass
+# --no-persona to skip; NEXO_PERSONA="owner/repo" to pick another.
+PERSONA="${NEXO_PERSONA-lordmacu/nexo-persona-cody}"
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --install-dir) INSTALL_DIR="$2"; shift 2 ;;
         --install-dir=*) INSTALL_DIR="${1#*=}"; shift ;;
         --from-source) FROM_SOURCE=1; shift ;;
-        --no-plugins) INSTALL_PLUGINS=0; shift ;;
+        --no-plugins) INSTALL_PLUGINS=0; PERSONA=""; shift ;;
+        --no-persona) PERSONA=""; shift ;;
         -h|--help) sed -n '2,42p' "$0" 2>/dev/null || true; exit 0 ;;
         *) echo "warning: ignoring unknown flag '$1'" >&2; shift ;;
     esac
@@ -211,7 +218,7 @@ install_plugins() {
 
     echo
     echo "─────────────────────────────────────────────────────────────"
-    echo "  Installing bundled plugins"
+    echo "  Installing bundled plugins + persona"
     echo "─────────────────────────────────────────────────────────────"
 
     # Channel plugins — GitHub Release tarballs via `nexo plugin install`.
@@ -230,6 +237,13 @@ install_plugins() {
         echo "  ⚠ skipped nexo-plugin-admin — needs the Rust toolchain." >&2
         echo "    Install Rust, then:  cargo install nexo-plugin-admin" >&2
     fi
+
+    # Default persona pack — a ready-to-run agent on first boot.
+    if [ -n "$PERSONA" ]; then
+        echo "→ persona ${PERSONA}"
+        "$nexo" persona install "$PERSONA" </dev/null \
+            || echo "  ⚠ skipped persona ${PERSONA} — retry later:  nexo persona install ${PERSONA}" >&2
+    fi
 }
 
 next_steps() {
@@ -244,15 +258,13 @@ Next:
        nexo admin --open
        nexo admin --tunnel    # + a free public Cloudflare URL
 
-  3. Add a persona pack (one-line ready-to-run agents):
-       nexo persona install lordmacu/nexo-persona-cody
-
-  4. (Optional) Scaffold 19 documented sample YAMLs:
+  3. (Optional) Scaffold 19 documented sample YAMLs:
        nexo init
 
-  More plugins / re-run a skipped one:
+  More plugins / personas / re-run a skipped one:
        nexo plugin install lordmacu/nexo-plugin-whatsapp
        # also: nexo-plugin-{telegram,email,browser}
+       nexo persona install lordmacu/nexo-persona-cody
 
   Update later:
        nexo update
