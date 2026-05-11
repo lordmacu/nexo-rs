@@ -134,6 +134,11 @@ EOF
 chmod 0755 "$PKG_DIR/DEBIAN/preinst"
 
 # Post-install: chown state dir, reload systemd. NO auto-start.
+# Phase 95 — also scaffold sample YAMLs into /etc/nexo-rs/ so an
+# operator that runs `nexo setup` doesn't start from a blank
+# dir, AND a `systemctl enable --now nexo-rs` works straight out
+# of the box (the daemon's Phase 93 zero-config defaults take
+# over for every YAML the operator doesn't customize).
 cat > "$PKG_DIR/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
@@ -141,16 +146,39 @@ mkdir -p /var/lib/nexo-rs /var/log/nexo-rs /etc/nexo-rs
 chown -R nexo:nexo /var/lib/nexo-rs /var/log/nexo-rs
 chmod 0750         /var/lib/nexo-rs /var/log/nexo-rs
 chmod 0750         /etc/nexo-rs
+
+# Phase 95 — drop sample YAMLs on first install (skip on
+# upgrade so operator edits survive). `nexo init` ships
+# baked-in templates; --output writes them to a dir we own
+# and chown.
+if [ ! -f /etc/nexo-rs/broker.yaml ]; then
+    /usr/bin/nexo init --output /etc/nexo-rs >/dev/null 2>&1 || :
+    chown -R nexo:nexo /etc/nexo-rs
+fi
+
 systemctl daemon-reload >/dev/null 2>&1 || :
 cat <<MSG
 
   nexo-rs installed.
 
-  Next steps:
-    1. Wire your config:    sudo -u nexo nexo setup
-       (writes /etc/nexo-rs/{agents,broker,llm,memory}.yaml)
-    2. Enable + start:      sudo systemctl enable --now nexo-rs
-    3. Tail logs:           sudo journalctl -u nexo-rs -f
+  Quick smoke test (Phase 93 zero-config):
+    sudo systemctl enable --now nexo-rs
+    sudo journalctl -u nexo-rs -f
+  → daemon boots with defaults (0 agents, broker=local,
+    no LLM provider). Admin RPCs + health endpoint live.
+
+  To customize:
+    A) Edit the auto-seeded YAMLs at /etc/nexo-rs/*.yaml,
+       restart with `sudo systemctl restart nexo-rs`.
+    B) Run the interactive wizard:
+         sudo -u nexo nexo setup
+    C) Use admin RPCs from the operator UI (microapp).
+
+  Common switches:
+    sudo -u nexo nexo --config /etc/nexo-rs set-broker nats \\
+         --url nats://localhost:4222    # if you run NATS
+    sudo -u nexo nexo --config /etc/nexo-rs set-broker local
+                                         # stdio bridge (default)
 
   Docs: https://lordmacu.github.io/nexo-rs/
 
