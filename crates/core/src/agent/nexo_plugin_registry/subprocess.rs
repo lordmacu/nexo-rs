@@ -937,7 +937,17 @@ impl SubprocessNexoPlugin {
         }
 
         // Step 10: publish `restarted_manually` event.
+        // Phase 90 audit fix — include `new_pid` in the broker
+        // payload so subscribers tailing lifecycle events see the
+        // freshly spawned PID without an extra RPC round-trip.
+        // Mirrors the `PluginsRestartResponse` wire shape; encoded
+        // via `Value::Null` when Tokio's `Child::id()` returned
+        // None (rare).
         let restarted_at_ms = chrono::Utc::now().timestamp_millis();
+        let new_pid_payload = match new_pid {
+            Some(p) => json!(p),
+            None => Value::Null,
+        };
         Self::publish_lifecycle_event(
             &broker,
             &plugin_id,
@@ -946,6 +956,7 @@ impl SubprocessNexoPlugin {
                 "plugin_id": plugin_id,
                 "previous_uptime_ms": previous_uptime_ms,
                 "restarted_at_ms": restarted_at_ms,
+                "new_pid": new_pid_payload,
             }),
         )
         .await;
@@ -4205,6 +4216,25 @@ exit {exit_code}
         assert!(
             event.payload.get("restarted_at_ms").and_then(|v| v.as_i64()).is_some()
         );
+        // Phase 90 audit fix — broker payload must mirror the
+        // `PluginsRestartResponse.new_pid` field so subscribers
+        // don't have to RPC again to learn the freshly spawned
+        // PID. `Some(_)` from Tokio's `Child::id()` is the common
+        // case; `None` would serialise as `null`.
+        let new_pid_v = event
+            .payload
+            .get("new_pid")
+            .expect("new_pid present in event payload");
+        match (report.new_pid, new_pid_v) {
+            (Some(pid), serde_json::Value::Number(n)) => {
+                assert_eq!(n.as_u64(), Some(u64::from(pid)));
+            }
+            (None, serde_json::Value::Null) => {}
+            (a, b) => panic!(
+                "new_pid mismatch — response={:?}, payload={:?}",
+                a, b
+            ),
+        }
 
         // No `crashed` event for an intentional kill.
         let crashed = collect_events_until(&mut crashed_sub, Duration::from_millis(300)).await;
@@ -4781,6 +4811,97 @@ fi
             gave_up.payload.get("stderr_tail").and_then(|v| v.as_array()).is_some(),
             "gave_up.stderr_tail must be array"
         );
+        cancel.cancel();
+    }
+
+    /// Phase 90 audit follow-up — golden coverage for the
+    /// `restarted_manually` event shape. The auto-respawn golden
+    /// at `lifecycle_event_payload_shapes_match_spec` only
+    /// reaches `crashed`/`respawning`/`gave_up`; manual restart
+    /// has its own broker payload (`previous_uptime_ms`,
+    /// `restarted_at_ms`, `new_pid`) shipped today and needs an
+    /// independent assertion so a future field rename / drop
+    /// doesn't slip through unnoticed.
+    #[tokio::test]
+    async fn lifecycle_payload_shape_restarted_manually() {
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1500");
+        let path = write_stable_script(
+            "nexo-lifecycle-shape-restarted-manually",
+            "test_plugin",
+        );
+        let m = manifest_with_supervisor(path.to_str().unwrap(), false, 0, 100);
+        let (plugin, _dyn) = arc_plugin_via_factory(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.restarted_manually")
+            .await
+            .expect("subscribe restarted_manually");
+        boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
+
+        plugin
+            .clone()
+            .force_restart(cancel.clone(), Some(broker.clone()), None, None)
+            .await
+            .expect("force_restart ok");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        let event = tokio::time::timeout(Duration::from_secs(2), sub.next())
+            .await
+            .expect("restarted_manually arrives within 2s")
+            .expect("Some");
+
+        // Source is the supervisor (not "memory-snapshot" or
+        // similar — the event lives in the plugin lifecycle family).
+        assert_eq!(event.source, "plugin.supervisor");
+
+        // plugin_id: string
+        assert_eq!(
+            event.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+
+        // previous_uptime_ms: u64
+        assert!(
+            event
+                .payload
+                .get("previous_uptime_ms")
+                .and_then(|v| v.as_u64())
+                .is_some(),
+            "previous_uptime_ms must be u64"
+        );
+
+        // restarted_at_ms: i64 (chrono timestamp)
+        let ts = event
+            .payload
+            .get("restarted_at_ms")
+            .and_then(|v| v.as_i64())
+            .expect("restarted_at_ms must be i64");
+        assert!(ts > 1_700_000_000_000, "restarted_at_ms must be sane");
+
+        // new_pid: u64 | null — present in payload exactly as
+        // the wire response carries it. Null is acceptable but
+        // the field must EXIST so subscribers can rely on its
+        // presence.
+        assert!(
+            event.payload.get("new_pid").is_some(),
+            "new_pid key must exist in event payload"
+        );
+
+        // Defensive: no extraneous fields slip in (catches
+        // accidental serialisation of the inner Inner state).
+        let obj = event.payload.as_object().expect("payload is object");
+        let allowed: std::collections::HashSet<&str> =
+            ["plugin_id", "previous_uptime_ms", "restarted_at_ms", "new_pid"]
+                .iter()
+                .copied()
+                .collect();
+        for k in obj.keys() {
+            assert!(
+                allowed.contains(k.as_str()),
+                "unexpected field `{k}` in restarted_manually payload"
+            );
+        }
         cancel.cancel();
     }
 }

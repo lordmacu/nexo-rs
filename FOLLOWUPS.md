@@ -116,15 +116,109 @@ P1 totals: 1 new backend test, 0 frontend tests added (pure UX
 + store changes verified manually + tsc clean), full mdbook
 build clean, full workspace build clean.
 
-P2 (14 open — polish): domain kill-switches dead code,
-manifest validation gaps (`max_attempts==0`,
-`backoff_ms==0`), dispatcher slot-not-wired tests for
-memory/* + plugins/* arms, capability-gate denial tests,
-frontend vitest coverage gaps, i18n drift test,
-`new_pid` golden assertion, lifecycle golden test
-expansion, supervisor.md doc drift cleanup, confirm-prefix
-inconsistency, modal Escape/backdrop-close, snapshot list
-expand, plugin doctor 5/9 fields, etc.
+P2 (12/12 shipped 2026-05-11):
+- ✅ ~~**P2.1 supervisor.md doc drift**~~ — events table now
+  includes `restarted_manually` row + clarified
+  `total_uptime_ms` is real (was always 0); `gave_up.last_exit_code = -1`
+  spawn-failure sentinel documented; "no manual restart RPC"
+  stale follow-up bullet removed (RPC shipped today).
+- ✅ ~~**P2.2 lifecycle golden expansion + `new_pid` assert**~~ —
+  broker payload now includes `new_pid` (was only in
+  `PluginsRestartResponse` wire shape). New
+  `lifecycle_payload_shape_restarted_manually` golden asserts
+  source / plugin_id / previous_uptime_ms / restarted_at_ms /
+  new_pid present + no extraneous fields. Existing
+  `force_restart_publishes_restarted_manually_event` extended to
+  match `report.new_pid` against the published payload.
+- ✅ ~~**P2.3 manifest validation gaps**~~ — added 3
+  `ManifestError` variants + bounds:
+  `SupervisorMaxAttemptsZero` (only enforced when respawn=true),
+  `SupervisorBackoffMsBelowFloor` (min 100ms — prevents tight
+  retry loops bypassing exponential schedule),
+  `SupervisorBackoffMsExceedsCap` (max 300_000ms — keeps
+  reset-counter heuristic meaningful). 5 new tests including
+  the regression net for the `respawn=false` skip path.
+- ✅ ~~**P2.4 capability-gate denial tests for 7 verbs**~~ —
+  `dispatcher.rs::tests` mirrors
+  `dispatch_tenants_list_denies_when_capability_not_granted`
+  for memory/{query,list_snapshots,delete_snapshot,
+  create_snapshot,restore_snapshot} + plugins/{doctor,restart}.
+  Each asserts `capability` field on `CapabilityNotGranted -32004`
+  matches the `capability_for_method` mapping. Shared
+  `assert_capability_gate_denies` helper. 7 tests.
+- ✅ ~~**P2.5 dispatcher slot-not-wired tests for 7 verbs**~~ —
+  parallel coverage: with capability granted but the slot
+  field still `None`, the dispatcher returns `Internal -32603`
+  whose message contains the documented `<domain> domain not
+  configured` substring. Microapps can detect wire-up gaps
+  reliably. Shared `assert_slot_not_wired_internal_contains`
+  helper. 7 tests.
+- ✅ ~~**P2.6 domain kill-switches implemented**~~ — operator
+  can now export `NEXO_MICROAPP_ADMIN_<DOMAIN>_ENABLED=0`
+  (any of agents/credentials/pairing/llm_keys/channels/skills/
+  tenants/secrets/auth) and the matching capability is
+  stripped from every microapp's grant set BEFORE the
+  dispatcher CapabilitySet is built — the verb returns
+  `CapabilityNotGranted -32004` regardless of operator-edited
+  YAML. New `apply_admin_domain_kill_switches` helper +
+  `ADMIN_DOMAIN_KILL_SWITCHES` table (9 entries) +
+  `tracing::warn!` per stripped grant. Closes the silent
+  operator-misleading bug where INVENTORY entries reported
+  "disabled" but had zero functional effect. 7 tests
+  including the off-value-aliases sweep + the inventory-
+  matches-INVENTORY contract test.
+- ✅ ~~**P2.7 i18n drift test**~~ — runtime guard against type-
+  widening drift in en/es catalogs. Asserts identical key sets
+  via Set diff, identical key counts, all wave 90.x audit-fix
+  keys present in both, all values non-empty. 4 vitest
+  assertions in `tests/i18n-drift.test.ts`.
+- ✅ ~~**P2.8 confirm-prefix shared helper**~~ — new
+  `frontend/src/lib/confirmPrefix.ts` exposes
+  `confirmPrefix(id, n=8)` + `confirmPrefixMatches(typed, id, n)`.
+  RestartPluginModal + RestoreSnapshotModal both refactored
+  to use it. Helper handles the short-id edge case the
+  `Math.min(8, len)` defensive line was guarding against.
+  11 vitest assertions for the helper.
+- ✅ ~~**P2.9 modal Escape + backdrop-close**~~ — new
+  `frontend/src/lib/useDialogClose.ts` exposes `useEscapeKey`
+  + `useBackdropClose` hooks. Wired into all 4 modals
+  (CreateSnapshot, RestoreSnapshot, RestartPlugin,
+  TenantCreate). Disabled mid-flight so a stray click
+  during a destructive RPC can't lose spinner + error
+  state. RestoreSnapshotModal's hook routes to
+  `handleDoneClose` when the post-apply view is showing
+  (so dismissing fires the same refresh path as the Close
+  button).
+- ✅ ~~**P2.10 snapshot list expand**~~ — `MemoryMain` now
+  defaults to the 5 most recent snapshots with a
+  "Show {count} more" button when more exist; expanding
+  shows all + a "Collapse" button. Operators with > 5
+  snapshots can restore / delete older bundles from the
+  UI without dropping to CLI. 2 new i18n keys
+  (`memory.snapshots.show_all`, `memory.snapshots.collapse`)
+  en+es.
+- ✅ ~~**P2.11 PluginsDoctor 5/9 fields render**~~ — the
+  `PluginDiscoveryReport` fields previously stuck behind
+  `agent doctor plugins --json` now surface in the UI:
+  duplicates as a 5th summary tile;
+  `unmet_required_capabilities` as a danger-toned section
+  rendered as JSON (open shape); `contributed_agents_per_plugin`
+  + `contributed_skills_per_plugin` as a side-by-side
+  contributions section; `plugin_capability_gates` as a
+  per-plugin JSON list with the operator-flippable env-var
+  contracts. 7 new i18n keys en+es.
+- ✅ ~~**P2.12 frontend vitest coverage**~~ — added
+  `RestartPluginModal` component test
+  (`tests/components/restart-plugin-modal.test.tsx`)
+  covering the destructive confirm-prefix safety gate
+  end-to-end: prefix-empty disables, wrong-prefix disables,
+  exact-match enables, click sends the right plugin id,
+  disabled-button no-op, short-id defensive variant. 6
+  test cases. Locale pinned to `en` so role-name matchers
+  hit the canonical English catalog (default es).
+
+P2 totals: 33 new tests (24 backend + 9 frontend), 0
+regressions, mdbook clean, full workspace build clean.
 
 P3 (6 open — observability + nits): `tracing::info!` on
 destructive paths, metrics counters, `gave_up.last_exit_code = -1`

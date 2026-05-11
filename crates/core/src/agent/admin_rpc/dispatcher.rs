@@ -2007,4 +2007,226 @@ mod tests {
             other => panic!("expected Internal, got {other:?}"),
         }
     }
+
+    // ── Phase 90 audit fix — capability-gate denial coverage ──
+    //
+    // Mirrors `dispatch_tenants_list_denies_when_capability_not_granted`
+    // for every admin verb shipped in the 2026-05-10 wave. Each
+    // test confirms the capability name resolved by
+    // `capability_for_method` and that the dispatcher refuses
+    // BEFORE entering the handler arm (so a missing slot wiring
+    // can never accidentally surface user input via "domain not
+    // configured" Internal).
+
+    async fn assert_capability_gate_denies(
+        method: &str,
+        expected_capability: &str,
+        params: serde_json::Value,
+    ) {
+        let d = AdminRpcDispatcher::new();
+        let result = d.dispatch("agent-creator", method, params).await;
+        let err = result.error.expect("error");
+        match err {
+            AdminRpcError::CapabilityNotGranted { capability, .. } => {
+                assert_eq!(
+                    capability, expected_capability,
+                    "method `{method}` should be gated by `{expected_capability}`"
+                );
+            }
+            other => panic!("expected CapabilityNotGranted for {method}, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_query_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/memory/query",
+            "memory_query",
+            serde_json::json!({"agent_id": "ana", "query": "x", "limit": 5}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_list_snapshots_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/memory/list_snapshots",
+            "memory_snapshot",
+            serde_json::json!({"agent_id": "ana", "tenant": "default"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_delete_snapshot_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/memory/delete_snapshot",
+            "memory_snapshot",
+            serde_json::json!({"agent_id": "ana", "tenant": "default", "id": "x"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_create_snapshot_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/memory/create_snapshot",
+            "memory_snapshot",
+            serde_json::json!({"agent_id": "ana", "tenant": "default", "label": null, "encrypt": false}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_restore_snapshot_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/memory/restore_snapshot",
+            "memory_snapshot",
+            serde_json::json!({
+                "agent_id": "ana",
+                "tenant": "default",
+                "snapshot_id": "x",
+                "dry_run": true,
+            }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_plugins_doctor_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/plugins/doctor",
+            "plugin_doctor",
+            serde_json::json!({}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_plugins_restart_denies_without_capability() {
+        assert_capability_gate_denies(
+            "nexo/admin/plugins/restart",
+            "plugin_restart",
+            serde_json::json!({"plugin_id": "browser"}),
+        )
+        .await;
+    }
+
+    // ── Phase 90 audit fix — slot-not-wired contract tests ────
+    //
+    // Mirror `dispatch_tenants_list_returns_internal_when_store_unwired`
+    // for every admin verb shipped in the 2026-05-10 wave. With
+    // capability granted but the slot field still `None`, the
+    // dispatcher must return a typed `Internal` error whose message
+    // contains a `<domain> domain not configured` substring so
+    // microapps can detect the wire-up gap reliably.
+
+    async fn assert_slot_not_wired_internal_contains(
+        capabilities: &[&str],
+        method: &str,
+        expected_substring: &str,
+        params: serde_json::Value,
+    ) {
+        let d = dispatcher_granting("agent-creator", capabilities);
+        let result = d.dispatch("agent-creator", method, params).await;
+        let err = result.error.expect("error");
+        match err {
+            AdminRpcError::Internal(msg) => {
+                assert!(
+                    msg.contains(expected_substring),
+                    "method `{method}` slot-not-wired Internal must contain `{expected_substring}`; got `{msg}`"
+                );
+            }
+            other => panic!(
+                "method `{method}` expected Internal, got {other:?}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_query_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["memory_query"],
+            "nexo/admin/memory/query",
+            "memory domain not configured",
+            serde_json::json!({"agent_id": "ana", "query": "x", "limit": 5}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_list_snapshots_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["memory_snapshot"],
+            "nexo/admin/memory/list_snapshots",
+            "memory snapshot domain not configured",
+            serde_json::json!({"agent_id": "ana", "tenant": "default"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_delete_snapshot_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["memory_snapshot"],
+            "nexo/admin/memory/delete_snapshot",
+            "memory snapshot domain not configured",
+            serde_json::json!({"agent_id": "ana", "tenant": "default", "id": "x"}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_create_snapshot_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["memory_snapshot"],
+            "nexo/admin/memory/create_snapshot",
+            "memory snapshot domain not configured",
+            serde_json::json!({
+                "agent_id": "ana",
+                "tenant": "default",
+                "label": null,
+                "encrypt": false,
+            }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_memory_restore_snapshot_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["memory_snapshot"],
+            "nexo/admin/memory/restore_snapshot",
+            "memory snapshot domain not configured",
+            serde_json::json!({
+                "agent_id": "ana",
+                "tenant": "default",
+                "snapshot_id": "x",
+                "dry_run": true,
+            }),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_plugins_doctor_returns_internal_when_reader_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["plugin_doctor"],
+            "nexo/admin/plugins/doctor",
+            "plugins domain not configured",
+            serde_json::json!({}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn dispatch_plugins_restart_returns_internal_when_restarter_unwired() {
+        assert_slot_not_wired_internal_contains(
+            &["plugin_restart"],
+            "nexo/admin/plugins/restart",
+            "plugin restart domain not configured",
+            serde_json::json!({"plugin_id": "browser"}),
+        )
+        .await;
+    }
 }
