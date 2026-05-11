@@ -51,7 +51,9 @@ pub fn validate(manifest: &PersonaManifest) -> Result<(), PersonaManifestError> 
     Ok(())
 }
 
-fn validate_required_fields(p: &crate::manifest::PersonaSection) -> Result<(), PersonaManifestError> {
+fn validate_required_fields(
+    p: &crate::manifest::PersonaSection,
+) -> Result<(), PersonaManifestError> {
     let checks: [(&'static str, &str); 4] = [
         ("id", &p.id),
         ("version", &p.version),
@@ -70,7 +72,9 @@ fn validate_id(id: &str) -> Result<(), PersonaManifestError> {
     if id_regex().is_match(id) {
         Ok(())
     } else {
-        Err(PersonaManifestError::InvalidId { got: id.to_string() })
+        Err(PersonaManifestError::InvalidId {
+            got: id.to_string(),
+        })
     }
 }
 
@@ -84,12 +88,12 @@ fn validate_version(v: &str) -> Result<(), PersonaManifestError> {
 }
 
 fn validate_min_nexo_version(v: &str) -> Result<(), PersonaManifestError> {
-    semver::VersionReq::parse(v)
-        .map(|_| ())
-        .map_err(|e| PersonaManifestError::InvalidMinNexoVersion {
+    semver::VersionReq::parse(v).map(|_| ()).map_err(|e| {
+        PersonaManifestError::InvalidMinNexoVersion {
             got: v.to_string(),
             reason: e.to_string(),
-        })
+        }
+    })
 }
 
 fn validate_env_var(name: &str, description: &str) -> Result<(), PersonaManifestError> {
@@ -106,7 +110,9 @@ fn validate_env_var(name: &str, description: &str) -> Result<(), PersonaManifest
     Ok(())
 }
 
-fn validate_contributes(c: &crate::manifest::PersonaContributes) -> Result<(), PersonaManifestError> {
+fn validate_contributes(
+    c: &crate::manifest::PersonaContributes,
+) -> Result<(), PersonaManifestError> {
     let lists: [(&'static str, &Vec<String>); 3] = [
         ("agent_configs", &c.agent_configs),
         ("plugin_configs_partial", &c.plugin_configs_partial),
@@ -221,7 +227,10 @@ repository = "https://github.com/lordmacu/nexo-persona-cody"
         assert!(!req.env_vars[1].required);
         let contrib = m.persona.contributes.as_ref().expect("contributes");
         assert_eq!(contrib.agent_configs, vec!["agents.d/cody.yaml"]);
-        assert_eq!(contrib.workspace_seed.as_deref(), Some("data/workspace/cody/"));
+        assert_eq!(
+            contrib.workspace_seed.as_deref(),
+            Some("data/workspace/cody/")
+        );
         let meta = m.persona.meta.as_ref().expect("meta");
         assert_eq!(meta.license.as_deref(), Some("MIT"));
         validate(&m).expect("validate");
@@ -240,7 +249,10 @@ min_nexo_version = ">=0.1.6"
         match parse_str(v1) {
             Err(PersonaManifestError::UnsupportedManifestVersion { got, hint }) => {
                 assert_eq!(got, 1);
-                assert!(hint.contains("install.sh"), "hint must mention install.sh, got: {hint}");
+                assert!(
+                    hint.contains("install.sh"),
+                    "hint must mention install.sh, got: {hint}"
+                );
             }
             other => panic!("expected UnsupportedManifestVersion(1), got {other:?}"),
         }

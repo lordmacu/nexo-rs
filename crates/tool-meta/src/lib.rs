@@ -63,11 +63,11 @@ pub mod webhook;
 
 pub use admin::audit::{AdminAuditResult, AdminAuditRow, AuditTailFilter, AuditTailPage};
 pub use binding::{binding_id_render, BindingContext};
-pub use locale::{LangCode, Locale, LocaleParseError, RegionCode};
 pub use event_source::{
     format_dispatch_source, format_event_subscriber_source, format_rate_limit_hit, EventSourceMeta,
 };
 pub use inbound::{InboundKind, InboundMessageMeta};
+pub use locale::{LangCode, Locale, LocaleParseError, RegionCode};
 pub use meta::{
     build_meta_value, parse_binding_from_meta, parse_inbound_from_meta, BINDING_KEY, INBOUND_KEY,
     META_KEY, NEXO_NAMESPACE,

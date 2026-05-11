@@ -96,8 +96,7 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 use super::SttProvider;
 use crate::stt::SttError;
 
-pub const DEFAULT_ENDPOINT: &str =
-    "wss://api.anthropic.com/api/ws/speech_to_text/voice_stream";
+pub const DEFAULT_ENDPOINT: &str = "wss://api.anthropic.com/api/ws/speech_to_text/voice_stream";
 
 /// Keep-alive cadence — must beat the server's idle-timeout
 /// window. Matches the `claude-code-leak` value verbatim.
@@ -182,8 +181,7 @@ impl AnthropicVoiceStream {
 fn urlencode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for b in input.bytes() {
-        let safe = b.is_ascii_alphanumeric()
-            || matches!(b, b'-' | b'_' | b'.' | b'~');
+        let safe = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
         if safe {
             out.push(b as char);
         } else {
@@ -416,9 +414,7 @@ impl SttProvider for AnthropicVoiceStream {
 /// on the server side.
 fn is_acceptable_pcm_mime(mime: &str) -> bool {
     let lower = mime.to_ascii_lowercase();
-    lower.starts_with("audio/l16")
-        || lower.starts_with("audio/pcm")
-        || lower == "audio/x-raw-int"
+    lower.starts_with("audio/l16") || lower.starts_with("audio/pcm") || lower == "audio/x-raw-int"
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -431,9 +427,14 @@ enum FinalizeSource {
 
 #[derive(Debug)]
 enum VoiceStreamEvent {
-    TranscriptText { data: String },
+    TranscriptText {
+        data: String,
+    },
     TranscriptEndpoint,
-    TranscriptError { code: Option<String>, msg: Option<String> },
+    TranscriptError {
+        code: Option<String>,
+        msg: Option<String>,
+    },
     Other,
 }
 
@@ -521,7 +522,10 @@ mod tests {
     #[test]
     fn urlencode_passes_alphanumerics_through() {
         assert_eq!(urlencode("abc123"), "abc123");
-        assert_eq!(urlencode("hello-world.com_test~ok"), "hello-world.com_test~ok");
+        assert_eq!(
+            urlencode("hello-world.com_test~ok"),
+            "hello-world.com_test~ok"
+        );
     }
 
     #[test]
@@ -537,9 +541,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let err = runtime.block_on(async {
-            p.transcribe(vec![1, 2, 3], "audio/ogg", None).await
-        });
+        let err = runtime.block_on(async { p.transcribe(vec![1, 2, 3], "audio/ogg", None).await });
         match err {
             Ok(t) => panic!("expected error, got {t:?}"),
             Err(SttError::UnsupportedFormat(msg)) => {
@@ -556,9 +558,8 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
-        let err = runtime.block_on(async {
-            p.transcribe(vec![], "audio/L16; rate=16000", None).await
-        });
+        let err =
+            runtime.block_on(async { p.transcribe(vec![], "audio/L16; rate=16000", None).await });
         match err {
             Ok(t) => panic!("expected error, got {t:?}"),
             Err(SttError::EmptyAudio) => {}

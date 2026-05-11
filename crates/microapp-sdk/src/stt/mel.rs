@@ -166,8 +166,7 @@ mod tests {
         // non-empty output. Exact shape depends on N_FFT /
         // HOP_LENGTH constants; what matters is "not empty".
         let samples = vec![0f32; 16_000];
-        let mel = compute_log_mel_spectrogram(&samples, 80)
-            .expect("1s silence is valid input");
+        let mel = compute_log_mel_spectrogram(&samples, 80).expect("1s silence is valid input");
         assert!(!mel.is_empty(), "mel buffer must be non-empty");
         // Length must be divisible by num_mel_bins so the caller
         // can build a `(1, num_mel_bins, frames)` Tensor cleanly.

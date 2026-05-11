@@ -113,10 +113,10 @@ pub use tool::InboundTransformHandler;
 // (parity tests), `stt-candle` wins as the default re-export;
 // the legacy whisper-rs entry stays reachable through
 // `super::stt::transcribe::transcribe_file`.
-#[cfg(feature = "stt-candle")]
-pub use transcribe_candle::transcribe_file;
 #[cfg(all(feature = "stt", not(feature = "stt-candle")))]
 pub use transcribe::transcribe_file;
+#[cfg(feature = "stt-candle")]
+pub use transcribe_candle::transcribe_file;
 
 /// Result alias for STT operations.
 pub type Result<T> = std::result::Result<T, SttError>;

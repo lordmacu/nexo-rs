@@ -141,13 +141,7 @@ async fn post_openai_compatible(
     // body never legitimately contains; using a UUID makes
     // collision impossible for any realistic audio buffer.
     let boundary = format!("nexo-stt-{}", uuid::Uuid::new_v4().simple());
-    let body = build_openai_multipart_body(
-        &boundary,
-        model,
-        audio_bytes,
-        audio_mime,
-        lang_hint,
-    );
+    let body = build_openai_multipart_body(&boundary, model, audio_bytes, audio_mime, lang_hint);
     let content_type = format!("multipart/form-data; boundary={boundary}");
 
     let client = reqwest::Client::new();
@@ -211,10 +205,7 @@ fn build_openai_multipart_body(
     let mut push_text = |name: &str, value: &str| {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            format!(
-                "Content-Disposition: form-data; name=\"{name}\"\r\n\r\n"
-            )
-            .as_bytes(),
+            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
         );
         body.extend_from_slice(value.as_bytes());
         body.extend_from_slice(b"\r\n");
@@ -307,9 +298,7 @@ impl SttProvider for CompositeProvider {
                     // problem.
                     if matches!(
                         &err,
-                        SttError::EmptyAudio
-                            | SttError::UnsupportedFormat(_)
-                            | SttError::Decode(_)
+                        SttError::EmptyAudio | SttError::UnsupportedFormat(_) | SttError::Decode(_)
                     ) {
                         return Err(err);
                     }
@@ -503,17 +492,20 @@ mod tests {
     #[tokio::test]
     async fn composite_first_leg_ok_returns_immediately() {
         let chain = CompositeProvider::new(vec![ok_leg("primary"), ok_leg("backup")]);
-        let out = chain.transcribe(vec![1, 2, 3], "audio/ogg", None).await.unwrap();
+        let out = chain
+            .transcribe(vec![1, 2, 3], "audio/ogg", None)
+            .await
+            .unwrap();
         assert_eq!(out, "primary");
     }
 
     #[tokio::test]
     async fn composite_transport_failure_falls_through_to_next() {
-        let chain = CompositeProvider::new(vec![
-            whisper_err_leg("primary"),
-            ok_leg("backup"),
-        ]);
-        let out = chain.transcribe(vec![1, 2, 3], "audio/ogg", None).await.unwrap();
+        let chain = CompositeProvider::new(vec![whisper_err_leg("primary"), ok_leg("backup")]);
+        let out = chain
+            .transcribe(vec![1, 2, 3], "audio/ogg", None)
+            .await
+            .unwrap();
         assert_eq!(out, "backup");
     }
 
@@ -521,10 +513,7 @@ mod tests {
     async fn composite_decode_failure_short_circuits() {
         // Decode failures are not transport — the next leg would
         // see the same broken audio. Must NOT fall through.
-        let chain = CompositeProvider::new(vec![
-            decode_err_leg("primary"),
-            ok_leg("backup"),
-        ]);
+        let chain = CompositeProvider::new(vec![decode_err_leg("primary"), ok_leg("backup")]);
         let err = match chain.transcribe(vec![1, 2, 3], "audio/ogg", None).await {
             Ok(t) => panic!("expected error, got {t:?}"),
             Err(e) => e,
@@ -544,10 +533,8 @@ mod tests {
 
     #[tokio::test]
     async fn composite_all_legs_fail_returns_last_error() {
-        let chain = CompositeProvider::new(vec![
-            whisper_err_leg("primary"),
-            whisper_err_leg("backup"),
-        ]);
+        let chain =
+            CompositeProvider::new(vec![whisper_err_leg("primary"), whisper_err_leg("backup")]);
         let err = match chain.transcribe(vec![1], "audio/ogg", None).await {
             Ok(_) => panic!("expected error"),
             Err(e) => e,
@@ -577,12 +564,12 @@ mod tests {
             mime_from_path(Path::new("voice.unknown")),
             "application/octet-stream"
         );
-        assert_eq!(mime_from_path(Path::new("noext")), "application/octet-stream");
-        // Multi-dot path → extension is "ogg" only.
         assert_eq!(
-            mime_from_path(Path::new("/tmp/a.b.c.ogg")),
-            "audio/ogg"
+            mime_from_path(Path::new("noext")),
+            "application/octet-stream"
         );
+        // Multi-dot path → extension is "ogg" only.
+        assert_eq!(mime_from_path(Path::new("/tmp/a.b.c.ogg")), "audio/ogg");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -606,11 +593,8 @@ mod tests {
                 mime: &str,
                 lang: Option<&str>,
             ) -> Result<String, SttError> {
-                *self.captured.lock().unwrap() = Some((
-                    audio,
-                    mime.to_string(),
-                    lang.map(str::to_string),
-                ));
+                *self.captured.lock().unwrap() =
+                    Some((audio, mime.to_string(), lang.map(str::to_string)));
                 Ok("captured".into())
             }
             fn name(&self) -> &'static str {
@@ -702,26 +686,14 @@ mod tests {
 
     #[test]
     fn multipart_body_includes_language_when_hint_given() {
-        let body = build_openai_multipart_body(
-            "X",
-            "m",
-            b"a".to_vec(),
-            "audio/ogg",
-            Some("es"),
-        );
+        let body = build_openai_multipart_body("X", "m", b"a".to_vec(), "audio/ogg", Some("es"));
         let s = String::from_utf8(body).unwrap();
         assert!(s.contains("name=\"language\"\r\n\r\nes\r\n"));
     }
 
     #[test]
     fn multipart_body_strips_bcp47_region_subtag() {
-        let body = build_openai_multipart_body(
-            "X",
-            "m",
-            b"a".to_vec(),
-            "audio/ogg",
-            Some("es-AR"),
-        );
+        let body = build_openai_multipart_body("X", "m", b"a".to_vec(), "audio/ogg", Some("es-AR"));
         let s = String::from_utf8(body).unwrap();
         // Whisper REST accepts language-level codes only;
         // region subtag must be dropped.
@@ -732,18 +704,14 @@ mod tests {
 
     #[test]
     fn multipart_body_omits_language_for_auto() {
-        let body = build_openai_multipart_body(
-            "X", "m", b"a".to_vec(), "audio/ogg", Some("auto"),
-        );
+        let body = build_openai_multipart_body("X", "m", b"a".to_vec(), "audio/ogg", Some("auto"));
         let s = String::from_utf8(body).unwrap();
         assert!(!s.contains("name=\"language\""));
     }
 
     #[test]
     fn multipart_body_omits_language_for_empty_hint() {
-        let body = build_openai_multipart_body(
-            "X", "m", b"a".to_vec(), "audio/ogg", Some(""),
-        );
+        let body = build_openai_multipart_body("X", "m", b"a".to_vec(), "audio/ogg", Some(""));
         let s = String::from_utf8(body).unwrap();
         assert!(!s.contains("name=\"language\""));
     }
@@ -753,13 +721,7 @@ mod tests {
         // Embed every byte 0x00..=0xFF — any naive string
         // handling would corrupt this.
         let audio: Vec<u8> = (0u8..=255).collect();
-        let body = build_openai_multipart_body(
-            "X",
-            "m",
-            audio.clone(),
-            "audio/L16",
-            None,
-        );
+        let body = build_openai_multipart_body("X", "m", audio.clone(), "audio/L16", None);
         // Find the start of the audio payload — after the
         // "\r\n\r\n" that ends the file field header.
         let needle = b"Content-Type: audio/L16\r\n\r\n";

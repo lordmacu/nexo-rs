@@ -705,10 +705,7 @@ impl AdminRpcDispatcher {
     /// around the daemon's `MemorySnapshotter`. `None` disables
     /// `nexo/admin/memory/list_snapshots` (operator falls back
     /// to `agent memory snapshot list` CLI).
-    pub fn with_memory_snapshot_reader(
-        mut self,
-        reader: Arc<dyn MemorySnapshotReader>,
-    ) -> Self {
+    pub fn with_memory_snapshot_reader(mut self, reader: Arc<dyn MemorySnapshotReader>) -> Self {
         self.memory_snapshot_reader = Some(reader);
         self
     }
@@ -1410,32 +1407,30 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/mcp/list" => match &self.mcp_store {
                 Some(store) => super::domains::mcp::list(store.as_ref()).await,
-                None => AdminRpcResult::err(AdminRpcError::Internal(
-                    "mcp domain not configured".into(),
-                )),
+                None => {
+                    AdminRpcResult::err(AdminRpcError::Internal("mcp domain not configured".into()))
+                }
             },
             "nexo/admin/mcp/get" => match &self.mcp_store {
                 Some(store) => super::domains::mcp::get(store.as_ref(), params).await,
-                None => AdminRpcResult::err(AdminRpcError::Internal(
-                    "mcp domain not configured".into(),
-                )),
+                None => {
+                    AdminRpcResult::err(AdminRpcError::Internal("mcp domain not configured".into()))
+                }
             },
             "nexo/admin/mcp/upsert" => match &self.mcp_store {
                 Some(store) => super::domains::mcp::upsert(store.as_ref(), params).await,
-                None => AdminRpcResult::err(AdminRpcError::Internal(
-                    "mcp domain not configured".into(),
-                )),
+                None => {
+                    AdminRpcResult::err(AdminRpcError::Internal("mcp domain not configured".into()))
+                }
             },
             "nexo/admin/mcp/delete" => match &self.mcp_store {
                 Some(store) => super::domains::mcp::delete(store.as_ref(), params).await,
-                None => AdminRpcResult::err(AdminRpcError::Internal(
-                    "mcp domain not configured".into(),
-                )),
+                None => {
+                    AdminRpcResult::err(AdminRpcError::Internal("mcp domain not configured".into()))
+                }
             },
             "nexo/admin/plugins/restart" => match &self.plugin_restarter {
-                Some(r) => {
-                    super::domains::plugin_restart::restart_plugin(r.as_ref(), params).await
-                }
+                Some(r) => super::domains::plugin_restart::restart_plugin(r.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugin restart domain not configured".into(),
                 )),
@@ -2137,9 +2132,7 @@ mod tests {
                     "method `{method}` slot-not-wired Internal must contain `{expected_substring}`; got `{msg}`"
                 );
             }
-            other => panic!(
-                "method `{method}` expected Internal, got {other:?}"
-            ),
+            other => panic!("method `{method}` expected Internal, got {other:?}"),
         }
     }
 

@@ -276,9 +276,7 @@ async fn build_bundle(
 /// failure carries the offending index so operators can fix
 /// their YAML.
 #[cfg(feature = "snapshot-encryption")]
-fn resolve_recipients(
-    strings: &[String],
-) -> Result<Vec<age::x25519::Recipient>, SnapshotError> {
+fn resolve_recipients(strings: &[String]) -> Result<Vec<age::x25519::Recipient>, SnapshotError> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(strings.len());
     for (i, s) in strings.iter().enumerate() {
@@ -290,9 +288,10 @@ fn resolve_recipients(
             );
             continue;
         }
-        out.push(crate::codec::age_codec::parse_recipient(s).map_err(|e| {
-            SnapshotError::Encryption(format!("recipient at index {i}: {e}"))
-        })?);
+        out.push(
+            crate::codec::age_codec::parse_recipient(s)
+                .map_err(|e| SnapshotError::Encryption(format!("recipient at index {i}: {e}")))?,
+        );
     }
     if out.is_empty() {
         return Err(SnapshotError::Encryption("empty recipients".into()));
@@ -314,9 +313,7 @@ fn build_encryption_meta(
             crate::request::EncryptionKey::AgePublicKey(s) => {
                 vec![crate::codec::age_codec::parse_recipient(s)?]
             }
-            crate::request::EncryptionKey::AgePublicKeys(strings) => {
-                resolve_recipients(strings)?
-            }
+            crate::request::EncryptionKey::AgePublicKeys(strings) => resolve_recipients(strings)?,
         };
         Ok(Some(crate::manifest::EncryptionMeta {
             scheme: "age".to_string(),
@@ -362,9 +359,7 @@ fn pack_pipeline(
             crate::request::EncryptionKey::AgePublicKey(s) => {
                 vec![crate::codec::age_codec::parse_recipient(s)?]
             }
-            crate::request::EncryptionKey::AgePublicKeys(strings) => {
-                resolve_recipients(strings)?
-            }
+            crate::request::EncryptionKey::AgePublicKeys(strings) => resolve_recipients(strings)?,
         };
         let enc_writer = crate::codec::age_codec::encrypt_writer(hashing, recipients)?;
         let enc_writer = pack_files(entries, enc_writer)

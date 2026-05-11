@@ -984,11 +984,7 @@ expose = ["wrong_prefix"]
     // ── Phase 90 audit fix — supervisor knob bounds ───────────
 
     fn manifest_with_supervisor_block(body: &str) -> PluginManifest {
-        let toml = format!(
-            "{}\n[plugin.supervisor]\n{}\n",
-            base_manifest_toml(),
-            body
-        );
+        let toml = format!("{}\n[plugin.supervisor]\n{}\n", base_manifest_toml(), body);
         parse(&toml)
     }
 
@@ -998,13 +994,11 @@ expose = ["wrong_prefix"]
         // equivalent of respawn = false (gave_up fires on first
         // crash with attempts: 0). Force the operator to use the
         // explicit `respawn = false` instead.
-        let m = manifest_with_supervisor_block(
-            "respawn = true\nmax_attempts = 0\nbackoff_ms = 1000",
-        );
+        let m =
+            manifest_with_supervisor_block("respawn = true\nmax_attempts = 0\nbackoff_ms = 1000");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs
-                .iter()
+            errs.iter()
                 .any(|e| matches!(e, ManifestError::SupervisorMaxAttemptsZero)),
             "expected SupervisorMaxAttemptsZero, got {errs:?}"
         );
@@ -1012,14 +1006,15 @@ expose = ["wrong_prefix"]
 
     #[test]
     fn supervisor_rejects_backoff_ms_below_floor_when_respawn_enabled() {
-        let m = manifest_with_supervisor_block(
-            "respawn = true\nmax_attempts = 3\nbackoff_ms = 50",
-        );
+        let m = manifest_with_supervisor_block("respawn = true\nmax_attempts = 3\nbackoff_ms = 50");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
             errs.iter().any(|e| matches!(
                 e,
-                ManifestError::SupervisorBackoffMsBelowFloor { value: 50, min: 100 }
+                ManifestError::SupervisorBackoffMsBelowFloor {
+                    value: 50,
+                    min: 100
+                }
             )),
             "expected SupervisorBackoffMsBelowFloor, got {errs:?}"
         );
@@ -1027,9 +1022,8 @@ expose = ["wrong_prefix"]
 
     #[test]
     fn supervisor_rejects_backoff_ms_above_cap_when_respawn_enabled() {
-        let m = manifest_with_supervisor_block(
-            "respawn = true\nmax_attempts = 3\nbackoff_ms = 600000",
-        );
+        let m =
+            manifest_with_supervisor_block("respawn = true\nmax_attempts = 3\nbackoff_ms = 600000");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
             errs.iter().any(|e| matches!(

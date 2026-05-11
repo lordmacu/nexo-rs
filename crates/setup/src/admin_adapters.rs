@@ -4469,8 +4469,7 @@ impl LivePluginDoctorReader {
 }
 
 #[async_trait]
-impl
-    nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader
+impl nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader
     for LivePluginDoctorReader
 {
     async fn report(&self) -> anyhow::Result<serde_json::Value> {
@@ -4478,11 +4477,10 @@ impl
         // Mirror src/main.rs::core_capability_env_vars — surface
         // INVENTORY tuples the plugin capability aggregator
         // expects.
-        let core_envs: Vec<(&'static str, &'static str)> =
-            crate::capabilities::evaluate_all()
-                .into_iter()
-                .map(|s| (s.toggle.env_var, s.toggle.extension))
-                .collect();
+        let core_envs: Vec<(&'static str, &'static str)> = crate::capabilities::evaluate_all()
+            .into_iter()
+            .map(|s| (s.toggle.env_var, s.toggle.extension))
+            .collect();
         // Mirror src/main.rs::build_available_capabilities — the
         // capability set the running daemon advertises so the
         // aggregator can flag unmet requires as Warn-level.
@@ -4589,10 +4587,7 @@ impl LiveMemoryReader {
 }
 
 #[async_trait]
-impl
-    nexo_core::agent::admin_rpc::domains::memory::MemoryReader
-    for LiveMemoryReader
-{
+impl nexo_core::agent::admin_rpc::domains::memory::MemoryReader for LiveMemoryReader {
     async fn query(
         &self,
         agent_id: &str,
@@ -4631,9 +4626,7 @@ impl
 /// finished its late init returns "snapshot subsystem not
 /// configured" and the operator hits reload).
 pub type SharedMemorySnapshotter = std::sync::Arc<
-    tokio::sync::RwLock<
-        Option<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>>,
-    >,
+    tokio::sync::RwLock<Option<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>>>,
 >;
 
 /// Build a fresh empty shared cell. Boot wiring:
@@ -4677,7 +4670,10 @@ impl std::fmt::Debug for LiveMemorySnapshotReader {
         f.debug_struct("LiveMemorySnapshotReader")
             .field("cell", &"<shared-snapshotter>")
             .field("encryption.enabled", &self.encryption.enabled)
-            .field("encryption.recipients_count", &self.encryption.recipients.len())
+            .field(
+                "encryption.recipients_count",
+                &self.encryption.recipients.len(),
+            )
             .finish()
     }
 }
@@ -4696,8 +4692,7 @@ impl LiveMemorySnapshotReader {
 
     async fn snapshotter(
         &self,
-    ) -> anyhow::Result<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>>
-    {
+    ) -> anyhow::Result<std::sync::Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> {
         let guard = self.cell.read().await;
         guard
             .as_ref()
@@ -4735,16 +4730,10 @@ impl LiveMemorySnapshotReader {
 }
 
 #[async_trait]
-impl
-    nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader
+impl nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader
     for LiveMemorySnapshotReader
 {
-    async fn delete(
-        &self,
-        agent_id: &str,
-        tenant: &str,
-        snapshot_id: &str,
-    ) -> anyhow::Result<()> {
+    async fn delete(&self, agent_id: &str, tenant: &str, snapshot_id: &str) -> anyhow::Result<()> {
         let snapshotter = self.snapshotter().await?;
         let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
         let id: nexo_memory_snapshot::SnapshotId = snapshot_id
@@ -4885,19 +4874,13 @@ impl
             );
         }
         let decrypt = if meta.encrypted {
-            let identity = self
-                .encryption
-                .identity_path
-                .clone()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "snapshot {snapshot_id} is encrypted but no identity_path \
+            let identity = self.encryption.identity_path.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "snapshot {snapshot_id} is encrypted but no identity_path \
                          configured; restore via CLI with --identity"
-                    )
-                })?;
-            Some(nexo_memory_snapshot::request::DecryptionIdentity::AgeIdentityFile(
-                identity,
-            ))
+                )
+            })?;
+            Some(nexo_memory_snapshot::request::DecryptionIdentity::AgeIdentityFile(identity))
         } else {
             None
         };
@@ -4947,9 +4930,7 @@ mod live_memory_snapshot_tests {
     use nexo_memory_snapshot::error::SnapshotError;
     use nexo_memory_snapshot::manifest::SchemaVersions;
     use nexo_memory_snapshot::request::{RestoreRequest, SnapshotRequest};
-    use nexo_memory_snapshot::{
-        AgentId, MemorySnapshotter as MemorySnapshotterTrait, SnapshotId,
-    };
+    use nexo_memory_snapshot::{AgentId, MemorySnapshotter as MemorySnapshotterTrait, SnapshotId};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -5025,7 +5006,11 @@ mod live_memory_snapshot_tests {
             let report = nexo_memory_snapshot::RestoreReport {
                 agent_id: req.agent_id.clone(),
                 from: SnapshotId::new(),
-                pre_snapshot: if req.dry_run { None } else { Some(SnapshotId::new()) },
+                pre_snapshot: if req.dry_run {
+                    None
+                } else {
+                    Some(SnapshotId::new())
+                },
                 git_reset_oid: None,
                 sqlite_restored_dbs: vec!["long_term.sqlite".into()],
                 state_files_restored: vec!["extract_cursor".into()],
@@ -5181,10 +5166,19 @@ mod live_memory_snapshot_tests {
             .await
             .expect("restore ok");
         assert!(report.dry_run);
-        assert!(report.pre_snapshot_id.is_none(), "dry_run skips pre-snapshot");
+        assert!(
+            report.pre_snapshot_id.is_none(),
+            "dry_run skips pre-snapshot"
+        );
         let r = mock.restore_calls.lock().unwrap()[0].clone();
-        assert!(r.auto_pre_snapshot, "adapter must force auto_pre_snapshot=true");
-        assert!(r.decrypt.is_none(), "plaintext bundle ⇒ no DecryptionIdentity");
+        assert!(
+            r.auto_pre_snapshot,
+            "adapter must force auto_pre_snapshot=true"
+        );
+        assert!(
+            r.decrypt.is_none(),
+            "plaintext bundle ⇒ no DecryptionIdentity"
+        );
         assert_eq!(r.bundle, PathBuf::from("/tmp/ana-seed.tar.zst"));
     }
 
@@ -5205,9 +5199,18 @@ mod live_memory_snapshot_tests {
             .await
             .expect_err("tenant mismatch must error");
         let msg = err.to_string();
-        assert!(msg.contains("staging"), "error must quote bundle tenant: {msg}");
-        assert!(msg.contains("prod"), "error must quote requested tenant: {msg}");
-        assert!(msg.contains("belongs to tenant"), "matches handler regex: {msg}");
+        assert!(
+            msg.contains("staging"),
+            "error must quote bundle tenant: {msg}"
+        );
+        assert!(
+            msg.contains("prod"),
+            "error must quote requested tenant: {msg}"
+        );
+        assert!(
+            msg.contains("belongs to tenant"),
+            "matches handler regex: {msg}"
+        );
         // No restore call should reach the snapshotter.
         assert!(mock.restore_calls.lock().unwrap().is_empty());
     }
@@ -5426,7 +5429,6 @@ pub fn shared_plugin_handles_cell() -> SharedPluginHandles {
     std::sync::Arc::new(tokio::sync::RwLock::new(None))
 }
 
-
 /// Operator-driven `nexo/admin/plugins/restart` adapter. Looks up
 /// the plugin handle in the snapshot of the daemon's plugin
 /// registry (taken at admin bootstrap), downcasts to
@@ -5483,9 +5485,7 @@ impl LivePluginRestarter {
 }
 
 #[async_trait]
-impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter
-    for LivePluginRestarter
-{
+impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for LivePluginRestarter {
     async fn restart(
         &self,
         plugin_id: &str,
@@ -5501,9 +5501,9 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter
         let handles = handles.ok_or_else(|| {
             anyhow::anyhow!("plugin handles not yet populated; daemon still booting")
         })?;
-        let handle = handles.get(plugin_id).ok_or_else(|| {
-            anyhow::anyhow!("plugin {plugin_id} not found")
-        })?;
+        let handle = handles
+            .get(plugin_id)
+            .ok_or_else(|| anyhow::anyhow!("plugin {plugin_id} not found"))?;
         let any = handle.as_any();
         let sub = any
             .downcast_ref::<nexo_core::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin>()
@@ -5513,17 +5513,17 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter
                 )
             })?;
         let arc_sub = sub.weak_self_arc().ok_or_else(|| {
-            anyhow::anyhow!(
-                "plugin {plugin_id} weak_self not populated; factory bypassed"
-            )
+            anyhow::anyhow!("plugin {plugin_id} weak_self not populated; factory bypassed")
         })?;
         // Re-derive LlmServices the same way init_loop does so
         // the respawned child speaks through the same provider
         // plumbing.
-        let llm = Some(nexo_core::agent::nexo_plugin_registry::subprocess::LlmServices {
-            registry: self.llm_registry.clone(),
-            config: self.llm_config.clone(),
-        });
+        let llm = Some(
+            nexo_core::agent::nexo_plugin_registry::subprocess::LlmServices {
+                registry: self.llm_registry.clone(),
+                config: self.llm_config.clone(),
+            },
+        );
         arc_sub
             .force_restart(
                 self.ctx_shutdown.clone(),
@@ -5567,10 +5567,7 @@ mod live_plugin_restarter_tests {
         fn manifest(&self) -> &PluginManifest {
             &self.manifest
         }
-        async fn init(
-            &self,
-            _ctx: &mut PluginInitContext<'_>,
-        ) -> Result<(), PluginInitError> {
+        async fn init(&self, _ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
             Ok(())
         }
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
@@ -5656,10 +5653,7 @@ nexo_capabilities = ["broker"]
     async fn live_plugin_restarter_rejects_unknown_plugin_id() {
         let r = build_restarter(BTreeMap::new()).await;
         let err = r.restart("ghost").await.expect_err("unknown id must error");
-        assert!(
-            err.to_string().contains("not found"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("not found"), "got: {err}");
     }
 
     #[tokio::test]
@@ -5676,10 +5670,7 @@ nexo_capabilities = ["broker"]
             .restart("in_tree")
             .await
             .expect_err("in-tree plugin must error");
-        assert!(
-            err.to_string().contains("is in-tree"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("is in-tree"), "got: {err}");
     }
 
     #[tokio::test]
@@ -5721,10 +5712,7 @@ nexo_capabilities = ["broker"]
             .restart("anything")
             .await
             .expect_err("empty cell must error");
-        assert!(
-            err.to_string().contains("not yet populated"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("not yet populated"), "got: {err}");
         assert!(
             err.to_string().contains("daemon still booting"),
             "message must hint at the boot-window cause: {err}"

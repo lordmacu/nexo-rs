@@ -115,12 +115,7 @@ impl AppConfig {
             "NEXO_BROKER_YAML",
             "broker.yaml",
         )?;
-        let llm = load_with_override::<LlmConfig>(
-            dir,
-            override_dir,
-            "NEXO_LLM_YAML",
-            "llm.yaml",
-        )?;
+        let llm = load_with_override::<LlmConfig>(dir, override_dir, "NEXO_LLM_YAML", "llm.yaml")?;
         let memory = load_with_override::<MemoryConfig>(
             dir,
             override_dir,
@@ -392,10 +387,7 @@ where
     let base_path = base_dir.join(filename);
     let override_path = override_dir.map(|d| d.join(filename));
     let has_base = base_path.exists();
-    let has_override = override_path
-        .as_ref()
-        .map(|p| p.exists())
-        .unwrap_or(false);
+    let has_override = override_path.as_ref().map(|p| p.exists()).unwrap_or(false);
 
     match (has_base, has_override) {
         (false, false) => {
@@ -437,8 +429,8 @@ where
             let override_str = read_yaml_resolved(&override_path, filename)?;
             let mut base_v: serde_yaml::Value = serde_yaml::from_str(&base_str)
                 .with_context(|| format!("invalid base config in {}", base_path.display()))?;
-            let override_v: serde_yaml::Value = serde_yaml::from_str(&override_str)
-                .with_context(|| {
+            let override_v: serde_yaml::Value =
+                serde_yaml::from_str(&override_str).with_context(|| {
                     format!("invalid override config in {}", override_path.display())
                 })?;
             yaml_deep_merge(&mut base_v, override_v);
@@ -483,8 +475,8 @@ fn yaml_deep_merge(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
 /// does inline, factored out so [`load_with_override`] can call
 /// it twice (once per layer) without re-implementing.
 fn read_yaml_resolved(path: &Path, label: &str) -> Result<String> {
-    let raw = std::fs::read_to_string(path)
-        .with_context(|| format!("cannot read {}", path.display()))?;
+    let raw =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     env::resolve_placeholders(&raw, label)
 }
 
@@ -651,13 +643,9 @@ mod phase94_tests {
             "NEXO_TEST_BROKER_YAML_X",
             other.path().join("broker.yaml").to_str().unwrap(),
         );
-        let cfg: BrokerConfig = load_with_override(
-            base.path(),
-            None,
-            "NEXO_TEST_BROKER_YAML_X",
-            "broker.yaml",
-        )
-        .unwrap();
+        let cfg: BrokerConfig =
+            load_with_override(base.path(), None, "NEXO_TEST_BROKER_YAML_X", "broker.yaml")
+                .unwrap();
         std::env::remove_var("NEXO_TEST_BROKER_YAML_X");
         assert_eq!(cfg.broker.kind, crate::types::broker::BrokerKind::Local);
     }

@@ -34,20 +34,14 @@ use sqlx::SqlitePool;
 /// `IF NOT EXISTS`-shaped alter that another process already
 /// applied. Lower-cased before matching to defang case-sensitive
 /// driver versions.
-const ALREADY_PRESENT_NEEDLES: &[&str] = &[
-    "duplicate column name",
-    "already exists",
-];
+const ALREADY_PRESENT_NEEDLES: &[&str] = &["duplicate column name", "already exists"];
 
 /// Run a single SQL statement that's expected to be idempotent
 /// — typically `ALTER TABLE … ADD COLUMN …`. Returns
 /// `Ok(applied)` where `applied = true` if the statement ran
 /// fresh, `false` if SQLite reported the change was already
 /// present. Any other error bubbles up.
-pub async fn run_idempotent_alter(
-    pool: &SqlitePool,
-    stmt: &str,
-) -> Result<bool, sqlx::Error> {
+pub async fn run_idempotent_alter(pool: &SqlitePool, stmt: &str) -> Result<bool, sqlx::Error> {
     match sqlx::query(stmt).execute(pool).await {
         Ok(_) => Ok(true),
         Err(e) => {
@@ -123,8 +117,7 @@ mod tests {
     async fn unrelated_error_bubbles_up() {
         let p = pool().await;
         // Bad column reference — not an "already present" case.
-        let err = run_idempotent_alter(&p, "ALTER TABLE nonexistent ADD COLUMN x TEXT")
-            .await;
+        let err = run_idempotent_alter(&p, "ALTER TABLE nonexistent ADD COLUMN x TEXT").await;
         assert!(err.is_err());
     }
 

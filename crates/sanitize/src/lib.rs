@@ -38,8 +38,20 @@ pub fn sanitize_color(input: &str, default: &str) -> String {
     // emails / dashboards. Avoids dragging in a full CSS color
     // crate for a 14-name list.
     const NAMED: &[&str] = &[
-        "transparent", "white", "black", "red", "green", "blue", "yellow",
-        "orange", "purple", "gray", "grey", "silver", "teal", "navy",
+        "transparent",
+        "white",
+        "black",
+        "red",
+        "green",
+        "blue",
+        "yellow",
+        "orange",
+        "purple",
+        "gray",
+        "grey",
+        "silver",
+        "teal",
+        "navy",
     ];
     if NAMED.contains(&s.to_lowercase().as_str()) {
         return s.to_string();
@@ -110,9 +122,20 @@ mod tests {
     #[test]
     fn color_accepts_named_palette() {
         for name in &[
-            "transparent", "white", "black", "red", "green", "blue",
-            "yellow", "orange", "purple", "gray", "grey", "silver",
-            "teal", "navy",
+            "transparent",
+            "white",
+            "black",
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "orange",
+            "purple",
+            "gray",
+            "grey",
+            "silver",
+            "teal",
+            "navy",
         ] {
             assert_eq!(sanitize_color(name, "#000"), *name, "name {name}");
         }
@@ -134,10 +157,10 @@ mod tests {
             "red; background:url(x)",
             "#fff; behavior:url(x)",
             "javascript:1",
-            "rgb(255,0,0)",   // no rgb() form for now
-            "#zzz",            // non-hex chars
-            "#1234",           // 4 chars not allowed
-            "#1234567",        // 7 chars not allowed
+            "rgb(255,0,0)", // no rgb() form for now
+            "#zzz",         // non-hex chars
+            "#1234",        // 4 chars not allowed
+            "#1234567",     // 7 chars not allowed
             "",
             "  ",
         ] {
@@ -183,10 +206,7 @@ mod tests {
             "ftp://x.test/a.png",
             "",
         ] {
-            assert!(
-                sanitize_url(bad).is_none(),
-                "should reject: {bad:?}"
-            );
+            assert!(sanitize_url(bad).is_none(), "should reject: {bad:?}");
         }
     }
 
@@ -204,10 +224,7 @@ mod tests {
             "https://x.test/a\nb.png",
             "https://x.test/a\tb.png",
         ] {
-            assert!(
-                sanitize_url(bad).is_none(),
-                "should reject: {bad:?}"
-            );
+            assert!(sanitize_url(bad).is_none(), "should reject: {bad:?}");
         }
     }
 

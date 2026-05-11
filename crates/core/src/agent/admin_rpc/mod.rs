@@ -33,8 +33,8 @@ pub use escalations_sqlite::SqliteEscalationStore;
 pub use processing_sqlite::SqliteProcessingControlStore;
 
 pub use audit::{
-    hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow,
-    AdminAuditWriter, AuditTailFilter, AuditTailPage, InMemoryAuditWriter,
+    hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
+    AuditTailFilter, AuditTailPage, InMemoryAuditWriter,
 };
 pub use capabilities::{
     validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError, CapabilityBootReport,

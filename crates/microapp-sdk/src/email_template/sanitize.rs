@@ -30,8 +30,9 @@ use std::borrow::Cow;
 
 /// Tags allowed inline. Lowercase. Anything else is stripped
 /// (children kept).
-const ALLOWED_TAGS: &[&str] =
-    &["strong", "b", "em", "i", "u", "br", "a", "span", "sub", "sup"];
+const ALLOWED_TAGS: &[&str] = &[
+    "strong", "b", "em", "i", "u", "br", "a", "span", "sub", "sup",
+];
 
 /// Inline-style properties the renderer accepts. Email
 /// clients honour the subset reliably; anything else gets
@@ -148,7 +149,7 @@ fn clean_attrs(tag: &str, attrs_raw: &str) -> String {
             continue;
         }
         i += 1; // consume `=`
-        // Expect quote.
+                // Expect quote.
         if i >= bytes.len() {
             break;
         }
@@ -187,14 +188,11 @@ fn clean_one_attr(tag: &str, name: &str, value: &str) -> Option<String> {
             if tag != "a" {
                 return None;
             }
-            let scheme_ok = ALLOWED_URL_SCHEMES.iter().any(|s| {
-                value.to_lowercase().starts_with(s)
-            });
+            let scheme_ok = ALLOWED_URL_SCHEMES
+                .iter()
+                .any(|s| value.to_lowercase().starts_with(s));
             if scheme_ok {
-                Some(format!(
-                    "href=\"{}\"",
-                    escape_attr(value)
-                ))
+                Some(format!("href=\"{}\"", escape_attr(value)))
             } else {
                 None
             }
@@ -220,10 +218,7 @@ fn clean_one_attr(tag: &str, name: &str, value: &str) -> Option<String> {
             }
         }
         // `title` is harmless on `<a>`.
-        "title" if tag == "a" => Some(format!(
-            "title=\"{}\"",
-            escape_attr(value)
-        )),
+        "title" if tag == "a" => Some(format!("title=\"{}\"", escape_attr(value))),
         // Drop everything else — class, id, data-*, srcset, etc.
         _ => None,
     }
@@ -265,7 +260,9 @@ fn clean_inline_style(value: &str) -> String {
 }
 
 fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
 }
 
 #[cfg(test)]
@@ -287,9 +284,7 @@ mod tests {
 
     #[test]
     fn strips_event_handlers() {
-        let out = email_safe_html(
-            r#"<a href="https://x.com" onclick="evil()">link</a>"#
-        );
+        let out = email_safe_html(r#"<a href="https://x.com" onclick="evil()">link</a>"#);
         assert!(out.contains("href=\"https://x.com\""));
         assert!(!out.contains("onclick"));
     }
@@ -311,27 +306,22 @@ mod tests {
 
     #[test]
     fn keeps_inline_style_whitelist() {
-        let out = email_safe_html(
-            r#"<span style="color: #ff0000; font-weight: bold">red</span>"#
-        );
+        let out = email_safe_html(r#"<span style="color: #ff0000; font-weight: bold">red</span>"#);
         assert!(out.contains("color: #ff0000"));
         assert!(out.contains("font-weight: bold"));
     }
 
     #[test]
     fn strips_unknown_style_props() {
-        let out = email_safe_html(
-            r#"<span style="position: fixed; color: red">x</span>"#
-        );
+        let out = email_safe_html(r#"<span style="position: fixed; color: red">x</span>"#);
         assert!(!out.contains("position"));
         assert!(out.contains("color: red"));
     }
 
     #[test]
     fn strips_css_url_in_style() {
-        let out = email_safe_html(
-            r#"<span style="background-color: url(http://evil.com)">x</span>"#
-        );
+        let out =
+            email_safe_html(r#"<span style="background-color: url(http://evil.com)">x</span>"#);
         assert!(!out.contains("url("));
     }
 
@@ -350,9 +340,7 @@ mod tests {
 
     #[test]
     fn drops_iframe() {
-        let out = email_safe_html(
-            r#"<iframe src="https://x.com">x</iframe>"#
-        );
+        let out = email_safe_html(r#"<iframe src="https://x.com">x</iframe>"#);
         // Tag dropped, child text preserved.
         assert!(!out.contains("iframe"));
         assert!(out.contains("x"));
@@ -370,9 +358,7 @@ mod tests {
 
     #[test]
     fn target_blank_adds_noopener() {
-        let out = email_safe_html(
-            r#"<a href="https://x.com" target="_blank">x</a>"#
-        );
+        let out = email_safe_html(r#"<a href="https://x.com" target="_blank">x</a>"#);
         assert!(out.contains("target=\"_blank\""));
         assert!(out.contains("rel=\"noopener\""));
     }

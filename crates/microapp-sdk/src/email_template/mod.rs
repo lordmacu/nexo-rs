@@ -38,19 +38,16 @@ pub mod sanitize;
 pub mod store;
 
 pub use asset_store::{
-    migrate as migrate_assets, mime_to_ext, AssetMetadata, AssetStore,
-    AssetStoreError, StoredAsset, ALLOWED_MIMES, MAX_ASSET_BYTES,
+    migrate as migrate_assets, mime_to_ext, AssetMetadata, AssetStore, AssetStoreError,
+    StoredAsset, ALLOWED_MIMES, MAX_ASSET_BYTES,
 };
 pub use blocks::{
-    migrate_legacy_to_rows, render_block, render_template,
-    render_template_with_bg, render_template_with_page_bg,
-    Column, EmailBlock, TextAlign,
+    migrate_legacy_to_rows, render_block, render_template, render_template_with_bg,
+    render_template_with_page_bg, Column, EmailBlock, TextAlign,
 };
 // Image optimisation lifted to `nexo_media` — re-export under
 // the same names so existing callers (admin/template_assets.rs)
 // don't need a path change.
-pub use nexo_media::{optimize as optimize_image, Optimized, OptimizeError};
+pub use nexo_media::{optimize as optimize_image, OptimizeError, Optimized};
 pub use sanitize::email_safe_html;
-pub use store::{
-    migrate, EmailTemplate, EmailTemplateStore, TemplateStoreError,
-};
+pub use store::{migrate, EmailTemplate, EmailTemplateStore, TemplateStoreError};

@@ -59,9 +59,8 @@ pub fn parse_str(input: &str) -> Result<PersonaManifest, PersonaManifestError> {
         manifest_version: Option<u32>,
     }
 
-    let probe: VersionProbe = toml::from_str(input).map_err(|e| {
-        PersonaManifestError::ParseToml(format!("manifest is not valid TOML: {e}"))
-    })?;
+    let probe: VersionProbe = toml::from_str(input)
+        .map_err(|e| PersonaManifestError::ParseToml(format!("manifest is not valid TOML: {e}")))?;
 
     match probe.manifest_version {
         None => return Err(PersonaManifestError::MissingManifestVersion),

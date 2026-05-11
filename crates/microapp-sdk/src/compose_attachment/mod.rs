@@ -137,10 +137,7 @@ fn validate_table(name: &str) -> Result<(), AttachmentStoreError> {
 /// Run the CREATE TABLE migration. Idempotent — safe on every
 /// boot. Caller passes the same `table_name` they'll use for
 /// the store.
-pub async fn migrate(
-    pool: &SqlitePool,
-    table_name: &str,
-) -> Result<(), AttachmentStoreError> {
+pub async fn migrate(pool: &SqlitePool, table_name: &str) -> Result<(), AttachmentStoreError> {
     validate_table(table_name)?;
     let stmt = format!(
         r#"

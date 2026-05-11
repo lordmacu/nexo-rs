@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use flate2::read::GzDecoder;
-use nexo_ext_installer::{
-    download_and_verify_url, resolve_release_with_contract, RepoCoords,
-};
+use nexo_ext_installer::{download_and_verify_url, resolve_release_with_contract, RepoCoords};
 use nexo_persona_manifest::PersonaManifest;
 
 use crate::contract::PersonaExtractContract;
@@ -129,14 +127,9 @@ pub async fn install_persona(
         });
     }
 
-    let resolved = resolve_release_with_contract(
-        &PersonaExtractContract,
-        client,
-        coords,
-        target,
-        api_base,
-    )
-    .await?;
+    let resolved =
+        resolve_release_with_contract(&PersonaExtractContract, client, coords, target, api_base)
+            .await?;
 
     nexo_persona_manifest::validate(&resolved.manifest)?;
 
@@ -207,10 +200,7 @@ pub async fn install_persona(
     // final dir to avoid partially-extracted state being
     // visible to a concurrent boot-time discovery scan.
     let staging_dir = install_root.join(format!(".{id}-{version}.staging"));
-    if tokio::fs::try_exists(&staging_dir)
-        .await
-        .unwrap_or(false)
-    {
+    if tokio::fs::try_exists(&staging_dir).await.unwrap_or(false) {
         let _ = tokio::fs::remove_dir_all(&staging_dir).await;
     }
     tokio::fs::create_dir_all(&staging_dir)
@@ -225,7 +215,11 @@ pub async fn install_persona(
     let staging_tarball_for_extract = staging_tarball.clone();
     let id_for_extract = id.clone();
     let extract_res = tokio::task::spawn_blocking(move || {
-        extract_persona_tarball(&staging_tarball_for_extract, &staging_dir_for_extract, &id_for_extract)
+        extract_persona_tarball(
+            &staging_tarball_for_extract,
+            &staging_dir_for_extract,
+            &id_for_extract,
+        )
     })
     .await
     .map_err(|e| PersonaInstallError::Extract {
@@ -326,10 +320,13 @@ fn extract_persona_tarball(
             });
         }
 
-        let header_size = entry.header().size().map_err(|e| PersonaInstallError::Extract {
-            persona_id: persona_id_for_errors.to_string(),
-            reason: format!("read entry size from header: {e}"),
-        })?;
+        let header_size = entry
+            .header()
+            .size()
+            .map_err(|e| PersonaInstallError::Extract {
+                persona_id: persona_id_for_errors.to_string(),
+                reason: format!("read entry size from header: {e}"),
+            })?;
         if header_size > MAX_ENTRY_BYTES {
             return Err(PersonaInstallError::Extract {
                 persona_id: persona_id_for_errors.to_string(),
@@ -382,10 +379,12 @@ fn extract_persona_tarball(
         // entry path safely under dest_dir; we've already
         // ruled out absolute + parent-traversal above, so
         // this lands inside dest_dir.
-        entry.unpack_in(dest_dir).map_err(|e| PersonaInstallError::Extract {
-            persona_id: persona_id_for_errors.to_string(),
-            reason: format!("unpack entry: {e}"),
-        })?;
+        entry
+            .unpack_in(dest_dir)
+            .map_err(|e| PersonaInstallError::Extract {
+                persona_id: persona_id_for_errors.to_string(),
+                reason: format!("unpack entry: {e}"),
+            })?;
     }
 
     Ok(())

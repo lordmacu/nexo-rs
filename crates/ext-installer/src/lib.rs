@@ -1049,7 +1049,9 @@ name = "Cody Persona"
             ]
         });
         Mock::given(method("GET"))
-            .and(path("/repos/lordmacu/nexo-persona-cody/releases/tags/v0.2.0"))
+            .and(path(
+                "/repos/lordmacu/nexo-persona-cody/releases/tags/v0.2.0",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(release))
             .mount(&server)
             .await;
@@ -1073,7 +1075,10 @@ name = "Cody Persona"
 
         assert_eq!(resolved.manifest.id, "cody");
         assert_eq!(resolved.version.to_string(), "0.2.0");
-        assert_eq!(resolved.target, "noarch", "noarch fallback wins when per-target absent");
+        assert_eq!(
+            resolved.target, "noarch",
+            "noarch fallback wins when per-target absent"
+        );
         assert_eq!(resolved.tarball_url.as_str(), tarball_url);
         assert_eq!(resolved.sha256_url.as_str(), sha_url);
         assert!(resolved.signing.is_none(), "no cosign assets in fixture");

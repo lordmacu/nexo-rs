@@ -118,10 +118,12 @@ impl PersonaAdmin for InMemoryPersonaAdmin {
 
     async fn remove(&self, id: &str) -> Result<PersonaListEntry, PersonaInstallError> {
         let mut guard = self.inner.lock().unwrap();
-        guard.remove(id).ok_or_else(|| PersonaInstallError::NotFound {
-            id: id.to_string(),
-            state_root: "<in-memory>".to_string(),
-        })
+        guard
+            .remove(id)
+            .ok_or_else(|| PersonaInstallError::NotFound {
+                id: id.to_string(),
+                state_root: "<in-memory>".to_string(),
+            })
     }
 }
 
@@ -159,8 +161,14 @@ min_nexo_version = ">=0.1.0"
     async fn in_memory_admin_register_list_get_remove_round_trip() {
         let admin = InMemoryPersonaAdmin::new();
 
-        admin.register(fake_installed("cody", "0.2.0")).await.unwrap();
-        admin.register(fake_installed("muse", "0.1.0")).await.unwrap();
+        admin
+            .register(fake_installed("cody", "0.2.0"))
+            .await
+            .unwrap();
+        admin
+            .register(fake_installed("muse", "0.1.0"))
+            .await
+            .unwrap();
 
         let listed = admin.list().await.unwrap();
         assert_eq!(listed.len(), 2);
@@ -182,8 +190,14 @@ min_nexo_version = ">=0.1.0"
     #[tokio::test]
     async fn re_register_overwrites_same_id() {
         let admin = InMemoryPersonaAdmin::new();
-        admin.register(fake_installed("cody", "0.1.0")).await.unwrap();
-        admin.register(fake_installed("cody", "0.2.0")).await.unwrap();
+        admin
+            .register(fake_installed("cody", "0.1.0"))
+            .await
+            .unwrap();
+        admin
+            .register(fake_installed("cody", "0.2.0"))
+            .await
+            .unwrap();
         let cody = admin.get("cody").await.unwrap().unwrap();
         assert_eq!(
             cody.version.to_string(),

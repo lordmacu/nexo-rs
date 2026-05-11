@@ -36,12 +36,7 @@ pub const MAX_ASSET_BYTES: usize = 5 * 1024 * 1024;
 /// Whitelisted MIME types. PNG / JPEG / GIF / WebP cover
 /// every email client; SVG is excluded on purpose because it
 /// can carry `<script>` and most clients refuse it anyway.
-pub const ALLOWED_MIMES: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-];
+pub const ALLOWED_MIMES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 #[derive(Debug, Error)]
 pub enum AssetStoreError {
@@ -146,10 +141,7 @@ impl AssetStore {
     /// the operator's media-picker modal to surface every
     /// previously-uploaded asset so the same logo never gets
     /// re-uploaded twice.
-    pub async fn list(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<AssetMetadata>, AssetStoreError> {
+    pub async fn list(&self, tenant_id: &str) -> Result<Vec<AssetMetadata>, AssetStoreError> {
         let rows = sqlx::query(
             "SELECT sha256, mime, size_bytes, created_at_ms \
              FROM marketing_email_template_assets \
@@ -182,11 +174,7 @@ impl AssetStore {
     /// can warn the operator about templates that reference
     /// the row before letting them delete (callers thread
     /// the warning through the UI).
-    pub async fn delete(
-        &self,
-        tenant_id: &str,
-        sha256: &str,
-    ) -> Result<bool, AssetStoreError> {
+    pub async fn delete(&self, tenant_id: &str, sha256: &str) -> Result<bool, AssetStoreError> {
         let res = sqlx::query(
             "DELETE FROM marketing_email_template_assets \
              WHERE tenant_id = ? AND sha256 = ?",
@@ -314,7 +302,10 @@ mod tests {
     #[tokio::test]
     async fn rejects_disallowed_mime() {
         let s = AssetStore::new(pool().await);
-        let err = s.put("t1", b"<svg/>", "image/svg+xml", 1).await.unwrap_err();
+        let err = s
+            .put("t1", b"<svg/>", "image/svg+xml", 1)
+            .await
+            .unwrap_err();
         assert!(matches!(err, AssetStoreError::MimeNotAllowed(_)));
     }
 
@@ -328,9 +319,15 @@ mod tests {
     #[tokio::test]
     async fn list_returns_newest_first() {
         let s = AssetStore::new(pool().await);
-        s.put("t1", b"\x89PNG\r\n\x1a\nA", "image/png", 100).await.unwrap();
-        s.put("t1", b"\x89PNG\r\n\x1a\nB", "image/png", 300).await.unwrap();
-        s.put("t1", b"\x89PNG\r\n\x1a\nC", "image/png", 200).await.unwrap();
+        s.put("t1", b"\x89PNG\r\n\x1a\nA", "image/png", 100)
+            .await
+            .unwrap();
+        s.put("t1", b"\x89PNG\r\n\x1a\nB", "image/png", 300)
+            .await
+            .unwrap();
+        s.put("t1", b"\x89PNG\r\n\x1a\nC", "image/png", 200)
+            .await
+            .unwrap();
         let metas = s.list("t1").await.unwrap();
         assert_eq!(metas.len(), 3);
         // 300 > 200 > 100 → newest first.
@@ -384,7 +381,9 @@ mod tests {
     fn sha256_hex_is_lowercase_64_chars() {
         let h = sha256_hex(b"hello");
         assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(h
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 
     #[test]

@@ -166,7 +166,10 @@ pub fn run_init(
             std::fs::create_dir_all(parent)?;
         }
         if target.exists() && !force {
-            println!("  [skip] {} (already exists; pass --force to overwrite)", target.display());
+            println!(
+                "  [skip] {} (already exists; pass --force to overwrite)",
+                target.display()
+            );
             skipped += 1;
             continue;
         }

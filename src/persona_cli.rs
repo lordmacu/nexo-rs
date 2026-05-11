@@ -108,7 +108,10 @@ pub async fn run_persona_list(config_dir: &Path, json: bool) -> Result<i32> {
     let cfg = AppConfig::load(config_dir).context("load config")?;
     if cfg.personas.discovery.search_paths.is_empty() {
         if json {
-            println!("{}", serde_json::to_string_pretty(&json!({"personas": []})).unwrap());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"personas": []})).unwrap()
+            );
         } else {
             eprintln!(
                 "no personas.discovery.search_paths configured; nothing to list. \
@@ -137,10 +140,15 @@ pub async fn run_persona_list(config_dir: &Path, json: bool) -> Result<i32> {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&json!({"personas": rows})).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"personas": rows})).unwrap()
+        );
     } else if rows.is_empty() {
-        println!("(no personas found in {} search path(s))",
-            cfg.personas.discovery.search_paths.len());
+        println!(
+            "(no personas found in {} search path(s))",
+            cfg.personas.discovery.search_paths.len()
+        );
     } else {
         for r in &rows {
             println!(
@@ -287,7 +295,10 @@ pub async fn run_persona_get(config_dir: &Path, id: String, json: bool) -> Resul
         println!("id:               {}", target.manifest.persona.id);
         println!("version:          {}", target.manifest.persona.version);
         println!("description:      {}", target.manifest.persona.description);
-        println!("min_nexo_version: {}", target.manifest.persona.min_nexo_version);
+        println!(
+            "min_nexo_version: {}",
+            target.manifest.persona.min_nexo_version
+        );
         if let Some(h) = &target.manifest.persona.homepage {
             println!("homepage:         {h}");
         }
@@ -314,7 +325,11 @@ pub async fn run_persona_get(config_dir: &Path, id: String, json: bool) -> Resul
             if !req.env_vars.is_empty() {
                 println!("requires.env_vars:");
                 for e in &req.env_vars {
-                    let req_marker = if e.required { "*required*" } else { "optional " };
+                    let req_marker = if e.required {
+                        "*required*"
+                    } else {
+                        "optional "
+                    };
                     println!("  - {req_marker} {} — {}", e.name, e.description);
                 }
             }
@@ -329,11 +344,7 @@ pub async fn run_persona_get(config_dir: &Path, id: String, json: bool) -> Resul
 /// pipeline. Refuses to downgrade — if the resolved version
 /// is older than what's installed, prints a diagnostic +
 /// exits non-zero. Idempotent on same-version.
-pub async fn run_persona_upgrade(
-    config_dir: &Path,
-    id: String,
-    json: bool,
-) -> Result<i32> {
+pub async fn run_persona_upgrade(config_dir: &Path, id: String, json: bool) -> Result<i32> {
     let cfg = AppConfig::load(config_dir).context("load config")?;
     if cfg.personas.discovery.search_paths.is_empty() {
         return Ok(emit_string_error(
@@ -414,7 +425,12 @@ pub async fn run_persona_upgrade(
             ))
         }
     };
-    let installed_version = match installed.manifest.persona.version.parse::<semver::Version>() {
+    let installed_version = match installed
+        .manifest
+        .persona
+        .version
+        .parse::<semver::Version>()
+    {
         Ok(v) => v,
         Err(_) => semver::Version::new(0, 0, 0),
     };
@@ -448,7 +464,11 @@ pub async fn run_persona_upgrade(
 
     // Delegate to the install pipeline — same install_root as
     // currently-installed (parent of install_root).
-    let install_root = installed.install_root.parent().unwrap_or(&installed.install_root).to_path_buf();
+    let install_root = installed
+        .install_root
+        .parent()
+        .unwrap_or(&installed.install_root)
+        .to_path_buf();
     let result = install_persona(InstallInputs {
         client: &client,
         coords: &coords,
@@ -528,7 +548,9 @@ pub enum PersonaRunError {
 /// the manifest file itself. No filesystem mutation; the
 /// dispatch handler applies the returned override to the
 /// loaded `AppConfig` before daemon boot.
-pub fn resolve_local_persona(raw_path: &Path) -> std::result::Result<PersonaRunOverride, PersonaRunError> {
+pub fn resolve_local_persona(
+    raw_path: &Path,
+) -> std::result::Result<PersonaRunOverride, PersonaRunError> {
     if !raw_path.exists() {
         return Err(PersonaRunError::PathNotFound {
             path: raw_path.to_path_buf(),
@@ -555,18 +577,16 @@ pub fn resolve_local_persona(raw_path: &Path) -> std::result::Result<PersonaRunO
         return Err(PersonaRunError::NotAPersonaPath { path: abs });
     };
 
-    let body = std::fs::read_to_string(&manifest_path).map_err(|e| {
-        PersonaRunError::ManifestInvalid {
+    let body =
+        std::fs::read_to_string(&manifest_path).map_err(|e| PersonaRunError::ManifestInvalid {
             path: manifest_path.clone(),
             reason: format!("read failed: {e}"),
-        }
-    })?;
-    let manifest = nexo_persona_manifest::parse_str(&body).map_err(|e| {
-        PersonaRunError::ManifestInvalid {
+        })?;
+    let manifest =
+        nexo_persona_manifest::parse_str(&body).map_err(|e| PersonaRunError::ManifestInvalid {
             path: manifest_path.clone(),
             reason: e.to_string(),
-        }
-    })?;
+        })?;
     nexo_persona_manifest::validate(&manifest).map_err(|e| PersonaRunError::ManifestInvalid {
         path: manifest_path.clone(),
         reason: e.to_string(),
@@ -622,7 +642,10 @@ pub fn print_persona_run_banner(override_: &PersonaRunOverride, json: bool) {
         println!("{}", serde_json::to_string(&payload).unwrap_or_default());
         return;
     }
-    eprintln!("→ Resolving local persona at {}", override_.persona_root.display());
+    eprintln!(
+        "→ Resolving local persona at {}",
+        override_.persona_root.display()
+    );
     eprintln!(
         "✓ Manifest valid: {}@{}",
         override_.persona_id, override_.persona_version

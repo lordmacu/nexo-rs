@@ -137,9 +137,7 @@ impl SttProvider for LocalCandleProvider {
         // (`es-AR`); Candle wants the bare 2-letter code, but
         // `transcribe_candle::transcribe_file` already normalises
         // internally, so pass-through is safe.
-        let cfg = if lang_hint.is_some()
-            && lang_hint.map(str::to_string) != self.cfg.lang_hint
-        {
+        let cfg = if lang_hint.is_some() && lang_hint.map(str::to_string) != self.cfg.lang_hint {
             let mut c = (*self.cfg).clone();
             c.lang_hint = lang_hint.map(str::to_string);
             Cow::Owned(c)

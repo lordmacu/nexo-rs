@@ -267,8 +267,7 @@ async fn resolve_model_dir(cfg: &TranscribeConfig) -> Result<PathBuf> {
 async fn fetch_from_hf_hub(model_id: &str) -> Result<PathBuf> {
     use hf_hub::api::tokio::Api;
 
-    let api = Api::new()
-        .map_err(|e| SttError::Whisper(format!("hf-hub Api init: {e}")))?;
+    let api = Api::new().map_err(|e| SttError::Whisper(format!("hf-hub Api init: {e}")))?;
     let repo = api.model(model_id.to_string());
 
     tracing::info!(
@@ -438,7 +437,10 @@ fn run_inference(
     // Greedy decoder loop. Cap iterations at
     // `max_target_positions` to defend against a runaway model
     // that never emits EOT.
-    let max_new = backend.config.max_target_positions.saturating_sub(prompt_len);
+    let max_new = backend
+        .config
+        .max_target_positions
+        .saturating_sub(prompt_len);
     let mut tokens = prompt;
     for step in 0..max_new {
         let tokens_t = Tensor::new(&tokens[..], &backend.device)

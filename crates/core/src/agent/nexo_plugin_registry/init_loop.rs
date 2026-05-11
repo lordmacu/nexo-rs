@@ -372,10 +372,12 @@ fn start_plugin_supervisor_loop_after_init(
     };
     // Re-derive the LlmServices the same way `init()` did so
     // respawned children speak through the same provider plumbing.
-    let llm = Some(crate::agent::nexo_plugin_registry::subprocess::LlmServices {
-        registry: ctx.llm_registry.clone(),
-        config: ctx.llm_config.clone(),
-    });
+    let llm = Some(
+        crate::agent::nexo_plugin_registry::subprocess::LlmServices {
+            registry: ctx.llm_registry.clone(),
+            config: ctx.llm_config.clone(),
+        },
+    );
     // The respawn loop needs `Arc<SubprocessNexoPlugin>` (typed,
     // not `Arc<dyn NexoPlugin>`). The factory stashed a
     // `Weak<SubprocessNexoPlugin>` inside the concrete struct
@@ -536,9 +538,7 @@ where
                                 {
                                     outcomes.insert(id, failed);
                                 } else if let Some(failed) =
-                                    start_plugin_supervisor_loop_after_init(
-                                        &id, &handle, &ctx,
-                                    )
+                                    start_plugin_supervisor_loop_after_init(&id, &handle, &ctx)
                                 {
                                     outcomes.insert(id, failed);
                                 } else {
@@ -641,9 +641,8 @@ where
                         .await
                         {
                             outcomes.insert(id, failed);
-                        } else if let Some(failed) = start_plugin_supervisor_loop_after_init(
-                            &id, &handle, &ctx,
-                        )
+                        } else if let Some(failed) =
+                            start_plugin_supervisor_loop_after_init(&id, &handle, &ctx)
                         {
                             outcomes.insert(id, failed);
                         } else {
@@ -657,8 +656,7 @@ where
                         // its real cause (Display alone says only
                         // "plugin `<id>` init failed").
                         let mut chain = e.to_string();
-                        let mut src: Option<&dyn std::error::Error> =
-                            std::error::Error::source(&e);
+                        let mut src: Option<&dyn std::error::Error> = std::error::Error::source(&e);
                         while let Some(cause) = src {
                             use std::fmt::Write;
                             let _ = write!(&mut chain, " ← {cause}");
