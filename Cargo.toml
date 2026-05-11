@@ -109,13 +109,6 @@ members = [
     # `nexo-microapp-sdk` builder API. README points authors at
     # `docs/src/microapps/contract.md` for porting to other langs.
     "extensions/template-microapp-rust",
-    # Phase 81.15.a / 81.17.c — out-of-tree subprocess plugin
-    # template. Copy + rename to bootstrap a channel plugin that
-    # speaks the wire spec at `nexo-plugin-contract.md` via the
-    # `nexo-microapp-sdk` `plugin` feature + `PluginAdapter`.
-    # Member because CI must keep it green; operators copy the
-    # directory out of the repo and swap path deps for crates.io.
-    "extensions/template-plugin-rust",
     # Phase 80.9 fixture — minimal MCP server with channel
     # capabilities for end-to-end testing of the channels
     # surface. Operator-facing fixture, not a template.
@@ -128,8 +121,18 @@ members = [
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
+#
+# `template-plugin-rust` moved here from `[workspace.members]`:
+# `nexo-rs`'s `src/plugin_new.rs` embeds its directory via
+# `include_dir!`, and cargo unconditionally drops workspace-member
+# directories from the parent crate's `.crate` tarball — so a
+# `cargo install nexo-rs` would proc-macro-panic on a missing dir.
+# As a non-member it's pulled into the tarball by `[package].include`
+# below; it still builds standalone (its deps are `path = "../../crates/…"`,
+# which resolve from this location too — same depth from the repo root).
 exclude = [
     "extensions/template-rust",
+    "extensions/template-plugin-rust",
 ]
 resolver = "2"
 

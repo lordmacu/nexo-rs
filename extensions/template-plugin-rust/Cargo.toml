@@ -26,8 +26,9 @@ tokio        = { version = "1", features = ["macros", "rt-multi-thread", "io-uti
 tracing      = "0.1"
 tracing-subscriber = "0.3"
 
-[lints]
-workspace = true
+# (No `[lints] workspace = true` — this crate is not a workspace
+#  member; it's in `[workspace.exclude]` so `cargo install nexo-rs`
+#  can embed its directory. It builds standalone.)
 
 [dev-dependencies]
 tempfile = "3"
