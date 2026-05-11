@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 # Direct path deps — these crates aren't in workspace.dependencies
 # yet (matches the pattern nexo-plugin-manifest uses).
-nexo-ext-installer    = { version = "0.1.0", path = "../ext-installer" }
+nexo-ext-installer    = { version = "0.1.1", path = "../ext-installer" }
 nexo-persona-manifest = { version = "0.1.0", path = "../persona-manifest" }
 async-trait           = { workspace = true }
 chrono                = { workspace = true, features = ["serde"] }
