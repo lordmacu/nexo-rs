@@ -1,5 +1,6 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
+mod persona_cli;
 mod plugin_admin;
 mod plugin_install;
 mod plugin_new;
@@ -171,6 +172,46 @@ enum Mode {
         yes: bool,
         json: bool,
     },
+    /// Phase F6 of `cody-cli-install` — `nexo persona install
+    /// <owner>/<repo>[@<tag>] [--dest <dir>] [--target
+    /// <triple>] [--json]`. Mirror of `Mode::PluginInstall`
+    /// but for v2 persona packs (out-of-tree agent
+    /// definitions). Resolves + verifies + extracts under
+    /// `--dest` (or `cfg.personas.discovery.search_paths[0]`,
+    /// or `<state_dir>/personas/`).
+    PersonaInstall {
+        coords: String,
+        dest: Option<PathBuf>,
+        target: Option<String>,
+        json: bool,
+    },
+    /// Phase F6 — `nexo persona list [--json]`. Walks
+    /// `cfg.personas.discovery.search_paths`, applies
+    /// disabled / allowlist filters, tabulates each survivor.
+    PersonaList { json: bool },
+    /// Phase F6 — `nexo persona remove <id> [--yes] [--json]`.
+    /// Atomic dir removal of the install root for `<id>`.
+    PersonaRemove {
+        id: String,
+        yes: bool,
+        json: bool,
+    },
+    /// Phase F6 — `nexo persona get <id> [--json]`. STUB; will
+    /// surface manifest + lifecycle history in F6.b. Meanwhile
+    /// suggests the operator-equivalent shell.
+    PersonaGet { id: String, json: bool },
+    /// Phase F6 — `nexo persona upgrade <id> [--json]`. STUB;
+    /// re-resolve recorded coords + delegate to install path
+    /// in F6.b. Meanwhile suggests the install-with-newer-tag
+    /// workaround.
+    PersonaUpgrade { id: String, json: bool },
+    /// Phase F6 — `nexo persona run <path> [--json]`. STUB;
+    /// inner-loop dev (mirror of `nexo plugin run`) deferred
+    /// to F6.b.
+    PersonaRun { path: PathBuf, json: bool },
+    /// Phase F6 — static help block printed by
+    /// `nexo persona help`.
+    PersonaHelp,
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
     /// canonical state directory for `<id>` resolved against
     /// the current `NEXO_HOME` (created if absent). Operators
@@ -1833,6 +1874,46 @@ async fn main() -> Result<()> {
                     .await?;
             std::process::exit(code);
         }
+        Mode::PersonaInstall {
+            coords,
+            dest,
+            target,
+            json,
+        } => {
+            let code = persona_cli::run_persona_install(
+                &args.config_dir,
+                coords,
+                dest,
+                target,
+                json,
+            )
+            .await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaList { json } => {
+            let code = persona_cli::run_persona_list(&args.config_dir, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaRemove { id, yes, json } => {
+            let code = persona_cli::run_persona_remove(&args.config_dir, id, yes, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaGet { id, json } => {
+            let code = persona_cli::run_persona_get_stub(id, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaUpgrade { id, json } => {
+            let code = persona_cli::run_persona_upgrade_stub(id, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaRun { path, json } => {
+            let code = persona_cli::run_persona_run_stub(path, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PersonaHelp => {
+            persona_cli::print_persona_help();
+            return Ok(());
+        }
         Mode::Admin { port } => return run_admin_via_plugin(port).await,
         Mode::Run => {}
     }
@@ -1844,8 +1925,14 @@ async fn main() -> Result<()> {
     let _lock = acquire_single_instance_lock().context("failed to acquire agent lock")?;
 
     let config_dir = args.config_dir;
-    tracing::info!(config_dir = %config_dir.display(), "loading config");
-    let mut cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+    let override_from = args.override_from;
+    tracing::info!(
+        config_dir = %config_dir.display(),
+        override_from = ?override_from.as_ref().map(|p| p.display().to_string()),
+        "loading config (Phase 94: env vars NEXO_<NAME>_YAML + --override-from layer)"
+    );
+    let mut cfg = AppConfig::load_with_overrides(&config_dir, override_from.as_deref())
+        .context("failed to load config")?;
 
     // Phase 31.7 — `nexo plugin run <path>` falls through to the
     // boot path with a side-channel override. Apply it here, AFTER
@@ -3000,7 +3087,19 @@ async fn main() -> Result<()> {
     let persona_admin = std::sync::Arc::new(
         nexo_persona_installer::InMemoryPersonaAdmin::new(),
     );
-    if !cfg.personas.discovery.search_paths.is_empty() {
+    // Phase F7 — `NEXO_DISABLE_BUNDLED_PERSONAS` kill switch.
+    // Honored even when search_paths is configured; lets a
+    // hardened deployment refuse persona discovery without
+    // mutating the YAML.
+    let personas_killed = std::env::var("NEXO_DISABLE_BUNDLED_PERSONAS")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
+        .unwrap_or(false);
+    if personas_killed {
+        tracing::info!(
+            "persona discovery skipped — NEXO_DISABLE_BUNDLED_PERSONAS is set"
+        );
+    }
+    if !personas_killed && !cfg.personas.discovery.search_paths.is_empty() {
         let discovered =
             nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths).await;
         let mut registered: usize = 0;
@@ -8849,6 +8948,12 @@ fn parse_args() -> CliArgs {
                 default_xdg_config_dir()
             }
         });
+    // Phase 94 — override dir layer. Sourced from
+    // `NEXO_OVERRIDE_FROM` env; `--override-from <dir>` flag wins.
+    let mut override_from: Option<PathBuf> = std::env::var("NEXO_OVERRIDE_FROM")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
     let mut positional: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
 
@@ -8859,9 +8964,15 @@ fn parse_args() -> CliArgs {
                     config_dir = PathBuf::from(path);
                 }
             }
+            "--override-from" => {
+                if let Some(path) = args.next() {
+                    override_from = Some(PathBuf::from(path));
+                }
+            }
             "--help" | "-h" => {
                 return CliArgs {
                     config_dir,
+                    override_from,
                     mode: Mode::Help,
                     plugin_run_override: None,
                 }
@@ -8878,6 +8989,7 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::Version { verbose },
+            override_from: override_from.clone(),
             plugin_run_override: None,
         };
     }
@@ -8896,6 +9008,7 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::CheckConfig { strict },
+            override_from: override_from.clone(),
             plugin_run_override: None,
         };
     }
@@ -8910,6 +9023,7 @@ fn parse_args() -> CliArgs {
             mode: Mode::DryRun {
                 json: has_json_flag,
             },
+            override_from: override_from.clone(),
             plugin_run_override: None,
         };
     }
@@ -8923,7 +9037,8 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
             };
         }
     }
@@ -8933,7 +9048,8 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
             };
         }
     }
@@ -8964,6 +9080,7 @@ fn parse_args() -> CliArgs {
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
                 tenant_id: parse_kv_flag(&positional, "--tenant"),
             },
+            override_from: override_from.clone(),
             plugin_run_override: None,
         };
     }
@@ -8973,7 +9090,8 @@ fn parse_args() -> CliArgs {
             return CliArgs {
                 config_dir,
                 mode,
-                plugin_run_override: None,
+                override_from: override_from.clone(),
+            plugin_run_override: None,
             };
         }
     }
@@ -9089,6 +9207,33 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
+        // Phase F6 of `cody-cli-install` — `nexo persona <sub>` family.
+        [cmd, sub, coords] if cmd == "persona" && sub == "install" => Mode::PersonaInstall {
+            coords: coords.clone(),
+            dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
+            target: parse_kv_flag(&positional, "--target"),
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "persona" && sub == "list" => Mode::PersonaList { json: has_json_flag },
+        [cmd, sub, id] if cmd == "persona" && sub == "remove" => Mode::PersonaRemove {
+            id: id.clone(),
+            yes: positional.iter().any(|a| a == "--yes"),
+            json: has_json_flag,
+        },
+        [cmd, sub, id] if cmd == "persona" && sub == "get" => Mode::PersonaGet {
+            id: id.clone(),
+            json: has_json_flag,
+        },
+        [cmd, sub, id] if cmd == "persona" && sub == "upgrade" => Mode::PersonaUpgrade {
+            id: id.clone(),
+            json: has_json_flag,
+        },
+        [cmd, sub, path] if cmd == "persona" && sub == "run" => Mode::PersonaRun {
+            path: PathBuf::from(path),
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "persona" && sub == "help" => Mode::PersonaHelp,
+        [cmd] if cmd == "persona" => Mode::PersonaHelp,
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => Mode::McpServer(McpServerSubcommand::Serve),
         [cmd, sub, url] if cmd == "mcp-server" && sub == "inspect" => {
@@ -9317,7 +9462,8 @@ fn parse_args() -> CliArgs {
     CliArgs {
         config_dir,
         mode,
-        plugin_run_override: None,
+        override_from: override_from.clone(),
+            plugin_run_override: None,
     }
 }
 
