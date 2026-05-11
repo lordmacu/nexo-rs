@@ -1,18 +1,14 @@
-//! Parse the project's real `FOLLOWUPS.md` and assert known
-//! resolved/open splits.
+//! Parse the bundled `tests/fixtures/FOLLOWUPS.md` (a trimmed,
+//! synthetic copy of the real file's dialect — the real backlog
+//! isn't part of the published crate) and assert known resolved/open
+//! splits.
 
 use std::path::PathBuf;
 
 use nexo_project_tracker::{parse_followups_file, FollowUpStatus};
 
 fn fixture_path() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("FOLLOWUPS.md")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/FOLLOWUPS.md")
 }
 
 #[test]
@@ -21,13 +17,12 @@ fn pr_3_is_open() {
     let pr3 = items
         .iter()
         .find(|i| i.code == "PR-3")
-        .expect("PR-3 must exist in FOLLOWUPS.md");
-    // PR-3 status changes as the operator marks progress in
-    // FOLLOWUPS.md (Open → 🔄 partial → ✅). Both Open and
-    // Resolved are valid current states; what we assert is that
-    // the parser surfaces *some* status, that the section is
-    // Phase 26, and that the body is non-empty.
-    let _ = pr3.status;
+        .expect("PR-3 must exist in the fixture");
+    // The parser maps a plain `**title**` (no `~~ ~~`, no `✅`) to
+    // Open; the fixture keeps PR-3 in that state. We assert the
+    // status surfaces, the section is Phase 26, and the body
+    // (the `- Missing:` / `- Why deferred:` bullets) is non-empty.
+    assert_eq!(pr3.status, FollowUpStatus::Open);
     assert!(pr3.section.contains("Phase 26"));
     assert!(!pr3.body.is_empty());
 }
