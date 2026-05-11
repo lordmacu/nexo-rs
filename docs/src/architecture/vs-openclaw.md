@@ -13,7 +13,7 @@ operational guarantees. This page lays out the differences honestly
 |-----------|----------|---------|
 | Language | TypeScript | Rust |
 | Runtime | Node 22+ | none — single statically-linked binary |
-| Install footprint | `pnpm install` over ~42 runtime deps + 24 dev deps | one binary, **34 MB** built (29 MB stripped, 13 MB gzipped) |
+| Install footprint | `pnpm install` over ~42 runtime deps + 24 dev deps | one binary, **~90 MB** built; ~15 MB to download (xz tarball), ~18 MB `.deb`, ~25 MB `.rpm` |
 | Cold-start | `node` boot + module resolution | direct `exec` — sub-100ms to `agent serve` |
 | Mobile target | feasible with Termux + Node | first-class on Termux, no root, no Docker |
 | Memory safety | runtime errors | Rust ownership: data races, use-after-free, null deref refused at compile |
@@ -151,14 +151,19 @@ OpenClaw supports MCP as a client. nexo-rs is **both**:
 ## Build size
 
 ```text
-target/release/agent             34 MB
-target/release/agent (stripped)  29 MB
-target/release/agent (.gz -9)    13 MB
+target/release/nexo              ~90 MB   (built binary)
+nexo-rs-<target>.tar.xz          ~12-16 MB  (release download, xz -9)
+nexo-rs_<ver>_<arch>.deb         ~14-18 MB
+nexo-rs-<ver>-1.<arch>.rpm       ~20-25 MB
 ```
 
-For comparison, an OpenClaw install (Node + `node_modules` after
-`pnpm install`) sits in the hundreds of megabytes — most of it
-needed at runtime, not just build-time.
+The binary has grown from ~34 MB at v0.1.0 as the feature surface
+expanded (whisper STT, sqlite-vec, embedded config templates, CDP,
+the driver subsystem, …). What you actually fetch is the compressed
+artifact — ~15 MB for the musl tarball. For comparison, an OpenClaw
+install (Node + `node_modules` after `pnpm install`) sits in the
+hundreds of megabytes — most of it needed at runtime, not just
+build-time.
 
 ## Where OpenClaw is still ahead
 
