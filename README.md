@@ -50,6 +50,32 @@ PKCE · agent framework Termux · self-hosted AI agents.
 
 ---
 
+## Install
+
+Every channel produces the same `nexo` binary — the differences are
+how it lands on your machine. The one-liner needs no Rust toolchain.
+
+| Method | Command | Notes |
+|--------|---------|-------|
+| **Pre-built binary** | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` | Linux x86_64 / aarch64 (static musl), macOS Intel / Apple Silicon. Detects OS+arch, verifies sha256, drops `nexo` on PATH. Falls back to `cargo install nexo-rs` for other platforms. |
+| **crates.io** | `cargo install nexo-rs` | Needs a Rust toolchain (1.80+). Compiles the daemon from the published workspace. |
+| **Debian / Ubuntu** | `sudo apt install ./nexo-rs_<ver>_amd64.deb` | Download the `.deb` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Ships a systemd unit; postinst seeds `/etc/nexo-rs/`. |
+| **Fedora / RHEL / Rocky** | `sudo dnf install ./nexo-rs-<ver>-1.x86_64.rpm` | `.rpm` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Same systemd unit. |
+| **Termux (Android, aarch64)** | `pkg install ./nexo-rs_<ver>_aarch64.deb` | aarch64 `.deb` (bionic libc) from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). No root. |
+| **Windows** | download the `.zip` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest), or `cargo install nexo-rs` | The bash installer is WSL-only. |
+| **Docker / GHCR** | `docker pull ghcr.io/lordmacu/nexo-rs:latest` | Multi-arch (`amd64` + `arm64`); bundles Chrome, cloudflared, ffmpeg, tesseract, yt-dlp; carries SBOM + SLSA provenance. |
+| **Nix flake** | `nix run github:lordmacu/nexo-rs` | Reproducible dev shell + binary. |
+| **From source** | `git clone https://github.com/lordmacu/nexo-rs && cd nexo-rs && cargo build --release` | Track `main`. `--profile release-fast` for ~50 % quicker iterative builds. |
+
+Every release artifact (tarball, `.deb`, `.rpm`, `.zip`) ships a
+`.sha256` sidecar and a cosign signature. Per-OS prerequisites + the
+optional-feature (STT / voice / browser) matrix:
+[Platform support](https://lordmacu.github.io/nexo-rs/getting-started/platform-support.html).
+After installing, `nexo` boots with zero config — see
+[Quick start](#quick-start) below.
+
+---
+
 ## Why
 
 Most "agent frameworks" assume a single LLM talking to a single user
@@ -271,6 +297,38 @@ nexo set-broker nats --url nats://localhost:4222
 
 See [broker shapes](./docs/src/architecture/broker-shapes.md)
 for when to pick which.
+
+## What you can build
+
+nexo-rs is the **runtime**; you bring the channels, the agents, and
+(for SaaS) the product layer on top. A reference build:
+
+### `agent-creator` — operator UI / control-plane microapp
+
+[**lordmacu/agent-creator-microapp**](https://github.com/lordmacu/agent-creator-microapp)
+is a [microapp](./docs/src/microapps/getting-started.md) (a Phase 11
+nexo extension with its own React UI + HTTP backend) that gives an
+operator a graphical control plane over their daemon — create / edit
+agent definitions without touching YAML, link & QR-pair WhatsApp
+numbers, register LLM provider keys per agent, browse live
+conversations, take over a chat manually, see escalation badges. It
+talks to the daemon over the admin RPC surface, runs the firehose SSE
+stream, and consumes the `@lordmacu/nexo-microapp-ui-react` theme
+preset — i.e. it exercises the full microapp contract end to end.
+It's also what surfaced (and validated) the Phase 92 stdio-bridge
+broker in production: WhatsApp/marketing subprocess plugins, `nexo
+set-broker local`, zero NATS server.
+
+### More shapes
+
+WhatsApp sales agent · email-triage agent · Telegram support copilot
+with KB + handoff · multi-agent CRM (intake → qualifier → closer) ·
+internal ops bot over Slack-via-MCP · browser scraping agent · RSS →
+Telegram poller · multi-tenant SaaS where end-users build their own
+WhatsApp agents · vertical extension packs (sales / support /
+marketing) · persona packs ([Cody](https://github.com/lordmacu/nexo-persona-cody) —
+the programmer-pair reference). Each with a recipe / template:
+[**What you can build**](https://lordmacu.github.io/nexo-rs/what-you-can-build.html).
 
 ## Configuration
 
