@@ -127,7 +127,7 @@ pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<Stri
 // Audio decode chain (ogg-opus → s16 PCM → f32) lives in the
 // shared `super::audio` module — both whisper-rs (this file) and
 // Candle (`transcribe_candle.rs`) consume the same helpers. See
-// `Phase 91.6` mod.rs note for the dispatch wiring.
+// the `mod.rs` note for the dispatch wiring.
 
 #[cfg(test)]
 mod tests {

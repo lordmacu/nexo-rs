@@ -1,7 +1,7 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.6 — concurrent HTTP load test for the per-principal
-//! concurrency cap. Boots a real HTTP server with cap wired in,
+//! Concurrent HTTP load test for the per-principal concurrency
+//! cap. Boots a real HTTP server with cap wired in,
 //! fires N concurrent calls, asserts:
 //!
 //!   * No panics (would propagate as task aborts).
@@ -91,8 +91,8 @@ async fn concurrent_load_no_permit_leak() {
         token_env: None,
         tenant: Some("default".into()),
     });
-    // Bump per-IP layer (76.1) out of the way so the test exercises
-    // ONLY the per-principal concurrency cap (76.6).
+    // Bump per-IP layer out of the way so the test exercises ONLY
+    // the per-principal concurrency cap.
     cfg.per_ip_rate_limit = nexo_mcp::server::http_config::PerIpRateLimit {
         rps: 100_000,
         burst: 100_000,

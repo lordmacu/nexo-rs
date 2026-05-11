@@ -1,9 +1,8 @@
 // Routing rules engine for microapps that dispatch inbound
 // events to handlers per declarative rules. Lifted from the
-// `nexo-rs-extension-marketing` extension as part of M15.4 so
-// the AST + dispatcher stay reusable across CRM-shaped
-// extensions and any future microapp that wants
-// declarative-rules routing.
+// `nexo-rs-extension-marketing` extension so the AST +
+// dispatcher stay reusable across CRM-shaped extensions and any
+// microapp that wants declarative-rules routing.
 //
 // Tenant-scoped from day 1: rule sets carry a `TenantIdRef`,
 // the dispatcher refuses to evaluate rules across tenants.

@@ -1,4 +1,4 @@
-//! Phase 67.F.3 — SQLite-backed idempotency log for hook firings.
+//! SQLite-backed idempotency log for hook firings.
 //!
 //! Why: NATS is at-least-once, the daemon may restart between
 //! "decide hook fires" and "hook side effect succeeded", and a
@@ -141,7 +141,7 @@ impl HookIdempotencyStore {
         Ok(row.is_some())
     }
 
-    /// B10 — release a claim made by `try_claim` when the action
+    /// Release a claim made by `try_claim` when the action
     /// itself failed. Without this, a transient adapter / network
     /// failure leaves the slot taken forever and any retry fails
     /// with `AlreadyDispatched`. Idempotent: deleting a row that

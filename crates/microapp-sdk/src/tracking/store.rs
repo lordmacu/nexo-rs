@@ -82,8 +82,8 @@ pub trait TrackingStore: Send + Sync {
         link_id: &LinkId,
     ) -> Result<Option<String>, TrackingStoreError>;
 
-    /// Append one open event. Caller dedupes upstream (same
-    /// strategy as F9 — short minute-bucket) before calling.
+    /// Append one open event. Caller dedupes upstream (short
+    /// minute-bucket strategy) before calling.
     async fn record_open(&self, event: &OpenEvent) -> Result<(), TrackingStoreError>;
 
     /// Append one click event. Same caller-dedupe contract as

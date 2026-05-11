@@ -1,4 +1,4 @@
-//! Phase 11.6 — per-agent registry for extension-provided lifecycle hooks.
+//! Per-agent registry for extension-provided lifecycle hooks.
 //!
 //! Hooks are fired sequentially in registration order. A `before_*` hook
 //! returning `abort: true` short-circuits further handlers and bubbles up as

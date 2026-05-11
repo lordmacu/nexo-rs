@@ -1,4 +1,4 @@
-//! Phase 79.10.b — bridge between nexo-core's `ConfigTool` traits
+//! Bridge between nexo-core's `ConfigTool` traits
 //! and the YAML helpers in this crate.
 //!
 //! `nexo-core` cannot depend on `nexo-setup` (the reverse already

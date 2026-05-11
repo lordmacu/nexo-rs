@@ -1,32 +1,28 @@
-//! 4-phase consolidation prompt builder. Phase 80.1.
+//! 4-phase consolidation prompt builder.
 //!
-//! Verbatim port of
-//! `claude-code-leak/src/services/autoDream/consolidationPrompt.ts:1-65`.
-//!
-//! Constants ported from
-//! `claude-code-leak/src/memdir/memdir.ts:34,35,116`:
+//! Defines the memory-directory conventions used by the prompt:
 //! - `ENTRYPOINT_NAME = "MEMORY.md"`
 //! - `MAX_ENTRYPOINT_LINES = 200`
 //! - `DIR_EXISTS_GUIDANCE` text
 
 use std::path::PathBuf;
 
-/// Memory entrypoint filename. Mirror leak `memdir.ts:34`.
+/// Memory entrypoint filename.
 pub const ENTRYPOINT_NAME: &str = "MEMORY.md";
 
-/// Soft cap on entrypoint length. Mirror leak `memdir.ts:35`.
+/// Soft cap on entrypoint length.
 pub const MAX_ENTRYPOINT_LINES: usize = 200;
 
-/// Guidance string for the prompt. Mirror leak `memdir.ts:116-117`.
+/// Guidance string for the prompt.
 pub const DIR_EXISTS_GUIDANCE: &str =
     "This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).";
 
-/// Build the consolidation prompt. Verbatim port of leak `:10-65`.
+/// Build the consolidation prompt.
 ///
 /// `extra` is the per-run context block (Bash read-only constraints +
 /// session list) — see `auto_dream::build_extra` for the canonical
 /// shape. When empty, the trailing "## Additional context" section is
-/// omitted (mirror leak `:64`).
+/// omitted.
 pub struct ConsolidationPromptBuilder {
     memory_root: PathBuf,
     transcript_dir: PathBuf,
@@ -49,7 +45,7 @@ impl ConsolidationPromptBuilder {
         self
     }
 
-    /// Render the prompt. Mirror leak `:14-64`.
+    /// Render the prompt.
     pub fn build(&self, extra: &str) -> String {
         let memory_root = self.memory_root.display();
         let transcript_dir = self.transcript_dir.display();

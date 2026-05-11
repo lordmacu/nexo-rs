@@ -1,4 +1,4 @@
-//! Phase 82.11 — end-to-end integration test for the agent
+//! End-to-end integration test for the agent
 //! event firehose.
 //!
 //! Wires the production stack: `TranscriptWriter` with a
@@ -107,7 +107,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
     // --- 2. Bind a captured outbound mpsc to the granted microapp -----
     // 16 frames is more than enough for the single entry this test
     // appends; bound > 1 so we don't accidentally exercise the lag
-    // path here (covered by the Step 4 unit tests).
+    // path here (covered by the lag-path unit tests).
     let (tx, mut rx) = mpsc::channel::<String>(16);
     bootstrap.bind_writer("agent-creator", tx);
 

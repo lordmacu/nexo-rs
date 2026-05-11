@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tokio::sync::Mutex as AsyncMutex;
 /// Optional YAML frontmatter parsed from the top of `SKILL.md`. All fields
-/// are optional — skills without frontmatter behave exactly as before
-/// (Phase 13.1 semantics).
+/// are optional — skills without frontmatter behave exactly as before.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct SkillMetadata {
@@ -134,17 +133,17 @@ pub enum SkillLoadAction {
 pub struct SkillLoader {
     root: PathBuf,
     overrides: BTreeMap<String, SkillDepsMode>,
-    /// Phase 83.8.12.6.runtime — owning tenant for per-tenant
-    /// skill resolution. `None` (default) skips the tenant-
-    /// scoped lookup. Resolution order in `load_one`:
+    /// Owning tenant for per-tenant skill resolution. `None`
+    /// (default) skips the tenant-scoped lookup. Resolution order
+    /// in `load_one`:
     /// 1. `<root>/<tenant_id>/<name>/SKILL.md` (when set)
     /// 2. `<root>/__global__/<name>/SKILL.md`
-    /// 3. `<root>/<name>/SKILL.md` (legacy — pre-83.8.12.6
-    ///    deployments; logged as deprecation when used)
-    /// 4. each `plugin_roots[i]/<name>/SKILL.md` (Phase 81.7,
-    ///    operator-priority preserved by the order)
+    /// 3. `<root>/<name>/SKILL.md` (legacy layout; logged as a
+    ///    deprecation when used)
+    /// 4. each `plugin_roots[i]/<name>/SKILL.md`
+    ///    (operator-priority preserved by the order)
     tenant_id: Option<String>,
-    /// Phase 81.7 — fallback roots searched after the operator's
+    /// Fallback roots searched after the operator's
     /// tenant + global + legacy chain. Populated at boot from
     /// `SkillsMergeReport.skill_roots`.
     plugin_roots: Vec<PathBuf>,
@@ -164,7 +163,7 @@ impl SkillLoader {
         self.overrides = overrides;
         self
     }
-    /// Phase 83.8.12.6.runtime — pin the loader to one tenant so
+    /// Pin the loader to one tenant so
     /// per-tenant skills (`<root>/<tenant_id>/<name>/SKILL.md`)
     /// take precedence over the global namespace. Multi-tenant
     /// boot (in `llm_behavior.rs`) threads `agent.tenant_id`
@@ -174,7 +173,7 @@ impl SkillLoader {
         self
     }
 
-    /// Phase 81.7 — register the plugin-contributed skill roots.
+    /// Register the plugin-contributed skill roots.
     /// Each entry is searched AFTER the operator's tenant + global
     /// + legacy chain, in the order provided. Operator's content
     /// always wins by definition; plugin contributions are
@@ -198,7 +197,7 @@ impl SkillLoader {
                 if idx == candidates.len() - 1 && candidates.len() > 1 {
                     // Legacy fallback hit — log a deprecation so
                     // operators see they should migrate to the
-                    // 83.8.12.6 layout.
+                    // tenant/global layout.
                     tracing::warn!(
                         skill = name,
                         path = %path.display(),
@@ -220,7 +219,7 @@ impl SkillLoader {
         }
         out.push(self.root.join("__global__").join(name).join("SKILL.md"));
         out.push(self.root.join(name).join("SKILL.md"));
-        // Phase 81.7 — plugin-contributed skills appended LAST so
+        // Plugin-contributed skills appended LAST so
         // operator content always wins. `plugin_roots` is iterated
         // in the order operators / boot wire passed it; the loader
         // returns the first existing path.

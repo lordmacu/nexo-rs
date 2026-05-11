@@ -1,4 +1,4 @@
-//! Phase 76.8 — row types for the session event store.
+//! Row types for the session event store.
 
 use serde_json::Value;
 

@@ -1,5 +1,5 @@
-//! Phase 11.7 — CLI subcommands for inspecting and administering
-//! extensions without booting the agent runtime.
+//! CLI subcommands for inspecting and administering extensions
+//! without booting the agent runtime.
 //!
 //! All commands are pure functions that take a [`CliContext`]; the binary
 //! (`src/main.rs`) is a thin adapter around these.

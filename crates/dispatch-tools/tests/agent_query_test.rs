@@ -1,4 +1,4 @@
-//! Phase 67.G.3 — list / status / logs / hooks query tools.
+//! List / status / logs / hooks query tools.
 
 use std::sync::Arc;
 

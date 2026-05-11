@@ -1,4 +1,4 @@
-//! Phase 82.13.b.1 — `TranscriptAppender` trait.
+//! `TranscriptAppender` trait.
 //!
 //! Decouples the admin-RPC layer (handler `processing/intervention`
 //! and `processing/resume`) from the concrete `TranscriptWriter`
@@ -11,17 +11,17 @@
 //!
 //! v0 only stamps three flavours of entry:
 //!
-//! 1. **Operator reply** (Phase 82.13.b.1) —
+//! 1. **Operator reply** —
 //!    `role: Assistant`, `source_plugin: "intervention:<channel>"`,
 //!    `sender_id: "operator:<token_hash>"`. Lets the agent treat
 //!    the operator's manual reply as if it had said it on its
 //!    next turn (continuity of tone, no system-prompt
 //!    engineering).
-//! 2. **Operator summary** (Phase 82.13.b.2) — `role: System`,
+//! 2. **Operator summary** — `role: System`,
 //!    content prefixed with `[operator_summary] `, same
 //!    `source_plugin` discriminator family but with a `:summary`
 //!    suffix.
-//! 3. **Replayed inbound** (Phase 82.13.b.3) — `role: User`,
+//! 3. **Replayed inbound** — `role: User`,
 //!    timestamp preserved from when the inbound originally
 //!    arrived during the pause.
 //!

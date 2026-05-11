@@ -1,4 +1,4 @@
-//! Phase 12.5 follow-up — LRU+TTL cache for `resources/read` results.
+//! LRU+TTL cache for `resources/read` results.
 //!
 //! Immutable resources (manifests, READMEs, configs) pay a roundtrip
 //! per read. This cache memoizes the raw `Vec<McpResourceContent>`

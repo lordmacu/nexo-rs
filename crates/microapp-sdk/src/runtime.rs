@@ -51,14 +51,14 @@ pub struct Handlers {
     /// Registered hook handlers keyed by hook name (no `hooks/`
     /// prefix).
     pub hooks: BTreeMap<String, Arc<dyn HookHandler>>,
-    /// Phase 83.8.8.a — admin RPC client. `Some` when the
+    /// Admin RPC client. `Some` when the
     /// `Microapp::with_admin()` builder method opts in. The
     /// dispatch loop forwards inbound frames whose `id` starts
     /// with `app:` to its `on_inbound_response` instead of the
     /// regular tool/hook dispatch.
     #[cfg(feature = "admin")]
     pub admin: Option<Arc<crate::admin::AdminClient>>,
-    /// Phase 83.4.c — JSON-RPC notification listeners keyed by
+    /// JSON-RPC notification listeners keyed by
     /// method name (e.g. `"nexo/notify/agent_event"`). When the
     /// dispatch loop sees a frame WITHOUT an `id` (notification
     /// per JSON-RPC 2.0) AND the method matches a registered
@@ -110,7 +110,7 @@ where
         let method = req.get("method").and_then(Value::as_str).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(Value::Null);
 
-        // Phase 83.8.8.a — admin RPC response interception. A
+        // Admin RPC response interception. A
         // microapp that issued a `nexo/admin/<method>` request via
         // `AdminClient::call` receives the response back through
         // the same line transport with an `app:<uuid>` correlation
@@ -126,7 +126,7 @@ where
             }
         }
 
-        // Phase 83.4.c — JSON-RPC notification dispatch. Per the
+        // JSON-RPC notification dispatch. Per the
         // JSON-RPC 2.0 spec, a frame WITHOUT an `id` field is a
         // notification — the daemon doesn't expect a response.
         // When the method matches a registered listener

@@ -1,4 +1,4 @@
-// Phase 10.8 — agent self-report tools.
+// Agent self-report tools.
 //
 // Three LLM-callable tools so the agent can describe its own state on demand:
 //

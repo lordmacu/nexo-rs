@@ -1,4 +1,4 @@
-//! Phase 14.7 end-to-end tests. Everything else lives in unit tests near the
+//! End-to-end tests. Everything else lives in unit tests near the
 //! module it exercises; these cover cross-cutting concerns the unit tests
 //! cannot express cleanly — restart durability (re-open the database) and
 //! concurrent mutation safety (two tokio tasks racing an update).

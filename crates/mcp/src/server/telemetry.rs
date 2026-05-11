@@ -1,5 +1,5 @@
-//! Phase 76.10 — server-side observability for the MCP HTTP/stdio
-//! dispatcher. Hand-rolled Prometheus text emitter following the
+//! Server-side observability for the MCP HTTP/stdio dispatcher.
+//! Hand-rolled Prometheus text emitter following the
 //! in-tree pattern (`crates/web-search/src/telemetry.rs`,
 //! `crates/llm/src/telemetry.rs`, `crates/poller/src/telemetry.rs`)
 //! — `LazyLock<DashMap<Key, AtomicU64>>` modules globals,
@@ -21,9 +21,8 @@
 //!
 //! Tool labels are bounded by `MAX_DISTINCT_TOOLS = 256`; once the
 //! threshold is reached, every new tool name is collapsed to
-//! `"other"`. Pattern ported from
-//! `claude-code-leak/src/services/analytics/datadog.ts:195-217`
-//! (`mcp__*` tools collapsed to `'mcp'`). Tenant labels are bounded
+//! `"other"` (the same idea as collapsing `mcp__*` tool names to a
+//! single bucket). Tenant labels are bounded
 //! by config (the `TenantId` parser already restricts the alphabet
 //! to `[a-z0-9_-]{1,64}`); operators with thousands of tenants
 //! should aggregate at the dashboard layer rather than at scrape
@@ -44,8 +43,8 @@ use dashmap::DashMap;
 
 // --- Outcome -----------------------------------------------------
 
-/// Bounded set of outcome labels. Reused by Phase 76.11 audit
-/// — `serde` derives keep the wire shape identical to
+/// Bounded set of outcome labels. Reused by the audit log —
+/// `serde` derives keep the wire shape identical to
 /// `as_label()` (snake_case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -295,8 +294,7 @@ pub fn render_prometheus() -> String {
     render_progress_notifications(&mut out);
     // `mcp_sessions_active` and `mcp_sse_subscribers` are emitted
     // by `crates/mcp/src/telemetry.rs::render_prometheus()`
-    // (Phase 12.4 session-lifecycle metrics) — no duplication
-    // here.
+    // (the session-lifecycle metrics) — no duplication here.
     out
 }
 

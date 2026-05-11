@@ -1,16 +1,15 @@
-//! Phase 67.B.4 — boot-time reattach. After a daemon restart the
-//! in-memory `AgentRegistry` is empty; this module reads the
-//! persistent store, decides what to do with each row, and seeds the
-//! registry so `list_agents` / `agent_status` keep working
-//! immediately.
+//! Boot-time reattach. After a daemon restart the in-memory
+//! `AgentRegistry` is empty; this module reads the persistent store,
+//! decides what to do with each row, and seeds the registry so
+//! `list_agents` / `agent_status` keep working immediately.
 //!
-//! Reattach policy in this step is conservative:
+//! Reattach policy here is conservative:
 //!
 //! - `Running` rows that the operator wants to reattach (the
 //!   default) are surfaced to the caller as
 //!   [`ReattachOutcome::Resume`] alongside their `AgentHandle`. The
-//!   actual subprocess respawn lives in Phase 67.C.1; this crate
-//!   does not own that decision.
+//!   actual subprocess respawn is the caller's responsibility; this
+//!   crate does not own that decision.
 //! - `Running` rows when reattach is disabled are flipped to
 //!   `LostOnRestart` and persisted, so the next chat query still
 //!   sees them.

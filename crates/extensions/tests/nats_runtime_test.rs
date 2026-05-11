@@ -1,4 +1,4 @@
-//! Integration tests for Phase 11.4 — `NatsRuntime` speaks JSON-RPC 2.0
+//! Integration tests: `NatsRuntime` speaks JSON-RPC 2.0
 //! over `BrokerHandle` request/reply.
 
 use std::sync::Arc;

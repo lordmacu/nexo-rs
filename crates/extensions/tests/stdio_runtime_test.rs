@@ -1,4 +1,4 @@
-//! Phase 11.3 — stdio extension runtime integration tests. Spawns the
+//! Stdio extension runtime integration tests. Spawns the
 //! companion `echo_ext` example binary and exercises handshake + tools/call.
 
 use std::path::PathBuf;

@@ -1,9 +1,7 @@
-//! Phase 77.11 — Transversal rate-limit header extraction and
+//! Transversal rate-limit header extraction and
 //! human-readable message generation for all LLM providers.
 //!
-//! Ported from `claude-code-leak/src/services/claudeAiLimits.ts` and
-//! `claude-code-leak/src/services/rateLimitMessages.ts`. Made
-//! provider-agnostic: every LLM provider can contribute its own
+//! Provider-agnostic: every LLM provider can contribute its own
 //! header parser that normalizes into a common `RateLimitInfo` struct.
 //!
 //! ## Architecture
@@ -152,7 +150,6 @@ pub fn extract_rate_limit_info(
 // ── Anthropic ────────────────────────────────────────────────────
 
 /// Extract Anthropic's `anthropic-ratelimit-unified-*` headers.
-/// Ported from `claudeAiLimits.ts:376-436 computeNewLimitsFromHeaders`.
 pub fn extract_anthropic_headers(headers: &HeaderMap) -> Option<RateLimitInfo> {
     let status_str = headers
         .get("anthropic-ratelimit-unified-status")
@@ -334,8 +331,6 @@ pub struct RateLimitMessage {
 
 /// Format a human-readable message from `RateLimitInfo`.
 /// Provider-agnostic — works with any LLM provider.
-///
-/// Ported from `rateLimitMessages.ts:45-104 getRateLimitMessage`.
 pub fn format_rate_limit_message(info: &RateLimitInfo) -> Option<RateLimitMessage> {
     // Tiered/overage in use without warning → no message
     if info.is_using_tiered {
@@ -362,8 +357,7 @@ pub fn format_rate_limit_message(info: &RateLimitInfo) -> Option<RateLimitMessag
             })
         }
         Some(QuotaStatus::AllowedWarning) => {
-            // Suppress warnings below 70% utilization
-            // `rateLimitMessages.ts:72-78`
+            // Suppress warnings below 70% utilization.
             if info.utilization.unwrap_or(0.0) < 0.7 {
                 return None;
             }
@@ -580,7 +574,7 @@ fn pick_earliest_reset(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     }
 }
 
-// ── Phase C4.c — last-known quota event cache ────────────────────
+// ── last-known quota event cache ─────────────────────────────────
 
 /// Process-wide snapshot of the most recent rejected-quota event
 /// per provider. Written by `crate::retry::classify_429_error`
@@ -594,15 +588,11 @@ fn pick_earliest_reset(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 /// provider; new events overwrite older ones for the same
 /// provider.
 ///
-/// IRROMPIBLE refs:
-/// - claude-code-leak `services/api/errors.ts:465-548` — 3-tier
-///   429 classification surfaces hard quota to the user via the
-///   chat error message. Our analog reaches `setup doctor` +
-///   notify_origin (deferred to slice C4.c.b).
-/// - claude-code-leak `services/rateLimitMessages.ts:45-104`
-///   `getRateLimitMessage` — already ported as
-///   `format_rate_limit_message`; the cache below stores the
-///   formatted message so callers don't re-run the formatter.
+/// 3-tier 429 classification surfaces hard quota to the user via
+/// the chat error message; our analog also reaches `setup doctor`
+/// and notifies the origin. The cache below stores the message
+/// produced by `format_rate_limit_message` so callers don't re-run
+/// the formatter.
 #[derive(Debug, Clone)]
 pub struct QuotaEvent {
     pub at: chrono::DateTime<chrono::Utc>,
@@ -862,7 +852,7 @@ mod tests {
         assert_eq!(info.status, Some(QuotaStatus::Rejected));
     }
 
-    // ── Phase C4.c — last-known quota cache ──
+    // ── last-known quota cache ──
 
     #[test]
     fn record_quota_event_is_visible_via_last_quota_event_for() {

@@ -36,8 +36,7 @@ pub struct PersonaSection {
     /// Persona id — must satisfy the id regex enforced by
     /// the validator (lowercase ascii alphanumerics + dash,
     /// 3-64 chars). Globally unique within the operator's
-    /// installed personas; collisions are an install-time
-    /// error in F3.
+    /// installed personas; collisions are an install-time error.
     pub id: String,
     /// Strict semver string (`MAJOR.MINOR.PATCH[-pre][+build]`).
     /// Validated by the validator pass.

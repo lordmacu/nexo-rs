@@ -1,4 +1,4 @@
-//! Phase 76.1 — HTTP transport configuration.
+//! HTTP transport configuration.
 //!
 //! Defaults are deliberately conservative; any insecure
 //! combination is refused at boot via [`HttpTransportConfig::validate`].
@@ -35,15 +35,15 @@ pub struct HttpTransportConfig {
     #[serde(default = "default_bind")]
     pub bind: SocketAddr,
 
-    /// Phase 76.3 — preferred. Pluggable authenticator
-    /// configuration (`none` / `static_token` / `bearer_jwt` /
-    /// `mutual_tls`). Mutually exclusive with the legacy
-    /// `auth_token` field below; setting both refuses to boot.
+    /// Preferred. Pluggable authenticator configuration (`none` /
+    /// `static_token` / `bearer_jwt` / `mutual_tls`). Mutually
+    /// exclusive with the legacy `auth_token` field below; setting
+    /// both refuses to boot.
     #[serde(default)]
     pub auth: Option<crate::server::auth::AuthConfig>,
 
-    /// DEPRECATED (Phase 76.3): legacy bearer-token field. Kept
-    /// for backward compat; auto-promoted to
+    /// DEPRECATED: legacy bearer-token field. Kept for backward
+    /// compat; auto-promoted to
     /// `AuthConfig::StaticToken` at boot with a `warn` log.
     #[serde(default)]
     pub auth_token: Option<String>,
@@ -100,8 +100,8 @@ pub struct HttpTransportConfig {
     #[serde(default)]
     pub enable_legacy_sse: bool,
 
-    /// Phase 76.5 — per-(tenant, tool) token-bucket rate limit.
-    /// `None` disables enforcement entirely (zero overhead in the
+    /// Per-(tenant, tool) token-bucket rate limit. `None` disables
+    /// enforcement entirely (zero overhead in the
     /// dispatcher hot path). When `Some`, the limiter sits inside
     /// `Dispatcher::dispatch` for `tools/call` only; `initialize`,
     /// `tools/list`, `shutdown`, etc. bypass.
@@ -109,25 +109,24 @@ pub struct HttpTransportConfig {
     pub per_principal_rate_limit:
         Option<crate::server::per_principal_rate_limit::PerPrincipalRateLimiterConfig>,
 
-    /// Phase 76.6 — per-(tenant, tool) in-flight concurrency cap +
-    /// per-call timeout. `None` disables; otherwise enforced at
+    /// Per-(tenant, tool) in-flight concurrency cap + per-call
+    /// timeout. `None` disables; otherwise enforced at
     /// the dispatcher for `tools/call` only.
     #[serde(default)]
     pub per_principal_concurrency:
         Option<crate::server::per_principal_concurrency::PerPrincipalConcurrencyConfig>,
 
-    /// Phase 76.11 — durable per-call audit log. When `Some`, the
-    /// runtime opens `SqliteAuditLogStore(db_path)` and spawns
+    /// Durable per-call audit log. When `Some`, the runtime opens
+    /// `SqliteAuditLogStore(db_path)` and spawns
     /// the writer worker; the dispatcher emits one row per
     /// `tools/call` outcome.
     #[serde(default)]
     pub audit_log: Option<crate::server::audit_log::AuditLogConfig>,
 
-    /// Phase 76.8 — durable session event store. When `Some` and
-    /// `enabled = true`, the HTTP transport persists every SSE
-    /// frame so reconnecting clients can replay missed events via
-    /// the `Last-Event-ID` header. `None` keeps the in-memory
-    /// behavior shipped in 76.1.
+    /// Durable session event store. When `Some` and `enabled =
+    /// true`, the HTTP transport persists every SSE frame so
+    /// reconnecting clients can replay missed events via the
+    /// `Last-Event-ID` header. `None` keeps the in-memory behavior.
     #[serde(default)]
     pub session_event_store: Option<crate::server::event_store::SessionEventStoreConfig>,
 }

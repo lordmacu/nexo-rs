@@ -249,29 +249,29 @@ pub struct LlmAgentBehavior {
     /// `None`, falls back to a fresh `WorkspaceLoader` every turn
     /// (legacy behavior, kept for tests and bootstrap paths).
     workspace_cache: Option<Arc<super::workspace_cache::WorkspaceCache>>,
-    /// Phase A.2 — when true, system prompt is emitted as
+    /// When true, system prompt is emitted as
     /// `Vec<PromptBlock>` with `cache_control` breakpoints, and the
     /// tool catalog is marked cacheable. When false, the legacy flat
     /// `system_prompt: String` path runs (no provider-level caching).
     prompt_cache_enabled: bool,
-    /// Phase C — pre-flight token counter. When `Some`, every request
+    /// Pre-flight token counter. When `Some`, every request
     /// is sized before send; the estimated count is emitted as
     /// `llm_prompt_tokens_estimated` and post-response we record drift
     /// vs the provider's reported total. When `None`, counting is
     /// skipped entirely (zero overhead).
     token_counter: Option<Arc<dyn nexo_llm::TokenCounter>>,
-    /// Phase B — online history compaction. All three must be wired
+    /// Online history compaction. All three must be wired
     /// together (compactor + store + runtime config). When any is
     /// missing, the compaction path is silently skipped — the agent
     /// loop falls back to the legacy "send the whole history" mode.
     compactor: Option<Arc<super::compaction::LlmCompactor>>,
     compaction_store: Option<Arc<nexo_memory::CompactionStore>>,
     compaction_runtime: CompactionRuntime,
-    /// Phase 77.2 — runtime circuit-breaker state (Sync-safe).
+    /// Runtime circuit-breaker state (Sync-safe).
     compaction_failures: std::sync::atomic::AtomicU32,
     compaction_last_turn: std::sync::Mutex<Option<u32>>,
     cache_break_tracker: Mutex<CacheBreakTracker>,
-    /// Phase M4 — post-turn memory-extraction hook. When set,
+    /// Post-turn memory-extraction hook. When set,
     /// every successful `run_turn` ticks the extractor and (when
     /// `memory_dir` is also set + `reply_text` is `Some`) fires
     /// `extract(...)` against the conversation transcript.
@@ -279,13 +279,13 @@ pub struct LlmAgentBehavior {
     /// concrete `ExtractMemories` impl from `nexo-driver-loop` is
     /// the one we ship today, but any impl works.
     memory_extractor: Option<Arc<dyn MemoryExtractor>>,
-    /// Phase M4 — destination root for extracted memories. Set
+    /// Destination root for extracted memories. Set
     /// together with `memory_extractor` via
     /// `with_memory_extractor`. `None` keeps `tick()` firing
     /// (cadence stays sane) but skips the actual `extract`
     /// call so we never write outside an explicit dir.
     memory_dir: Option<PathBuf>,
-    /// Phase 36.2 (MS-1.b compactions) — optional mutation observer.
+    /// Optional mutation observer.
     /// When set, every successful `compaction_store.insert` fires a
     /// `SqliteCompactions/Insert` event keyed on the session id so
     /// downstream subscribers can correlate the row to the agent
@@ -297,7 +297,7 @@ pub struct LlmAgentBehavior {
     /// `"default"`; multi-tenant SaaS wires the per-binding tenant
     /// at boot via `with_mutation_hook`.
     mutation_tenant: String,
-    /// Phase 81.9 — plugin-contributed skill roots threaded from
+    /// Plugin-contributed skill roots threaded from
     /// `wire_plugin_registry` boot output. Empty when no plugin
     /// discovery is configured. `prepare_system_prompt()` consumes
     /// this via `SkillLoader::with_plugin_roots(self.plugin_skill_roots.clone())`
@@ -332,9 +332,9 @@ struct SleepSignal {
     reason: String,
 }
 
-/// Phase B — flattened compaction config that the agent loop reads on
+/// Flattened compaction config that the agent loop reads on
 /// every turn. Lives alongside the behavior so a hot-reload can swap
-/// the whole struct via `Arc::make_mut` later (Phase F).
+/// the whole struct via `Arc::make_mut`.
 #[derive(Debug, Clone)]
 pub struct CompactionRuntime {
     pub enabled: bool,
@@ -347,7 +347,7 @@ pub struct CompactionRuntime {
     /// Per-tool-result hard cap, in chars. Above this, the body is
     /// replaced by a `[truncated NNN bytes]` marker pre-send.
     pub tool_result_max_chars: usize,
-    /// Phase 77.1 microcompact threshold. Tool results above this
+    /// Microcompact threshold. Tool results above this
     /// byte size are summarized before sending the next LLM request.
     pub micro_threshold_bytes: usize,
     /// Maximum summary body retained for one microcompacted tool result.
@@ -360,7 +360,7 @@ pub struct CompactionRuntime {
     /// Override of the summary model. Empty = reuse the agent's main
     /// model.
     pub summarizer_model: String,
-    // ── Phase 77.2 autoCompact ─────────────────────────────────────
+    // ── autoCompact ─────────────────────────────────────
     /// Token-pct trigger (0.0 disables token trigger).
     pub auto_token_pct: f32,
     /// Age trigger in minutes (0 disables age trigger).
@@ -696,7 +696,7 @@ impl LlmAgentBehavior {
         Ok(reply)
     }
 
-    /// Phase 81.9 — install the plugin-contributed skill roots
+    /// Install the plugin-contributed skill roots
     /// returned by `wire_plugin_registry`. Empty vec preserves
     /// legacy behavior (operator's `skills_dir` is the only
     /// source). Operator-priority is preserved by the loader's
@@ -706,8 +706,8 @@ impl LlmAgentBehavior {
         self
     }
 
-    /// Phase 36.2 (MS-1.b compactions) — wire the mutation
-    /// observer. Successful `compaction_store.insert` calls fire a
+    /// Wire the mutation observer. Successful `compaction_store.insert`
+    /// calls fire a
     /// `SqliteCompactions/Insert` event onto
     /// `nexo.memory.mutated.<agent_id>` with the session id as the
     /// correlation key. Best-effort: hook failures are swallowed.
@@ -721,12 +721,12 @@ impl LlmAgentBehavior {
         self
     }
 
-    /// Phase M4 — wire post-turn memory extraction. When set,
-    /// every successful `run_turn` ticks the extractor and fires
-    /// extraction against `memory_dir`. Mirrors driver-loop's
-    /// per-turn wire (`orchestrator.rs:702-726`); both engines
-    /// share the same `Arc<ExtractMemories>` so cadence + circuit
-    /// breaker + in-progress mutex stay coherent across paths.
+    /// Wire post-turn memory extraction. When set, every successful
+    /// `run_turn` ticks the extractor and fires extraction against
+    /// `memory_dir`. Mirrors driver-loop's per-turn wire; both
+    /// engines share the same `Arc<ExtractMemories>` so cadence +
+    /// circuit breaker + in-progress mutex stay coherent across
+    /// paths.
     ///
     /// Provider-agnostic: `Arc<dyn MemoryExtractor>` keeps any
     /// concrete impl pluggable (today `ExtractMemories` from
@@ -782,7 +782,7 @@ impl LlmAgentBehavior {
             );
         }
     }
-    /// Phase B — wire the online compactor. All three handles must be
+    /// Wire the online compactor. All three handles must be
     /// supplied together; passing `enabled: true` in `runtime` without
     /// the wiring is a no-op (logged on first turn so the gap is
     /// visible). `summarizer` is the LLM client used to produce the
@@ -799,7 +799,7 @@ impl LlmAgentBehavior {
         self.compaction_runtime = runtime;
         self
     }
-    /// Phase C — attach a `TokenCounter`. Boot time pick this from
+    /// Attach a `TokenCounter`. Boot time pick this from
     /// `nexo_llm::token_counter::build()` based on
     /// `llm.context_optimization.token_counter.backend`. When omitted,
     /// pre-flight sizing is skipped (zero metrics, zero overhead).
@@ -818,9 +818,9 @@ impl LlmAgentBehavior {
         self.workspace_cache = Some(cache);
         self
     }
-    /// Phase A.2 — opt the agent into provider-level prompt caching.
+    /// Opt the agent into provider-level prompt caching.
     /// Driven from `llm.context_optimization.prompt_cache.enabled` (or
-    /// the per-agent override added in Phase F). Defaults to false so
+    /// the per-agent override). Defaults to false so
     /// the legacy non-cached path stays the safe fallback.
     pub fn with_prompt_cache(mut self, enabled: bool) -> Self {
         self.prompt_cache_enabled = enabled;
@@ -864,14 +864,14 @@ impl LlmAgentBehavior {
         self.hooks = Some(hooks);
         self
     }
-    /// Phase 9.2 follow-up — attach per-tool rate limiter. Denied calls
+    /// Attach per-tool rate limiter. Denied calls
     /// surface as `outcome="rate_limited"` and are not routed to the
     /// handler.
     pub fn with_rate_limiter(mut self, rl: Arc<super::rate_limit::ToolRateLimiter>) -> Self {
         self.rate_limiter = Some(rl);
         self
     }
-    /// Phase 9.2 follow-up — attach the JSON Schema args validator.
+    /// Attach the JSON Schema args validator.
     /// Denied calls surface as `outcome="invalid_args"` with the path
     /// of the offending field(s) in the result, so the LLM can retry.
     pub fn with_schema_validator(
@@ -905,13 +905,12 @@ impl LlmAgentBehavior {
             tool_call_id = %call.id,
             "tool call dispatch"
         );
-        // Phase 79.1 — centralised plan-mode gate. Runs before any
-        // other check so the refusal message stays consistent with
-        // the structured `PlanModeRefusal` shape regardless of which
-        // downstream gate would have matched. The Bash classifier
-        // verdict is `None` until Phase 77.8 ships — `gate_tool_call`
-        // treats `Bash + None` as fail-safe blocking, which matches
-        // the spec ("default to blocking if classifier returns
+        // Centralised plan-mode gate. Runs before any other check so
+        // the refusal message stays consistent with the structured
+        // `PlanModeRefusal` shape regardless of which downstream gate
+        // would have matched. The Bash classifier verdict is `None`
+        // here — `gate_tool_call` treats `Bash + None` as fail-safe
+        // blocking ("default to blocking if classifier returns
         // Unknown").
         {
             let state = ctx.plan_mode.read().await;
@@ -957,7 +956,7 @@ impl LlmAgentBehavior {
                 sleep: None,
             };
         }
-        // Phase 11.6 — before_tool_call hook.
+        // before_tool_call hook.
         let mut skip_call = None;
         if let Some(hooks) = &self.hooks {
             let ev = serde_json::json!({
@@ -979,7 +978,7 @@ impl LlmAgentBehavior {
         }
         let started_tool = std::time::Instant::now();
         let call_ctx = ctx.clone().with_session_id(msg.session_id);
-        // Phase 82.7 — rate-limit lookup is binding-aware. The
+        // Rate-limit lookup is binding-aware. The
         // limiter resolves per-binding overrides
         // (`ctx.effective.tool_rate_limits`) before the global
         // pattern set; bucket cardinality is per
@@ -1003,7 +1002,7 @@ impl LlmAgentBehavior {
             _ => true,
         };
         if !rate_allowed {
-            // Phase 82.7 — Phase 72 turn-log marker on denial so
+            // Turn-log marker on denial so
             // operator audit queries can identify which
             // `(binding, tool)` pairs hit caps most. The marker
             // is wire-shape stable; downstream billing pipelines
@@ -1201,7 +1200,7 @@ impl LlmAgentBehavior {
                 }
             }
         }
-        // Phase 11.6 — before_message hook. Extensions can short-circuit the
+        // before_message hook. Extensions can short-circuit the
         // turn (e.g. content filter, rate-limiter, observability gate).
         if let Some(hooks) = &self.hooks {
             let event = serde_json::json!({
@@ -1225,8 +1224,8 @@ impl LlmAgentBehavior {
             }
         }
         let mut session = ctx.sessions.get_or_create(msg.session_id, &ctx.agent_id);
-        // Phase 82.11.d — append the user transcript entry IMMEDIATELY,
-        // before the LLM call. The legacy code path appended both user
+        // Append the user transcript entry IMMEDIATELY, before the
+        // LLM call. The legacy code path appended both user
         // and assistant entries together AFTER the LLM produced a
         // reply, which meant the firehose `TranscriptAppended` event
         // for the user message only fired once the assistant turn
@@ -1278,7 +1277,7 @@ impl LlmAgentBehavior {
         // order: workspace bundle (IDENTITY/SOUL/USER/AGENTS/recent notes/MEMORY),
         // then optional local skills, then inline `system_prompt`. All parts
         // are merged into one system ChatMessage to keep prompt caching stable.
-        // Phase A.2 — collect the system prompt into named sections so
+        // Collect the system prompt into named sections so
         // we can hand them to `prompt_assembly::build_blocks` with
         // explicit `CachePolicy` per block. Empty sections fall out
         // and never occupy a cache breakpoint.
@@ -1339,15 +1338,14 @@ impl LlmAgentBehavior {
             } else {
                 let loader = SkillLoader::new(skills_dir)
                     .with_overrides(ctx.config.skill_overrides.clone())
-                    // Phase 83.8.12.6.runtime — tenant-scoped
-                    // skill resolution: per-tenant skills
+                    // Tenant-scoped skill resolution: per-tenant skills
                     // (`<root>/<tenant_id>/<name>/`) win over
                     // global, and legacy `<root>/<name>/`
                     // remains as fallback for un-migrated
                     // deployments.
                     .with_tenant_id(ctx.config.tenant_id.clone())
-                    // Phase 81.9 — append plugin-contributed
-                    // skill roots from `wire_plugin_registry`.
+                    // Append plugin-contributed skill roots from
+                    // `wire_plugin_registry`.
                     // Operator-priority is preserved because
                     // `candidate_paths` searches the operator
                     // chain (tenant + global + legacy) before
@@ -1388,7 +1386,7 @@ impl LlmAgentBehavior {
                  your turn-final reply to the user must be in {lang}."
             ));
         }
-        // Phase 21 — link understanding. When the agent has it
+        // Link understanding. When the agent has it
         // enabled and the user message contains URLs, fetch each one
         // and inject a `# LINK CONTEXT` block so the LLM has grounded
         // facts to reason over. Lives in `channel_meta_parts` so it
@@ -1433,12 +1431,12 @@ impl LlmAgentBehavior {
                 ));
             }
         }
-        // Phase 79.1 — inject the canonical plan-mode hint while
+        // Inject the canonical plan-mode hint while
         // plan mode is on. Frozen string keeps the prompt cache warm.
         if let Some(hint) = crate::plan_mode::plan_mode_system_hint(&*ctx.plan_mode.read().await) {
             channel_meta_parts.push(hint.to_string());
         }
-        // Phase 77.20 — inject proactive + coordinator hints once (frozen
+        // Inject proactive + coordinator hints once (frozen
         // strings → prompt-cache-friendly, same pattern as plan_mode).
         if let Some(hint) =
             crate::agent::proactive_hint::proactive_system_hint(ctx.proactive_enabled)
@@ -1450,7 +1448,7 @@ impl LlmAgentBehavior {
         {
             channel_meta_parts.push(hint.to_string());
         }
-        // Phase 80.15 — assistant-mode addendum. Append the resolved
+        // Assistant-mode addendum. Append the resolved
         // text (operator override or bundled default) when the
         // boot-immutable flag is on. Same prompt-cache rules as the
         // proactive/coordinator hints — the addendum is stable across
@@ -1459,7 +1457,7 @@ impl LlmAgentBehavior {
         if assistant_addendum_appended {
             channel_meta_parts.push((*ctx.assistant.addendum).clone());
         }
-        // Phase 80.8 — brief-mode "talking to the user" section.
+        // Brief-mode "talking to the user" section.
         // Skipped when the assistant-mode addendum already covers
         // the same instruction (avoid duplicating the directive).
         if let Some(section) = crate::agent::send_user_message_tool::brief_system_section(
@@ -1483,7 +1481,7 @@ impl LlmAgentBehavior {
             },
         };
         let mut system_blocks = super::prompt_assembly::build_blocks(prompt_inputs);
-        // Phase 79.2 — inject a stub block listing deferred tools by name
+        // Inject a stub block listing deferred tools by name
         // + description so the model can discover them via ToolSearch.
         let registry_for_deferred = ctx.effective_tools.as_ref().unwrap_or(&self.tools);
         if let Some(summary) = registry_for_deferred.deferred_tools_summary() {
@@ -1521,7 +1519,7 @@ impl LlmAgentBehavior {
         }
         session.push(Interaction::new(Role::User, &msg.text));
 
-        // Phase B + 77.2 — pre-flight compaction trigger. Only runs when the
+        // Pre-flight compaction trigger. Only runs when the
         // compactor is wired AND enabled in runtime config. Estimates
         // the would-be request size (system blocks + history); when
         // it exceeds `compact_at_tokens` OR the session is older than
@@ -1530,7 +1528,7 @@ impl LlmAgentBehavior {
         // the head with a stored summary. The summary then gets
         // injected into `messages` below as a user/assistant pair so
         // role alternation stays valid for Anthropic.
-        // Phase F follow-up — gate on BOTH the boot-wired flag AND the
+        // Gate on BOTH the boot-wired flag AND the
         // current snapshot's resolved enable. A hot-reload that flips
         // `compaction: false` takes effect on this turn without
         // rebuilding the behavior. Legacy paths without a snapshot
@@ -1566,7 +1564,7 @@ impl LlmAgentBehavior {
                 0
             };
 
-            // ── Phase 77.2 autoCompact triggers ───────────────────
+            // ── autoCompact triggers ───────────────────
             let token_trigger = est >= self.compaction_runtime.compact_at_tokens;
             let age_minutes = chrono::Utc::now()
                 .signed_duration_since(session.created_at)
@@ -1647,8 +1645,7 @@ impl LlmAgentBehavior {
                                         false
                                     }
                                 };
-                                // Phase 36.2 (MS-1.b compactions) —
-                                // fire the mutation event only when
+                                // Fire the mutation event only when
                                 // the insert actually committed. Use
                                 // session.id as the correlation key
                                 // since compactions_v1 has no UUID
@@ -1666,7 +1663,7 @@ impl LlmAgentBehavior {
                                     }
                                 }
                                 session.apply_compaction(r.summary, r.tail_start_index);
-                                // Phase 77.2 — reset circuit breaker on success.
+                                // Reset circuit breaker on success.
                                 self.compaction_failures
                                     .store(0, std::sync::atomic::Ordering::Relaxed);
                                 *self.compaction_last_turn.lock().unwrap() =
@@ -1686,7 +1683,7 @@ impl LlmAgentBehavior {
                                 );
                             }
                             Err(e) => {
-                                // Phase 77.2 — increment circuit breaker.
+                                // Increment circuit breaker.
                                 let new_failures = self
                                     .compaction_failures
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -1779,7 +1776,7 @@ impl LlmAgentBehavior {
                 .filter(|d| effective_policy.tool_allowed(&d.name))
                 .collect(),
         };
-        // Phase 3 optimisation: the relevance filter index is built
+        // The relevance filter index is built
         // once at agent boot (see `with_tool_policy`). We just borrow
         // the prebuilt index here and score against a query built
         // from the current user message plus the last few turns of
@@ -1816,7 +1813,7 @@ impl LlmAgentBehavior {
         let mut reply_text: Option<String> = None;
         let mut sleep_signal: Option<SleepSignal> = None;
         for iteration in 0..self.max_tool_iterations {
-            // Phase 77.1 — microcompact oversized tool results in the
+            // Microcompact oversized tool results in the
             // request clone only. The canonical in-memory messages keep
             // the full body and the tool_call_id/name correlation stays
             // intact in the compacted clone.
@@ -1874,7 +1871,7 @@ impl LlmAgentBehavior {
             }
             let mut req = ChatRequest::new(&model, messages_for_send);
             req.tools = filtered_tools.clone();
-            // Phase A.2 — wire the structured prompt + tool catalog
+            // Wire the structured prompt + tool catalog
             // caching opt-in. Provider clients that don't honor the
             // fields fall back to flat `system_prompt`; the fields
             // are otherwise inert.
@@ -1896,7 +1893,7 @@ impl LlmAgentBehavior {
             let provider = self.llm.provider();
             let model_label = self.llm.model_id();
             inc_llm_requests_total(&ctx.agent_id, provider, model_label);
-            // Phase C — pre-flight token sizing. Counted on
+            // Pre-flight token sizing. Counted on
             // (system_blocks + messages); count_tokens-backed
             // counters cache the stable prefix so 95%+ of the bytes
             // are a memory hit. Emits the estimate as a gauge; drift
@@ -1932,7 +1929,7 @@ impl LlmAgentBehavior {
             let cache_break_req_ctx =
                 CacheBreakRequestContext::from_request(provider, model_label, &req);
             let started_at = std::time::Instant::now();
-            // Phase 3 follow-up: consume the streaming API in the
+            // Consume the streaming API in the
             // main loop so provider-native SSE paths are exercised
             // end-to-end (chat() remains the fallback in the trait).
             let response = collect_stream(self.llm.stream(req).await?).await?;
@@ -1942,7 +1939,7 @@ impl LlmAgentBehavior {
                 model_label,
                 started_at.elapsed().as_millis() as u64,
             );
-            // Phase A.2 — emit cache hit/miss metrics whenever the
+            // Emit cache hit/miss metrics whenever the
             // provider returned `CacheUsage`. Off-by-default providers
             // pass `None` here, so dashboards only see real activity.
             if let Some(cu) = response.cache_usage.as_ref() {
@@ -1965,7 +1962,7 @@ impl LlmAgentBehavior {
                 cache_read_input_tokens,
                 cache_creation_input_tokens,
             );
-            // Phase C — drift observation. Only meaningful when we
+            // Drift observation. Only meaningful when we
             // actually estimated and the provider actually reported a
             // total. `prompt_tokens` on Anthropic already folds cache
             // read+creation into the total, so the comparison stays
@@ -2159,7 +2156,7 @@ impl LlmAgentBehavior {
                     .await;
             }
         }
-        // Persist turn to the session transcript (Phase 10.4) when the
+        // Persist turn to the session transcript when the
         // operator has configured a transcripts_dir. Failures are logged
         // but never break the reply — transcripts are auxiliary state.
         let transcripts_dir = ctx.config.transcripts_dir.trim();
@@ -2174,12 +2171,12 @@ impl LlmAgentBehavior {
                 redactor,
                 ctx.transcripts_index.clone(),
             )
-            // Phase 83.8.12.4.b — tag the writer with the
-            // owning tenant so emitted `TranscriptAppended`
+            // Tag the writer with the owning tenant so emitted
+            // `TranscriptAppended`
             // events carry `tenant_id`. `None` for
             // single-tenant agents.
             .with_tenant_id(ctx.config.tenant_id.clone());
-            // Phase 82.11.c — chain the firehose emitter onto
+            // Chain the firehose emitter onto
             // the writer so every `append_entry` reaches the
             // bootstrap's broadcast (live SSE subscribers) and
             // the durable `SqliteAgentEventLog` (admin RPC
@@ -2190,7 +2187,7 @@ impl LlmAgentBehavior {
             if let Some(ref em) = ctx.event_emitter {
                 writer = writer.with_emitter(em.clone());
             }
-            // Phase 82.11.d — user_entry was already appended at
+            // user_entry was already appended at
             // the top of `run_turn` (right after the before_message
             // hook) so the firehose `TranscriptAppended` for the
             // inbound fires LIVE rather than batched with the
@@ -2234,8 +2231,7 @@ impl LlmAgentBehavior {
                     _ => format!("plugin.outbound.{}", plugin),
                 };
                 // Build the per-turn reply kind + transform context.
-                // Phase 81.19.b locale follow-up item 5 — pull
-                // `language` from `EffectiveBindingPolicy` so a binding
+                // Pull `language` from `EffectiveBindingPolicy` so a binding
                 // override (`InboundBinding.language`) propagates to
                 // the reply ctx instead of always inheriting the
                 // agent-level value. `resolve_language(agent, binding)`
@@ -2318,7 +2314,7 @@ impl LlmAgentBehavior {
                 );
             }
         }
-        // Phase 11.6 — after_message hook (advisory). Only fire when we
+        // after_message hook (advisory). Only fire when we
         // actually produced a reply; silent turns don't trigger it.
         if let (Some(hooks), Some(text_out)) = (&self.hooks, reply_text.as_ref()) {
             let ev = serde_json::json!({
@@ -2347,17 +2343,16 @@ impl LlmAgentBehavior {
             "agent turn finished"
         );
 
-        // Phase M4 — post-turn memory extraction. Mirrors driver-loop's
-        // wire at `orchestrator.rs:702-726`; both engines share the
-        // same `Arc<dyn MemoryExtractor>` so cadence + circuit breaker
-        // + in-progress mutex stay coherent across paths. `tick()`
-        // runs every turn (cadence stays sane even when extract gates
-        // skip); `extract(...)` only fires when `memory_dir` is set
-        // AND `reply_text` carries the assistant turn text. Provider-
-        // agnostic — the trait operates on transcript text, no LLM
-        // provider assumption. `turn_index = 0` is an MVP sentinel
-        // (regular AgentRuntime does not yet track per-session turn
-        // counters; defer M4.c).
+        // Post-turn memory extraction. Mirrors driver-loop's wire;
+        // both engines share the same `Arc<dyn MemoryExtractor>` so
+        // cadence + circuit breaker + in-progress mutex stay coherent
+        // across paths. `tick()` runs every turn (cadence stays sane
+        // even when extract gates skip); `extract(...)` only fires
+        // when `memory_dir` is set AND `reply_text` carries the
+        // assistant turn text. Provider-agnostic — the trait operates
+        // on transcript text, no LLM provider assumption.
+        // `turn_index = 0` is a sentinel (regular AgentRuntime does
+        // not yet track per-session turn counters).
         if let Some(extractor) = &self.memory_extractor {
             extractor.tick();
             if let (Some(dir), Some(text)) = (&self.memory_dir, reply_text.as_ref()) {
@@ -2424,7 +2419,7 @@ impl AgentBehavior for LlmAgentBehavior {
             tick.source_plugin = "followup".to_string();
             tick.source_instance = followup.source_instance.clone();
             tick.priority = MessagePriority::Later;
-            // Phase 82.5 — followup ticks are scheduler-driven
+            // Followup ticks are scheduler-driven
             // (no end-user) → InternalSystem.
             tick.inbound =
                 Some(nexo_tool_meta::InboundMessageMeta::internal_system().with_ts(Utc::now()));
@@ -2775,7 +2770,7 @@ mod tests {
         assert!(tracker.observe("sess-1", second).is_none());
     }
 
-    // ── Phase M4 — MemoryExtractor wire ──
+    // ── MemoryExtractor wire ──
 
     /// Minimal mock that records `tick` + `extract` calls so
     /// tests can assert the post-turn wire fired.

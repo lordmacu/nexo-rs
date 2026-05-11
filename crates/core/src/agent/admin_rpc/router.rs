@@ -1,4 +1,4 @@
-//! Phase 82.10.h.b.3 — concrete `AdminRouter` implementation
+//! Concrete `AdminRouter` implementation
 //! that bridges the extension-host stdio reader to the
 //! [`AdminRpcDispatcher`].
 //!

@@ -1,9 +1,9 @@
-//! Phase 83.5 — Conversational compliance primitives.
+//! Conversational compliance primitives.
 //!
 //! Provider-agnostic, runtime-agnostic helpers every conversational
 //! microapp needs. Each primitive ships as a small struct with one
 //! evaluation method and zero IO. Microapps wire them into the
-//! Phase 83.3 hook interceptor (vote-to-block / vote-to-transform)
+//! dispatch hook interceptor (vote-to-block / vote-to-transform)
 //! to enforce policy without re-deriving the heuristics.
 //!
 //! No async runtime, no persistence, no LLM dep — pure logic.

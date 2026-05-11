@@ -1,10 +1,10 @@
-//! Phase 81.13 — plugin manifest discovery in a plugin root.
+//! Plugin manifest discovery in a plugin root.
 //!
-//! Pre-81.13 the framework looked for two different files in
+//! The framework used to look for two different files in
 //! disjoint code paths: `nexo-extensions::ExtensionDiscovery`
 //! walked `plugin.toml`, while
 //! `crates/setup/src/admin_capability_collect.rs` walked
-//! `nexo-plugin.toml`. After 81.13 both paths share this single
+//! `nexo-plugin.toml`. Both paths now share this single
 //! resolver, which prefers `plugin.toml` (the canonical
 //! filename) and falls back to `nexo-plugin.toml` for plugins
 //! that haven't migrated yet.
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// File names this resolver looks at, in priority order.
 ///
-/// `plugin.toml` is the canonical filename Phase 81.13
+/// `plugin.toml` is the canonical filename the framework
 /// standardised on; `nexo-plugin.toml` is the legacy modern-
 /// schema filename kept around for one deprecation cycle so
 /// existing plugins (8 in-tree, plus out-of-tree microapps)

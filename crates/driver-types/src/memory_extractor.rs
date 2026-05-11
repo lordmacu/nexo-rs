@@ -1,18 +1,17 @@
-//! Phase M4 — provider-agnostic memory-extraction hook.
+//! Provider-agnostic memory-extraction hook.
 //!
-//! Mirrors the [`AutoDreamHook`] (Phase 80.1.b) and
-//! [`MemoryCheckpointer`] (Phase 80.1.g) cycle-break patterns:
+//! Mirrors the [`AutoDreamHook`] and
+//! [`MemoryCheckpointer`] cycle-break patterns:
 //! the trait is declared upstream so consumer crates can hold
 //! `Arc<dyn MemoryExtractor>` without depending on the producer
 //! crate that ships the concrete implementation.
 //!
 //! Today `nexo-driver-loop` ships
-//! `impl MemoryExtractor for ExtractMemories` (Phase 77.5
-//! production extractor). Both turn engines hold an
+//! `impl MemoryExtractor for ExtractMemories` (the production
+//! extractor). Both turn engines hold an
 //! `Arc<dyn MemoryExtractor>` so post-turn extraction fires
 //! uniformly across paths:
-//! - `nexo-driver-loop::orchestrator` — Phase 67 self-driving
-//!   agents (was the only path before M4).
+//! - `nexo-driver-loop::orchestrator` — self-driving agents.
 //! - `nexo-core::agent::LlmAgentBehavior` — every regular
 //!   agent (event-driven inbound, pollers, heartbeat,
 //!   marketing plugin, etc.).
@@ -22,20 +21,6 @@
 //! `Arc<dyn LlmClient>` upstream so any provider impl works
 //! (Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
 //! Mistral) per the `feedback_provider_agnostic.md` rule.
-//!
-//! IRROMPIBLE refs:
-//! - claude-code-leak
-//!   `services/extractMemories/extractMemories.ts:121-148`
-//!   `hasMemoryWritesSince` — gate cadence semantics the
-//!   inherent `check_gates` mirrors. Already cited on the
-//!   producer side (`crates/driver-loop/src/extract_memories.rs`).
-//! - claude-code-leak `QueryEngine.ts` — leak's single turn
-//!   engine fires extract after every turn. Our split
-//!   driver-loop / LlmAgentBehavior shares `MemoryExtractor`
-//!   so both paths trigger uniformly without duplicating the
-//!   gate / coalesce logic.
-//! - `research/` — no relevant prior art (OpenClaw is
-//!   channel-side, no extract-memories concept).
 //!
 //! [`AutoDreamHook`]: crate::auto_dream::AutoDreamHook
 //! [`MemoryCheckpointer`]: crate::memory_checkpoint::MemoryCheckpointer

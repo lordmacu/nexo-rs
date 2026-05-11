@@ -1,4 +1,4 @@
-//! Error type for the fork subagent. Step 80.19 / 2.
+//! Error type for the fork subagent.
 
 use std::time::Duration;
 use thiserror::Error;

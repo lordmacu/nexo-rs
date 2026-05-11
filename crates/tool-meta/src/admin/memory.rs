@@ -1,15 +1,15 @@
-//! Phase 90.x.memory — `nexo/admin/memory/*` wire types.
+//! `nexo/admin/memory/*` wire types.
 //!
-//! Surface (Phase 90.x.memory + 90.x.memory-snapshot.create-restore):
+//! Surface:
 //!
 //! - `query` — text search over an agent's long-term memory
 //!   entries. Mirrors the agent-side `memory.recall` SDK call but
 //!   exposes it operator-side (so the admin UI can show "what
 //!   does the agent remember about X").
 //! - `list_snapshots` / `delete_snapshot` — bundle inventory +
-//!   idempotent removal (Phase 90.x.memory-snapshot list/delete).
+//!   idempotent removal.
 //! - `create_snapshot` / `restore_snapshot` — capture + restore
-//!   bundles (Phase 90.x.memory-snapshot.create-restore). Server
+//!   bundles. Server
 //!   resolves `snapshot_id → bundle_path` so clients never hold
 //!   a filesystem path. `encrypt` is a bool toggle; the daemon
 //!   resolves the actual age recipient from
@@ -49,7 +49,7 @@ pub struct MemoryEntryWire {
     /// Operator-set tags (`#user`, `#feedback`, etc.).
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Auto-derived concept tags (Phase 10.7 derivation).
+    /// Auto-derived concept tags.
     #[serde(default)]
     pub concept_tags: Vec<String>,
     /// ISO-8601 UTC timestamp of memory creation.
@@ -113,7 +113,7 @@ pub struct SnapshotMetaWire {
 
 /// Response for `nexo/admin/memory/list_snapshots`.
 ///
-/// SHAPE NOTE (0.1.12, Phase 90.x.memory-snapshot.create-restore):
+/// SHAPE NOTE (0.1.12):
 /// the `snapshots` field is unchanged but the response gained
 /// `encryption_available`. Older clients that previously
 /// deserialized the response as `Vec<SnapshotMetaWire>` directly

@@ -1,9 +1,9 @@
-//! Phase 31.2 — End-to-end test of `scripts/pack-tarball.sh`.
+//! End-to-end test of `scripts/pack-tarball.sh`.
 //!
 //! Asserts that the bash pipeline (extract-plugin-meta.sh +
 //! pack-tarball.sh) produces a tarball whose name + layout +
 //! sha256 sidecar exactly match the convention `nexo-ext-installer`
-//! consumes (validated against 31.1.b's `extract_verified_tarball`
+//! consumes (validated against the installer's `extract_verified_tarball`
 //! expectations).
 //!
 //! Synthetic binary: a 1-byte file at

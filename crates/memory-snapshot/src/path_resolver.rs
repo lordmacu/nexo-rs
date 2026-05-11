@@ -6,7 +6,7 @@
 //! YAML. That is correct for single-tenant deployments where every
 //! agent shares the same memory layout.
 //!
-//! Multi-tenant SaaS (Phase 82) breaks the symmetry: each agent's
+//! Multi-tenant SaaS breaks the symmetry: each agent's
 //! memdir typically lives under its own workspace
 //! (`agent_cfg.workspace/.git/`), and per-agent SQLite databases may
 //! sit under tenant-scoped state directories. The trait below lets

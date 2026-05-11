@@ -1,8 +1,8 @@
-//! Phase 80.14 — re-connection digest helper. Slim MVP: template-based,
-//! no LLM call. The forked-LLM-summarised variant lands as 80.14.b.
+//! Re-connection digest helper. Slim MVP: template-based,
+//! no LLM call. A forked-LLM-summarised variant is planned.
 //!
 //! Composes a short markdown digest summarising goals + aborts +
-//! failures recorded in the Phase 72 turn-log during the silence
+//! failures recorded in the turn-log during the silence
 //! window. Caller is responsible for tracking `last_seen_at` per
 //! (channel, sender_id) and updating it after composing the digest
 //! (atomic update keeps double-inbound from re-firing).
@@ -65,9 +65,8 @@ pub async fn try_compose_away_digest(
     Ok(Some(build_digest(&records, elapsed, cfg.max_events)))
 }
 
-/// Pure-fn renderer. Public for tests + future LLM-summarised path
-/// (80.14.b) that may want to fold the same counters into a richer
-/// prompt body.
+/// Pure-fn renderer. Public for tests + a future LLM-summarised path
+/// that may want to fold the same counters into a richer prompt body.
 pub fn build_digest(events: &[TurnRecord], elapsed: Duration, max_events: usize) -> String {
     let total_secs = elapsed.as_secs();
     let hours = total_secs / 3600;

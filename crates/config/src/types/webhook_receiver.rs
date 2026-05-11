@@ -1,6 +1,6 @@
-//! Phase 82.2 — top-level HTTP server schema for the webhook
+//! Top-level HTTP server schema for the webhook
 //! receiver. Wraps the per-source schema shipped in
-//! `nexo-webhook-receiver` (Phase 80.12) with transport knobs and
+//! `nexo-webhook-receiver` with transport knobs and
 //! per-source overrides for rate-limit + concurrency cap.
 //!
 //! Provider-agnostic by construction: the operator declares any
@@ -18,7 +18,7 @@ use thiserror::Error;
 use super::channels::ChannelRateLimit;
 
 /// Default body cap honoured when neither global nor per-source
-/// override is set. 1 MiB matches the Phase 80.12 default and is
+/// override is set. 1 MiB matches the per-source default and is
 /// generous for typical provider payloads.
 pub const DEFAULT_BODY_CAP_BYTES: usize = 1024 * 1024;
 
@@ -55,7 +55,7 @@ fn default_concurrency() -> u32 {
 pub struct WebhookServerConfig {
     /// Master killswitch. `false` (default) means the boot
     /// supervisor never spawns the listener — operators can ship
-    /// the YAML disabled and flip via Phase 18 hot-reload.
+    /// the YAML disabled and flip via hot-reload.
     #[serde(default)]
     pub enabled: bool,
 
@@ -124,8 +124,8 @@ impl Default for WebhookServerConfig {
     }
 }
 
-/// Per-source config. Wraps the Phase 80.12 `WebhookSourceConfig`
-/// (already shipped in `nexo-webhook-receiver`) and layers two
+/// Per-source config. Wraps the `WebhookSourceConfig`
+/// (shipped in `nexo-webhook-receiver`) and layers two
 /// override knobs on top.
 ///
 /// Using `#[serde(flatten)]` keeps the operator-facing YAML shape

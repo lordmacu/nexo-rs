@@ -1,4 +1,4 @@
-//! Phase 91.x.wasm.phase-4 — Groq Whisper REST provider.
+//! Groq Whisper REST provider.
 //!
 //! Groq hosts an OpenAI-compatible audio transcription endpoint
 //! at `POST https://api.groq.com/openai/v1/audio/transcriptions`.

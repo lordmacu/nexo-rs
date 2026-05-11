@@ -65,8 +65,9 @@ pub struct GmailJobConfig {
     /// Mark each dispatched message as read in Gmail. Default true.
     #[serde(default = "default_mark_read")]
     pub mark_read_on_dispatch: bool,
-    /// Where to send the rendered message. The runner uses Phase 17 to
-    /// look up the agent's binding for `deliver.channel`.
+    /// Where to send the rendered message. The runner uses the
+    /// credential resolver to look up the agent's binding for
+    /// `deliver.channel`.
     pub deliver: DeliverCfg,
 }
 

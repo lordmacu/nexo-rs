@@ -1,4 +1,4 @@
-//! Phase 82.10.n integration test — wire a production
+//! Integration test — wire a production
 //! [`TelegramPersister`] / [`EmailPersister`] through the
 //! [`AdminRpcDispatcher`] and verify a `nexo/admin/credentials/register`
 //! end-to-end produces the per-channel yaml entry, the secret

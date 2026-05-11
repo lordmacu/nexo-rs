@@ -1,4 +1,4 @@
-//! Phase 82.10.p — `PairingChannelTrigger` bridges admin
+//! `PairingChannelTrigger` bridges admin
 //! `pairing/start` to the actual channel plugin.
 //!
 //! Pre-82.10.p, `nexo/admin/pairing/start` only inserted a row
@@ -34,8 +34,8 @@
 //! ## Why a trait (and not direct plugin coupling)
 //!
 //! Symmetrical with [`crate::agent::admin_rpc::channel_outbound::ChannelOutboundDispatcher`]
-//! (Phase 83.8.4.b) and `ChannelCredentialPersister`
-//! (Phase 82.10.n). New channels (telegram-link, email-link)
+//! and `ChannelCredentialPersister`.
+//! New channels (telegram-link, email-link)
 //! plug in by registering a trigger; admin handler stays
 //! channel-agnostic. Capability gates (`pairing_initiate`)
 //! apply BEFORE trigger dispatch — same audit story.

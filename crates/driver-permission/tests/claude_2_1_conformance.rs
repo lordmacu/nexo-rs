@@ -1,8 +1,8 @@
-//! Phase 74.1 — Claude Code 2.1 conformance fixture.
+//! Claude Code 2.1 conformance fixture.
 //!
 //! Drives `nexo-driver-permission-mcp --allow-all` through the
 //! exact byte sequence Claude Code 2.1 sends and asserts every
-//! response field that Phase 73 had to fix. Future regressions in
+//! response field the wire format had to get right. Future regressions in
 //! either Claude's schema or our wire format land as a failing
 //! test instead of a silent loop where Cody dispatches goals that
 //! never write a single file.
@@ -75,7 +75,7 @@ async fn shutdown(mut child: Child, stdin: ChildStdin) {
 
 #[tokio::test]
 async fn initialize_echoes_claude_2_1_protocol_version() {
-    // Phase 73 — Claude Code 2.1 sends `protocolVersion: 2025-11-25`.
+    // Claude Code 2.1 sends `protocolVersion: 2025-11-25`.
     // Echoing the legacy `2024-11-05` made Claude register the
     // server but silently drop every tool from the permission
     // registry ("Available MCP tools: none"). The server must
@@ -148,7 +148,7 @@ async fn initialize_falls_back_for_unknown_protocol_version() {
 
 #[tokio::test]
 async fn tools_list_omits_next_cursor_when_no_pagination() {
-    // Phase 73 — Claude Code 2.1's Zod validator refused tools
+    // Claude Code 2.1's Zod validator refused tools
     // when the response contained `nextCursor: null`. The MCP
     // spec treats the field as pagination-only; absence means
     // "no more pages". Confirm we no longer emit the field.
@@ -181,9 +181,9 @@ async fn tools_list_omits_next_cursor_when_no_pagination() {
         schema["properties"]["tool_name"].is_object(),
         "permission_prompt input schema must declare tool_name"
     );
-    // Phase 74.2 — outputSchema declared so Claude 2.1's Zod-style
-    // validator runs against our typed shape. Phase 75 dialed the
-    // shape back to a permissive object schema after the strict
+    // outputSchema declared so Claude 2.1's Zod-style
+    // validator runs against our typed shape. The shape was dialed
+    // back to a permissive object schema after the strict
     // `oneOf` + `additionalProperties:false` form made Claude
     // silently drop the tool. The accepted form names the
     // discriminator (`behavior`) and lists the optional fields
@@ -207,7 +207,7 @@ async fn tools_list_omits_next_cursor_when_no_pagination() {
 
 #[tokio::test]
 async fn permission_prompt_allow_response_includes_updated_input_record() {
-    // Phase 73 — Claude Code 2.1 schema requires `updatedInput`
+    // Claude Code 2.1 schema requires `updatedInput`
     // to be a record (object) on every `behavior:"allow"`
     // response. Earlier we omitted it when the decider had no
     // override and Claude rejected the tool with a Zod
@@ -264,7 +264,7 @@ async fn permission_prompt_allow_response_includes_updated_input_record() {
         updated, &original_input,
         "AllowOnce echoes the caller's input by default"
     );
-    // Phase 74.3 — same payload also surfaces in structuredContent
+    // Same payload also surfaces in structuredContent
     // so Claude 2.1's typed validator can run against the object
     // directly instead of re-parsing the text.
     let structured = &resp["result"]["structuredContent"];
@@ -321,7 +321,7 @@ async fn permission_prompt_deny_response_includes_message() {
     let resp = read_id(&mut reader, 2).await;
     let content = resp["result"]["content"].as_array().expect("content array");
     let text = content[0]["text"].as_str().expect("text content");
-    // Phase 77.8 — text may carry advisory warnings prefix.
+    // Text may carry an advisory warnings prefix.
     // Label was unified from `bash security` to `tool advisories`
     // when the advisor framework grew beyond bash. Use
     // `structured_content` for the machine-readable shape.

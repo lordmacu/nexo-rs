@@ -1,4 +1,4 @@
-//! Phase 81.3 — Tool namespace runtime enforcement.
+//! Tool namespace runtime enforcement.
 //!
 //! `ScopedToolRegistry` is a per-plugin proxy around `ToolRegistry`
 //! that gates every registration against:

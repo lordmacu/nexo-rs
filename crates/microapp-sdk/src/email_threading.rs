@@ -1,6 +1,5 @@
 //! Email subject normalization + synthetic thread-id helpers
-//! (Phase 83.18 / F29 — lifted from `nexo-rs-extension-marketing`
-//! 0.17.x).
+//! (lifted from `nexo-rs-extension-marketing` 0.17.x).
 //!
 //! Two layers of reply-detection live on top of standard RFC
 //! 5322 threading (`In-Reply-To` / `References`):

@@ -1,4 +1,4 @@
-//! [`CredentialStore`] impl for IMAP/SMTP email accounts (Phase 48).
+//! [`CredentialStore`] impl for IMAP/SMTP email accounts.
 //!
 //! Three auth modes are supported, each emitting opaque [`SecretString`]
 //! material to the plugin so a stray `tracing::debug!("{account:?}")`

@@ -2,7 +2,7 @@
 //! a freshly-loaded YAML snapshot. Returns a typed delta the
 //! caller logs / surfaces in setup-doctor / admin UI.
 //!
-//! Phase 18 post-reload hook calls `reevaluate(router_state, &new_cfg)`
+//! The post-reload hook calls `reevaluate(router_state, &new_cfg)`
 //! and uses the report to swap an `arc_swap::ArcSwap` cell that
 //! holds the live router. Atomic from the request handler's
 //! perspective — already-in-flight requests finish on the old

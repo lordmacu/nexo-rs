@@ -1,12 +1,12 @@
-//! Phase 90.x.memory — `nexo/admin/memory/*` handlers.
+//! `nexo/admin/memory/*` handlers.
 //!
-//! Surface (Phase 90.x.memory + 90.x.memory-snapshot.create-restore):
+//! Surface:
 //!
 //! - `query` — text search over long-term memory store (`recall`).
 //! - `list_snapshots` / `delete_snapshot` — bundle inventory +
-//!   idempotent removal (Phase 90.x.memory-snapshot list/delete).
+//!   idempotent removal.
 //! - `create_snapshot` / `restore_snapshot` — capture + restore
-//!   bundles (Phase 90.x.memory-snapshot.create-restore). Defaults
+//!   bundles. Defaults
 //!   forced server-side: `redact_secrets=true`,
 //!   `auto_pre_snapshot=true`, `created_by="admin-ui"`. Encryption
 //!   recipient resolved from `memory.snapshot.encryption.recipients`
@@ -48,7 +48,7 @@ pub trait MemoryReader: Send + Sync + std::fmt::Debug {
 /// adapter wraps `nexo_memory_snapshot::MemorySnapshotter`; tests
 /// inject in-memory fakes.
 ///
-/// NAMING NOTE (Phase 90.x.memory-snapshot.create-restore): the
+/// NAMING NOTE: the
 /// trait is named `…Reader` but now also exposes `create()` and
 /// `restore()` — write operations. The mismatch is intentional
 /// debt rather than a rename: renaming would break `nexo-core`
@@ -518,7 +518,7 @@ mod tests {
         assert!(res.error.is_some());
     }
 
-    // ── Phase 90.x.memory-snapshot.create-restore tests ──
+    // ── snapshot create-restore tests ──
 
     #[tokio::test]
     async fn create_snapshot_records_call() {

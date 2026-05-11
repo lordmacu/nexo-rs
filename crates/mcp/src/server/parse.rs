@@ -1,4 +1,4 @@
-//! Phase 76.1 — JSON-RPC parse defenses for HTTP request bodies.
+//! JSON-RPC parse defenses for HTTP request bodies.
 //!
 //! Stdio path keeps its existing parser (newline-delimited, one
 //! object per line, lenient on bad lines because the peer is

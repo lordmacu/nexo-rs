@@ -1,4 +1,4 @@
-//! Phase 80.9 — MCP channel routing config.
+//! MCP channel routing config.
 //!
 //! Channels let an MCP server become an inbound surface — a Slack
 //! bot, a Telegram chat, an iMessage relay, etc. The server
@@ -13,7 +13,7 @@
 //!
 //! 1. **Capability** — server actually declared the capability.
 //! 2. **Killswitch** — operator may flip `channels.enabled` off
-//!    via Phase 18 hot-reload to mute the entire feature.
+//!    via hot-reload to mute the entire feature.
 //! 3. **Per-binding session allowlist** — each binding lists the
 //!    server names it will accept channel notifications from.
 //! 4. **Plugin source verification** — when the server is loaded
@@ -25,11 +25,11 @@
 //!    is denied.
 //!
 //! Out-of-scope for the MVP (deferred): permission relay
-//! (`notifications/nexo/channel/permission`) — handled by 80.9.b.
+//! (`notifications/nexo/channel/permission`).
 
 use serde::{Deserialize, Serialize};
 
-/// Phase 80.9.g — token-bucket rate limit applied to channel
+/// Token-bucket rate limit applied to channel
 /// notifications before they enter the bridge. `rps` is the
 /// average refill rate (tokens/second); `burst` is the bucket
 /// capacity (max sustained burst before throttling kicks in).
@@ -69,7 +69,7 @@ impl ChannelRateLimit {
 pub struct ChannelsConfig {
     /// Master killswitch. `false` (default) makes every channel
     /// server fall through with `Skip { kind: Disabled }`. Hot
-    /// reloadable through Phase 18 — flipping mid-process disables
+    /// reloadable — flipping mid-process disables
     /// the next gate evaluation; existing registered handlers stay
     /// up until the connection cycles.
     #[serde(default)]
@@ -91,7 +91,7 @@ pub struct ChannelsConfig {
     #[serde(default = "default_max_content_chars")]
     pub max_content_chars: u32,
 
-    /// Phase 80.9.g — default rate limit applied to every server
+    /// Default rate limit applied to every server
     /// that doesn't ship its own `rate_limit`. `None` (default)
     /// keeps the runtime unthrottled per-server. Use this to set
     /// a global ceiling for the whole channels surface; per-server
@@ -116,7 +116,7 @@ pub struct ApprovedChannel {
     #[serde(default)]
     pub plugin_source: Option<String>,
 
-    /// Phase 80.9 outbound — name of the MCP tool the
+    /// Name of the MCP tool the
     /// `channel_send` LLM wrapper should call when the agent
     /// emits a reply to this server. Defaults to
     /// [`DEFAULT_OUTBOUND_TOOL_NAME`] (`send_message`) which
@@ -127,7 +127,7 @@ pub struct ApprovedChannel {
     #[serde(default = "default_outbound_tool_name_opt")]
     pub outbound_tool_name: Option<String>,
 
-    /// Phase 80.9.g — per-server rate limit override.
+    /// Per-server rate limit override.
     /// `None` (default) inherits `ChannelsConfig.default_rate_limit`;
     /// `Some(cfg)` replaces it for this server.
     #[serde(default)]
@@ -169,7 +169,7 @@ impl Default for ChannelsConfig {
 }
 
 impl ChannelsConfig {
-    /// Validate at boot. Mirrors the rest of the Phase 80 cluster —
+    /// Validate at boot —
     /// fail loud at boot rather than mysteriously skip channels at
     /// runtime when the operator typoed a knob.
     pub fn validate(&self) -> Result<(), String> {
@@ -212,7 +212,7 @@ impl ChannelsConfig {
         Ok(())
     }
 
-    /// Phase 80.9.g — resolve the rate limit for `server`. Per-server
+    /// Resolve the rate limit for `server`. Per-server
     /// override wins; falls back to `default_rate_limit`; `None`
     /// when neither is set or both collapse to inactive.
     pub fn resolve_rate_limit(&self, server: &str) -> Option<ChannelRateLimit> {
@@ -403,7 +403,7 @@ approved:
         parsed.validate().unwrap();
     }
 
-    // ---- Phase 80.9.g rate-limit ----
+    // ---- rate-limit ----
 
     #[test]
     fn rate_limit_is_active_only_with_positive_rps_and_burst() {

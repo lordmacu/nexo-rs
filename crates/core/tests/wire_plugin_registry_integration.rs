@@ -1,4 +1,4 @@
-//! Phase 81.9 — end-to-end pipeline: build a fixture plugin tree
+//! End-to-end pipeline: build a fixture plugin tree
 //! on disk that contributes one agent + one skill, run
 //! `wire_plugin_registry`, assert every fold + the snapshot's
 //! `skill_roots` populate as expected, and the channel adapter

@@ -95,9 +95,8 @@ impl GeminiClient {
         if status == 429 {
             let headers = response.headers().clone();
             let retry_after_ms = parse_retry_after(&headers).unwrap_or(30_000);
-            // Phase C4.c — extract Gemini headers to promote
-            // `Rejected` quotas (RESOURCE_EXHAUSTED) to
-            // `LlmError::QuotaExceeded`.
+            // Extract Gemini headers to promote `Rejected` quotas
+            // (RESOURCE_EXHAUSTED) to `LlmError::QuotaExceeded`.
             let info = crate::rate_limit_info::extract_gemini_headers(&headers);
             return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
@@ -313,7 +312,7 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     }
 }
 
-/// Phase A.3 — Gemini does not honor `ChatRequest.system_blocks` /
+/// Gemini does not honor `ChatRequest.system_blocks` /
 /// `cache_tools`. The native equivalent is the `cachedContents` API,
 /// which has a different lifecycle (server-side resource) and is not
 /// wired here yet. Warn once per process so the operator sees the
@@ -339,7 +338,7 @@ fn build_body(req: &ChatRequest) -> Value {
     if let Some(s) = &req.system_prompt {
         system_parts.push(s.clone());
     }
-    // Phase A.3 — flatten any prompt-cache blocks into the legacy
+    // Flatten any prompt-cache blocks into the legacy
     // system path so callers that opt in still get the content into
     // the model, just without provider-side caching.
     if !req.system_blocks.is_empty() {

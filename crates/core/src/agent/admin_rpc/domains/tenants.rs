@@ -1,4 +1,4 @@
-//! Phase 83.8.12 — `nexo/admin/tenants/*` handlers.
+//! `nexo/admin/tenants/*` handlers.
 //!
 //! CRUD surface for multi-tenant tenant records. The runtime
 //! itself does not consume tenants directly — it only reads

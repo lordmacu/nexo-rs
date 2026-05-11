@@ -1,7 +1,7 @@
 //! `nexo-persona-installer` — install / list / remove v2
 //! persona packs from GitHub Releases. Sibling of
 //! `nexo-ext-installer`'s plugin install path; reuses ~60% of
-//! the resolve+download plumbing via Phase F1's
+//! the resolve+download plumbing via the
 //! `ExtractContract` abstraction.
 //!
 //! # Surface
@@ -35,13 +35,12 @@
 //! └──────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Phase F3 of the `cody-cli-install` follow-up wave
+//! # Shared plumbing
 //!
-//! Reuses Phase F1's `ExtractContract` (introduced via
-//! `cody-cli.F1` commit) so plugin + persona installers share
-//! the GitHub Releases plumbing. Lifecycle events mirror the
-//! plugin lifecycle shape from Phase 81.21.b for subscriber
-//! decoder reuse.
+//! Reuses `nexo-ext-installer`'s `ExtractContract` so plugin +
+//! persona installers share the GitHub Releases plumbing.
+//! Lifecycle events mirror the plugin lifecycle shape for
+//! subscriber decoder reuse.
 
 #![deny(missing_docs)]
 

@@ -1,6 +1,6 @@
-//! Phase 82.10.f — `nexo/admin/channels/*` handlers.
+//! `nexo/admin/channels/*` handlers.
 //!
-//! Operates on `agents.yaml.<id>.channels.approved` (Phase 80.9
+//! Operates on `agents.yaml.<id>.channels.approved` (the
 //! MCP-channel server allowlist). Reuses the agents-domain
 //! [`super::agents::YamlPatcher`] trait — same yaml file.
 //!

@@ -4,7 +4,7 @@
 //! [`Poller`] and only contains its fetch / parse / extract logic.
 //! Scheduling, jitter, lease-based concurrency control, exponential
 //! backoff, per-job circuit breaker, SQLite-backed cursor persistence,
-//! credential resolution (Phase 17), outbound dispatch, telemetry,
+//! credential resolution, outbound dispatch, telemetry,
 //! admin HTTP endpoints, and CLI surface all live in the runner.
 //!
 //! See `docs/src/recipes/build-a-poller.md` for the three-step DX

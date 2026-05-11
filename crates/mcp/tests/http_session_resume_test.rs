@@ -1,16 +1,14 @@
 #![allow(clippy::all)]
 
-//! Phase 76.8 — end-to-end resume tests for the HTTP transport.
-//! Boots a real server with a configured `SessionEventStore`,
-//! initializes a session, fires `notifications/tools/list_changed`
-//! to seed the durable trail, then asserts the SSE consumer's
-//! `Last-Event-ID` reconnect surfaces the right gap.
+//! End-to-end resume tests for the HTTP transport. Boots a real
+//! server with a configured `SessionEventStore`, initializes a
+//! session, fires `notifications/tools/list_changed` to seed the
+//! durable trail, then asserts the SSE consumer's `Last-Event-ID`
+//! reconnect surfaces the right gap.
 //!
-//! Wire contract under test (matches the leak):
-//!   * `claude-code-leak/src/cli/transports/SSETransport.ts:159-266`
-//!     — SSE frame `id: <seq>` + `Last-Event-ID: <seq>` reconnect.
-//!   * `claude-code-leak/src/services/mcp/client.ts:189-206` —
-//!     unknown session → HTTP 404 + JSON-RPC `-32001`.
+//! Wire contract under test:
+//!   * SSE frame `id: <seq>` + `Last-Event-ID: <seq>` reconnect.
+//!   * unknown session → HTTP 404 + JSON-RPC `-32001`.
 
 use std::time::Duration;
 

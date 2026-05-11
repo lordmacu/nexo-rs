@@ -1,12 +1,12 @@
-//! Phase 81.11 — aggregate plugin-declared capability gates +
-//! check unmet `requires.nexo_capabilities` entries. The bundled
+//! Aggregate plugin-declared capability gates + check unmet
+//! `requires.nexo_capabilities` entries. The bundled
 //! `nexo_setup::capabilities::INVENTORY` const is borrowed read-
 //! only — drift-prevention contract preserved.
 //!
 //! Conflicts vs INVENTORY → Error diagnostics; cross-plugin
 //! conflicts → Error diagnostics; unmet-capability → Warn.
-//! `wire_plugin_registry` (Phase 81.9 / 81.11) folds the result
-//! into `PluginDiscoveryReport` so doctor CLI + admin-ui see one
+//! `wire_plugin_registry` folds the result into
+//! `PluginDiscoveryReport` so doctor CLI + admin-ui see one
 //! coherent view.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,7 +18,7 @@ use nexo_plugin_manifest::{GateKind, GateRisk};
 use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 use super::NexoPluginRegistrySnapshot;
 
-/// Phase 81.11 — runtime view of one plugin-declared capability
+/// Runtime view of one plugin-declared capability
 /// gate. Carries the manifest's static fields plus a runtime
 /// evaluation (`state` + `raw_value`) using the same env::var
 /// logic as `nexo_setup::capabilities::evaluate_one`.
@@ -61,7 +61,7 @@ pub struct PluginCapabilityAggregation {
     pub conflicts: Vec<DiscoveryDiagnostic>,
 }
 
-/// Phase 81.11 — collect plugin-declared capability gates +
+/// Collect plugin-declared capability gates +
 /// required-capability mismatches.
 ///
 /// Caller-provided arguments:

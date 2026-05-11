@@ -1,14 +1,13 @@
-//! Phase 80.1 — autoDream fork-style memory consolidation.
+//! AutoDream fork-style memory consolidation.
 //!
-//! Verbatim port of `claude-code-leak/src/services/autoDream/`. See
-//! `README.md` for the full reference + intentional divergences.
+//! See `README.md` for the full reference + intentional divergences.
 //!
 //! # Three pillars
 //!
 //! - **Robusto**: 23 edge cases tested; defense-in-depth (whitelist +
 //!   path canonicalize + post-fork audit + lock); typed errors;
 //!   idempotent rollback; symlink defense.
-//! - **Óptimo**: reuses 80.18 / 80.19 / 80.20 + Phase 10.6 scoring;
+//! - **Óptimo**: reuses the dream-run store + memory scoring;
 //!   single canonicalize at construction; lock mtime IS
 //!   lastConsolidatedAt (one stat per turn).
 //! - **Transversal**: provider-agnostic via `nexo_fork::DefaultForkSubagent`;
@@ -22,11 +21,6 @@ pub mod consolidation_prompt;
 pub mod dream_progress_watcher;
 pub mod error;
 pub mod tools;
-
-// Modules below land in subsequent steps:
-// pub mod consolidation_prompt;     // step 4
-// pub mod dream_progress_watcher;   // step 5
-// pub mod auto_dream;               // step 6
 
 pub use auto_dream::{
     build_extra, AutoDreamRunner, DreamContext, RunOutcome, RunReason, SkipReason,

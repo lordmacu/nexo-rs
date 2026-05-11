@@ -1,7 +1,6 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.1 — adversarial integration tests for the HTTP+SSE
-//! transport. Each test boots a real server on a kernel-assigned
+//! Adversarial integration tests for the HTTP+SSE transport. Each test boots a real server on a kernel-assigned
 //! port and drives it with reqwest.
 
 use std::sync::atomic::{AtomicUsize, Ordering};

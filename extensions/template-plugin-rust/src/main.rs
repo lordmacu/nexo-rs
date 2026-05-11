@@ -1,4 +1,4 @@
-//! Phase 81.15.a / 81.17.c — out-of-tree subprocess plugin template.
+//! Out-of-tree subprocess plugin template.
 //!
 //! Echoes every inbound event back to the broker on the matching
 //! `plugin.inbound.<kind>` topic. Replace the `on_broker_event`
@@ -14,10 +14,10 @@ const MANIFEST: &str = include_str!("../nexo-plugin.toml");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Stderr logging — daemon's stdio→tracing bridge (Phase 81.23,
-    // pending) will fold this into the operator's structured log
-    // stream. Until then it's debug visibility for operators
-    // running the binary directly.
+    // Stderr logging — the daemon's stdio→tracing bridge folds
+    // this into the operator's structured log stream when the
+    // plugin runs under the daemon; standalone it's debug
+    // visibility for operators running the binary directly.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_target(false)

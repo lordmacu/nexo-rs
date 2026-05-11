@@ -1,4 +1,4 @@
-//! Phase 81.22 — Plugin sandbox manifest schema.
+//! Plugin sandbox manifest schema.
 //!
 //! Subprocess plugins opt into bubblewrap-based sandboxing via
 //! `[plugin.sandbox]`. The host-side runner (`nexo-core`'s
@@ -8,16 +8,9 @@
 //! predicates. Path-canonicalization-against-denylist + bwrap
 //! argv construction live in `nexo-core::agent::plugin_sandbox`.
 //!
-//! IRROMPIBLE refs:
-//! - `research/src/agents/sandbox/validate-sandbox-security.ts:22-48`
-//!   — `BLOCKED_HOST_PATHS` + `BLOCKED_HOME_SUBPATHS` denylist
-//!   subset reused here. Mirrored 1:1 (with `/etc` narrowed to
-//!   the actually-sensitive `/etc/shadow`/`/etc/sudoers*`
-//!   subset, since `/etc/ssl/certs` is a common legitimate
-//!   read mount and OpenClaw blocked all of `/etc` only because
-//!   Docker's bind shape is coarse).
-//! - claude-code-leak/: absent — sandbox is OS-process infra,
-//!   no LLM-tool surface relevance.
+//! The host-path denylist narrows `/etc` to the actually-sensitive
+//! `/etc/shadow` / `/etc/sudoers*` subset, since `/etc/ssl/certs`
+//! is a common legitimate read mount.
 
 use serde::{Deserialize, Serialize};
 
@@ -116,12 +109,11 @@ pub const SANDBOX_STATE_DIR_TOKEN: &str = "${state_dir}";
 /// even if the operator's manifest puts them in an allowlist.
 /// Compile-time const so operators can't override.
 ///
-/// Tighter than OpenClaw's `BLOCKED_HOST_PATHS` (`research/src/agents/sandbox/validate-sandbox-security.ts:22-37`)
-/// in two directions:
-/// 1. **Narrower** on `/etc`: `/etc` itself is OK (legitimate
+/// Two design choices worth noting:
+/// 1. **Narrow** on `/etc`: `/etc` itself is OK (legitimate
 ///    plugins read `/etc/ssl/certs`); only the sensitive
 ///    subset (`/etc/shadow`, `/etc/sudoers*`) is denied.
-/// 2. **Broader** on `/proc`: `/proc/sys` denied beyond the
+/// 2. **Broad** on `/proc`: `/proc/sys` denied beyond the
 ///    `/proc/<pid>/mem` family.
 pub const SANDBOX_DENYLIST_HOST_PATHS: &[&str] = &[
     "/etc/shadow",
@@ -144,11 +136,9 @@ pub const SANDBOX_DENYLIST_HOST_PATHS: &[&str] = &[
 
 /// Hard denylist for `${HOME}`-relative subpaths. Host resolves
 /// at validate-time using the daemon's `$HOME` (via `home_dir()`
-/// crate or `std::env`). Mirrors OpenClaw's `BLOCKED_HOME_SUBPATHS`
-/// (`research/src/agents/sandbox/validate-sandbox-security.ts:39-48`)
+/// crate or `std::env`). Covers the usual credential/config dirs
 /// plus `.cargo/credentials` (cargo registry tokens) and `.kube`
-/// (kubeconfig tokens) which OpenClaw didn't list because TS
-/// devs aren't usually in those paths.
+/// (kubeconfig tokens).
 pub const SANDBOX_DENYLIST_HOME_SUBPATHS: &[&str] = &[
     ".aws",
     ".ssh",
@@ -167,8 +157,8 @@ pub const SANDBOX_DENYLIST_HOME_SUBPATHS: &[&str] = &[
 /// subpath of any entry in `denylist`. Returns the matched
 /// denylist entry on hit (for richer error messages).
 ///
-/// Algorithm mirrors `research/src/agents/sandbox/validate-sandbox-security.ts:140-150`:
-/// per denylist entry, accept exact-match OR `path.startsWith(blocked + "/")`.
+/// Per denylist entry, accept exact-match OR
+/// `path.starts_with(blocked + "/")`.
 /// Plus a "path covers root" guard: any literal `/` in the
 /// allowlist matches every denylist entry, since `/` is the
 /// parent of everything.

@@ -1,9 +1,9 @@
-//! Phase 80.14 — AWAY_SUMMARY re-connection digest config.
+//! AWAY_SUMMARY re-connection digest config.
 //!
 //! When enabled, the runtime composes a short markdown digest the
 //! first time a user sends a message after being silent for
 //! `threshold_hours`. The digest summarises goals + aborts +
-//! failures recorded in the Phase 72 turn-log during the silence
+//! failures recorded in the turn-log during the silence
 //! window. Default disabled; per-binding opt-in.
 
 use serde::{Deserialize, Serialize};

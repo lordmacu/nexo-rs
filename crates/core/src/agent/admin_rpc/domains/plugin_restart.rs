@@ -1,4 +1,4 @@
-//! Phase 81.21.b.b follow-up — `nexo/admin/plugins/restart` handler.
+//! `nexo/admin/plugins/restart` handler.
 //!
 //! Operator verb that drives `SubprocessNexoPlugin::force_restart`
 //! via the [`PluginRestarter`] trait. Distinct from the auto-respawn
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(err.code(), -32603); // Internal
     }
 
-    /// Phase 90 audit follow-up — boot-window race surfaces from
+    /// Boot-window race surfaces from
     /// `LivePluginRestarter` as "plugin handles not yet populated;
     /// daemon still booting". Genuinely user-recoverable (retry
     /// 1-2s), so the handler must classify it as InvalidParams not

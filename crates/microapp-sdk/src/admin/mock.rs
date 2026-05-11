@@ -1,4 +1,4 @@
-//! Phase 83.15.b — programmable `nexo/admin/*` mock for SDK tests.
+//! Programmable `nexo/admin/*` mock for SDK tests.
 //!
 //! Microapps that consume `ctx.admin().call(...)` can't easily be
 //! unit-tested without a live daemon: the production [`AdminClient`]
@@ -6,13 +6,9 @@
 //! in-process replacement so tool / hook tests run with synthetic
 //! responses and assert on the request shape.
 //!
-//! Pattern mirrored from OpenClaw
-//! `research/extensions/telegram/src/polling-transport-state.test.ts:8-16`
-//! (`makeMockTransport()` returns a fake transport with hardcoded
-//! responses + a spy that captures interactions for later
-//! assertions). Translated to Rust: register handlers per method,
-//! capture every request seen, hand callers an [`AdminClient`]
-//! bound to the mock for direct injection into the harness.
+//! Register handlers per method, capture every request seen, hand
+//! callers an [`AdminClient`] bound to the mock for direct
+//! injection into the harness.
 //!
 //! Gated behind the `admin` cargo feature (the surface this mocks)
 //! AND the `test-harness` feature (the consumer audience).

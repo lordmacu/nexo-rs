@@ -10,7 +10,7 @@ use super::repl_registry::ReplRegistry;
 use crate::agent::context::AgentContext;
 use crate::agent::tool_registry::ToolHandler;
 
-/// Phase 79.12 — stateful REPL tool. Spawns persistent Python, Node.js,
+/// Stateful REPL tool. Spawns persistent Python, Node.js,
 /// or bash subprocesses that survive across LLM turns.
 ///
 /// Feature-gated behind `repl-tool`. Registered per-agent when

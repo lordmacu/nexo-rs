@@ -1,4 +1,4 @@
-//! Phase 78.2 — synthetic test that an `AttemptOutcome::Continue`
+//! Synthetic test that an `AttemptOutcome::Continue`
 //! routed through `DefaultReplayPolicy::NextTurn` actually fires
 //! turn N+1 instead of stalling on turn N.
 //!

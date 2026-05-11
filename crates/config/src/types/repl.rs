@@ -16,7 +16,7 @@ fn default_allowed_runtimes() -> Vec<String> {
     vec!["python".into(), "node".into(), "bash".into()]
 }
 
-/// Phase 79.12 — per-agent / per-binding REPL tool configuration.
+/// Per-agent / per-binding REPL tool configuration.
 ///
 /// When `enabled: true` the agent registers a `Repl` tool that can spawn
 /// persistent Python, Node.js, or bash subprocesses, execute code, and

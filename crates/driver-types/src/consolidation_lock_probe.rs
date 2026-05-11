@@ -1,8 +1,8 @@
-//! Phase 80.1.e — consolidation-lock probe contract upstream of
+//! Consolidation-lock probe contract upstream of
 //! nexo-dream and nexo-core.
 //!
-//! Mirrors the [`AutoDreamHook`] (Phase 80.1.b) and
-//! [`MemoryCheckpointer`] (Phase 80.1.g) cycle-break pattern: the
+//! Mirrors the [`AutoDreamHook`] and
+//! [`MemoryCheckpointer`] cycle-break pattern: the
 //! trait lives here so both `nexo-dream` (provider via
 //! `ConsolidationLock`) and `nexo-core` (consumer in dreaming sweep)
 //! can depend on it without forming a cycle.
@@ -11,24 +11,12 @@
 //! the **scoring sweep** (light pass, `nexo-core::agent::dreaming`)
 //! checks the lock at the start of `run_sweep` and defers when the
 //! **fork-pass** (deep, `nexo-dream::AutoDreamRunner`) is currently
-//! running. Mutually exclusive per turn — same philosophy as the
-//! leak's `extractMemories.ts:121-148` `hasMemoryWritesSince` SKIP
-//! pattern.
+//! running. The two writers — scoring sweep and fork — are mutually
+//! exclusive per turn: when the fork-pass holds the lock, the
+//! scoring sweep defers.
 //!
 //! [`AutoDreamHook`]: crate::auto_dream::AutoDreamHook
 //! [`MemoryCheckpointer`]: crate::memory_checkpoint::MemoryCheckpointer
-//!
-//! # Reference
-//!
-//! - **claude-code-leak (PRIMARY)**:
-//!   `claude-code-leak/src/services/extractMemories/extractMemories.ts:121-148`
-//!   `hasMemoryWritesSince` is the closest parallel — when the main
-//!   agent already wrote memory in a turn, the extract subagent
-//!   skips entirely. We adapt the SKIP idea to a lock-based variant
-//!   (lock-held → defer scoring sweep) because nexo's two writers
-//!   are scoring sweep + fork, not main agent + subagent.
-//! - **research/ (OpenClaw)**: no analog — single-process Node
-//!   without two-tier consolidation. **Absence noted.**
 
 /// Synchronous probe of an external memory-consolidation lock.
 /// Implementors return `true` when a live PID currently holds the

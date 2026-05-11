@@ -1,10 +1,8 @@
 //! `OnMessage` — observation hook over the fork's message stream.
-//! Step 80.19 / 7 (executed alongside steps 4-6 — interdependency).
 //!
-//! Mirrors KAIROS's `onMessage?: (message: Message) => void` callback
-//! (leak `forkedAgent.ts:106`). Consumers like Phase 80.1's
-//! `FilesTouchedCollector` build collectors that scan tool_use blocks
-//! for `FileEdit` / `FileWrite` paths.
+//! An `on_message` callback fired for each message the fork produces.
+//! Consumers like autoDream's `FilesTouchedCollector` build collectors
+//! that scan tool_use blocks for `FileEdit` / `FileWrite` paths.
 //!
 //! Panic safety: [`ChainCollector`] catches panics in inner collectors
 //! so a buggy hook cannot kill the fork's turn loop.

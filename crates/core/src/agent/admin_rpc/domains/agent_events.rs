@@ -1,4 +1,4 @@
-//! Phase 82.11 — `nexo/admin/agent_events/*` handlers.
+//! `nexo/admin/agent_events/*` handlers.
 //!
 //! Backfill + search surface for the agent event firehose. The
 //! live notification stream
@@ -65,7 +65,7 @@ pub trait TranscriptReader: Send + Sync {
     ) -> anyhow::Result<Vec<SearchHit>>;
 }
 
-/// Phase 82.11.log.merge — `TranscriptReader` impl that
+/// `TranscriptReader` impl that
 /// composes a transcripts source (JSONL via
 /// `TranscriptReaderFs`) with a durable
 /// [`AgentEventLog`] (firehose backfill). Operator UIs that
@@ -587,7 +587,7 @@ mod tests {
         assert!(matches!(err, AdminRpcError::Internal(_)));
     }
 
-    // ── Phase 82.11.log.merge — `MergingAgentEventReader` tests ──
+    // ── `MergingAgentEventReader` tests ──
 
     use crate::agent::admin_rpc::SqliteAgentEventLog;
     use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};

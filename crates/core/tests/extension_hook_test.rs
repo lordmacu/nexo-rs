@@ -1,4 +1,4 @@
-//! Phase 11.6 — end-to-end: echo_ext declares hook subscriptions, agent
+//! End-to-end: echo_ext declares hook subscriptions, agent
 //! registers them in HookRegistry, firing routes through the extension.
 
 use std::path::PathBuf;

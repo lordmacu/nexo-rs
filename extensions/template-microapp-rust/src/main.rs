@@ -1,4 +1,4 @@
-//! Phase 83.7 — Microapp template (Rust).
+//! Microapp template (Rust).
 //!
 //! Skeleton stdio microapp built on `nexo-microapp-sdk`. Copy the
 //! whole `extensions/template-microapp-rust/` directory, rename
@@ -12,7 +12,7 @@
 //!    channel + account triple the daemon threaded through.
 //! 3. One observer hook (`before_message`) registered via
 //!    `with_hook` that always votes `Continue`.
-//! 4. Outbound dispatch via `ToolCtx::outbound()` (Phase 82.3) —
+//! 4. Outbound dispatch via `ToolCtx::outbound()` —
 //!    the `greet` tool sends a confirmation back through the
 //!    channel after producing the LLM-visible reply.
 //!
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 /// of test-only builders drifting from the deployed shape.
 pub(crate) fn build_app() -> Microapp {
     Microapp::new("template-microapp-rust", env!("CARGO_PKG_VERSION"))
-        // Phase 83.8.8.a — opt into the admin RPC surface so
+        // Opt into the admin RPC surface so
         // `whoami_tool` can call `nexo/admin/agents/get`. Tools that
         // don't touch the daemon admin layer can omit this.
         .with_admin()
@@ -68,7 +68,7 @@ async fn greet_tool(args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
     let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("world");
 
     // BindingContext access — the daemon threads agent_id,
-    // channel, account_id (Phase 82.1) through every tool call.
+    // channel, account_id through every tool call.
     // None when the binding wasn't resolvable (delegation /
     // heartbeat paths). Production code should handle the
     // None case explicitly.
@@ -94,7 +94,7 @@ async fn ping_tool(_args: Value, _ctx: ToolCtx) -> Result<ToolReply, ToolError> 
     Ok(ToolReply::ok_json(json!({ "pong": true })))
 }
 
-/// Example tool 3 (Phase 83.8.8 admin RPC): query the daemon
+/// Example tool 3 (admin RPC): query the daemon
 /// for the agent's own row via `nexo/admin/agents/get` and
 /// surface a compact view to the caller. Demonstrates the full
 /// admin call cycle: pull the client off `ctx`, call by method
@@ -122,7 +122,7 @@ async fn whoami_tool(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError>
     })))
 }
 
-/// Example hook (Phase 83.3 observer-only): logs the inbound and
+/// Example hook (observer-only): logs the inbound and
 /// always votes `Continue`. Hooks are how a microapp participates
 /// in the daemon's pre/post-turn lifecycle without owning a tool
 /// surface. The vote-to-block path (returning `Abort`) lets a
@@ -140,7 +140,7 @@ async fn before_message_hook(_args: Value, ctx: HookCtx) -> Result<HookOutcome, 
 
 #[cfg(test)]
 mod tests {
-    //! Phase 83.15.b — reference tests for microapp authors.
+    //! Reference tests for microapp authors.
     //!
     //! Demonstrates `MicroappTestHarness` + `MockAdminRpc` on the
     //! exact `build_app()` the production binary ships. Authors

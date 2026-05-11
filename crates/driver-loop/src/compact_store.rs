@@ -1,4 +1,4 @@
-//! Phase 77.3 — `CompactSummaryStore` implementations.
+//! `CompactSummaryStore` implementations.
 //!
 //! `SqliteCompactSummaryStore` persists summaries via
 //! `nexo_memory::LongTermMemory::remember()` so resumed sessions can
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use nexo_memory::LongTermMemory;
 
-/// Persists compact summaries via the Phase 5.3 long-term memory store.
+/// Persists compact summaries via the long-term memory store.
 pub struct SqliteCompactSummaryStore {
     ltm: Arc<LongTermMemory>,
 }

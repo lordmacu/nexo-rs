@@ -1,4 +1,4 @@
-//! Phase 81.4 — Plugin-scoped config dir loader.
+//! Plugin-scoped config dir loader.
 //!
 //! Reads each plugin's `<config_dir>/plugins/<plugin_id>/*.yaml`
 //! files, deep-merges them with `${ENV_VAR}` resolution, validates

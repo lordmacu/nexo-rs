@@ -1,6 +1,6 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.4 — multi-tenant isolation fixture.
+//! Multi-tenant isolation fixture.
 //!
 //! Two tenants (`tenant-a`, `tenant-b`) reach the same in-process
 //! handler over HTTP, each authenticated with its own static token
@@ -40,8 +40,8 @@ use tokio_util::sync::CancellationToken;
 /// `DispatchContext` isn't passed into `call_tool` in the current
 /// public trait; instead the test handler reads the principal from
 /// a thread-local set by a wrapper. Cleaner in production would be
-/// to plumb principal into ToolContext (Phase 76.4 follow-up); for
-/// the fixture we set up the work via separate per-tenant handlers.
+/// to plumb principal into ToolContext; for the fixture we set up
+/// the work via separate per-tenant handlers.
 #[derive(Clone)]
 struct PerTenantHandler {
     tenant: TenantId,

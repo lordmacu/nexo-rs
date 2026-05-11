@@ -1,4 +1,4 @@
-//! Phase 81.25 — end-to-end smoke for `RemoteLlmClient`. Builds
+//! End-to-end smoke for `RemoteLlmClient`. Builds
 //! a tempdir with a `nexo-plugin.toml` declaring
 //! `[plugin.extends].llm_providers = ["mock_llm"]` and a bash
 //! mock that:

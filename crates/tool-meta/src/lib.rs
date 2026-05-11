@@ -21,8 +21,7 @@
 //!   dual-write `_meta` payload.
 //! - [`WebhookEnvelope`] — JSON envelope nexo publishes to NATS
 //!   after every accepted webhook request.
-//! - [`format_webhook_source`] — Phase 72 turn-log marker
-//!   helper.
+//! - [`format_webhook_source`] — turn-log marker helper.
 //!
 //! # Round-trip example
 //!
@@ -50,7 +49,7 @@ pub mod binding;
 pub mod event_source;
 pub mod http_server;
 pub mod inbound;
-/// Phase 81.19.b locale follow-up — moved from nexo-microapp-sdk so
+/// Locale validation. Lives here (rather than in nexo-microapp-sdk) so
 /// nexo-config can consume the closed-enum validator at YAML
 /// deserialise time. SDK still re-exports for back-compat.
 pub mod locale;
@@ -76,7 +75,7 @@ pub use microapp_error::{MicroappError, MicroappErrorKind, MICROAPP_ERROR_NOTIFY
 pub use template::{render_template, MISSING_PLACEHOLDER};
 pub use webhook::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};
 
-// Phase 83.12.ts-types-codegen — types tagged
+// TypeScript bindings codegen: types tagged
 // `#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]`
 // auto-generate one test per type via the `ts_rs::TS` derive macro.
 // Running `cargo test --features=ts-export -p nexo-tool-meta` triggers

@@ -1,4 +1,4 @@
-//! Phase 82.10.f — `nexo/admin/llm_providers/*` wire types.
+//! `nexo/admin/llm_providers/*` wire types.
 //!
 //! Operates on `llm.yaml.providers.<id>`. API keys stay as
 //! `${ENV_VAR}` references — the operator owns the secret; the
@@ -20,7 +20,7 @@ pub struct LlmProviderSummary {
     /// VAR NAME (not the value); the value is read at runtime by
     /// the LLM client.
     pub api_key_env: String,
-    /// Phase 83.8.12.5.c — owning tenant. `None` for the global
+    /// Owning tenant. `None` for the global
     /// provider table; `Some(tenant_id)` when the row lives
     /// under `llm.yaml.tenants.<tenant_id>.providers.<id>`.
     /// Operator UI uses this to badge per-tenant providers
@@ -29,14 +29,14 @@ pub struct LlmProviderSummary {
     pub tenant_scope: Option<String>,
 }
 
-/// Phase 83.8.12.5.c — list filter shared by all
+/// List filter shared by all
 /// `llm_providers` admin RPC methods.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LlmProvidersListFilter {
     /// `Some(tenant_id)` returns only providers under
     /// `llm.yaml.tenants.<id>.providers`. `Some("")` is invalid
-    /// (-32602). `None` returns the global table only (matches
-    /// pre-Phase 83.8.12.5 behaviour). Operator-level UIs that
+    /// (-32602). `None` returns the global table only (the
+    /// original behaviour). Operator-level UIs that
     /// want EVERY scope set this to `None` and merge with
     /// per-tenant lists themselves — explicit > implicit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -59,17 +59,17 @@ pub struct LlmProvidersListResponse {
 /// `#[serde(default)]` so wire-level back-compat is preserved.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LlmProviderUpsertInput {
-    /// Provider INSTANCE id. Phase 82.10.s — distinct from the
+    /// Provider INSTANCE id. Distinct from the
     /// factory id; can be e.g. `"minimax-cliente-a"` while
     /// `factory_type: Some("minimax")` routes against the
     /// `MiniMaxFactory`.
     pub id: String,
     /// HTTP base URL.
     pub base_url: String,
-    /// LEGACY env var name holding the API key. Phase 82.10.s
-    /// recommends `api_key_secret_value` instead — env vars
+    /// LEGACY env var name holding the API key. Prefer
+    /// `api_key_secret_value` instead — env vars
     /// collide between microapps in the same daemon. Kept for
-    /// back-compat with pre-82.10.s yamls and the M9 wizard's
+    /// back-compat with older yamls and the setup wizard's
     /// existing flow.
     #[serde(default)]
     pub api_key_env: String,
@@ -77,13 +77,13 @@ pub struct LlmProviderUpsertInput {
     /// map if not needed.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// Phase 82.10.s — factory id from the catalog the daemon
+    /// Factory id from the catalog the daemon
     /// reports via `llm_providers/catalog`. When `Some`, the yaml
     /// instance can be named anything; when `None`, the daemon
     /// treats the instance id as the factory id (legacy path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub factory_type: Option<String>,
-    /// Phase 82.10.s — name of the secret in the daemon's
+    /// Name of the secret in the daemon's
     /// SecretsStore that holds the API key. Mutually exclusive
     /// with `api_key_secret_value` AND `api_key_env`. Useful when
     /// the operator has already written the secret out-of-band
@@ -91,7 +91,7 @@ pub struct LlmProviderUpsertInput {
     /// point the provider at it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_secret_id: Option<String>,
-    /// Phase 82.10.s — write-through API key. The daemon stamps
+    /// Write-through API key. The daemon stamps
     /// the value into the SecretsStore (under a generated id) AND
     /// sets `api_key_secret_id` on the yaml in one transaction.
     /// Audit redaction MUST mask this field — it never lands in
@@ -99,13 +99,13 @@ pub struct LlmProviderUpsertInput {
     /// AND `api_key_env` (loud -32602 on multi-source).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_secret_value: Option<String>,
-    /// Phase 83.8.12.5.c — when `Some(tenant_id)`, the upsert
+    /// When `Some(tenant_id)`, the upsert
     /// targets `llm.yaml.tenants.<tenant_id>.providers.<id>`
     /// instead of the global `providers.<id>`. `None` keeps
-    /// pre-83.8.12.5 behaviour (writes the global table).
+    /// the original behaviour (writes the global table).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
-    /// Phase 82.10.u — selected auth mode for this instance.
+    /// Selected auth mode for this instance.
     /// `None` ⇒ `AuthMode::ApiKey` (back-compat). When set to an
     /// OAuth mode, the operator must run `oauth_start` /
     /// `oauth_finish` BEFORE upsert; the resulting bundle's
@@ -113,7 +113,7 @@ pub struct LlmProviderUpsertInput {
     /// equivalent — the factory's schema decides the field name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_mode: Option<AuthMode>,
-    /// Phase 82.10.u — schema-driven credential payload. Each key
+    /// Schema-driven credential payload. Each key
     /// MUST match a `CredentialFieldDescriptor.name` from the
     /// factory's `credential_schema`. Values are validated server-
     /// side against the descriptor's `validation` + `required` +
@@ -134,7 +134,7 @@ pub struct LlmProviderUpsertInput {
 pub struct LlmProvidersDeleteParams {
     /// Provider id to remove.
     pub provider_id: String,
-    /// Phase 83.8.12.5.c — when `Some(tenant_id)`, the delete
+    /// When `Some(tenant_id)`, the delete
     /// targets the tenant-scoped namespace. `None` removes
     /// from the global table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,7 +149,7 @@ pub struct LlmProvidersDeleteResponse {
     pub removed: bool,
 }
 
-/// Phase 82.10.u — JSON-RPC method that probes a DRAFT provider
+/// JSON-RPC method that probes a DRAFT provider
 /// payload before it lands in `llm.yaml`. Used by the SPA wizard
 /// between the "fill credentials" and "pick model" steps so the
 /// operator confirms the API key is accepted + enumerates live
@@ -185,7 +185,7 @@ pub struct LlmProviderProbeDraftInput {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Phase 82.10.u — OAuth start/finish endpoints. Two-step flow:
+// OAuth start/finish endpoints. Two-step flow:
 // SPA calls `oauth_start` to get an authorize URL (auth-code) or
 // user_code+verification_uri (device-code), the operator approves
 // in their browser, then SPA calls `oauth_finish` with the code
@@ -281,11 +281,11 @@ pub struct OAuthFinishResponse {
     pub secret_id: String,
 }
 
-/// Phase 82.10.l — JSON-RPC method that probes a configured LLM
+/// JSON-RPC method that probes a configured LLM
 /// provider's reachability + key validity from the daemon's
 /// network position.
 ///
-/// Operator UIs (e.g. M9 wizard's Step 1) call this AFTER
+/// Operator UIs (e.g. the setup wizard's first step) call this AFTER
 /// `secrets/write` + `llm_providers/upsert` to confirm the
 /// daemon successfully resolved the env var AND can reach the
 /// provider AND the key is accepted. Microapp's own probe
@@ -299,10 +299,10 @@ pub struct LlmProviderProbeInput {
     /// Provider id matching `llm.yaml.providers.<id>` (or
     /// `tenants.<tenant_id>.providers.<id>` when scoped).
     pub provider_id: String,
-    /// Phase 83.8.12.5.c — tenant scope. `None` reads the global
-    /// table; `Some(id)` reads the tenant namespace. v1 adapter
-    /// ignores tenant scope (always reads global) — full
-    /// support lands as `82.10.l.tenant`.
+    /// Tenant scope. `None` reads the global
+    /// table; `Some(id)` reads the tenant namespace. The current
+    /// adapter ignores tenant scope (always reads global) — full
+    /// support is still pending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
 }
@@ -324,7 +324,7 @@ pub struct LlmProviderProbeResponse {
     /// status was 2xx.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_count: Option<usize>,
-    /// Phase 82.10.t — model ids parsed from `data[].id` of an
+    /// Model ids parsed from `data[].id` of an
     /// OpenAI-compat `/v1/models` response. `None` when the
     /// provider doesn't expose that shape (Anthropic + Gemini use
     /// distinct endpoints) or the body wasn't parseable. UI falls
@@ -369,19 +369,19 @@ pub struct LlmProviderCatalogEntry {
     /// Empty when the factory hasn't declared any — UIs fall back
     /// to a free-text input in that case.
     pub models: Vec<String>,
-    /// Phase 82.10.u — declarative credential schema. Empty for
+    /// Declarative credential schema. Empty for
     /// factories that haven't migrated yet (SPA falls back to the
     /// legacy "single api_key field" UI). When non-empty, the SPA
     /// renders one input per descriptor + the upsert handler
     /// validates the operator's payload against this schema.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credential_schema: Vec<CredentialFieldDescriptor>,
-    /// Phase 82.10.u — auth modes the factory supports. Empty
-    /// implies `[ApiKey]` (back-compat with pre-82.10.u factories).
+    /// Auth modes the factory supports. Empty
+    /// implies `[ApiKey]` (back-compat with older factories).
     /// When > 1, the SPA renders an `auth_mode` dropdown.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_auth_modes: Vec<AuthMode>,
-    /// Phase 82.10.u — `true` when the factory exposes an
+    /// `true` when the factory exposes an
     /// OpenAI-compat `/v1/models` endpoint that `probe_draft` can
     /// hit to enumerate live models. `false` for Anthropic +
     /// Gemini (their model lists are static and exposed via the
@@ -400,7 +400,7 @@ pub struct LlmProvidersCatalogResponse {
 }
 
 // ──────────────────────────────────────────────────────────────────
-// Phase 82.10.u — schema-driven credential descriptors.
+// Schema-driven credential descriptors.
 //
 // Each LLM factory declares the credential fields it accepts. The
 // admin RPC catalog surfaces the schema; the SPA wizard renders one
@@ -730,7 +730,7 @@ mod schema_tests {
         assert_eq!(back, e);
     }
 
-    /// Phase 82.10.u back-compat: old microapps that don't know
+    /// Back-compat: old microapps that don't know
     /// about the new `auth_mode` + `fields` keys must still be
     /// able to serialise legacy upserts. The new fields default
     /// to absent on the wire.
@@ -774,7 +774,7 @@ mod schema_tests {
     /// `LlmProviderCatalogEntry` legacy payloads (without
     /// `credential_schema` + `supported_auth_modes` +
     /// `supports_models_probe`) deserialise cleanly into the
-    /// post-82.10.u shape so older operator UIs stay compatible.
+    /// current shape so older operator UIs stay compatible.
     #[test]
     fn catalog_entry_legacy_payload_deserialises_into_82_10_u_shape() {
         let raw = r#"{
@@ -834,7 +834,7 @@ mod tests {
         assert_eq!(i, back);
     }
 
-    /// Phase 83.8.12.5.c — `tenant_scope` round-trips when
+    /// `tenant_scope` round-trips when
     /// present and is omitted when `None` (graceful absence
     /// for legacy operators).
     #[test]
@@ -860,7 +860,7 @@ mod tests {
         assert!(!s.contains("tenant_scope"));
     }
 
-    /// Phase 83.8.12.5.c — pre-Phase 83.8.12.5 microapps emit
+    /// Older microapps emit
     /// no `tenant_scope` field on summaries; deserialise must
     /// default to `None`.
     #[test]
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(s, "{}", "tenant_id None must be omitted");
     }
 
-    /// Phase 82.10.l — probe wire shapes round-trip cleanly +
+    /// Probe wire shapes round-trip cleanly +
     /// `tenant_id` skips when None.
     #[test]
     fn probe_input_round_trip() {

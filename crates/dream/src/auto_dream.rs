@@ -1,14 +1,11 @@
-//! AutoDream control flow. Phase 80.1.
+//! AutoDream control flow — the `runAutoDream` closure that the driver
+//! loop invokes from its stop hooks.
 //!
-//! Verbatim port of
-//! `claude-code-leak/src/services/autoDream/autoDream.ts:122-273`
-//! (the `runAutoDream` closure inside `initAutoDream`).
-//!
-//! # Gate ordering (cheapest first — leak `:5-8`)
+//! # Gate ordering (cheapest first)
 //!
 //! 1. **Disabled** (`config.enabled == false`)
 //! 2. **KAIROS active** (`ctx.kairos_active() == true` → skip; KAIROS
-//!    runs the dream from a disk-skill instead — leak `:96`)
+//!    runs the dream from a disk-skill instead)
 //! 3. **Remote mode** (skip when running in remote-control mode)
 //! 4. **Auto-memory enabled** (memory_dir present)
 //! 5. **Time gate** (`hours_since_last >= min_hours`)
@@ -17,7 +14,7 @@
 //! 8. **Lock acquire** (no other process mid-consolidation)
 //!
 //! Force path (`RunReason::Manual`): bypass gates 5-7; lock
-//! `priorMtime = lastAt` so kill rollback is a no-op (leak `:174-179`).
+//! `priorMtime = lastAt` so kill rollback is a no-op.
 //!
 //! # Provider-agnostic
 //!
@@ -53,11 +50,10 @@ use crate::error::AutoDreamError;
 /// Why this fork was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunReason {
-    /// Per-turn invocation from driver-loop (mirror leak's
-    /// `executeAutoDream` from stopHooks).
+    /// Per-turn invocation from the driver loop's stop hooks.
     PerTurn,
     /// Operator-forced via `dream_now` LLM tool or `nexo agent dream`
-    /// CLI. Bypasses time/scan/session gates (mirror leak `isForced()`).
+    /// CLI. Bypasses time/scan/session gates.
     Manual,
 }
 
@@ -73,9 +69,8 @@ pub enum SkipReason {
     SessionGate,
 }
 
-/// Outcome of a single `check_and_run` call. Nexo addition (leak
-/// returns `Promise<void>`); structured for CLI / `dream_now` tool
-/// feedback.
+/// Outcome of a single `check_and_run` call. Structured for CLI /
+/// `dream_now` tool feedback.
 #[derive(Debug)]
 pub enum RunOutcome {
     /// Fork ran to completion. `files_touched` reflects the
@@ -102,8 +97,8 @@ pub enum RunOutcome {
         prior_mtime: i64,
     },
     /// Post-fork audit failed — fork attempted to edit paths outside
-    /// `memory_dir`. Lock rolled back. Defense-in-depth (nexo
-    /// addition; leak relies on canUseTool only).
+    /// `memory_dir`. Lock rolled back. Defense-in-depth on top of the
+    /// `canUseTool` gate.
     EscapeAudit {
         run_id: Uuid,
         escapes: Vec<PathBuf>,
@@ -114,13 +109,11 @@ pub enum RunOutcome {
 /// Snapshot of agent context fields the runner needs. Caller (driver-loop
 /// per-turn hook) builds this before invoking `check_and_run`.
 ///
-/// Phase 80.1.b refactor: `parent_ctx` and `last_chat_request` removed —
-/// caller no longer needs to thread them. The runner now holds an
-/// operator-supplied `parent_ctx_template` + `fork_system_prompt`/
-/// `fork_tools`/`fork_model` at construction time and clones the
-/// template per fork (mirror Phase 77.5 `ExtractMemories` shape).
-/// Forks build a fresh `ChatRequest` (no parent-cache share — same
-/// trade-off Phase 77.5 made).
+/// `parent_ctx` and `last_chat_request` are deliberately not threaded
+/// here: the runner holds an operator-supplied `parent_ctx_template` +
+/// `fork_system_prompt`/`fork_tools`/`fork_model` at construction time
+/// and clones the template per fork. Forks build a fresh `ChatRequest`
+/// (no parent-cache share).
 pub struct DreamContext {
     pub goal_id: GoalId,
     pub session_id: String,
@@ -141,15 +134,14 @@ pub struct AutoDreamRunner {
     fork_label: String,
     last_session_scan_at: AtomicI64, // unix seconds
     /// Parent context cloned per fork (Arc<...> internals — cheap).
-    /// Phase 80.1.b: operator builds once at boot.
+    /// Operator builds once at boot.
     parent_ctx_template: nexo_core::agent::AgentContext,
     /// Fresh `ChatRequest` system prompt for each fork. No parent
-    /// prompt-cache share — same trade-off as Phase 77.5
-    /// `ExtractMemories`.
+    /// prompt-cache share.
     fork_system_prompt: String,
     fork_tools: Vec<ToolDef>,
     fork_model: String,
-    /// Phase 80.1.g — optional checkpoint sink. When `Some`, the
+    /// Optional checkpoint sink. When `Some`, the
     /// runner records each `Completed` fork-pass via the trait impl
     /// (typically `MemoryGitCheckpointer` from nexo-core). Skipped
     /// when `files_touched.is_empty()` — no point recording an
@@ -215,15 +207,15 @@ impl AutoDreamRunner {
         })
     }
 
-    /// Override the fork label. Used by AWAY_SUMMARY (Phase 80.14)
-    /// and future eval harness (Phase 51) to share this runner's
-    /// machinery under a different audit tag.
+    /// Override the fork label. Lets callers such as AWAY_SUMMARY or
+    /// an eval harness share this runner's machinery under a different
+    /// audit tag.
     pub fn with_fork_label(mut self, label: impl Into<String>) -> Self {
         self.fork_label = label.into();
         self
     }
 
-    /// Phase 80.1.g — wire a memory-checkpoint sink. When set, the
+    /// Wire a memory-checkpoint sink. When set, the
     /// runner records each successful Completed fork-pass via the
     /// trait method (typically `nexo_core::agent::MemoryGitCheckpointer`).
     /// Skipped when `files_touched.is_empty()`. Failure of the
@@ -264,7 +256,7 @@ impl AutoDreamRunner {
         self.pre_dream_snapshot.is_some()
     }
 
-    /// Phase 80.1.g — observability accessor for boot logs / tests.
+    /// Observability accessor for boot logs / tests.
     pub fn has_git_checkpointer(&self) -> bool {
         self.git_checkpointer.is_some()
     }
@@ -300,14 +292,13 @@ impl AutoDreamRunner {
         )
     }
 
-    /// Per-turn hook entry point. Mirrors leak `executeAutoDream`.
+    /// Per-turn hook entry point.
     pub async fn check_and_run(&self, ctx: &DreamContext) -> RunOutcome {
         self.run(ctx, RunReason::PerTurn).await
     }
 
-    /// Manual force. Bypasses time / scan / session gates. Mirrors
-    /// leak `isForced()` semantics (build-time hardcoded false in the
-    /// leak — nexo exposes via `dream_now` tool + CLI).
+    /// Manual force. Bypasses time / scan / session gates. Exposed via
+    /// the `dream_now` tool + CLI.
     pub async fn run_forced(&self, ctx: &DreamContext) -> RunOutcome {
         self.run(ctx, RunReason::Manual).await
     }
@@ -323,8 +314,8 @@ impl AutoDreamRunner {
             };
         }
 
-        // Gate 2: KAIROS active (mirror leak `:96` — KAIROS uses
-        // disk-skill dream; autoDream skips).
+        // Gate 2: KAIROS active — KAIROS uses the disk-skill dream, so
+        // autoDream skips.
         if ctx.kairos_active {
             return RunOutcome::Skipped {
                 gate: SkipReason::KairosActive,
@@ -356,7 +347,7 @@ impl AutoDreamRunner {
             };
         }
 
-        // Gate 6: scan throttle (mirror leak `:143-150`).
+        // Gate 6: scan throttle.
         let now_secs = now_ms / 1000;
         let last_scan = self.last_session_scan_at.load(Ordering::Relaxed);
         if !force && now_secs - last_scan < cfg.scan_interval.as_secs() as i64 {
@@ -390,9 +381,8 @@ impl AutoDreamRunner {
             };
         }
 
-        // Lock acquire. Force path (mirror leak `:174-179`):
-        // skip acquire entirely; use lastAt as priorMtime so
-        // rollback is a no-op.
+        // Lock acquire. Force path: skip acquire entirely; use lastAt
+        // as priorMtime so rollback is a no-op.
         let prior_mtime = if force {
             last_at
         } else {
@@ -427,7 +417,7 @@ impl AutoDreamRunner {
             "fork starting"
         );
 
-        // Build prompt extra block — verbatim leak `:216-221`.
+        // Build prompt extra block.
         let extra = build_extra(&sessions);
         let prompt =
             ConsolidationPromptBuilder::new(self.memory_dir.clone(), ctx.transcript_dir.clone())
@@ -498,9 +488,8 @@ impl AutoDreamRunner {
             self.memory_dir.clone(),
         ));
 
-        // CacheSafeParams built fresh from operator-supplied template
-        // — Phase 80.1.b refactor. No parent-cache share (same trade-off
-        // Phase 77.5 ExtractMemories made). Provider-agnostic.
+        // CacheSafeParams built fresh from the operator-supplied
+        // template. No parent-cache share. Provider-agnostic.
         let cache_safe = CacheSafeParams {
             system_prompt: Some(self.fork_system_prompt.clone()),
             system_blocks: Vec::new(),
@@ -575,8 +564,7 @@ impl AutoDreamRunner {
                     };
                 }
 
-                // Update phase to Updating if any edits landed (mirror
-                // leak `DreamTask.ts:96`).
+                // Update phase to Updating if any edits landed.
                 if !progress.touched.is_empty() {
                     let _ = self.audit.update_phase(run_id, DreamPhase::Updating).await;
                 }
@@ -596,8 +584,8 @@ impl AutoDreamRunner {
                     "fork done"
                 );
 
-                // Phase 80.1.g — checkpoint to git when configured AND
-                // the fork actually wrote files. Empty `touched` means
+                // Checkpoint to git when configured AND the fork
+                // actually wrote files. Empty `touched` means
                 // the fork ran but didn't change any memory file (e.g.
                 // pruned candidates rejected); the audit row already
                 // captures that — no point in an empty git commit.
@@ -666,10 +654,10 @@ impl AutoDreamRunner {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.1.b — `AutoDreamHook` impl bridges `AutoDreamRunner` to the
-// driver-loop without forcing nexo-driver-loop to depend on nexo-dream
-// (which would cycle: nexo-core → nexo-dispatch-tools → nexo-driver-loop
-// → nexo-dream → nexo-core).
+// `AutoDreamHook` impl bridges `AutoDreamRunner` to the driver-loop
+// without forcing nexo-driver-loop to depend on nexo-dream (which would
+// cycle: nexo-core → nexo-dispatch-tools → nexo-driver-loop → nexo-dream
+// → nexo-core).
 //
 // The impl converts the slim `DreamContextLite` (driver-types) into the
 // internal `DreamContext` and maps `RunOutcome → AutoDreamOutcomeKind`.
@@ -690,8 +678,8 @@ impl AutoDreamHook for AutoDreamRunner {
 }
 
 /// Lossy mapping from `RunOutcome` to `AutoDreamOutcomeKind`. Detail
-/// fields (run_id, files_touched, etc.) drop here — full row lives
-/// in the 80.18 `dream_runs` audit table.
+/// fields (run_id, files_touched, etc.) drop here — the full row lives
+/// in the `dream_runs` audit table.
 pub fn run_outcome_to_kind(outcome: &RunOutcome) -> AutoDreamOutcomeKind {
     match outcome {
         RunOutcome::Completed { .. } => AutoDreamOutcomeKind::Completed,
@@ -711,13 +699,12 @@ pub fn run_outcome_to_kind(outcome: &RunOutcome) -> AutoDreamOutcomeKind {
     }
 }
 
-/// Phase 80.1.g — render the git-checkpoint body for a Completed
-/// fork-pass. Format mirrors the scoring-sweep pattern at
-/// `src/main.rs:3640-3665`: top line carries the audit run id (so a
-/// reader can `git log --grep auto_dream` then cross-link to the row
-/// in `dream_runs.db`), followed by a markdown-bullet list of the
-/// touched paths. No truncation cap because fork passes typically
-/// touch 1-5 files (constrained by AutoMemFilter + 30-turn cap).
+/// Render the git-checkpoint body for a Completed fork-pass. The top
+/// line carries the audit run id (so a reader can `git log --grep
+/// auto_dream` then cross-link to the row in `dream_runs.db`), followed
+/// by a markdown-bullet list of the touched paths. No truncation cap
+/// because fork passes typically touch 1-5 files (constrained by
+/// AutoMemFilter + the 30-turn cap).
 pub fn build_checkpoint_body(run_id: Uuid, files: &[PathBuf]) -> String {
     let mut s = format!("audit_run_id: {run_id}\n\n");
     for f in files {
@@ -727,7 +714,6 @@ pub fn build_checkpoint_body(run_id: Uuid, files: &[PathBuf]) -> String {
 }
 
 /// Build the per-run `extra` block for the consolidation prompt.
-/// Verbatim port of leak `:216-221`.
 pub fn build_extra(sessions: &[String]) -> String {
     let mut out = String::new();
     out.push_str(
@@ -1231,7 +1217,7 @@ mod tests {
         );
     }
 
-    // ── Phase 80.1.g — git checkpoint wiring ──
+    // ── git checkpoint wiring ──
 
     use std::sync::atomic::{AtomicUsize, Ordering as StdOrdering};
     use std::sync::Mutex as StdMutex;

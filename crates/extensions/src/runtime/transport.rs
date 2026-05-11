@@ -44,7 +44,7 @@ pub trait ExtensionTransport: Send + Sync {
 
     async fn shutdown(&self);
 
-    /// Phase 11.3 follow-up — like `shutdown` but threads a reason into
+    /// Like `shutdown` but threads a reason into
     /// the `shutdown` notification params. Default delegates to
     /// `shutdown` and ignores the reason so third-party mocks keep
     /// working unchanged.

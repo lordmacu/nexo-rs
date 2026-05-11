@@ -1,13 +1,12 @@
-//! Phase 67.B — multi-agent registry.
+//! Multi-agent registry.
 //!
 //! Tracks every in-flight driver goal with a live snapshot
 //! (turn N/M, last decision, last acceptance, diff_stat) and a
 //! persistent backing store so the daemon can rehydrate after a
 //! restart and answer "qué hace el agente X" via the chat tools.
 //!
-//! 67.B.2 ships the trait surface + SQLite store + lifecycle tests.
-//! 67.B.3 adds the cap / queue / live event subscriber. 67.B.4 wires
-//! reattach + log buffer.
+//! Provides the trait surface + SQLite store, the cap / queue / live
+//! event subscriber, and the boot-time reattach + log buffer.
 
 pub mod dream_run;
 pub mod log_buffer;

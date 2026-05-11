@@ -1,4 +1,4 @@
-//! Phase 67.4 — driver agent loop. See `README.md` and
+//! Driver agent loop. See `README.md` and
 //! `docs/src/architecture/driver-subsystem.md` for the architecture.
 
 pub mod acceptance;
@@ -23,8 +23,8 @@ pub mod replay;
 // the module so Windows builds (which don't ship UnixListener
 // / UnixStream) compile clean. Operators on Windows targeting
 // the daemon's permission-prompt forwarder can either run via
-// WSL or wait for the Phase 27.x follow-up that swaps Unix
-// sockets for a named-pipe / TCP-loopback fallback.
+// WSL or wait for the follow-up that swaps Unix sockets for a
+// named-pipe / TCP-loopback fallback.
 #[cfg(unix)]
 pub mod socket;
 pub mod workspace;

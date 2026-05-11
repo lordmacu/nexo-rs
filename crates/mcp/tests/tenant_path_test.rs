@@ -1,4 +1,4 @@
-//! Phase 76.4 — symlink-aware containment tests for
+//! Symlink-aware containment tests for
 //! `tenant_scoped_canonicalize`. Unix-only because Windows
 //! `std::fs::canonicalize` returns UNC paths that break the prefix
 //! check; the production targets are Linux musl + Termux.

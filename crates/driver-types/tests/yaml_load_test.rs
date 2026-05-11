@@ -1,5 +1,5 @@
 //! Confirms the YAML shape published in the spec deserialises into
-//! `Goal` without manual conversions. The driver loop (Phase 67.4) is
+//! `Goal` without manual conversions. The driver loop is
 //! the runtime consumer; here we lock the contract.
 
 use std::time::Duration;

@@ -1,8 +1,8 @@
 //! Launch config for a stdio MCP server.
 //!
-//! The YAML loader (12.3/12.4) is responsible for resolving `${ENV_VAR}`
-//! placeholders before constructing this struct. 12.1 treats every field
-//! as fully resolved.
+//! The YAML loader is responsible for resolving `${ENV_VAR}`
+//! placeholders before constructing this struct; every field is
+//! treated as fully resolved here.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,12 +20,12 @@ pub struct McpServerConfig {
     pub initialize_timeout: Duration,
     pub call_timeout: Duration,
     pub shutdown_grace: Duration,
-    /// Phase 12.8 — when Some and the server advertises the `logging`
-    /// capability, the client sends `logging/setLevel` once after
-    /// initialize. Unknown levels or missing capability are logged at
-    /// `warn` and skipped — connect does not fail.
+    /// When Some and the server advertises the `logging` capability,
+    /// the client sends `logging/setLevel` once after initialize.
+    /// Unknown levels or missing capability are logged at `warn` and
+    /// skipped — connect does not fail.
     pub log_level: Option<String>,
-    /// Phase 12.8 — per-server override for `mcp.context.passthrough`.
+    /// Per-server override for `mcp.context.passthrough`.
     /// `None` defers to the global flag; `Some(bool)` forces the value
     /// regardless of the global setting.
     pub context_passthrough: Option<bool>,

@@ -1,4 +1,4 @@
-//! Phase 80.15 — assistant-mode runtime.
+//! Assistant-mode runtime.
 //!
 //! Per-binding behavioural toggle. When active, the binding's
 //! effective system prompt picks up an addendum that nudges the
@@ -9,7 +9,7 @@
 //! The toggle is **boot-immutable**: enabling / disabling
 //! `assistant_mode` requires a daemon restart so a single turn
 //! never sees a half-flipped state. The addendum *content* itself
-//! IS hot-reloadable through the Phase 18 ArcSwap path — operators
+//! IS hot-reloadable through the ArcSwap config path — operators
 //! can iterate on the prompt text without bouncing the daemon.
 //!
 //! Provider-agnostic: the bundled default addendum is plain English
@@ -37,8 +37,8 @@ input when you genuinely need a decision they can supply.";
 /// `enabled` is captured snapshot-style; toggling it requires a
 /// restart. `addendum` lives behind an `Arc` so cloning into the
 /// `AgentContext` is cheap. `initial_team` is also `Arc`-shared —
-/// the resolved spec doesn't change at runtime (Phase 80.15.b will
-/// wire actual spawn behaviour against this list).
+/// the resolved spec doesn't change at runtime (actual spawn
+/// behaviour against this list is wired separately).
 #[derive(Clone, Debug)]
 pub struct ResolvedAssistant {
     pub enabled: bool,

@@ -1,4 +1,4 @@
-//! Phase 82.10.b — admin RPC capability gates.
+//! Admin RPC capability gates.
 //!
 //! Layered grant model:
 //! - **plugin.toml** declares `[capabilities.admin] required +
@@ -113,9 +113,9 @@ pub enum CapabilityBootWarn {
 /// `extensions.yaml` grants and produces a [`CapabilityBootReport`].
 ///
 /// Caller wires:
-/// 1. Read all discovered plugin manifests (already done by Phase
-///    81 plugin discovery / current Phase 11 boot).
-/// 2. Read `extensions.yaml.entries` (Phase 82.10 — new field).
+/// 1. Read all discovered plugin manifests (already done by plugin
+///    discovery at boot).
+/// 2. Read `extensions.yaml.entries`.
 /// 3. Call this fn → `CapabilityBootReport`.
 /// 4. Treat `errors` as fail-fast. Log `warns` at WARN level.
 /// 5. Feed `grants` into `CapabilitySet::from_grants(...)`.

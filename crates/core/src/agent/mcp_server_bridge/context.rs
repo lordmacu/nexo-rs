@@ -1,4 +1,4 @@
-//! Phase 79.M — boot context for the exposable-tool dispatcher.
+//! Boot context for the exposable-tool dispatcher.
 //!
 //! Holds the optional handles available when `nexo mcp-server` is
 //! standing up its tool registry. Each handle is `Option<_>` so that
@@ -56,7 +56,7 @@ pub struct McpServerBootContext {
     /// boots a `LocalFsSnapshotter` (or any other impl) from the
     /// daemon's `<state_root>/snapshots/` layout.
     pub memory_snapshotter: Option<Arc<dyn MemorySnapshotter>>,
-    /// Phase 79.M.c.full — Config self-edit handles. Wired only
+    /// Config self-edit handles. Wired only
     /// when the `config-self-edit` Cargo feature is enabled.
     /// Compile-time gate keeps the trait objects out of the type
     /// when the feature is off so default builds carry no overhead.

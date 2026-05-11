@@ -20,9 +20,9 @@ pub use nats::{NatsRuntime, NatsRuntimeOptions};
 pub use stdio::{StdioRuntime, StdioSpawnOptions};
 pub use transport::ExtensionTransport;
 
-/// Phase 11.6 — lifecycle hook names that extensions can subscribe to.
-/// Kept small on purpose; OpenClaw has ~29 hooks but most are feature-
-/// specific. This list maps to events our framework already emits.
+/// Lifecycle hook names that extensions can subscribe to.
+/// Kept small on purpose; this list maps to events the framework
+/// already emits.
 pub const HOOK_NAMES: &[&str] = &[
     "before_message",
     "after_message",
@@ -45,8 +45,8 @@ pub fn is_valid_hook(name: &str) -> bool {
 /// consumption of the final event). `abort=true` wins over any
 /// `override_event` — aborted handlers don't get to reshape the event.
 ///
-/// Phase 83.3 adds three optional fields used by the vote-to-block /
-/// vote-to-transform interceptor path:
+/// Three optional fields support the vote-to-block / vote-to-transform
+/// interceptor path:
 /// - `decision`: explicit `"allow" | "block" | "transform"` (the
 ///   legacy `abort` boolean is still accepted; this field is the
 ///   richer audit-log signal).
@@ -67,17 +67,16 @@ pub struct HookResponse {
     #[serde(default, rename = "override", skip_serializing_if = "Option::is_none")]
     pub override_event: Option<serde_json::Value>,
 
-    /// Phase 83.3 — explicit decision discriminator. `None` for
-    /// pre-83.3 responses (legacy `abort` boolean is the source of
-    /// truth in that case).
+    /// Explicit decision discriminator. `None` for legacy responses
+    /// (the `abort` boolean is the source of truth in that case).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<String>,
-    /// Phase 83.3 — rewritten inbound body. Only meaningful when
+    /// Rewritten inbound body. Only meaningful when
     /// `decision == Some("transform")`; the host applies the
     /// rewrite (subject to operator policy) and audit-logs the diff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transformed_body: Option<String>,
-    /// Phase 83.3 — anti-loop signal. `true` means the host should
+    /// Anti-loop signal. `true` means the host should
     /// suppress pending auto-replies for this conversation in
     /// addition to whatever block/transform action was voted for.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -115,7 +114,7 @@ mod tests {
         assert!(!r.do_not_reply_again);
     }
 
-    // ── Phase 83.3 — parser tolerates new + legacy shapes ──
+    // ── parser tolerates new + legacy shapes ──
 
     #[test]
     fn hook_response_parses_legacy_abort_shape() {
@@ -159,13 +158,12 @@ mod tests {
 
 /// Tool declared by an extension in its handshake response.
 ///
-/// Accepts two on-the-wire shapes (Phase 81.13.c — bridge between
-/// SDKs that emit just the name string and the framework's full
-/// descriptor):
+/// Accepts two on-the-wire shapes — a bridge between SDKs that emit
+/// just the name string and the framework's full descriptor:
 ///
 /// - **Bare string** (`"agent_delete"`) → name-only descriptor
 ///   with empty `description` + `input_schema = {}`. Used by
-///   pre-82 SDKs whose `tools/list` response only knows tool
+///   older SDKs whose `tools/list` response only knows tool
 ///   names.
 /// - **Full object** (`{name, description, input_schema}`) →
 ///   richer descriptor used by the modern microapp SDK.

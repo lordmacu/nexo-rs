@@ -1,12 +1,11 @@
-//! Phase 82.10.h.b.3 — extension-host hook for routing inbound
-//! `app:`-prefixed JSON-RPC frames to an admin RPC dispatcher.
+//! Extension-host hook for routing inbound `app:`-prefixed JSON-RPC
+//! frames to an admin RPC dispatcher.
 //!
 //! The reader task in [`super::stdio`] receives every line from
 //! the extension's stdout. Frames whose `id` is a string starting
-//! with `app:` are microapp-initiated admin requests (per the
-//! Phase 82.10 wire contract); they are NOT responses to
-//! daemon-initiated `tools/call` and must NOT be matched against
-//! the pending-request map. The reader hands them to an
+//! with `app:` are microapp-initiated admin requests; they are NOT
+//! responses to daemon-initiated `tools/call` and must NOT be matched
+//! against the pending-request map. The reader hands them to an
 //! [`AdminRouter`] instead.
 //!
 //! The trait lives here (consumer side) rather than in

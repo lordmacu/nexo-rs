@@ -56,7 +56,7 @@ pub enum AttemptOutcome {
     /// Runtime-local park request emitted when the model calls Sleep.
     Sleep { duration_ms: u64, reason: String },
     /// Budget exhausted on one of the four axes — driver routes to
-    /// 67.10 escalate.
+    /// escalate.
     BudgetExhausted { axis: BudgetAxis },
     /// External cancellation (`CancellationToken`).
     Cancelled,

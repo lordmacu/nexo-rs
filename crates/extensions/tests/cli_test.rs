@@ -1,4 +1,4 @@
-//! Phase 11.7 — integration tests for `agent ext` subcommands.
+//! Integration tests for `agent ext` subcommands.
 //!
 //! Uses `tempfile::TempDir` to build a fixture workspace with manifests and
 //! an `extensions.yaml`, then exercises the CLI entry points directly.

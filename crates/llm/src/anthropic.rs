@@ -92,7 +92,7 @@ impl CacheBreakTracker {
         if prev_read == 0 {
             return None;
         }
-        // Phase 77.4 trigger: cache-read dropped by >50% turn-over-turn.
+        // Trigger when cache-read dropped by >50% turn-over-turn.
         let curr_read_twice = u64::from(current.cache_read_input_tokens).saturating_mul(2);
         if curr_read_twice >= u64::from(prev_read) {
             return None;
@@ -276,8 +276,7 @@ pub(crate) fn merge_beta_headers(
 /// `base_url`. Handles both the canonical `https://api.anthropic.com`
 /// shape (no trailing path) and the legacy `https://api.anthropic.com/v1`
 /// shape some operator yamls carry — appending `/v1/messages`
-/// blindly would land at `/v1/v1/messages` and 404. Mirrors
-/// `research/src/agents/anthropic-transport-stream.ts:430-431`:
+/// blindly would land at `/v1/v1/messages` and 404:
 /// strip trailing slashes, then route on the `/v1` suffix.
 pub(crate) fn build_messages_url(base_url: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
@@ -761,8 +760,9 @@ pub(crate) fn caching_flags(model: &str, req: &ChatRequest) -> CachingFlags {
 /// a legacy `Value::String`, it is promoted to an array with the spoof
 /// first and the original text second; if it is already an array, the
 /// spoof is inserted at position 0.
-/// Phase 90 audit fix (Cody A.5) — env-var gate for the
-/// Claude-Code identity spoof. `false` only when the operator
+///
+/// Env-var gate for the Claude-Code identity spoof. `false` only
+/// when the operator
 /// explicitly exports `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF` to
 /// an "off"-ish value. Empty string + unset + truthy values
 /// keep the spoof ON (backward compatibility).
@@ -901,10 +901,9 @@ fn build_body(model: &str, req: &ChatRequest, is_subscription: bool) -> Value {
     }
     // Bearer-auth requests must declare the Claude-Code identity in the
     // first system block. Without it, Anthropic rejects Opus / Sonnet 4.x
-    // with a generic 4xx that surfaces as "no quota" upstream. Mirrors
-    // OpenClaw `anthropic-transport-stream.ts:627-641`.
+    // with a generic 4xx that surfaces as "no quota" upstream.
     //
-    // Phase 90 audit fix (Cody A.5) — runtime opt-out via
+    // Runtime opt-out via
     // `NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF=1` for microapps that
     // use Anthropic OAuth/setup-token but do NOT want to falsely
     // identify as Claude Code (e.g. an integration that surfaces
@@ -1187,18 +1186,16 @@ impl LlmProviderFactory for AnthropicFactory {
         // is the primary source — this list is just a safe default
         // shown when the probe can't run.
         //
-        // IDs sourced from `claude-code-leak/src/utils/model/configs.ts`
-        // `firstParty` field + `model.ts::getDefaultSonnetModel`
-        // (line 127, returns `sonnet46` for firstParty) and
-        // `getDefaultHaikuModel` (line 137, returns `haiku45` for
-        // all platforms).
+        // IDs match the first-party model set Claude Code uses,
+        // with `sonnet46` as the default Sonnet and `haiku45` as
+        // the default Haiku across platforms.
         //
         // Curated to 5 SKUs Claude Code Pro / Max OAuth tiers
         // accept (verified live 2026-05-05 against OAuth bundle
         // bearer auth):
         //
-        // 1. `claude-sonnet-4-6` — versionless alias, Pro default
-        //    per leak. Confirmed working live.
+        // 1. `claude-sonnet-4-6` — versionless alias, Pro default.
+        //    Confirmed working live.
         // 2. `claude-opus-4-6` — versionless alias, Max default
         //    per leak.
         // 3. `claude-haiku-4-5-20251001` — universal haiku per
@@ -1220,7 +1217,7 @@ impl LlmProviderFactory for AnthropicFactory {
         ]
     }
 
-    /// Phase 82.10.u — credential schema. The `auth_mode` selector
+    /// Credential schema. The `auth_mode` selector
     /// is always visible; `api_key` shows up when `auth_mode ∈
     /// {api_key, setup_token}` (the SetupToken flavor reuses the
     /// `api_key` field name to keep the wire shape uniform — the
@@ -1696,7 +1693,7 @@ mod tests {
         assert!(validate_request(&r).is_ok());
     }
 
-    // -------- prompt-caching tests (Phase A) --------
+    // -------- prompt-caching tests --------
 
     use crate::prompt_block::{CachePolicy, PromptBlock};
 
@@ -1856,7 +1853,7 @@ mod tests {
         assert!(!m.contains("extended-cache-ttl"));
     }
 
-    /// Phase 90 audit fix (Cody A.5) — env-var opt-out for the
+    /// Env-var opt-out for the
     /// Claude-Code identity spoof on Bearer-auth requests.
     /// Production default keeps the spoof ON; microapps that
     /// integrate Anthropic without falsely identifying as Claude

@@ -6,13 +6,12 @@
 //! (`flush_interval_ms`), and persists. SIGTERM drains pending
 //! rows synchronously (with a timeout) before the process exits.
 //!
-//! Anti-pattern flagged: the leak's `shouldSampleEvent`
-//! (`claude-code-leak/src/services/analytics/firstPartyEventLogger.ts:57-85`)
-//! drops a configurable fraction of events to keep volume down.
-//! Audit log is not telemetry — sampling is forbidden. Phase
-//! 76.11 logs every dispatch at 100% and only drops on
-//! buffer-full conditions, with a hard `tracing::error!` line per
-//! drop so the operator notices rather than discovers a gap.
+//! No sampling: an audit log is not telemetry, so unlike
+//! event-sampling analytics we never drop a configurable fraction
+//! of events. Every dispatch is logged at 100% and rows are only
+//! dropped on buffer-full conditions, with a hard `tracing::error!`
+//! line per drop so the operator notices rather than discovers a
+//! gap.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

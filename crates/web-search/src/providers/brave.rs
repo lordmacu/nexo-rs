@@ -2,7 +2,6 @@
 //!
 //! Endpoint: `https://api.search.brave.com/res/v1/web/search`
 //! Auth: `X-Subscription-Token: <key>` header.
-//! Reference: `research/extensions/brave/src/brave-web-search-provider.shared.ts`.
 
 use std::time::Duration;
 

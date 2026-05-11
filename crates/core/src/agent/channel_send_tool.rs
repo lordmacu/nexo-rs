@@ -1,4 +1,4 @@
-//! Phase 80.9 — `channel_send` LLM tool.
+//! `channel_send` LLM tool.
 //!
 //! Stable wrapper that lets the agent reply through a registered
 //! MCP channel server without having to know the server's
@@ -38,7 +38,7 @@ pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
 #[derive(Clone)]
 pub struct ChannelSendTool {
     registry: SharedChannelRegistry,
-    /// Phase 80.9.j — `None` => resolve from `ctx.effective` at call time.
+    /// `None` => resolve from `ctx.effective` at call time.
     binding_id: Option<String>,
 }
 
@@ -50,7 +50,7 @@ impl ChannelSendTool {
         }
     }
 
-    /// Phase 80.9.j — dynamic-binding constructor.
+    /// Dynamic-binding constructor.
     pub fn new_dynamic(registry: SharedChannelRegistry) -> Self {
         Self {
             registry,

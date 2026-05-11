@@ -228,9 +228,9 @@ impl MiniMaxClient {
         if status == 429 {
             let headers = resp.headers().clone();
             let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
-            // Phase C4.c — MiniMax speaks OpenAI-compat headers
-            // shape; reuse `extract_openai_compat_headers` for
-            // the Rejected→QuotaExceeded promotion path.
+            // MiniMax speaks the OpenAI-compat header shape; reuse
+            // `extract_openai_compat_headers` for the
+            // Rejected→QuotaExceeded promotion path.
             let info = crate::rate_limit_info::extract_openai_compat_headers(&headers);
             return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
@@ -282,9 +282,9 @@ impl MiniMaxClient {
         if status == 429 {
             let headers = response.headers().clone();
             let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
-            // Phase C4.c — MiniMax speaks OpenAI-compat headers
-            // shape; reuse `extract_openai_compat_headers` for
-            // the Rejected→QuotaExceeded promotion path.
+            // MiniMax speaks the OpenAI-compat header shape; reuse
+            // `extract_openai_compat_headers` for the
+            // Rejected→QuotaExceeded promotion path.
             let info = crate::rate_limit_info::extract_openai_compat_headers(&headers);
             return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
@@ -485,7 +485,7 @@ fn resolve_group_id(cfg: &LlmProviderConfig) -> Option<String> {
 
 // ── OpenAI-compat wire ────────────────────────────────────────────────────────
 
-/// Phase A.3 — MiniMax has no public docs for prompt-cache breakpoints
+/// MiniMax has no public docs for prompt-cache breakpoints
 /// (their Anthropic-flavor wire mirrors Claude shapes but the platform
 /// has not exposed pricing/breakpoint behavior). Treat `system_blocks`
 /// / `cache_tools` as a no-op for now: flatten the blocks into the
@@ -554,7 +554,7 @@ fn openai_tool_choice(tc: &ToolChoice) -> Value {
 
 fn build_openai_messages(req: &ChatRequest) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
-    // Phase A.3 — flatten cache blocks into the system slot so the
+    // Flatten cache blocks into the system slot so the
     // content actually reaches the model on providers without native
     // breakpoint support. system_prompt (legacy) wins precedence —
     // we append the flattened blocks after it.
@@ -814,7 +814,7 @@ fn build_anthropic_body(req: &ChatRequest) -> Value {
         "max_tokens": req.max_tokens,
         "temperature": req.temperature,
     });
-    // Phase A.3 — flatten system_blocks into the system slot so cache
+    // Flatten system_blocks into the system slot so cache
     // opt-in callers don't lose the content even though MiniMax does
     // not support cache_control natively.
     let mut system_text = String::new();

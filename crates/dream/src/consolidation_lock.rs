@@ -1,8 +1,5 @@
 //! Lock file whose mtime IS `lastConsolidatedAt`. Body is the holder's
-//! PID. Phase 80.1.
-//!
-//! Verbatim port of
-//! `claude-code-leak/src/services/autoDream/consolidationLock.ts:1-140`.
+//! PID.
 //!
 //! # Design
 //!
@@ -18,7 +15,7 @@
 //!   (returns `Ok(None)`).
 //! - `rollback`: rewind mtime to prior. `prior == 0` → unlink.
 //!   Idempotent — kill + fail double-call safe.
-//! - **NO heartbeat** — leak doesn't have one. Operator with
+//! - **NO heartbeat** — by design. An operator with
 //!   sub-1h-but-close-to-1h forks should raise `holder_stale`.
 
 use std::path::{Path, PathBuf};
@@ -92,7 +89,7 @@ impl ConsolidationLock {
     /// `Ok(None)` when blocked by a live holder OR when we lost the
     /// race against another acquirer.
     ///
-    /// Mirror leak `:46-84`:
+    /// Sequence:
     /// 1. stat + read body in parallel.
     /// 2. If mtime exists AND `now - mtime < holder_stale` AND PID is
     ///    live → bail `Ok(None)`.
@@ -139,9 +136,8 @@ impl ConsolidationLock {
     }
 
     /// Rewind mtime to pre-acquire. Idempotent.
-    /// `prior == 0` → unlink (mirror leak `:91-99`).
-    /// Otherwise → set utimes to `prior_mtime / 1000` seconds (mirror
-    /// leak `:101-107`).
+    /// `prior == 0` → unlink. Otherwise → set utimes to
+    /// `prior_mtime / 1000` seconds.
     pub async fn rollback(&self, prior_mtime: i64) {
         if prior_mtime == 0 {
             // Try to unlink. Errors logged but not bubbled.
@@ -164,7 +160,7 @@ impl ConsolidationLock {
         let timestamp = SystemTime::UNIX_EPOCH + Duration::new(secs as u64, nanos);
         let path = self.path.clone();
         let result = tokio::task::spawn_blocking(move || {
-            // Clear PID body before utimes — leak `:103`.
+            // Clear PID body before utimes.
             std::fs::write(&path, b"")?;
             filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(timestamp))?;
             Ok::<(), std::io::Error>(())
@@ -185,8 +181,8 @@ impl ConsolidationLock {
         }
     }
 
-    /// Stamp from manual `/dream`. Best-effort. Mirror leak `:130-138`.
-    /// Optimistic: fires at prompt-build time, no completion hook.
+    /// Stamp from manual `/dream`. Best-effort and optimistic: fires
+    /// at prompt-build time, no completion hook.
     pub async fn record_consolidation(&self) {
         if let Some(parent) = self.path.parent() {
             let _ = fs::create_dir_all(parent).await;
@@ -211,8 +207,7 @@ impl ConsolidationLock {
 /// True if a process with `pid` is currently running.
 ///
 /// **Unix**: `kill(0)` semantics — send no signal but return Ok
-/// if the process exists. Same shape as TS leak's
-/// `process.kill(pid, 0)`.
+/// if the process exists.
 ///
 /// **Windows**: shells out to `tasklist /FI "PID eq <pid>"` and
 /// matches the captured output for the pid. Slower (~10-30 ms
@@ -244,7 +239,7 @@ pub fn is_pid_running(pid: i32) -> bool {
     }
 }
 
-/// Phase 80.1.e — sync probe for the scoring sweep coordination.
+/// Sync probe for the scoring sweep coordination.
 /// Reads the lock file, parses the PID body, and checks live-ness.
 /// **Fail-open**: any I/O / parse error → `false` (no live holder
 /// detected). Real liveness checks log nothing — sweep proceeds
@@ -270,11 +265,10 @@ fn now_unix_ms() -> i64 {
 }
 
 /// List session IDs from a transcript dir whose mtime > `since_ms`,
-/// excluding the current session. Mirror leak `:118-124`.
+/// excluding the current session.
 ///
 /// Sessions are identified by directory entries whose name parses as
-/// a UUID. Non-UUID files (e.g., `agent-*.jsonl` per leak `:117`) are
-/// skipped.
+/// a UUID. Non-UUID files (e.g., `agent-*.jsonl`) are skipped.
 pub async fn list_sessions_touched_since(
     transcript_dir: &Path,
     since_ms: i64,
@@ -506,7 +500,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── Phase 80.1.e — ConsolidationLockProbe impl ──
+    // ── ConsolidationLockProbe impl ──
 
     use nexo_driver_types::ConsolidationLockProbe;
 

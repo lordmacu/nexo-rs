@@ -1,12 +1,8 @@
 //! All errors the LSP client can surface to the agent runtime.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:17`
-//!     — `LSP_ERROR_CONTENT_MODIFIED = -32801` constant lifted into
-//!     `Wire` body when retries exhaust.
-//!   * `claude-code-leak/src/tools/LSPTool/LSPTool.ts:53` —
-//!     `MAX_LSP_FILE_SIZE_BYTES = 10_000_000` mirrored as
-//!     `FileTooLarge.max_bytes`.
+//! Notable constants: `LSP_ERROR_CONTENT_MODIFIED = -32801` is
+//! placed in the `Wire` body when retries exhaust, and the
+//! 10 MB file-size ceiling is mirrored as `FileTooLarge.max_bytes`.
 //!
 //! Display strings are deterministic — the agent surfaces them
 //! verbatim in `tool_result`, so the model can act on the install

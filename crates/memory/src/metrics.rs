@@ -1,4 +1,4 @@
-//! Phase 86.1 — local memory-shape metrics.
+//! Local memory-shape metrics.
 //!
 //! Process-wide counters + histograms covering recall and write
 //! activity in `LongTermMemory`. Mirrors the lock-free pattern used
@@ -26,7 +26,7 @@ use dashmap::DashMap;
 
 const AGENT_LABEL_CAP: usize = 256;
 
-/// Memory taxonomy from Phase 77.5. Any string outside this set
+/// Memory taxonomy. Any string outside this set
 /// collapses to `"other"` at emit time so the label space stays
 /// small and well-known.
 pub const KNOWN_TYPES: &[&str] = &["user", "feedback", "project", "reference"];

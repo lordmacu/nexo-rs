@@ -1,20 +1,12 @@
-//! Phase 79.8 — per-agent allowlist of remote-trigger destinations.
+//! Per-agent allowlist of remote-trigger destinations.
 //!
 //! The `RemoteTrigger` tool refuses to publish to anything not
 //! listed here. Operators YAML-name each destination; the model
 //! refers to it by name. URLs and NATS subjects never travel
 //! through the model.
 //!
-//! Reference (PRIMARY): the leak's `RemoteTriggerTool` is a
-//! claude.ai-CCR-API client (a CRUD wrapper for Anthropic's hosted
-//! scheduled-agent service). Different concept entirely. Nexo-rs
-//! adopts the *name* but ships a generic outbound webhook + NATS
-//! publisher per our PHASES.md spec, with allowlist + HMAC the leak
-//! has no analog for.
-//!
-//! Reference (secondary): OpenClaw `research/` — no equivalent
-//! generic webhook publisher. Single-process TS reference uses the
-//! plugin outbound paths directly.
+//! `RemoteTrigger` is a generic outbound webhook + NATS publisher,
+//! with an allowlist + HMAC signing.
 
 use serde::Deserialize;
 

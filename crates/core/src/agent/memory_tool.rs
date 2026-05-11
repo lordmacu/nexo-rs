@@ -91,7 +91,7 @@ impl ToolHandler for MemoryTool {
                     "keyword" | "" => self.memory.recall(&ctx.agent_id, query, limit).await?,
                     other => anyhow::bail!("unknown recall mode: {other}"),
                 };
-                // Log one recall event per hit for Phase 10.5 signal tracking.
+                // Log one recall event per hit for signal tracking.
                 // Reciprocal rank as score — position 1 → 1.0, position 2 → 0.5, …
                 for (idx, e) in entries.iter().enumerate() {
                     let score = 1.0 / (idx as f32 + 1.0);

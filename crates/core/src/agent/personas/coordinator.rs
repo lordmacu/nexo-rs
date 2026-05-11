@@ -1,4 +1,4 @@
-//! Phase 84.1 — coordinator persona system prompt builder.
+//! Coordinator persona system prompt builder.
 //!
 //! Produces a single Markdown block that the boot path prepends to
 //! the agent's existing system prompt when
@@ -6,7 +6,7 @@
 //! deterministic (same inputs → same bytes) so prompt-cache prefix
 //! matching stays warm across turns.
 //!
-//! Sections (per Phase 84.1 spec):
+//! Sections:
 //! 1. Role declaration.
 //! 2. Tool list — focused on the coordinator surface, filtered to
 //!    tools the binding actually has access to.
@@ -14,9 +14,9 @@
 //! 4. Synthesis discipline (anti-pattern: "based on your findings").
 //! 5. Verification rigor (real verification, not happy-path only).
 //! 6. Parallelism guidance (independent work fans out concurrently).
-//! 7. Optional scratchpad section (Phase 79.4 TodoWrite — when
-//!    scratchpad is enabled, the coordinator gets explicit guidance
-//!    to use it for cross-worker tracking).
+//! 7. Optional scratchpad section (TodoWrite — when scratchpad is
+//!    enabled, the coordinator gets explicit guidance to use it for
+//!    cross-worker tracking).
 //! 8. Optional workers section — when the binding's peer list is
 //!    known at boot, list each peer with its goal_id so the
 //!    coordinator can address them by name.
@@ -26,13 +26,13 @@
 /// cloning every binding-policy field.
 #[derive(Debug, Clone)]
 pub struct CoordinatorPromptCtx<'a> {
-    /// The binding's resolved allowed-tool list (post Phase 16
-    /// `EffectiveBindingPolicy::allowed_tools`). Used to filter the
+    /// The binding's resolved allowed-tool list
+    /// (`EffectiveBindingPolicy::allowed_tools`). Used to filter the
     /// section-2 tool list to tools this binding actually surfaces.
     /// Empty = render section 2 with a "no tools" note (still useful
     /// for tests + safe in case the operator strips the surface).
     pub allowed_tools: &'a [String],
-    /// `true` when Phase 79.4 TodoWrite scratchpad is enabled for
+    /// `true` when the TodoWrite scratchpad is enabled for
     /// this binding. Adds the optional scratchpad guidance section.
     pub scratchpad_enabled: bool,
     /// Optional list of known peer/worker goal IDs at boot. Empty =

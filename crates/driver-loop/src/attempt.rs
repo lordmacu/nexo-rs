@@ -44,8 +44,8 @@ pub(crate) async fn run_attempt(
         .clone()
         .unwrap_or_else(|| std::path::PathBuf::from("claude"));
     let prior = ctx.binding_store.get(goal_id).await?;
-    // Phase 67.9 — when the orchestrator scheduled a compact turn it
-    // pre-fills `extras["compact_turn"] = true`; substitute the
+    // When the orchestrator scheduled a compact turn it pre-fills
+    // `extras["compact_turn"] = true`; substitute the
     // prompt with a `/compact <focus>` slash command so Claude Code
     // compacts its context.
     let prompt = if params
@@ -219,7 +219,7 @@ pub(crate) async fn run_attempt(
     let _ = turn.shutdown().await;
 
     // Persist binding (whatever session id Claude reported last).
-    // B1 — lift origin_channel + dispatcher out of goal.metadata so
+    // Lift origin_channel + dispatcher out of goal.metadata so
     // the binding carries the chat that triggered the goal across
     // reattach, and the completion router knows where to send the
     // notify_origin summary.

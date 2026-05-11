@@ -1,4 +1,4 @@
-//! Phase 79.M — boot dispatcher for `EXPOSABLE_TOOLS`.
+//! Boot dispatcher for `EXPOSABLE_TOOLS`.
 //!
 //! Each named entry maps to a small `boot_*` helper that constructs
 //! the tool from handles in `McpServerBootContext`. Missing handles
@@ -192,7 +192,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
     use crate::agent::web_search_tool::WebSearchTool;
 
     match name {
-        // --- Step 5 — handle-free tools shipped by Phase 79.1–.4/.13 ---
+        // --- handle-free tools (no infra handles needed) ---
         "EnterPlanMode" => {
             BootResult::Registered(EnterPlanModeTool::tool_def(), Arc::new(EnterPlanModeTool))
         }
@@ -211,7 +211,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
             BootResult::Registered(NotebookEditTool::tool_def(), Arc::new(NotebookEditTool))
         }
 
-        // --- Step 6 — cron_* (require ctx.cron_store) ---
+        // --- cron_* (require ctx.cron_store) ---
         "cron_create" => match ctx.cron_store.as_ref() {
             Some(s) => BootResult::Registered(
                 CronCreateTool::tool_def(),
@@ -258,7 +258,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
             },
         },
 
-        // --- Step 7 — mcp_router (handle-free; reads ctx.mcp at call time) ---
+        // --- mcp_router (handle-free; reads ctx.mcp at call time) ---
         "ListMcpResources" => match ctx.mcp_runtime.as_ref() {
             Some(_) => BootResult::Registered(
                 ListMcpResourcesTool::tool_def(),
@@ -278,7 +278,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
             },
         },
 
-        // --- Step 8 — config_changes_tail ---
+        // --- config_changes_tail ---
         "config_changes_tail" => match ctx.config_changes_store.as_ref() {
             Some(s) => BootResult::Registered(
                 ConfigChangesTailTool::tool_def(),
@@ -289,7 +289,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
             },
         },
 
-        // --- Step 9 — web_search + web_fetch ---
+        // --- web_search + web_fetch ---
         "web_search" => match ctx.web_search_router.as_ref() {
             Some(r) => BootResult::Registered(
                 WebSearchTool::tool_def(),

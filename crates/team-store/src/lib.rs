@@ -1,4 +1,4 @@
-//! Phase 79.6 — `nexo-team-store` crate.
+//! `nexo-team-store` crate.
 //!
 //! SQLite-backed registry + audit log for the five `Team*` tools
 //! that ship in `nexo-core`. Three tables — `teams`,
@@ -6,22 +6,13 @@
 //! async trait. Production wiring uses [`SqliteTeamStore`]; tests
 //! can swap a mock impl trivially.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/utils/swarm/teamHelpers.ts:65-176`
-//!     — the leak's `TeamFile` shape (JSON file per team). We
-//!     adapt the column set into normalised SQL because:
-//!       - concurrent member writes don't race;
-//!       - foreign keys + indexes are free;
-//!       - the audit log gets a separate table for clean
-//!         filtering, not a stream of out-of-tree analytics
-//!         events (`tengu_team_*` from `TeamCreateTool.ts:214-221`).
-//!   * `claude-code-leak/src/utils/swarm/teamHelpers.ts:100-102`
-//!     — `sanitizeName` regex `[^a-zA-Z0-9]/g → '-'` mirrored.
+//! The column set is a normalised-SQL adaptation of a JSON
+//! file-per-team shape, chosen because:
+//!   - concurrent member writes don't race;
+//!   - foreign keys + indexes are free;
+//!   - the audit log gets a separate table for clean filtering.
 //!
-//! Reference (secondary):
-//!   * OpenClaw `research/src/` — no equivalent. `grep -rln
-//!     "TeamCreate\|spawnTeam\|swarm" research/src/` returns 0
-//!     relevant matches.
+//! `sanitize_name` mirrors a `[^a-zA-Z0-9]/g → '-'` regex.
 
 pub mod store;
 pub mod types;

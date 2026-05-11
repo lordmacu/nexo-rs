@@ -1,12 +1,12 @@
-//! Phase 76.3 — caller identity surfaced from HTTP / stdio auth.
-//! Phase 76.4 — `tenant_id` promoted to a validated [`TenantId`].
+//! Caller identity surfaced from HTTP / stdio auth, with `tenant_id`
+//! as a validated [`TenantId`].
 //!
 //! `Principal` is the credential-side projection of an authenticated
 //! request: who is calling, which tenant they belong to, what scopes
 //! they hold, and the raw claims they presented (when applicable).
 //! `DispatchContext::principal` carries this struct from the
-//! transport layer down to tools so 76.4 (multi-tenant) and 76.11
-//! (audit log) can consume it without reaching back through axum.
+//! transport layer down to tools so the multi-tenant and audit-log
+//! layers can consume it without reaching back through axum.
 
 use std::collections::BTreeMap;
 
@@ -17,8 +17,8 @@ use super::tenant::TenantId;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Principal {
-    /// Validated tenant identifier. Phase 76.4 makes this always
-    /// present — stdio uses [`TenantId::STDIO_LOCAL`], static-token
+    /// Validated tenant identifier. Always present — stdio uses
+    /// [`TenantId::STDIO_LOCAL`], static-token
     /// without an explicit `tenant:` block uses [`TenantId::DEFAULT`].
     pub tenant: TenantId,
 
@@ -37,9 +37,9 @@ pub struct Principal {
     /// Discriminator used for tracing labels and per-method routing.
     pub auth_method: AuthMethod,
 
-    /// Raw claims (or empty map for non-JWT). Useful for audit
-    /// (76.11) and for downstream tools that want to mirror claims
-    /// into their own structured logs.
+    /// Raw claims (or empty map for non-JWT). Useful for the audit
+    /// log and for downstream tools that want to mirror claims into
+    /// their own structured logs.
     #[serde(default)]
     pub claims: BTreeMap<String, Value>,
 }
@@ -54,9 +54,8 @@ pub enum AuthMethod {
     StaticToken,
     /// JWT validated against a JWKS document.
     Jwt,
-    /// Mutual TLS — peer certificate identity. Phase 76.3 supplies
-    /// the `FromHeader` source; 76.13 will add the in-process
-    /// rustls source.
+    /// Mutual TLS — peer certificate identity via the `FromHeader`
+    /// source.
     MutualTls,
     /// `NoneAuthenticator` — dev-only loopback bypass.
     None,
@@ -89,8 +88,8 @@ impl Principal {
     }
 
     /// Test-only constructor — keeps the same shape as `stdio_local`
-    /// but is plain on the tin. Phase 76.4 keeps this `pub(crate)` so
-    /// callers can't accidentally use it as a real principal.
+    /// but is plain on the tin. Kept `pub(crate)` so callers can't
+    /// accidentally use it as a real principal.
     #[allow(dead_code)]
     pub(crate) fn test_local() -> Self {
         Self::stdio_local()

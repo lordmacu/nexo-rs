@@ -1,13 +1,13 @@
-//! Phase 81.5 — typed report shape produced by [`super::discover`].
+//! Typed report shape produced by [`super::discover`].
 //!
 //! Every diagnostic kind is its own enum variant so admin-ui + the
 //! `nexo agent doctor plugins` CLI can render localized messages
 //! without parsing free-form strings.
 //!
-//! Phase 81.6 extends this with three fields tracking plugin-
-//! contributed agents, merge conflicts, and `NexoPlugin::init()`
-//! outcomes. All three are `#[serde(default, skip_serializing_if)]`
-//! so the wire format stays backward-compatible with 81.5 consumers.
+//! Several fields track plugin-contributed agents, merge conflicts,
+//! and `NexoPlugin::init()` outcomes. They are
+//! `#[serde(default, skip_serializing_if)]` so the wire format stays
+//! backward-compatible with older consumers.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -24,8 +24,8 @@ use super::init_loop::InitOutcome;
 
 /// One validated plugin manifest plus the on-disk paths used to find
 /// it. The `manifest` field carries the full schema parsed by
-/// `nexo-plugin-manifest`; consumers (Phase 81.6 onward) instantiate
-/// the plugin from this record.
+/// `nexo-plugin-manifest`; consumers instantiate the plugin from
+/// this record.
 #[derive(Clone, Debug, Serialize)]
 pub struct DiscoveredPlugin {
     pub manifest: PluginManifest,
@@ -34,7 +34,7 @@ pub struct DiscoveredPlugin {
 }
 
 /// Audit summary returned by [`super::discover`]. Lightweight + serde
-/// so an admin-ui caller can fetch it over wire later (Phase 81.11).
+/// so an admin-ui caller can fetch it over wire.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PluginDiscoveryReport {
     pub loaded_ids: Vec<String>,
@@ -43,31 +43,31 @@ pub struct PluginDiscoveryReport {
     pub invalid: usize,
     pub disabled: usize,
     pub duplicates: usize,
-    /// Phase 81.6 — `plugin_id -> [agent_id, ...]` populated by the
+    /// `plugin_id -> [agent_id, ...]` populated by the
     /// merge step. Empty when no plugins contribute agents.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contributed_agents_per_plugin: BTreeMap<String, Vec<String>>,
-    /// Phase 81.6 — collisions detected during the merge.
+    /// Collisions detected during the agent merge.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_merge_conflicts: Vec<AgentMergeConflict>,
-    /// Phase 81.6 — `plugin_id -> outcome` populated by the
+    /// `plugin_id -> outcome` populated by the
     /// `NexoPlugin::init()` driver.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub init_outcomes: BTreeMap<String, InitOutcome>,
-    /// Phase 81.7 — `plugin_id -> [skill_name, ...]` populated by
-    /// the skill merge step.
+    /// `plugin_id -> [skill_name, ...]` populated by the skill
+    /// merge step.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contributed_skills_per_plugin: BTreeMap<String, Vec<String>>,
-    /// Phase 81.7 — same-skill-name collisions across plugins.
+    /// Same-skill-name collisions across plugins.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_conflicts: Vec<SkillConflict>,
-    /// Phase 81.11 — plugin-declared capability gates aggregated
-    /// at boot. Keyed by `env_var`. Drift-prevention contract
-    /// preserved: `nexo_setup::capabilities::INVENTORY` stays
-    /// immutable; this map is the parallel plugin view.
+    /// Plugin-declared capability gates aggregated at boot. Keyed by
+    /// `env_var`. Drift-prevention contract preserved:
+    /// `nexo_setup::capabilities::INVENTORY` stays immutable; this
+    /// map is the parallel plugin view.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugin_capability_gates: BTreeMap<String, AggregatedGate>,
-    /// Phase 81.11 — `requires.nexo_capabilities` entries that the
+    /// `requires.nexo_capabilities` entries that the
     /// running daemon does not provide. Warn-level (graceful
     /// degradation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,7 +75,7 @@ pub struct PluginDiscoveryReport {
 }
 
 impl PluginDiscoveryReport {
-    /// Phase 81.6 — fold a [`super::contributes::AgentMergeReport`]
+    /// Fold a [`super::contributes::AgentMergeReport`]
     /// into this report. Diagnostics are appended; the
     /// `contributed_agents_per_plugin` map is replaced verbatim;
     /// conflicts are appended.
@@ -85,13 +85,13 @@ impl PluginDiscoveryReport {
         self.agent_merge_conflicts.extend(m.conflicts);
     }
 
-    /// Phase 81.6 — fold the result of
+    /// Fold the result of
     /// [`super::init_loop::run_plugin_init_loop`] into this report.
     pub fn fold_init_outcomes(&mut self, outcomes: BTreeMap<String, InitOutcome>) {
         self.init_outcomes = outcomes;
     }
 
-    /// Phase 81.7 — fold a [`super::contributes_skills::SkillsMergeReport`]
+    /// Fold a [`super::contributes_skills::SkillsMergeReport`]
     /// into this report. Diagnostics are appended; the
     /// `contributed_skills_per_plugin` map is replaced verbatim;
     /// conflicts are appended. The `skill_roots` + `attribution`
@@ -103,7 +103,7 @@ impl PluginDiscoveryReport {
         self.skill_conflicts.extend(m.conflicts);
     }
 
-    /// Phase 81.11 — fold a [`PluginCapabilityAggregation`] into
+    /// Fold a [`PluginCapabilityAggregation`] into
     /// this report. Diagnostics appended; `plugin_capability_gates`
     /// replaced verbatim; `unmet_required_capabilities` extended.
     pub fn fold_capability_aggregation(&mut self, agg: PluginCapabilityAggregation) {
@@ -162,7 +162,7 @@ pub enum DiscoveryDiagnosticKind {
         var_name: String,
         in_path: PathBuf,
     },
-    /// Phase 81.8 — two plugins both tried to register the same
+    /// Two plugins both tried to register the same
     /// channel kind. The first plugin's adapter is live; the
     /// later plugin's adapter is rejected. Other registrations
     /// (tools / advisors / hooks) by the rejected plugin are not
@@ -173,7 +173,7 @@ pub enum DiscoveryDiagnosticKind {
         prior_registered_by: String,
         attempted_by: String,
     },
-    /// Phase 81.11 — plugin's manifest declares a `[plugin.capability_gates.gate]`
+    /// Plugin's manifest declares a `[plugin.capability_gates.gate]`
     /// whose `env_var` is already in `nexo_setup::capabilities::INVENTORY`.
     /// Plugin gate dropped (operator must disable one).
     CapabilityGateConflictsCore {
@@ -181,7 +181,7 @@ pub enum DiscoveryDiagnosticKind {
         plugin_id: String,
         core_extension: String,
     },
-    /// Phase 81.11 — two plugins declare the same `env_var` in
+    /// Two plugins declare the same `env_var` in
     /// their `[plugin.capability_gates.gate]` arrays.
     /// First-plugin-wins; second's gate dropped.
     CapabilityGateConflictsPlugin {
@@ -189,7 +189,7 @@ pub enum DiscoveryDiagnosticKind {
         plugin_a: String,
         plugin_b: String,
     },
-    /// Phase 81.11 — plugin declares a `requires.nexo_capabilities`
+    /// Plugin declares a `requires.nexo_capabilities`
     /// entry that the running daemon does not provide. Warn-level:
     /// operator may run degraded; plugin's own `init()` may still
     /// reject when manifest-driven factory ships.

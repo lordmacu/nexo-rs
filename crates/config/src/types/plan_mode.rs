@@ -1,8 +1,8 @@
-//! Phase 79.1 — per-binding plan-mode policy.
+//! Per-binding plan-mode policy.
 //!
 //! This module owns the YAML surface that an operator uses to opt into
 //! (or opt out of) plan-mode gating per binding. The runtime loads the
-//! resolved policy via Phase 16 `EffectiveBindingPolicy` and consults
+//! resolved policy via `EffectiveBindingPolicy` and consults
 //! [`PlanModePolicy::compute_default_active`] to decide whether plan
 //! mode should be ARMED for a given goal — that is, whether new goals
 //! enter plan mode automatically. Tool registration is gated by the
@@ -45,17 +45,15 @@ const DEFAULT_APPROVAL_TIMEOUT_SECS: u64 = 86_400; // 24 h
 /// Defaults below are the values applied when the operator omits the
 /// block entirely:
 ///   * `enabled: true` — tools are registered; the model sees them.
-///   * `auto_enter_on_destructive: false` — opt-in pairing with 77.8.
+///   * `auto_enter_on_destructive: false` — opt-in pairing with the
+///     destructive-command warning.
 ///   * `default_active: None` — role-aware computed default; see
 ///     [`PlanModePolicy::compute_default_active`].
 ///   * `approval_timeout_secs: 86_400` (24 h).
 ///
-/// Cross-reference: `claude-code-leak/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts:60-66`
-/// uses `feature('KAIROS_CHANNELS')` to disable the entire tool when
-/// channels are active. Nexo intentionally diverges (pairing IS the
-/// channel) — `enabled: true` is a sensible default for chat-rooted
-/// bindings, and `compute_default_active` keeps non-coordinator roles
-/// from suffering surprise auto-arm.
+/// `enabled: true` is a sensible default for chat-rooted bindings
+/// (pairing IS the channel), and `compute_default_active` keeps
+/// non-coordinator roles from suffering surprise auto-arm.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields, default)]
 pub struct PlanModePolicy {
@@ -64,12 +62,12 @@ pub struct PlanModePolicy {
     /// them in the catalogue. Useful for bindings whose channel cannot
     /// deliver an approval message (e.g. one-shot HTTP webhooks).
     pub enabled: bool,
-    /// Soft dep on Phase 77.8: when the destructive-command warning
+    /// Soft dep on the destructive-command warning: when it
     /// classifies the next Bash call as destructive, the dispatcher
     /// pre-empts the call and auto-enters plan mode with the
-    /// classifier verdict embedded in the refusal. While 77.8 is not
-    /// shipped this knob no-ops and emits a `tracing::warn!` once at
-    /// boot.
+    /// classifier verdict embedded in the refusal. Until that
+    /// classifier ships this knob no-ops and emits a `tracing::warn!`
+    /// once at boot.
     pub auto_enter_on_destructive: bool,
     /// Whether plan mode is ARMED by default for new goals on this
     /// binding. `None` (the YAML default) defers to
@@ -83,7 +81,7 @@ pub struct PlanModePolicy {
     /// 24 h is enough for an operator to come back to a paused chat
     /// the next morning.
     pub approval_timeout_secs: u64,
-    /// Phase 79.1 — when `true`, `ExitPlanMode` blocks until an
+    /// When `true`, `ExitPlanMode` blocks until an
     /// operator-side `plan_mode_resolve` arrives via the pairing
     /// channel. When `false` (the default for safe rollout), the
     /// model self-approves: the unlock is immediate. Production
@@ -112,7 +110,7 @@ impl PlanModePolicy {
     ///   non-trivial work and benefit from plan-mode gating).
     /// * `worker` role → `false` (workers receive sub-goals from a
     ///   coordinator that already planned).
-    /// * `proactive` role → `false` (Phase 77.20 ticks would be
+    /// * `proactive` role → `false` (proactive ticks would be
     ///   disrupted by a blocking approval flow).
     /// * Unset role → `false` (safest opt-out — any new role added
     ///   later does not silently auto-arm).

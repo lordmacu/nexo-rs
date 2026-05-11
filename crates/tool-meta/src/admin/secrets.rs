@@ -1,4 +1,4 @@
-//! Phase 82.10.k — `nexo/admin/secrets/*` wire types.
+//! `nexo/admin/secrets/*` wire types.
 //!
 //! Microapps with the `secrets_write` capability persist
 //! operator-supplied secrets (LLM API keys, channel tokens, …)
@@ -10,8 +10,8 @@
 //! Audit log redacts `value` per `audit_sqlite::redact_for_audit`
 //! — only `name` is recorded.
 //!
-//! M9.frame.a (microapp follow-up): wires the wizard's Step 1
-//! through this RPC to skip the operator's manual `export`.
+//! The setup wizard's first step wires through this RPC to skip
+//! the operator's manual `export`.
 
 use std::path::PathBuf;
 

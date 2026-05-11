@@ -1,4 +1,4 @@
-//! Phase 87.1 — LLM-as-judge AcceptanceEvaluator implementations.
+//! LLM-as-judge AcceptanceEvaluator implementations.
 //!
 //! Sister to `crate::acceptance` (the default rules-based
 //! evaluator that handles `ShellCommand` / `FileMatches` /

@@ -1,4 +1,4 @@
-//! Phase 67.5 — `AcceptanceEvaluator` and friends.
+//! `AcceptanceEvaluator` and friends.
 
 pub mod custom;
 pub mod default_evaluator;

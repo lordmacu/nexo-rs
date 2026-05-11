@@ -190,7 +190,7 @@ impl ClaudeCommand {
         args.push(self.prompt.clone());
         args.push("--output-format".into());
         args.push(self.output_format.as_cli().into());
-        // Phase 73 — Claude CLI requires `--verbose` whenever
+        // Claude CLI requires `--verbose` whenever
         // `--print` is combined with `--output-format=stream-json`.
         // Without it the CLI prints
         // "Error: When using --print, --output-format=stream-json
@@ -229,7 +229,7 @@ impl ClaudeCommand {
         if let Some(p) = &self.mcp_config_path {
             args.push("--mcp-config".into());
             args.push(p.display().to_string());
-            // Phase 73 — without `--strict-mcp-config`, Claude CLI
+            // Without `--strict-mcp-config`, Claude CLI
             // 2.1+ merges `--mcp-config` with the user's
             // `~/.claude.json` and silently drops servers whose
             // name collides or whose stdio child fails to start

@@ -1,12 +1,12 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.1 — replay of the Phase 12.6 / 73 / 74 conformance
-//! cases against the HTTP transport. Stdio path keeps its inline
-//! tests in `crates/mcp/src/server/stdio.rs::tests`; the same
-//! observable contracts must hold over HTTP.
+//! Replay of the spec MCP conformance cases against the HTTP
+//! transport. Stdio path keeps its inline tests in
+//! `crates/mcp/src/server/stdio.rs::tests`; the same observable
+//! contracts must hold over HTTP.
 //!
-//! Phase 76.12 — `ConformanceHandler` moved to `conformance_shared`
-//! so `stdio_conformance_test` can reuse it without duplication.
+//! `ConformanceHandler` lives in `conformance_shared` so
+//! `stdio_conformance_test` can reuse it without duplication.
 
 mod conformance_shared;
 
@@ -90,8 +90,7 @@ async fn rpc(
 async fn initialize_echoes_supported_protocol_version() {
     let (handle, client, t) = boot().await;
     let (_, init) = initialize(&client, handle.bind_addr).await;
-    // Phase 73.4 — server echoes the client's requested version
-    // when supported.
+    // Server echoes the client's requested version when supported.
     assert_eq!(init["result"]["protocolVersion"], "2025-11-25");
     assert_eq!(init["result"]["serverInfo"]["name"], "mock");
     shut(handle, t).await;
@@ -120,8 +119,8 @@ async fn initialize_falls_back_when_client_version_unknown() {
 
 #[tokio::test]
 async fn tools_list_omits_next_cursor_when_no_pagination() {
-    // Phase 73.5 — `nextCursor` MUST NOT appear when there is no
-    // next page (Claude Code 2.1 schema validator rejects null).
+    // `nextCursor` MUST NOT appear when there is no next page
+    // (strict client schema validators reject null).
     let (handle, client, t) = boot().await;
     let (session, _) = initialize(&client, handle.bind_addr).await;
     let body = rpc(

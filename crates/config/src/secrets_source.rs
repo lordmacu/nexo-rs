@@ -1,4 +1,4 @@
-//! Phase 82.10.s — read-only `SecretsSource` trait.
+//! Read-only `SecretsSource` trait.
 //!
 //! `nexo-config` consumes secrets at config-load to resolve
 //! per-provider API keys from `api_key_secret_id` references. Kept

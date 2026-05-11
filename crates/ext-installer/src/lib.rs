@@ -1,5 +1,5 @@
-//! Phase 31.1 (Option B — decentralized GitHub Releases) —
-//! building block for `nexo plugin install <owner>/<repo>@<tag>`.
+//! Decentralized GitHub Releases install — building block for
+//! `nexo plugin install <owner>/<repo>@<tag>`.
 //!
 //! Architecture: there is NO central catalog. Each plugin
 //! author publishes their plugin as a GitHub Release on their
@@ -16,14 +16,12 @@
 //! 4. Download the tarball matching the daemon's target
 //! 5. Stream-verify the sha256 (read from the `.sha256` asset)
 //!
-//! What it does NOT do (deferred):
-//! - **Cosign verification** — Phase 31.3.
-//! - **Tarball extraction** — Phase 31.1.b.
-//! - **CLI integration** — Phase 31.1.c.
+//! Cosign signature verification lives in [`verify`], tarball
+//! extraction in [`extract`]; the CLI wires them together.
 //!
-//! # IRROMPIBLE refs
+//! # References
 //!
-//! - Internal: `crates/ext-registry/` (Phase 31.0) — entry types.
+//! - Internal: `crates/ext-registry/` — entry types.
 //! - GitHub Releases API:
 //!   `https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name`
 //! - Real-world: `cargo binstall` + `gh extension install` —
@@ -60,10 +58,9 @@ pub use verify_error::VerifyError;
 /// Parsed `<owner>/<repo>@<tag>` coordinates. `tag` defaults to
 /// `latest` when the user omits it.
 ///
-/// Renamed from `PluginCoords` during the `cody-cli-install`
-/// wave once the same struct started serving non-plugin
-/// artifacts (persona packs). The legacy name is kept as a
-/// deprecated type alias below for backward compatibility.
+/// Renamed from `PluginCoords` once the same struct started
+/// serving non-plugin artifacts (persona packs). The legacy name
+/// is kept as a deprecated type alias below for backward compatibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoCoords {
     /// GitHub repo owner (user or org).
@@ -204,9 +201,8 @@ pub struct InstalledTarball {
 /// can call [`download_and_verify_url`] without re-querying the
 /// release JSON.
 ///
-/// Introduced for the `cody-cli-install` wave so persona-installer
-/// can share the resolve+download pipeline without duplicating
-/// the GitHub Releases plumbing.
+/// Lets persona-installer share the resolve+download pipeline
+/// without duplicating the GitHub Releases plumbing.
 #[derive(Debug, Clone)]
 pub struct ResolvedReleaseTyped<M> {
     /// The typed manifest produced by [`ExtractContract::parse_manifest`].
@@ -233,7 +229,7 @@ pub struct ResolvedReleaseTyped<M> {
     /// hex). Used by [`download_and_verify_url`] to obtain the
     /// expected digest at install time.
     pub sha256_url: String,
-    /// Optional cosign material (Phase 31.3 enforces).
+    /// Optional cosign material (signature verification enforces it).
     pub signing: Option<nexo_ext_registry::ExtSigning>,
 }
 
@@ -328,8 +324,8 @@ pub async fn resolve_release_with_contract<C: ExtractContract>(
     let manifest = contract.parse_manifest(&manifest_bytes, coords)?;
     let pkg_id = contract.manifest_id(&manifest);
 
-    // Find the tarball asset for the requested target. Phase 31.4
-    // adds `noarch` as a fallback target name so portable plugins
+    // Find the tarball asset for the requested target. `noarch`
+    // acts as a fallback target name so portable plugins
     // (Python, TypeScript) can publish a single asset that all
     // daemons accept.
     let per_target_name = format!("{pkg_id}-{version_str}-{target}.tar.gz");
@@ -371,7 +367,7 @@ pub async fn resolve_release_with_contract<C: ExtractContract>(
             ),
         })?;
 
-    // Locate optional cosign material (Phase 31.3 enforces).
+    // Locate optional cosign material (signature verification enforces it).
     let sig_name = format!("{tarball_name}.sig");
     let cert_name = format!("{tarball_name}.cert");
     let signing = match (
@@ -423,10 +419,10 @@ pub async fn resolve_release(
         resolve_release_with_contract(&PluginExtractContract, client, coords, target, api_base)
             .await?;
 
-    // Per Option B's decentralized model, every release defaults
+    // Per the decentralized model, every release defaults
     // to `tier = community`. Operator's trusted_keys.toml decides
     // which authors' cosign keys count as "verified" at install
-    // time (Phase 31.3).
+    // time.
     //
     // `downloads[0].target` echoes the *requested* target rather
     // than the matched asset's flavor (`noarch` vs per-target).
@@ -470,7 +466,7 @@ pub async fn resolve_release(
 /// (cleaning up the partial file). Returns the byte count.
 ///
 /// Decoupled from [`ResolvedInstall`] so `persona-installer`
-/// (Phase F3) can drive download without constructing an
+/// can drive download without constructing an
 /// `ExtEntry`. Plugin path uses [`download_and_verify`] which
 /// is now a thin wrapper.
 ///
@@ -984,7 +980,7 @@ nexo_capabilities = ["broker"]
     // contract that consumes a non-plugin manifest filename +
     // schema. Proves the resolver doesn't smuggle the
     // `nexo-plugin.toml` assumption anywhere — the persona-installer
-    // crate (Phase F3) will plug in its own contract analogously.
+    // crate plugs in its own contract analogously.
 
     #[derive(Debug, serde::Deserialize)]
     struct TestPersonaManifest {

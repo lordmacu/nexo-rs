@@ -1,12 +1,11 @@
-//! Phase 80.1 — autoDream consolidation config.
+//! autoDream consolidation config.
 //!
 //! Lives here (not in `nexo-dream`) so `nexo-config::AgentConfig` can
 //! embed it without a circular dep. `nexo-dream` re-exports for
 //! ergonomic operator imports.
 //!
-//! Defaults mirror `claude-code-leak/src/services/autoDream/autoDream.ts:63-66`
-//! (`minHours=24, minSessions=5`) and `consolidationLock.ts:19`
-//! (`HOLDER_STALE_MS = 60*60*1000`).
+//! Defaults: `min_hours = 24`, `min_sessions = 5`, and a stale-holder
+//! lock timeout of one hour.
 
 use std::path::PathBuf;
 use std::time::Duration;

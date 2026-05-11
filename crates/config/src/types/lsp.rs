@@ -1,16 +1,11 @@
-//! Phase 79.5 — per-binding `lsp:` policy.
+//! Per-binding `lsp:` policy.
 //!
 //! YAML schema operators use to opt-in to LSP per binding. Disabled
 //! by default — the `Lsp` tool is only registered for bindings
-//! that explicitly turn it on (`lsp.enabled: true`).
-//!
-//! Cross-reference:
-//!   * `claude-code-leak/src/services/lsp/manager.ts:100-110`
-//!     `isLspConnected()` gates the leak's tool catalogue. We use
-//!     `enabled` to gate registration AND a per-binding language
-//!     whitelist on top.
-//!   * Spec: `proyecto/PHASES.md::79.5` — `lsp.enabled` +
-//!     `lsp.languages` + `lsp.prewarm` + `lsp.idle_teardown_secs`.
+//! that explicitly turn it on (`lsp.enabled: true`). `enabled` gates
+//! registration, and a per-binding language whitelist applies on top.
+//! Knobs: `lsp.enabled`, `lsp.languages`, `lsp.prewarm`,
+//! `lsp.idle_teardown_secs`.
 
 use serde::{Deserialize, Serialize};
 
@@ -98,8 +93,8 @@ pub struct LspPolicy {
     pub prewarm: Vec<LspLanguageWire>,
 
     /// Seconds of inactivity before the manager tears down a
-    /// session. Default 600 (10 min). Phase 19/20 synthetic
-    /// pollers do not reset this counter.
+    /// session. Default 600 (10 min). Synthetic poller activity
+    /// does not reset this counter.
     #[serde(default = "default_idle_secs")]
     pub idle_teardown_secs: u64,
 }

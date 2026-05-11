@@ -14,7 +14,7 @@
 //!   the standard human-confirm path.
 //! - Per-binding rate limit: keyed `(tenant, "memory_snapshot")`.
 //! - Deferred schema: `deferred() = true` keeps the verbose schema
-//!   out of the default tool catalog (Phase 79.2 token budget).
+//!   out of the default tool catalog to save token budget.
 
 use std::sync::Arc;
 
@@ -90,7 +90,7 @@ impl MemorySnapshotTool {
         }
     }
 
-    /// Phase 79.2 — defer the schema from the default tool catalog so
+    /// Defer the schema from the default tool catalog so
     /// it only loads when the LLM explicitly asks for it via
     /// `tool_search`. This tool is high-value but rarely-used; the
     /// schema is verbose enough to be worth deferring.

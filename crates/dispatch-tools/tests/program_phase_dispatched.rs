@@ -1,10 +1,10 @@
-//! Phase 67.E.1 — `program_phase` happy / denied paths.
+//! `program_phase` happy / denied paths.
 //!
 //! We don't actually spawn a Claude subprocess in these tests. The
 //! gate-denied + tracker-not-found paths don't reach `spawn_goal` at
 //! all; the cap-rejected path doesn't either. The "happy admit"
-//! path is exercised in the multi-agent end-to-end test in 67.H.x
-//! once the full mock-claude harness is wired through dispatch-tools.
+//! path is exercised in the multi-agent end-to-end test once the
+//! full mock-claude harness is wired through dispatch-tools.
 
 #![cfg(unix)]
 

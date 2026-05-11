@@ -1,6 +1,6 @@
 //! `nexo/admin/whatsapp/bot/*` wire types.
 //!
-//! Phase: experimental Meta AI / `*@bot` decryption surface. Each
+//! Experimental Meta AI / `*@bot` decryption surface. Each
 //! WhatsApp-bound agent owns a paired phone, and that phone has
 //! its own roster of assigned AI bots (Meta AI, future personas).
 //! This domain lets a microapp UI list those bots and chat with

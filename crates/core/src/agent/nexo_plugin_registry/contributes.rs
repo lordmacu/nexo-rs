@@ -1,4 +1,4 @@
-//! Phase 81.6 — merge plugin-contributed agents into the runtime
+//! Merge plugin-contributed agents into the runtime
 //! `AgentsConfig`. Walks each loaded plugin's `agents.contributes_dir`,
 //! parses the YAML files, and folds them in honoring operator-priority
 //! by load order plus the per-plugin `allow_override` opt-in.

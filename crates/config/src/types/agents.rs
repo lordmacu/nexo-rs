@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Phase 81.19.b locale follow-up item 1 — closed-enum validator
+/// Closed-enum validator
 /// for `agents.<id>.language` and `InboundBinding.language` at
-/// YAML deserialise time. Pre-89 the daemon would silently treat
+/// YAML deserialise time. The daemon used to silently treat
 /// an unknown `language: "klingon"` as `None`; the validator
 /// surfaces the typo as a hard parse error so a hand-edit of the
 /// YAML never ships an unsupported locale to production.
@@ -63,7 +63,7 @@ fn default_active() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub id: String,
-    /// Phase 83.8.12 — SaaS tenant (tenant) owner. `None` =
+    /// SaaS tenant owner. `None` =
     /// global agent (operator-level, not tenant-owned).
     /// Multi-tenant filtering across admin RPC + microapp tools
     /// keys on this field.
@@ -100,13 +100,13 @@ pub struct AgentConfig {
     /// Per-binding `InboundBinding::language` overrides this for the
     /// matched channel.
     ///
-    /// Phase 81.19.b — strict-validated at YAML deserialise time
+    /// Strict-validated at YAML deserialise time
     /// against `nexo_tool_meta::locale::Locale::from_str`.
     /// `language: "klingon"` aborts boot with a typed parse error
     /// instead of silently dropping to `None`.
     #[serde(default, deserialize_with = "deserialize_locale_string")]
     pub language: Option<String>,
-    /// Phase 21 — link understanding. When enabled, the runtime
+    /// Link understanding. When enabled, the runtime
     /// detects URLs in inbound messages, fetches each one once per
     /// turn, and renders a `# LINK CONTEXT` system block with the
     /// extracted text. Disabled by default. Schema lives in
@@ -114,13 +114,13 @@ pub struct AgentConfig {
     /// JSON value to avoid a config → core dep cycle.
     #[serde(default)]
     pub link_understanding: serde_json::Value,
-    /// Phase 25 — web search. Toggle + provider + caps for the
+    /// Web search. Toggle + provider + caps for the
     /// `web_search` built-in tool. Same opaque-Value discipline as
     /// `link_understanding`: parsed lazily by `EffectiveBindingPolicy`
     /// so the config crate stays nexo-web-search-free.
     #[serde(default)]
     pub web_search: serde_json::Value,
-    /// Phase 26 — pairing policy default (per-binding overrides this).
+    /// Pairing policy default (per-binding overrides this).
     /// Same opaque-Value discipline; `Value::Null` (default) = the
     /// gate is a no-op so existing setups don't see any change.
     #[serde(default)]
@@ -151,14 +151,14 @@ pub struct AgentConfig {
     /// interval when `dreaming.enabled` is true.
     #[serde(default)]
     pub dreaming: DreamingYamlConfig,
-    /// Phase 10.9 — wrap the workspace directory in a local git repo for
+    /// Wrap the workspace directory in a local git repo for
     /// forensics, rollback, and LLM-inspectable history. Off by default.
     #[serde(default)]
     pub workspace_git: WorkspaceGitConfig,
-    /// Phase 9.2 follow-up — per-tool rate limits. `None` = no limits.
+    /// Per-tool rate limits. `None` = no limits.
     #[serde(default)]
     pub tool_rate_limits: Option<ToolRateLimitsConfig>,
-    /// Phase 9.2 follow-up — opt-out JSON Schema validation of tool
+    /// Opt-out JSON Schema validation of tool
     /// args. `None` defaults to `true` when `schema-validation` feature
     /// is on, `false` otherwise.
     #[serde(default)]
@@ -232,7 +232,7 @@ pub struct AgentConfig {
     /// system prompt was jailbroken from spamming arbitrary numbers.
     #[serde(default)]
     pub outbound_allowlist: OutboundAllowlistConfig,
-    /// Phase 17 — per-agent credential bindings. Declares which
+    /// Per-agent credential bindings. Declares which
     /// plugin instance / Google account the agent uses for outbound
     /// traffic. The gauntlet validates every entry at boot. Empty =
     /// back-compat (resolver infers from `inbound_bindings` when a
@@ -240,7 +240,7 @@ pub struct AgentConfig {
     /// unavailable).
     #[serde(default)]
     pub credentials: crate::types::credentials::AgentCredentialsConfig,
-    /// Phase F — per-agent override of `llm.context_optimization`
+    /// Per-agent override of `llm.context_optimization`
     /// kill switches. Only the four enables are overridable per-agent
     /// (numeric knobs stay global). `None` on a sub-flag inherits.
     /// Shape:
@@ -253,31 +253,31 @@ pub struct AgentConfig {
     /// ```
     #[serde(default)]
     pub context_optimization: Option<crate::types::llm::AgentContextOptimizationOverride>,
-    /// Phase 67.D.1 — dispatch policy for project-tracker tools
+    /// Dispatch policy for project-tracker tools
     /// (`program_phase`, `cancel_agent`, etc). Default keeps the
     /// dispatch surface OFF for back-compat agents — the operator
     /// must opt in by raising `mode` to `read_only` or `full`.
     #[serde(default)]
     pub dispatch_policy: DispatchPolicy,
-    /// Phase 79.1 — plan-mode policy default (per-binding overrides
+    /// Plan-mode policy default (per-binding overrides
     /// this via `InboundBinding::plan_mode`). The field is always
     /// present so an operator can pin behaviour at the agent level
     /// even without binding-level overrides.
     #[serde(default)]
     pub plan_mode: crate::types::plan_mode::PlanModePolicy,
-    /// Phase 79.8 — allowlist of remote-trigger destinations the
+    /// Allowlist of remote-trigger destinations the
     /// agent's `RemoteTrigger` tool may publish to. Empty (the
     /// default) keeps the tool registered but every call refuses
     /// with a clear "name not in allowlist" error.
     #[serde(default)]
     pub remote_triggers: Vec<crate::types::remote_triggers::RemoteTriggerEntry>,
-    /// Phase 79.5 — agent-level LSP policy. Per-binding override
+    /// Agent-level LSP policy. Per-binding override
     /// is a follow-up; today the field on `AgentConfig` is the
     /// single source of truth for whether the `Lsp` tool is
     /// registered for this agent's goals.
     #[serde(default)]
     pub lsp: crate::types::lsp::LspPolicy,
-    /// Phase 79.10 — agent-level `ConfigTool` policy. Default
+    /// Agent-level `ConfigTool` policy. Default
     /// `self_edit: false` (opt-in). When enabled, the `Config`
     /// tool is registered for this agent's goals and the
     /// approval correlator listens for operator approvals on the
@@ -288,59 +288,58 @@ pub struct AgentConfig {
     /// `agents[].config_tool: { self_edit: true, ... }`.
     #[serde(default)]
     pub config_tool: crate::types::config_tool::ConfigToolPolicy,
-    /// Phase 79.6 — agent-level team policy. Default
+    /// Agent-level team policy. Default
     /// `enabled: false` (opt-in). When enabled, the 5 `Team*`
     /// tools register for this agent's goals.
     #[serde(default)]
     pub team: crate::types::team::TeamPolicy,
-    /// Phase 77.20 — proactive tick-loop config. When `enabled: true` the
+    /// Proactive tick-loop config. When `enabled: true` the
     /// driver-loop keeps the goal alive after every turn and injects
     /// periodic `<tick>` prompts. The agent controls its own wake-up
     /// interval via `Sleep { duration_ms }`.
     #[serde(default)]
     pub proactive: crate::types::proactive::ProactiveConfig,
-    /// Phase 79.12 — stateful REPL tool config. When `enabled: true` the
+    /// Stateful REPL tool config. When `enabled: true` the
     /// `Repl` tool is registered for this agent, allowing persistent
     /// Python/Node/bash subprocesses across turns.
     #[serde(default)]
     pub repl: crate::types::repl::ReplConfig,
-    /// Phase 80.1 — autoDream consolidation config. `None` disables
+    /// autoDream consolidation config. `None` disables
     /// the post-turn fork. When `Some(cfg)` AND `cfg.enabled = true`,
-    /// the runner fires from the driver-loop per-turn hook
-    /// (Phase 80.1.b).
+    /// the runner fires from the driver-loop per-turn hook.
     #[serde(default)]
     pub auto_dream: Option<crate::types::dream::AutoDreamConfig>,
 
-    /// Phase 80.15 — per-binding assistant-mode toggle. `None` keeps
-    /// the pre-80.15 behaviour (no system-prompt addendum, no
+    /// Per-binding assistant-mode toggle. `None` keeps
+    /// the legacy behaviour (no system-prompt addendum, no
     /// initial-team spawn). `Some(cfg)` opt-ins to the proactive
     /// posture when `cfg.enabled = true`. Boot-immutable flag —
     /// toggling enabled requires a daemon restart; the addendum
-    /// content itself is hot-reloadable through Phase 18.
+    /// content itself is hot-reloadable.
     #[serde(default)]
     pub assistant_mode: Option<crate::types::assistant::AssistantConfig>,
 
-    /// Phase 80.14 — re-connection digest config. `None` keeps the
+    /// Re-connection digest config. `None` keeps the
     /// runtime quiet (default). `Some(cfg)` with `cfg.enabled = true`
     /// opts into the AWAY_SUMMARY behaviour: on the first inbound
     /// after `cfg.threshold_hours` of silence, the runtime composes
     /// a short markdown digest summarising goals/aborts/failures
-    /// recorded in the Phase 72 turn-log during the silence window
+    /// recorded in the turn-log during the silence window
     /// and delivers it before processing the user's message.
     #[serde(default)]
     pub away_summary: Option<crate::types::away_summary::AwaySummaryConfig>,
 
-    /// Phase 80.9 — MCP channel routing. `None` keeps the legacy
+    /// MCP channel routing. `None` keeps the legacy
     /// behaviour (no inbound from MCP servers — channel
     /// notifications fall through with `Skip`). `Some(cfg)` with
     /// `cfg.enabled = true` arms the 5-step gate; per-binding
     /// allowlists (`InboundBinding::allowed_channel_servers`) close
     /// the loop for which servers a given binding will accept
-    /// notifications from. Hot-reloadable through Phase 18.
+    /// notifications from. Hot-reloadable.
     #[serde(default)]
     pub channels: Option<crate::types::channels::ChannelsConfig>,
 
-    /// Phase 80.8 — brief-mode + `send_user_message` tool. `None`
+    /// Brief-mode + `send_user_message` tool. `None`
     /// keeps the legacy behaviour (no extra tool, no extra system
     /// section). `Some(cfg)` with `cfg.enabled = true` registers
     /// the tool for every binding of this agent and appends the
@@ -351,25 +350,25 @@ pub struct AgentConfig {
     #[serde(default)]
     pub brief: Option<crate::types::brief::BriefConfig>,
 
-    /// Phase 80.17 — auto-approve dial for the curated tool subset.
+    /// Auto-approve dial for the curated tool subset.
     /// `false` (default) keeps current interactive-approval behaviour;
     /// `true` flips skipping the prompt for read-only / scoped-write
     /// tools while destructive Bash + writes outside workspace +
     /// ConfigTool + REPL + remote_trigger always ask. Composes with
-    /// Phase 16 binding policy — never adds tools to the surface.
+    /// the binding policy — never adds tools to the surface.
     /// Per-binding override available via `InboundBinding::auto_approve`.
     #[serde(default)]
     pub auto_approve: bool,
 
-    /// Phase M4.a.b — post-turn LLM memory extraction. `None`
+    /// Post-turn LLM memory extraction. `None`
     /// keeps the legacy behaviour (no extraction). `Some(cfg)`
     /// with `cfg.enabled = true` opts the agent in; the boot
     /// loop constructs `ExtractMemories` + `LlmClientAdapter`
     /// (defined in `nexo-driver-loop`) and wires them into
     /// `LlmAgentBehavior` via `with_memory_extractor` so every
     /// regular turn fires post-turn extraction. Boot-immutable
-    /// today — toggling `enabled` requires a daemon restart
-    /// (defer hot-reload to follow-up). Wire-shape struct is
+    /// today — toggling `enabled` requires a daemon restart.
+    /// Wire-shape struct is
     /// duplicated here (mirror of the
     /// `nexo_driver_types::ExtractMemoriesConfig` schema) to
     /// avoid creating a `nexo-config -> nexo-driver-types`
@@ -381,7 +380,7 @@ pub struct AgentConfig {
     #[serde(default)]
     pub extract_memories: Option<ExtractMemoriesYamlConfig>,
 
-    /// Phase 82.4 — per-agent NATS event subscribers. Each
+    /// Per-agent NATS event subscribers. Each
     /// binding subscribes to a subject pattern and translates
     /// matching events into the standard inbound flow (republished
     /// to `plugin.inbound.event.<id>`). Empty by default; existing
@@ -389,13 +388,13 @@ pub struct AgentConfig {
     #[serde(default)]
     pub event_subscribers: Vec<crate::types::event_subscriber::EventSubscriberBinding>,
 
-    /// Phase 83.1 — per-agent extension config. Operator declares
+    /// Per-agent extension config. Operator declares
     /// per-extension knobs in `agents.yaml` so a single microapp
     /// subprocess that serves multiple personas / tenants can
     /// look up the right config in O(1) by `agent_id`. The shape
     /// is `{ <extension_id>: <opaque YAML> }` — opaque to the
-    /// daemon, validated by the microapp itself (Phase 83.17 will
-    /// add boot-time schema validation as opt-in).
+    /// daemon, validated by the microapp itself (boot-time schema
+    /// validation is opt-in).
     ///
     /// ```yaml
     /// agents:
@@ -408,13 +407,12 @@ pub struct AgentConfig {
     ///
     /// Empty by default; agents that don't bind to any
     /// per-extension config keep working unchanged. Propagated
-    /// to the microapp via the JSON-RPC `initialize` method
-    /// (Phase 83.1.b will wire the propagation).
+    /// to the microapp via the JSON-RPC `initialize` method.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions_config: BTreeMap<String, serde_yaml::Value>,
 }
 
-/// Phase M4.a.b — wire-shape mirror of
+/// Wire-shape mirror of
 /// `nexo_driver_types::ExtractMemoriesConfig`. Adding
 /// `nexo-driver-types` to `nexo-config`'s dep tree would create
 /// a cycle (`nexo-driver-types` already depends on
@@ -462,7 +460,7 @@ model:
 "#
     }
 
-    /// Phase 83.1 — YAML lacking `extensions_config` deserialises
+    /// YAML lacking `extensions_config` deserialises
     /// to an empty map (back-compat via `#[serde(default)]`).
     #[test]
     fn agent_config_yaml_without_extensions_config_parses() {
@@ -470,7 +468,7 @@ model:
         assert!(cfg.extensions_config.is_empty());
     }
 
-    /// Phase 83.1 — YAML with `extensions_config` round-trips per
+    /// YAML with `extensions_config` round-trips per
     /// `<extension_id>` and preserves the opaque YAML payload.
     #[test]
     fn agent_config_yaml_with_extensions_config_parses() {
@@ -495,7 +493,7 @@ model:
         assert_eq!(another.get("enabled").and_then(|v| v.as_bool()), Some(true));
     }
 
-    /// Phase 80.1.b.b — YAML lacking `auto_dream` block must
+    /// YAML lacking `auto_dream` block must
     /// deserialize to `auto_dream: None` (`#[serde(default)]`
     /// backward-compat).
     #[test]
@@ -504,7 +502,7 @@ model:
         assert!(cfg.auto_dream.is_none());
     }
 
-    /// Phase 80.1.b.b — YAML with explicit `auto_dream` block
+    /// YAML with explicit `auto_dream` block
     /// populates the field correctly. humantime_serde parses the
     /// `min_hours: 25h` literal.
     #[test]
@@ -522,7 +520,7 @@ model:
         assert_eq!(ad.min_sessions, 7);
     }
 
-    /// Phase 80.1.b.b — explicit `enabled: false` is distinguishable
+    /// Explicit `enabled: false` is distinguishable
     /// from absent block (Some(cfg) with cfg.enabled=false vs None).
     #[test]
     fn agent_config_yaml_with_auto_dream_disabled_explicit() {
@@ -532,7 +530,7 @@ model:
         assert!(!ad.enabled);
     }
 
-    // ── Phase M4.a.b — extract_memories YAML ──
+    // ── extract_memories YAML ──
 
     #[test]
     fn agent_config_yaml_without_extract_memories_parses() {
@@ -589,7 +587,7 @@ pub enum DispatchCapability {
 }
 
 /// Per-agent / per-binding dispatch policy. Not all fields are
-/// honoured at every call site (see Phase 67.D.2 `DispatchGate` for
+/// honoured at every call site (see `DispatchGate` for
 /// the enforcement matrix); the YAML carries them all so an
 /// operator's intent survives across feature increments.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -704,11 +702,11 @@ pub struct InboundBinding {
     /// support Telegram). `None` (default) inherits the agent-level
     /// `language` field.
     ///
-    /// Phase 81.19.b — strict-validated at YAML deserialise time;
+    /// Strict-validated at YAML deserialise time;
     /// see `AgentConfig.language` for the closed-enum reference.
     #[serde(default, deserialize_with = "deserialize_locale_string")]
     pub language: Option<String>,
-    /// Phase 21 — per-binding override of the link-understanding
+    /// Per-binding override of the link-understanding
     /// config. Same opaque-JSON shape as the agent-level field;
     /// `serde_json::Value::Null` (default) inherits the agent value.
     /// Use when an agent has link-understanding enabled globally but
@@ -716,52 +714,52 @@ pub struct InboundBinding {
     /// public WhatsApp where every URL fetch would burn quota).
     #[serde(default)]
     pub link_understanding: serde_json::Value,
-    /// Phase 25 — per-binding override of the web-search config.
+    /// Per-binding override of the web-search config.
     /// `Value::Null` (default) inherits the agent-level value.
     #[serde(default)]
     pub web_search: serde_json::Value,
-    /// Phase 26 — pairing policy. Same opaque-Value discipline as
+    /// Pairing policy. Same opaque-Value discipline as
     /// `link_understanding` and `web_search`. `Value::Null` (default)
     /// = the gate is a no-op (every message admitted). When the
     /// binding sets `{auto_challenge: true}`, unknown senders get a
     /// challenge reply and the message is dropped.
     #[serde(default)]
     pub pairing_policy: serde_json::Value,
-    /// Phase 67.D.1 — per-binding override of `agents.dispatch_policy`.
+    /// Per-binding override of `agents.dispatch_policy`.
     /// `None` (default) inherits the agent-level value; populated
     /// replaces the whole struct so an operator can be precise per
     /// channel ("agent 'asistente' is `none` everywhere except this
     /// Telegram chat where it's `full`").
     #[serde(default)]
     pub dispatch_policy: Option<DispatchPolicy>,
-    /// Phase 79.1 — per-binding override of `agents.plan_mode`. `None`
+    /// Per-binding override of `agents.plan_mode`. `None`
     /// (default) inherits the agent-level policy; populated replaces
     /// the whole struct.
     #[serde(default)]
     pub plan_mode: Option<crate::types::plan_mode::PlanModePolicy>,
-    /// Phase 79.1 — optional role tag consulted by
+    /// Optional role tag consulted by
     /// `PlanModePolicy::compute_default_active`. Accepts
     /// `"coordinator"`, `"worker"`, `"proactive"` (case-insensitive);
     /// any other value (or omission) is treated as unset.
     #[serde(default)]
     pub role: Option<String>,
-    /// Phase 77.20 — per-binding proactive config override. `None` inherits
+    /// Per-binding proactive config override. `None` inherits
     /// the agent-level `proactive` block. When present, replaces the whole
     /// struct for goals spawned from this binding.
     #[serde(default)]
     pub proactive: Option<crate::types::proactive::ProactiveConfig>,
-    /// Phase 79.12 — per-binding REPL config override. `None` inherits
+    /// Per-binding REPL config override. `None` inherits
     /// the agent-level `repl` block. When present, replaces the whole
     /// struct for goals spawned from this binding.
     #[serde(default)]
     pub repl: Option<crate::types::repl::ReplConfig>,
-    /// Phase 80.17 — per-binding auto-approve dial override. `None`
+    /// Per-binding auto-approve dial override. `None`
     /// (default) inherits the agent-level `auto_approve`.
     /// `Some(true|false)` overrides for this binding.
     #[serde(default)]
     pub auto_approve: Option<bool>,
 
-    /// Phase 80.9 — per-binding channel-server session allowlist.
+    /// Per-binding channel-server session allowlist.
     /// Empty (default) denies every channel registration for this
     /// binding even when `agents.channels.enabled = true`. Names
     /// must match the MCP server name advertised at runtime — for
@@ -769,26 +767,26 @@ pub struct InboundBinding {
     /// `plugin:<plugin>:<server>`.
     #[serde(default)]
     pub allowed_channel_servers: Vec<String>,
-    /// Phase 79.8 — per-binding override of `agents.remote_triggers`.
+    /// Per-binding override of `agents.remote_triggers`.
     /// `None` (default) inherits the agent-level allowlist; `Some(vec)`
     /// replaces it entirely for this binding.
     #[serde(default)]
     pub remote_triggers: Option<Vec<crate::types::remote_triggers::RemoteTriggerEntry>>,
-    /// Phase 79.5 — per-binding LSP policy override. `None` (default)
+    /// Per-binding LSP policy override. `None` (default)
     /// inherits the agent-level `lsp` block. When present, replaces the
     /// whole struct for goals spawned from this binding (operator must
     /// write the full `LspPolicy` if they only want to flip one field).
     #[serde(default)]
     pub lsp: Option<crate::types::lsp::LspPolicy>,
-    /// Phase 79.6 — per-binding team policy override. `None` (default)
+    /// Per-binding team policy override. `None` (default)
     /// inherits the agent-level `team` block. Replace-whole semantics.
     #[serde(default)]
     pub team: Option<crate::types::team::TeamPolicy>,
-    /// Phase 79.10 — per-binding config-tool policy override. `None`
+    /// Per-binding config-tool policy override. `None`
     /// (default) inherits the agent-level `config_tool` block. Replace-whole.
     #[serde(default)]
     pub config_tool: Option<crate::types::config_tool::ConfigToolPolicy>,
-    /// Phase 82.7 — per-binding tool rate-limit overrides for
+    /// Per-binding tool rate-limit overrides for
     /// multi-tenant fair-use. Maps tool-name glob → spec.
     /// `None` (default) inherits the global agent-level
     /// `tool_rate_limits`. `Some(map)` FULLY REPLACES the global
@@ -862,10 +860,9 @@ pub struct ToolRateLimitSpec {
     pub rps: f64,
     #[serde(default)]
     pub burst: u64,
-    /// Phase 82.7 — when `true`, fail-closed if the bucket for
+    /// When `true`, fail-closed if the bucket for
     /// `(agent, binding_id, tool)` was evicted by LRU pressure.
-    /// Default `false` matches `claude-code-leak`'s
-    /// `policyLimits::isPolicyAllowed` fail-open semantic; tools
+    /// Default `false` is fail-open; tools
     /// declared "essential" (e.g. paid `marketing_send_drip` on
     /// a free tier) opt-in to fail-closed so evicted-bucket
     /// races cannot leak quota.
@@ -1047,7 +1044,7 @@ fn default_queue_cap() -> usize {
 mod rate_limit_yaml_tests {
     use super::*;
 
-    /// Phase 82.7 — yaml round-trip with new field.
+    /// Yaml round-trip with new field.
     #[test]
     fn tool_rate_limit_spec_yaml_with_essential_deny_on_miss() {
         let yaml = "rps: 0.167\nburst: 10\nessential_deny_on_miss: true\n";
@@ -1057,8 +1054,7 @@ mod rate_limit_yaml_tests {
         assert!(spec.essential_deny_on_miss);
     }
 
-    /// Default `essential_deny_on_miss = false` matches
-    /// claude-code-leak `policyLimits::isPolicyAllowed` fail-open.
+    /// Default `essential_deny_on_miss = false` is fail-open.
     #[test]
     fn tool_rate_limit_spec_default_essential_deny_on_miss_false() {
         let yaml = "rps: 1.0\nburst: 5\n";
@@ -1096,7 +1092,7 @@ patterns:
         assert!(!mem.essential_deny_on_miss);
     }
 
-    /// Phase 82.7 — yaml round-trip with per-binding override.
+    /// Yaml round-trip with per-binding override.
     /// Validates the field on `InboundBinding` deserialises and
     /// the operator-friendly nested shape works.
     #[test]
@@ -1133,7 +1129,7 @@ tool_rate_limits:
     }
 }
 
-/// Phase 81.19.b locale follow-up item 1 — strict YAML validation
+/// Strict YAML validation
 /// of `agents.<id>.language` and `InboundBinding.language` against
 /// the closed-enum `nexo_tool_meta::locale::Locale`.
 #[cfg(test)]

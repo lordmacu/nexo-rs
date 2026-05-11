@@ -1,4 +1,4 @@
-//! Phase 81.1 — typed errors for manifest parse + validation.
+//! Typed errors for manifest parse + validation.
 //!
 //! `ManifestError` encodes failure modes operators encounter when
 //! shipping a plugin: invalid TOML, regex-violating ids, semver
@@ -87,7 +87,7 @@ pub enum ManifestError {
     )]
     SupervisorStderrTailExceedsCap { value: usize, max: usize },
 
-    /// Phase 90 audit fix — `max_attempts = 0` is silently
+    /// `max_attempts = 0` is silently
     /// equivalent to `respawn = false` (the supervisor publishes
     /// `gave_up` with `attempts: 0` on the very first crash). Use
     /// `respawn = false` for "do not auto-respawn"; reserve
@@ -98,7 +98,7 @@ pub enum ManifestError {
     )]
     SupervisorMaxAttemptsZero,
 
-    /// Phase 90 audit fix — `backoff_ms = 0` produces a tight
+    /// `backoff_ms = 0` produces a tight
     /// retry loop (the documented exponential schedule starts from
     /// the base; with base = 0 every attempt's wait is 0). Force a
     /// minimum that gives the failing dependency time to recover.
@@ -109,7 +109,7 @@ pub enum ManifestError {
     )]
     SupervisorBackoffMsBelowFloor { value: u64, min: u64 },
 
-    /// Phase 90 audit fix — `backoff_ms` upper bound. The
+    /// `backoff_ms` upper bound. The
     /// reset-counter heuristic (`base * max_attempts * 2`) saturates
     /// at very large bases, effectively disabling the per-window
     /// counter reset. Cap so the heuristic stays meaningful.
@@ -120,7 +120,7 @@ pub enum ManifestError {
     )]
     SupervisorBackoffMsExceedsCap { value: u64, max: u64 },
 
-    /// Phase 81.28 — entry in `[plugin.extends].<section>` does
+    /// Entry in `[plugin.extends].<section>` does
     /// not match the id regex (`^[a-z][a-z0-9_]{0,31}$`).
     #[error("[plugin.extends].{section} id `{id}` invalid: {reason}")]
     ExtendsIdInvalid {
@@ -129,12 +129,12 @@ pub enum ManifestError {
         reason: &'static str,
     },
 
-    /// Phase 81.28 — same id appears more than once within a
+    /// Same id appears more than once within a
     /// single `[plugin.extends].<section>` list.
     #[error("[plugin.extends].{section} contains duplicate id `{id}`")]
     ExtendsDuplicate { section: &'static str, id: String },
 
-    /// Phase 81.28 — same id appears in two or more
+    /// Same id appears in two or more
     /// `[plugin.extends]` lists. Each id must occupy at most one
     /// list within a plugin to keep operator-visible declarations
     /// unambiguous.
@@ -147,7 +147,7 @@ pub enum ManifestError {
         sections: Vec<&'static str>,
     },
 
-    /// Phase 81.22 — sandbox allowlist entry equals or contains a
+    /// Sandbox allowlist entry equals or contains a
     /// host path on the hard denylist. `path` is the manifest
     /// allowlist entry, `denylisted` is the denylist match,
     /// `kind` distinguishes `fs_read_paths` from `fs_write_paths`.
@@ -161,7 +161,7 @@ pub enum ManifestError {
         kind: crate::sandbox::SandboxPathKind,
     },
 
-    /// Phase 81.22 — sandbox allowlist entry must be an absolute
+    /// Sandbox allowlist entry must be an absolute
     /// path. Relative paths are ambiguous (relative to plugin
     /// root? cwd? state_dir?) and bwrap binds need absolute
     /// host paths anyway.
@@ -173,7 +173,7 @@ pub enum ManifestError {
         kind: crate::sandbox::SandboxPathKind,
     },
 
-    /// Phase 81.22 — `${state_dir}` token appears in
+    /// `${state_dir}` token appears in
     /// `fs_read_paths`. State dir is the plugin's per-instance
     /// owned write space; reading from it is meaningless.
     /// Operators using this token are usually trying to declare
@@ -183,7 +183,7 @@ pub enum ManifestError {
     )]
     SandboxInvalidStateDirInterpolation { path: String },
 
-    /// Phase 81.22 — manifest declares `network = \"host\"` but
+    /// Manifest declares `network = \"host\"` but
     /// the operator-side capability `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`
     /// is not set. Sharing the host network namespace defeats
     /// most of the sandbox; operator must opt in explicitly.

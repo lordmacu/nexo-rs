@@ -55,7 +55,6 @@ pub struct RuntimeCronConfig {
     pub tool_calls: RuntimeCronToolCallsConfig,
     /// ±% jitter applied to `next_fire_at` to avoid thundering-herd
     /// when many entries share the same cron expression. `0` disables.
-    /// Lift from `claude-code-leak/src/utils/cronJitterConfig.ts`.
     #[serde(default = "default_cron_jitter_pct")]
     pub jitter_pct: u32,
 }

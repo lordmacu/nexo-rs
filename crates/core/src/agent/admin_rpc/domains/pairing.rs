@@ -1,4 +1,4 @@
-//! Phase 82.10.e — `nexo/admin/pairing/*` handlers + notification
+//! `nexo/admin/pairing/*` handlers + notification
 //! shape.
 //!
 //! Async pairing flow abstracted via [`PairingChallengeStore`]
@@ -45,7 +45,7 @@ pub trait PairingChallengeStore: Send + Sync {
     /// terminal (linked / expired / cancelled) — idempotent.
     fn cancel_challenge(&self, challenge_id: Uuid) -> anyhow::Result<bool>;
 
-    /// Phase 82.10.p — replace the QR snapshot for an in-flight
+    /// Replace the QR snapshot for an in-flight
     /// challenge. Called by `PairingChannelTrigger` impls on each
     /// onQr callback. Idempotent — overwriting an existing QR is
     /// the expected hot path (WhatsApp rotates pairing refs
@@ -70,7 +70,7 @@ pub trait PairingChallengeStore: Send + Sync {
         expires_at_ms: u64,
     ) -> anyhow::Result<bool>;
 
-    /// Phase 82.10.p — transition the state of an in-flight
+    /// Transition the state of an in-flight
     /// challenge. Triggers push `AwaitingUser` after delivering
     /// QR, `Linked` on confirmation. Transport failures are
     /// surfaced via `data.error` (the wire enum has no `Error`
@@ -153,7 +153,7 @@ pub fn status(store: &dyn PairingChallengeStore, params: Value) -> AdminRpcResul
     }
 }
 
-/// Phase 82.10.p — async wrapper that performs the trigger
+/// Async wrapper that performs the trigger
 /// lookup + spawn AFTER the legacy `start` path created the
 /// challenge. Production dispatcher routes here. The stale
 /// `start` (above) is kept for unit tests that don't care
@@ -181,7 +181,7 @@ pub async fn start_with_trigger(
         return AdminRpcResult::err(AdminRpcError::InvalidParams("channel is empty".into()));
     }
 
-    // Phase 82.10.p — fail-fast if no trigger registered. No
+    // Fail-fast if no trigger registered. No
     // garbage row in store; operator gets a clean error.
     let Some(trigger) = triggers.get(&input.channel) else {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
@@ -281,7 +281,7 @@ pub fn cancel(
     )
 }
 
-/// Phase 82.10.p — wrapper that aborts the spawned trigger
+/// Wrapper that aborts the spawned trigger
 /// task BEFORE flipping the store entry. Production dispatcher
 /// routes here. Same semantics as `cancel` for callers that
 /// have no trigger handles to abort.
@@ -607,7 +607,7 @@ mod tests {
         );
     }
 
-    // ── Phase 82.10.p — start_with_trigger / cancel_with_handles ──
+    // ── start_with_trigger / cancel_with_handles ──
 
     use crate::agent::admin_rpc::pairing_trigger::{
         PairingChannelTrigger, PairingChannelTriggers, PairingContext, PairingHandle,

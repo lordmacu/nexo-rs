@@ -1,4 +1,4 @@
-//! Phase 82.2 — axum-based HTTP server that hosts the webhook
+//! Axum-based HTTP server that hosts the webhook
 //! receiver. Sits next to `nexo-webhook-receiver` (data plane) and
 //! adds the wire layer plus the broker-backed dispatcher.
 //!

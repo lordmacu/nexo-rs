@@ -1,9 +1,9 @@
-//! Phase 91.4 — Candle Whisper inference backend.
+//! Candle Whisper inference backend.
 //!
 //! Mirrors the public surface of [`super::transcribe`] (the
 //! whisper-rs legacy backend) byte-for-byte so the dispatch in
-//! [`super::mod`] (lands in 91.6) can re-export either path
-//! transparently. Specifically:
+//! [`super::mod`] can re-export either path transparently.
+//! Specifically:
 //!
 //! - [`transcribe_file`] takes the same `Path` + `TranscribeConfig`
 //!   shape and returns the same `Result<String, SttError>`.
@@ -88,7 +88,7 @@ static MODEL_CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, Arc<CandleBackend
 /// - `config.json` — `m::Config` source-of-truth.
 ///
 /// Same layout HuggingFace ships under `openai/whisper-tiny`
-/// (Phase 91.7 wires the auto-fetch when `model_path` is empty).
+/// (the auto-fetch kicks in when `model_path` is empty).
 fn load_backend(model_dir: &Path) -> Result<Arc<CandleBackend>> {
     let cache = MODEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().expect("model cache mutex poisoned");
@@ -135,11 +135,10 @@ fn load_backend(model_dir: &Path) -> Result<Arc<CandleBackend>> {
     let tokenizer = Tokenizer::from_file(&tokenizer_path)
         .map_err(|e| SttError::Whisper(format!("loading tokenizer.json: {e}")))?;
 
-    // Device selection — v1 is CPU-only. GPU backends opt in via
-    // Phase 91.10 features (`stt-candle-metal`, `stt-candle-cuda`,
-    // `stt-candle-accelerate`). The cfg blocks land in 91.10; for
-    // now hard-pin CPU so cross-compile to every target stays
-    // pure-Rust.
+    // Device selection — v1 is CPU-only. GPU backends will opt in
+    // via future features (`stt-candle-metal`, `stt-candle-cuda`,
+    // `stt-candle-accelerate`); for now hard-pin CPU so
+    // cross-compile to every target stays pure-Rust.
     let device = Device::Cpu;
 
     // SAFETY: `from_mmaped_safetensors` requires the caller to
@@ -348,7 +347,7 @@ pub async fn transcribe_file(path: &Path, cfg: &TranscribeConfig) -> Result<Stri
     }
     let samples = super::audio::pcm_s16_to_f32(&pcm);
 
-    // Phase 91.7 — resolve the model directory. Either the
+    // resolve the model directory. Either the
     // operator points at a local SafeTensors layout via
     // `model_path`, or sets `model_id` and we auto-fetch from
     // HuggingFace Hub on first call. Both empty is a hard error
@@ -486,7 +485,7 @@ fn run_inference(
     Ok(raw.trim().to_string())
 }
 
-#[allow(dead_code)] // exercised once the dispatch in 91.6 lands
+#[allow(dead_code)] // exercised once the dispatch wiring lands
 const fn _compile_time_marker() -> &'static str {
     "phase-91.4-candle-inference"
 }

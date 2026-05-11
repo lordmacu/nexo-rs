@@ -1,4 +1,4 @@
-//! Step 10: hot-reload diff/apply behaviour.
+//! Hot-reload diff/apply behaviour.
 
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;

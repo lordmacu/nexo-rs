@@ -1,4 +1,4 @@
-//! Phase 21 — link understanding.
+//! Link understanding.
 //!
 //! When a user message contains URLs, the runtime fetches each one
 //! once per turn, extracts a short text summary, and renders a
@@ -201,7 +201,7 @@ impl LinkExtractor {
             .unwrap_or("")
             .to_lowercase();
         // Fetcher only understands HTML / plain text. PDFs / images
-        // / video are out of scope (Phase 24 will handle media).
+        // / video are out of scope.
         if !content_type.contains("text/html")
             && !content_type.contains("text/plain")
             && !content_type.is_empty()
@@ -364,11 +364,10 @@ pub fn extract_main_text(html: &str, max_bytes: usize) -> String {
     // prompt budget and stops the agent from anchoring on cookie
     // banners / share-buttons / nav menus.
     //
-    // Phase 21 L-2 — moves the extractor from "naive HTML stripper"
-    // to "readability-shaped boilerplate dropper" without pulling
-    // in the `scraper` crate. Real DOM-walk readability is the
-    // next-step upgrade if this still leaves noise on a specific
-    // site shape.
+    // The extractor is a readability-shaped boilerplate dropper
+    // rather than a naive HTML stripper, and avoids pulling in the
+    // `scraper` crate. Real DOM-walk readability is the next-step
+    // upgrade if this still leaves noise on a specific site shape.
     let mut cleaned = String::from(html);
     for tag in [
         "script", "style", "noscript", "head", "nav", "header", "footer", "aside", "form",
@@ -506,8 +505,6 @@ fn extract_title(html: &str) -> Option<String> {
 /// and `<aside class="sidebar">`. The earlier tag-name strip
 /// handles semantic tags; this catches the `<div>`s that should
 /// have been semantic but aren't.
-///
-/// Phase 21 L-2.
 fn strip_blocks_by_class_keyword(html: &str, keywords: &[&str]) -> String {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len());
@@ -760,7 +757,7 @@ mod tests {
         assert!(!out.contains(".x{}"));
     }
 
-    // Phase 21 L-2 — readability-shaped boilerplate dropper.
+    // readability-shaped boilerplate dropper.
 
     #[test]
     fn extract_drops_semantic_boilerplate_tags() {

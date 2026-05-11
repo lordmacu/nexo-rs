@@ -1,4 +1,4 @@
-/// Phase 77.20 — system-prompt hint injected when proactive mode is active.
+/// System-prompt hint injected when proactive mode is active.
 ///
 /// Kept as a `&'static str` so every LLM turn sees the same bytes,
 /// preserving the Anthropic prompt-cache fingerprint across turns

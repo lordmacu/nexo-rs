@@ -22,7 +22,7 @@ pub struct PersonEmail {
     pub added_at_ms: i64,
 }
 
-/// LID ↔ PN mapping row (M15.23.e / F23). WhatsApp protocol
+/// LID ↔ PN mapping row. WhatsApp protocol
 /// announces a migration whenever a contact's phone-number
 /// JID (`573001234567@s.whatsapp.net`) gets a corresponding
 /// LID-namespace JID (`123456789@lid`). Both Baileys + whatsmeow
@@ -48,7 +48,7 @@ pub struct LidPnMapping {
 /// SMS side: a contact's E.164 phone (or platform-specific
 /// JID like `573001234567@s.whatsapp.net`) resolves to the
 /// same `Person` already known to the email pipeline,
-/// powering the M15.23.e cross-channel duplicate detector.
+/// powering the cross-channel duplicate detector.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PersonPhone {
     pub person_id: PersonId,
@@ -76,7 +76,7 @@ pub trait PersonStore: Send + Sync {
         email: &str,
     ) -> Result<Option<Person>, IdentityError>;
     /// Every person on the tenant whose `company_id` matches
-    /// `company_id`. Powers the M15.23.e duplicate-person
+    /// `company_id`. Powers the duplicate-person
     /// matcher's name+company fuzzy signal so the search
     /// space isn't artificially narrowed to email-matched
     /// candidates only. Caller-supplied `limit` clamps the
@@ -680,7 +680,7 @@ impl PersonPhoneRow {
     }
 }
 
-/// SQLite-backed [`LidPnMappingStore`] (M15.23.e / F23).
+/// SQLite-backed [`LidPnMappingStore`].
 /// Tenant-keyed; PK on `(tenant_id, lid_user)` with a
 /// covering index on `(tenant_id, pn_user)` so reverse
 /// lookups don't trigger a table scan.
@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(count.0, 5);
     }
 
-    // ─── PersonPhoneStore (M15.23.e) ──────────────────────────
+    // ─── PersonPhoneStore ──────────────────────────
 
     async fn fresh_phone_store() -> SqlitePersonPhoneStore {
         SqlitePersonPhoneStore::new(open_pool(":memory:").await.unwrap())
@@ -1225,7 +1225,7 @@ mod tests {
         );
     }
 
-    // ─── PersonStore::list_by_company (M15.23.e / F24) ────────
+    // ─── PersonStore::list_by_company ────────
 
     fn person_with_company(id: &str, email: &str, company: &str) -> Person {
         let mut p = person_fixture(id, email);
@@ -1340,7 +1340,7 @@ mod tests {
         assert!(rows.is_empty());
     }
 
-    // ─── LidPnMappingStore (M15.23.e / F23) ─────────────────────
+    // ─── LidPnMappingStore ─────────────────────
 
     async fn fresh_lid_pn_store() -> SqliteLidPnMappingStore {
         SqliteLidPnMappingStore::new(open_pool(":memory:").await.unwrap())

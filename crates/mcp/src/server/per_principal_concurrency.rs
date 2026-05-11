@@ -1,21 +1,22 @@
-//! Phase 76.6 — per-principal in-flight concurrency cap +
-//! per-call timeout, keyed on `(TenantId, ToolName)`.
+//! Per-principal in-flight concurrency cap + per-call timeout,
+//! keyed on `(TenantId, ToolName)`.
 //!
 //! Sits inside `Dispatcher::dispatch` for `tools/call`, AFTER the
-//! 76.5 rate-limit gate. Stdio principals bypass entirely.
+//! rate-limit gate. Stdio principals bypass entirely.
 //!
-//! ## Why this is distinct from 76.5 (rate-limit)
+//! ## Why this is distinct from the rate-limit layer
 //!
-//! * 76.5 measures **calls per second** (token bucket). Protects
-//!   against floods of fast requests.
-//! * 76.6 measures **calls in flight at once** (semaphore).
+//! * The rate-limit layer measures **calls per second** (token
+//!   bucket). Protects against floods of fast requests.
+//! * This layer measures **calls in flight at once** (semaphore).
 //!   Protects against slow handlers piling up — a tenant that
-//!   sends 1 req/s but each takes 60 s would pass 76.5 cleanly
-//!   but accumulate 60 simultaneous calls without a cap here.
+//!   sends 1 req/s but each takes 60 s would pass the rate-limit
+//!   layer cleanly but accumulate 60 simultaneous calls without a
+//!   cap here.
 //!
 //! The two layers compose: a request must (a) get a token from
-//! 76.5 AND (b) acquire a permit from 76.6 before reaching the
-//! handler.
+//! the rate limiter AND (b) acquire a permit here before reaching
+//! the handler.
 //!
 //! ## Wire shape
 //!
@@ -27,20 +28,10 @@
 //! * `-32001` — per-call timeout exceeded.
 //!   Body `data` carries `timeout_ms`.
 //!
-//! ## Reference patterns
-//!
-//! * **RAII permit + cancel-aware acquire** — in-tree
-//!   `crates/mcp/src/client.rs:873-899` (76.1 client side).
-//! * **DashMap + sweeper + hard-cap eviction** — Phase 76.5
-//!   `per_principal_rate_limit.rs`. We mirror the same shape with
-//!   `Semaphore` in place of `TokenBucket`.
-//! * **`tokio::select!` cancellation pattern** — Phase 76.2
-//!   `dispatch.rs:201-205` (`biased; cancel; do_dispatch`).
-//! * **AbortSignal/AbortController equivalent in TS** —
-//!   `claude-code-leak/src/Task.ts:39` and
-//!   `claude-code-leak/src/services/tools/toolExecution.ts:415-416`.
-//!   The leak does not implement server-side concurrency caps;
-//!   only the cancellation propagation pattern is portable.
+//! Mirrors the DashMap + sweeper + hard-cap eviction shape from
+//! the per-principal rate limiter, with a `Semaphore` in place of
+//! the token bucket, plus the `tokio::select!` (`biased`) cancel
+//! pattern used elsewhere in the dispatcher.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -216,7 +207,7 @@ impl PerPrincipalConcurrencyCap {
         let key = (tenant.clone(), tool.to_string());
 
         // Hard-cap eviction BEFORE the lookup-then-insert. Same
-        // pattern as 76.5 `per_principal_rate_limit.rs`.
+        // pattern as `per_principal_rate_limit.rs`.
         if !self.semaphores.contains_key(&key) && self.semaphores.len() >= self.cfg.max_buckets {
             self.evict_oldest(self.cfg.max_buckets / 100 + 1);
         }
@@ -544,7 +535,7 @@ pub struct PerToolConcurrency {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PerPrincipalConcurrencyConfig {
-    /// Defaults to `true` so an operator who reaches Phase 76.6
+    /// Defaults to `true` so an operator who configures this block
     /// is concurrency-capped by default. Opt out with
     /// `enabled: false`.
     #[serde(default = "default_enabled")]

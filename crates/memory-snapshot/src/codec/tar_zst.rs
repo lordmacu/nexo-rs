@@ -9,7 +9,7 @@ use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 /// Compression level applied to every bundle. Mirrors the
-/// `nexo-backup.sh` operator script (Phase 36.1) so backup and snapshot
+/// `nexo-backup.sh` operator script so backup and snapshot
 /// converge on one tradeoff.
 pub const ZSTD_LEVEL: i32 = 19;
 

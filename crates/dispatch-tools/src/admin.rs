@@ -1,9 +1,9 @@
-//! Phase 67.G.4 — operator-only admin tools.
+//! Operator-only admin tools.
 //!
 //! These don't pass through `DispatchGate` because they aren't
 //! per-binding actions; instead they're gated by the
 //! `is_admin` flag on the agent's policy snapshot. The runtime
-//! ToolRegistry filter (67.D.3) drops them from non-admin
+//! ToolRegistry filter drops them from non-admin
 //! sessions so the LLM never even sees them. The server-side
 //! function-level `is_admin: bool` argument is a defense in
 //! depth — it should never be reachable for non-admin callers.

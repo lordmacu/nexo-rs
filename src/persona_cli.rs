@@ -1,10 +1,10 @@
-//! Phase F6 of `cody-cli-install` — CLI surface for the
+//! CLI surface for the
 //! `nexo persona <subcommand>` family. Sister of
 //! `src/plugin_install.rs` + `src/plugin_admin.rs` but for
 //! v2 persona packs (out-of-tree agent definitions).
 //!
 //! Subcommands implemented:
-//! - `nexo persona install <coords>` — F1+F3 pipeline:
+//! - `nexo persona install <coords>` — install pipeline:
 //!   resolve → validate → download → verify → extract.
 //! - `nexo persona list` — scan
 //!   `cfg.personas.discovery.search_paths` and tabulate.
@@ -29,7 +29,7 @@ use nexo_persona_installer::{install_persona, InstallInputs, PersonaInstallError
 use serde_json::json;
 
 /// `nexo persona install <owner>/<repo>[@<tag>] [--dest <dir>]
-/// [--target <triple>] [--json]` — runs the F3 orchestrator
+/// [--target <triple>] [--json]` — runs the install orchestrator
 /// against a real GitHub Releases endpoint. Resolves
 /// `--dest` (or
 /// `cfg.personas.discovery.search_paths[0]` /
@@ -404,7 +404,7 @@ pub async fn run_persona_upgrade(config_dir: &Path, id: String, json: bool) -> R
     };
 
     // Pre-flight downgrade check: peek the resolved version
-    // before paying for the full download. Reuse the F1
+    // before paying for the full download. Reuse the
     // contract resolver directly.
     let client = reqwest::Client::new();
     let resolved = match nexo_ext_installer::resolve_release_with_contract(

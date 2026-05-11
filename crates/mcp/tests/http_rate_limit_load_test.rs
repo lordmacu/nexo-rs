@@ -1,7 +1,6 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.5 — concurrent load test for the per-principal
-//! rate-limiter. Boots an HTTP server with the limiter wired in,
+//! Concurrent load test for the per-principal rate-limiter. Boots an HTTP server with the limiter wired in,
 //! fires N concurrent `tools/call` requests across multiple
 //! tenants/tools, and asserts:
 //!
@@ -131,8 +130,8 @@ async fn concurrent_calls_no_panic_no_leak() {
         token_env: None,
         tenant: Some("default".into()),
     });
-    // Bump the per-IP layer (Phase 76.1) out of the way so we
-    // exercise ONLY the per-principal layer (Phase 76.5).
+    // Bump the per-IP layer out of the way so we exercise ONLY
+    // the per-principal layer.
     cfg.per_ip_rate_limit = nexo_mcp::server::http_config::PerIpRateLimit {
         rps: 100_000,
         burst: 100_000,

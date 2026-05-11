@@ -1,5 +1,4 @@
 //! `ForkHandle` + `ForkResult` — public outcome types of a fork.
-//! Step 80.19 / 8.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -110,8 +109,7 @@ impl ForkResult {
         }
     }
 
-    /// Extract the last assistant text from a message list. Mirror of
-    /// `extractResultText` (leak `forkedAgent.ts:237-258`).
+    /// Extract the last assistant text from a message list.
     pub fn extract_final_text(messages: &[ChatMessage]) -> Option<String> {
         messages.iter().rev().find_map(|m| {
             if matches!(m.role, ChatRole::Assistant) && !m.content.is_empty() {
@@ -122,10 +120,9 @@ impl ForkResult {
         })
     }
 
-    /// Phase 84.2 — render this fork outcome as a
-    /// [`TaskNotification`] so the coordinator's session sees a
-    /// canonical `<task-notification>` envelope (Phase 84.2.1)
-    /// instead of free-form text.
+    /// Render this fork outcome as a [`TaskNotification`] so the
+    /// coordinator's session sees a canonical `<task-notification>`
+    /// envelope instead of free-form text.
     ///
     /// `task_id` is the worker's stable id (the `goal_id` from
     /// `ForkHandle.goal_id` when the fork was registered, or any
@@ -168,8 +165,7 @@ impl ForkResult {
     }
 }
 
-/// Phase 84.2 — render a [`ForkError`] as a failure-shaped
-/// [`TaskNotification`].
+/// Render a [`ForkError`] as a failure-shaped [`TaskNotification`].
 ///
 /// Maps abort-token cancellation to [`TaskStatus::Killed`] and
 /// budget breaches to [`TaskStatus::Timeout`]. All other errors

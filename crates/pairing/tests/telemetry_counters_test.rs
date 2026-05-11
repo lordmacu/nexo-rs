@@ -1,4 +1,4 @@
-//! Phase 26.y — integration tests asserting that pairing lifecycle
+//! Integration tests asserting that pairing lifecycle
 //! events bump the right Prometheus counters.
 //!
 //! Counters are process-global `LazyLock<DashMap<...>>`, so these

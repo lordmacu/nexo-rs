@@ -7,24 +7,17 @@
 //! `Content-Length`.
 //!
 //! The codec body uses [`tokio_util::codec::Decoder`] /
-//! [`tokio_util::codec::Encoder`] so the [`LspClient`] in step 5
+//! [`tokio_util::codec::Encoder`] so the [`LspClient`]
 //! can wrap the child stdio with `Framed::new` and pull
 //! `serde_json::Value` items.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPClient.ts:1-9` — the
-//!     leak imports `vscode-jsonrpc/node.js`'s `StreamMessageReader`
-//!     / `StreamMessageWriter`. They implement exactly this wire
-//!     format. We re-implement here in ~150 LoC because we are
-//!     not in the JS ecosystem and `vscode-jsonrpc` is not a Rust
-//!     crate.
-//!
-//! Reference (secondary):
-//!   * `research/src/agents/pi-bundle-lsp-runtime.ts:46-86` —
-//!     OpenClaw's `encodeLspMessage` + `parseLspMessages` are the
-//!     direct prior art (TypeScript, ~40 LoC). Their parser uses
-//!     buffer-of-strings instead of bytes which mishandles multi-byte
-//!     UTF-8 boundaries; we work in bytes.
+//! Prior art for this wire format is `vscode-jsonrpc`'s
+//! `StreamMessageReader` / `StreamMessageWriter`; we re-implement
+//! here in ~150 LoC since that is a JS library, not a Rust crate.
+//! OpenClaw's `encodeLspMessage` / `parseLspMessages` are a smaller
+//! TypeScript precedent, but their parser works on a buffer of
+//! strings and mishandles multi-byte UTF-8 boundaries; we work in
+//! bytes.
 //!
 //! [`LspClient`]: crate::client
 

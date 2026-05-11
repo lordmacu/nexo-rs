@@ -1,6 +1,5 @@
-//! Phase 81.19.b locale follow-up — `Locale`, `LangCode`,
-//! `RegionCode`, and `LocaleParseError` were moved to
-//! `nexo-tool-meta` so `nexo-config` can validate
+//! `Locale`, `LangCode`, `RegionCode`, and `LocaleParseError`
+//! live in `nexo-tool-meta` so `nexo-config` can validate
 //! `agents.<id>.language` at YAML deserialise time without
 //! triggering a layer inversion (`nexo-config` cannot depend on
 //! `nexo-microapp-sdk`).

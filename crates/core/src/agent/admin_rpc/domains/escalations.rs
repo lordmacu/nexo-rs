@@ -1,4 +1,4 @@
-//! Phase 82.14 — agent escalation list + resolve handlers.
+//! Agent escalation list + resolve handlers.
 //!
 //! Backed by an `EscalationStore` trait so the dispatcher
 //! crate stays cycle-free vs whoever holds the persistent
@@ -61,7 +61,7 @@ pub trait EscalationStore: Send + Sync + std::fmt::Debug {
 
 /// `nexo/admin/escalations/list` — read-only paginated query.
 ///
-/// Phase 83.8.12.4.b — `patcher` is optional. When `Some` AND
+/// `patcher` is optional. When `Some` AND
 /// `params.tenant_id.is_some()`, the handler filters returned
 /// rows by joining each `EscalationEntry.agent_id` against
 /// `agents.yaml.<id>.tenant_id`. Defense-in-depth: agents
@@ -105,7 +105,7 @@ pub async fn list(
 
 /// `nexo/admin/escalations/resolve` — flip Pending → Resolved.
 ///
-/// Phase 82.14.b — when `emitter` is `Some` AND the resolve
+/// When `emitter` is `Some` AND the resolve
 /// transition was a real flip (`changed = true`), fires
 /// `AgentEventKind::EscalationResolved` on the firehose so
 /// operator UIs subscribed to `nexo/notify/agent_event` clear
@@ -168,7 +168,7 @@ pub async fn resolve(
     )
 }
 
-/// Phase 82.14 cross-cut into 82.13: when `processing/pause`
+/// Cross-cut into processing: when `processing/pause`
 /// fires on a scope that has a Pending escalation, auto-flip
 /// the escalation to `Resolved { OperatorTakeover }`. Boot
 /// wires this by calling [`auto_resolve_on_pause`] from the
@@ -176,7 +176,7 @@ pub async fn resolve(
 /// Idempotent — returns `Ok(true)` when a row was flipped,
 /// `Ok(false)` otherwise.
 ///
-/// Phase 82.14.b — when `emitter` is `Some` AND the row
+/// When `emitter` is `Some` AND the row
 /// flipped, fires `AgentEventKind::EscalationResolved` on the
 /// firehose. Same shape as the operator-driven `resolve`
 /// handler emit so subscribers can't tell the two paths
@@ -205,7 +205,7 @@ pub async fn auto_resolve_on_pause(
     Ok(changed)
 }
 
-/// Phase 82.14.b — sliding-window escalation throttle.
+/// Sliding-window escalation throttle.
 ///
 /// Caps how many `escalate_to_human` calls a single scope can
 /// emit within a rolling time window. Defends against agent
@@ -556,7 +556,7 @@ mod tests {
         assert!(!resp.changed);
     }
 
-    /// Phase 83.8.12.4.b — minimal `YamlPatcher` mock used to feed
+    /// Minimal `YamlPatcher` mock used to feed
     /// `agent_tenant_id` lookups during the tenant-filter tests.
     /// Maps `agent_id → tenant_id` via a static table; only the
     /// `tenant_id` dotted field is honoured.
@@ -665,7 +665,7 @@ mod tests {
         );
     }
 
-    /// Phase 82.14.b — minimal `AgentEventEmitter` mock that
+    /// Minimal `AgentEventEmitter` mock that
     /// captures emitted events into a Vec for the firehose
     /// emit assertions.
     #[derive(Debug, Default)]
@@ -814,7 +814,7 @@ mod tests {
         );
     }
 
-    // ── Phase 82.14.b — escalation throttle primitive ──────────
+    // ── escalation throttle primitive ──────────
 
     fn other_convo() -> ProcessingScope {
         ProcessingScope::Conversation {

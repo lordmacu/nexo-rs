@@ -16,8 +16,8 @@ pub trait AgentHarness: Send + Sync + 'static {
     /// Human-readable label for logs and admin-ui.
     fn label(&self) -> &str;
 
-    /// `Some(plugin_id)` when the harness is registered by a plugin
-    /// (Phase 11). `None` for in-tree harnesses.
+    /// `Some(plugin_id)` when the harness is registered by a plugin.
+    /// `None` for in-tree harnesses.
     fn plugin_id(&self) -> Option<&str> {
         None
     }

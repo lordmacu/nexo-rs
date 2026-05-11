@@ -1,4 +1,4 @@
-//! Phase 77.2 — autoCompact policy shared by driver-loop and core agent.
+//! AutoCompact policy shared by driver-loop and core agent.
 //!
 //! `CompactPolicy::classify` returns `Some((focus_hint, trigger))` when
 //! the caller should inject a compact turn before the next regular turn.
@@ -66,7 +66,7 @@ pub trait CompactPolicy: Send + Sync + 'static {
     async fn classify(&self, ctx: &CompactContext<'_>) -> Option<(String, CompactTrigger)>;
 }
 
-/// Phase 85.2 — micro-compact policy. Per-turn cheap O(1) check
+/// Micro-compact policy. Per-turn cheap O(1) check
 /// the orchestrator runs BEFORE assembling the request body. When
 /// it returns `Some(decision)`, the orchestrator replaces the
 /// matched tool result with [`TIME_BASED_MC_CLEARED_MESSAGE`] and
@@ -562,7 +562,7 @@ mod tests {
     }
 }
 
-// ── Phase 77.3 — session memory compact ───────────────────────────
+// ── Session memory compact ────────────────────────────────────────
 
 /// Config for session-memory-backed compaction.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -598,8 +598,6 @@ fn default_sm_store_in_ltm() -> bool {
 /// One tool result that the micro-compact policy truncated. Carried
 /// inside [`CompactSummary`] so the orchestrator + provider clients
 /// reconstruct the same shape across daemon restarts.
-///
-/// Phase 85.2.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TruncatedToolResult {
     /// The tool call's stable id (matches the `id` field in the
@@ -620,8 +618,6 @@ pub struct TruncatedToolResult {
 /// Marker text the orchestrator splices into a truncated tool
 /// result. Constant string so the provider's prompt-cache prefix
 /// matcher sees identical bytes across compact passes.
-///
-/// Phase 85.2.
 pub const TIME_BASED_MC_CLEARED_MESSAGE: &str =
     "[tool_result truncated by micro-compact for cache stability — \
 see CompactSummary.truncated_tool_results for original byte size]";
@@ -635,17 +631,17 @@ pub struct CompactSummary {
     pub before_tokens: u64,
     pub after_tokens: u64,
     pub stored_at: chrono::DateTime<chrono::Utc>,
-    /// Phase 85.2 — provider-cache breakpoint anchors that survived
+    /// Provider-cache breakpoint anchors that survived
     /// the compact pass. Each entry is a stable string the provider
     /// client uses to render `cache_control: { type: "ephemeral" }`
     /// markers at the same logical positions across turns. Empty in
-    /// pre-85.2 payloads thanks to `#[serde(default)]`.
+    /// older payloads thanks to `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cache_pin_keys: Vec<String>,
-    /// Phase 85.2 — tool results the micro-compact policy truncated
+    /// Tool results the micro-compact policy truncated
     /// during this compact pass. The orchestrator deduplicates by
     /// `call_id` across consecutive compacts so the same call is
-    /// never marked twice. Empty in pre-85.2 payloads thanks to
+    /// never marked twice. Empty in older payloads thanks to
     /// `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub truncated_tool_results: Vec<TruncatedToolResult>,
@@ -669,7 +665,7 @@ pub trait CompactSummaryStore: Send + Sync + 'static {
     async fn forget(&self, goal_id: &crate::GoalId) -> Result<(), String>;
 }
 
-// ── Phase 77.5 — extractMemories config ────────────────────────────
+// ── extractMemories config ─────────────────────────────────────────
 
 /// Config for post-turn LLM memory extraction.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -796,10 +792,9 @@ mod micro_compact_tests {
 
     #[test]
     fn compact_summary_pre85_2_payload_loads_with_empty_extensions() {
-        // Backwards-compat: pre-85.2 payloads (no cache_pin_keys
+        // Backwards-compat: older payloads (no cache_pin_keys
         // / truncated_tool_results) must deserialise cleanly with
-        // empty Vecs via #[serde(default)]. Migration test
-        // (done-criterion 5).
+        // empty Vecs via #[serde(default)].
         let pre_85_2_json = r#"{
             "agent_id": "ana",
             "summary": "compacted history",

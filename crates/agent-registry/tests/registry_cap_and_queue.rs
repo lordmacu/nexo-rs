@@ -1,4 +1,4 @@
-//! Phase 67.B.3 — `admit` enforces the global cap; beyond it,
+//! `admit` enforces the global cap; beyond it,
 //! goals are queued (FIFO) and `release` returns the next-up so
 //! the caller can promote it.
 
@@ -57,7 +57,7 @@ async fn cap_2_third_admit_queues() {
         .unwrap();
     assert_eq!(next, id_c);
 
-    // B12 — release pops; a second release after another goal
+    // release pops; a second release after another goal
     // ends MUST NOT return the same id again (queue is empty
     // now since C was popped above and there were only 3
     // entries originally).
@@ -95,7 +95,7 @@ async fn release_with_non_terminal_status_errors() {
 
 #[tokio::test]
 async fn concurrent_admits_do_not_overshoot_cap() {
-    // PT-5 — 10 concurrent admits with cap=3 must produce exactly
+    // 10 concurrent admits with cap=3 must produce exactly
     // 3 Admitted and 7 Queued. Without the admit_lock the sum of
     // running could exceed the cap by N.
     let store = Arc::new(MemoryAgentRegistryStore::default());

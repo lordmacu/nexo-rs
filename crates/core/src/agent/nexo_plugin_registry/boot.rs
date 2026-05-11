@@ -1,11 +1,10 @@
-//! Phase 81.9 — atomic boot helper that runs the
+//! Atomic boot helper that runs the
 //! discover → merge_agents → merge_skills → init_loop pipeline and
 //! returns a single struct holding every handle the per-agent boot
 //! loop needs (registry, skill_roots, channel adapter registry).
 //!
-//! Replaces the `Phase 81.5.b` snippet at `src/main.rs:1928-1954` —
-//! same observable behavior, but the four sub-phase handles
-//! (81.5 / 81.6 / 81.7 / 81.8) are folded into one call site.
+//! The four pipeline stages (discover / merge agents / merge skills /
+//! init loop) are folded into one call site.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,10 +29,9 @@ use crate::config_reload::ConfigReloadCoordinator;
 use nexo_broker::AnyBroker;
 use tokio_util::sync::CancellationToken;
 
-/// Phase 81.17.b — runtime handles the caller (main.rs) supplies
-/// so the auto-subprocess fallback in
-/// `run_plugin_init_loop_with_factory` can build a real
-/// `PluginInitContext` for `SubprocessNexoPlugin::init`.
+/// Runtime handles the caller (main.rs) supplies so the
+/// auto-subprocess fallback in `run_plugin_init_loop_with_factory`
+/// can build a real `PluginInitContext` for `SubprocessNexoPlugin::init`.
 ///
 /// Today the subprocess adapter only reads `broker` + `shutdown`
 /// from the context. Other registries (tool / advisor / hook /
@@ -41,27 +39,27 @@ use tokio_util::sync::CancellationToken;
 /// `::new()` instances inside `wire_plugin_registry`'s ctx_factory
 /// because the subprocess path doesn't touch them. `config_dir`
 /// + `state_root` are passed so the SDK's `plugin_config_dir(id)`
-/// helper resolves correctly when 81.20+ extends the contract.
+/// helper resolves correctly.
 pub struct SubprocessRuntime {
     pub broker: AnyBroker,
     pub shutdown: CancellationToken,
     pub config_dir: PathBuf,
     pub state_root: PathBuf,
-    /// Phase 81.20.a — long-term memory backend exposed to
-    /// subprocess plugins via the `memory.recall` JSON-RPC method.
-    /// `None` when the operator hasn't configured memory.
+    /// Long-term memory backend exposed to subprocess plugins via
+    /// the `memory.recall` JSON-RPC method. `None` when the operator
+    /// hasn't configured memory.
     pub long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
-    /// Phase 81.20.b.b — real LLM registry (with operator's
-    /// providers registered) threaded into the subprocess
-    /// pipeline so `llm.complete` requests reach actual providers
-    /// instead of the SubprocessCtxStubs empty stub.
+    /// Real LLM registry (with operator's providers registered)
+    /// threaded into the subprocess pipeline so `llm.complete`
+    /// requests reach actual providers instead of the
+    /// SubprocessCtxStubs empty stub.
     pub llm_registry: Arc<nexo_llm::LlmRegistry>,
-    /// Phase 81.20.b.b — provider config (api keys, endpoints,
-    /// retry knobs, tenant overrides) the registry needs at
-    /// `build()` time. Subprocess plugins issuing `llm.complete`
-    /// requests get clients constructed from this config.
+    /// Provider config (api keys, endpoints, retry knobs, tenant
+    /// overrides) the registry needs at `build()` time. Subprocess
+    /// plugins issuing `llm.complete` requests get clients
+    /// constructed from this config.
     pub llm_config: Arc<nexo_config::LlmConfig>,
-    /// Phase 81.22 — sandbox runner shared across subprocess
+    /// Sandbox runner shared across subprocess
     /// plugin spawns. Discovers `bwrap` once + caches env-driven
     /// capability flags. Used by `SubprocessNexoPlugin::spawn_one_attempt`
     /// to wrap each plugin's command with bwrap argv when the
@@ -69,12 +67,11 @@ pub struct SubprocessRuntime {
     pub sandbox: Arc<crate::agent::plugin_sandbox::SandboxRunner>,
 }
 
-/// Phase 81.9 — bundle of registry handles produced by
-/// [`wire_plugin_registry`] and consumed by the per-agent boot loop.
+/// Bundle of registry handles produced by [`wire_plugin_registry`]
+/// and consumed by the per-agent boot loop.
 pub struct WirePluginRegistryOutput {
     /// Active snapshot container. Boot keeps the `Arc` alive so
-    /// later sub-phases can swap (Phase 18 hot-reload, Phase 81.11
-    /// admin RPC).
+    /// hot-reload and admin RPC paths can swap it.
     pub registry: Arc<NexoPluginRegistry>,
     /// Plugin-contribution skill roots, sorted by plugin id
     /// (BTreeMap iteration). Per-agent
@@ -83,43 +80,35 @@ pub struct WirePluginRegistryOutput {
     /// uses the same vec so plugin priority is consistent across
     /// agents.
     pub skill_roots: Vec<PathBuf>,
-    /// Channel adapter registry. Empty on this phase — no producer
-    /// constructs `Arc<dyn ChannelAdapter>` instances yet
-    /// (manifest-driven factory lands in Phase 81.12). Held in
-    /// scope so the outbound dispatcher refactor (Phase 81.9.b)
-    /// can pull it without changing the boot wire shape.
+    /// Channel adapter registry. Held in scope so the outbound
+    /// dispatcher can pull it without changing the boot wire shape.
     pub channel_adapter_registry: Arc<ChannelAdapterRegistry>,
-    /// Phase 81.27 — `HookRegistry` shared with the post-init
-    /// hook so subprocess plugins declaring `extends.hooks =
-    /// [...]` can register `RemoteHookHandler`s into the same
-    /// instance the agent runtime fires hooks against.
+    /// `HookRegistry` shared with the post-init hook so subprocess
+    /// plugins declaring `extends.hooks = [...]` can register
+    /// `RemoteHookHandler`s into the same instance the agent
+    /// runtime fires hooks against.
     pub hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
-    /// Phase 81.26 — `VectorBackendRegistry` shared with the
-    /// post-init hook so subprocess plugins declaring
-    /// `extends.memory_backends = [...]` can register
-    /// `RemoteVectorBackend` instances. v1 ships the registry +
-    /// wire only; consumer-side wiring (`LongTermMemory.recall_vector`
-    /// reading from this registry) lands in 81.26.b.
+    /// `VectorBackendRegistry` shared with the post-init hook so
+    /// subprocess plugins declaring `extends.memory_backends =
+    /// [...]` can register `RemoteVectorBackend` instances.
     pub vector_backend_registry: Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
-    /// Phase 81.29 — shared `ToolRegistry` (the daemon's main
-    /// tool catalog). Surfaced on the wire output so callers can
-    /// enumerate registered subprocess tools (operator visibility,
-    /// e2e tests, future doctor surface). Subprocess plugins
-    /// declaring `extends.tools = [...]` register `RemoteToolHandler`s
-    /// into the per-plugin scoped wrapper around this same Arc.
+    /// Shared `ToolRegistry` (the daemon's main tool catalog).
+    /// Surfaced on the wire output so callers can enumerate
+    /// registered subprocess tools. Subprocess plugins declaring
+    /// `extends.tools = [...]` register `RemoteToolHandler`s into
+    /// the per-plugin scoped wrapper around this same Arc.
     pub tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
-    /// Phase 81.11 — plugin-declared capability gates aggregated
-    /// at boot. Same data as
+    /// Plugin-declared capability gates aggregated at boot. Same
+    /// data as
     /// `registry.snapshot().last_report.plugin_capability_gates`,
     /// surfaced here for callers that don't want to load the
     /// snapshot.
     pub plugin_capability_gates: std::collections::BTreeMap<String, AggregatedGate>,
-    /// Phase 81.11 — capabilities a plugin declared in
-    /// `requires.nexo_capabilities` that are not currently wired
-    /// in the daemon.
+    /// Capabilities a plugin declared in `requires.nexo_capabilities`
+    /// that are not currently wired in the daemon.
     pub unmet_required_capabilities: Vec<UnmetRequirement>,
 
-    /// Phase 81.17.b — live `Arc<dyn NexoPlugin>` handles produced
+    /// Live `Arc<dyn NexoPlugin>` handles produced
     /// by the auto-subprocess fallback (and any in-tree factory).
     /// Caller MUST retain this output for the daemon's lifetime —
     /// dropping these handles triggers `Arc::drop` on each plugin
@@ -129,7 +118,7 @@ pub struct WirePluginRegistryOutput {
     pub plugin_handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
 }
 
-/// Phase 81.9 — atomic 4-step plugin registry boot wire.
+/// Atomic 4-step plugin registry boot wire.
 ///
 /// 1. `discover` walks the search paths in `discovery_cfg`.
 /// 2. `merge_plugin_contributed_agents` folds plugin agents into
@@ -138,8 +127,8 @@ pub struct WirePluginRegistryOutput {
 /// 3. `merge_plugin_contributed_skills` catalogs plugin skill
 ///    roots; they land on the snapshot's `skill_roots` field.
 /// 4. `run_plugin_init_loop` exercises any
-///    `Arc<dyn NexoPlugin>` handles registered by 81.7.b / 81.12
-///    (today: empty map → every plugin records
+///    `Arc<dyn NexoPlugin>` handles registered by the factory
+///    (with no factory: empty map → every plugin records
 ///    `InitOutcome::NoHandle`).
 ///
 /// All three reports are folded into the snapshot's `last_report`
@@ -167,21 +156,19 @@ pub async fn wire_plugin_registry(
     .await
 }
 
-/// Phase 81.17.b — variant of [`wire_plugin_registry`] that
-/// accepts an optional [`SubprocessRuntime`] from the caller.
-/// When `factory_registry: Some` AND `subprocess_runtime: Some`,
-/// the auto-subprocess fallback in
-/// `run_plugin_init_loop_with_factory` builds a real
+/// Variant of [`wire_plugin_registry`] that accepts an optional
+/// [`SubprocessRuntime`] from the caller. When `factory_registry:
+/// Some` AND `subprocess_runtime: Some`, the auto-subprocess
+/// fallback in `run_plugin_init_loop_with_factory` builds a real
 /// `PluginInitContext` (using the runtime's broker + shutdown +
 /// config_dir + state_root, plus stub registries for the other
 /// fields the subprocess path doesn't read). With
 /// `subprocess_runtime: None` (the default) and a Some
 /// factory_registry, the legacy `unreachable!()` ctx_factory
-/// fires — preserving the existing 81.12.0 contract for callers
-/// that haven't migrated.
+/// fires — for callers that don't host subprocess plugins.
 ///
-/// Phase 81.18.b — `extra_plugins` are appended to the
-/// post-discovery snapshot before the agent / skill / init-loop
+/// `extra_plugins` are appended to the post-discovery snapshot
+/// before the agent / skill / init-loop
 /// passes run. Multi-instance subprocess plugins (telegram /
 /// whatsapp) clone a base discovered manifest N times with
 /// mutated `plugin.id` (`telegram.<inst>`) and pass them here so
@@ -200,7 +187,7 @@ pub async fn wire_plugin_registry_with_runtime(
 ) -> WirePluginRegistryOutput {
     // 1. discover.
     let snap = discover(discovery_cfg, current_version);
-    // 1.b. Phase 81.18.b — merge synthetic instance plugins from
+    // 1.b. merge synthetic instance plugins from
     // the daemon's multi-instance loop. Each entry has a
     // mutated `plugin.id` (`telegram.<inst>`) so the init loop's
     // factory_registry lookup hits the per-instance factory the
@@ -224,31 +211,28 @@ pub async fn wire_plugin_registry_with_runtime(
     let skill_roots: Vec<PathBuf> = skill_merge.skill_roots.values().cloned().collect();
 
     // 4. drive NexoPlugin::init() per discovered plugin.
-    //    Phase 81.12.0 — when the operator supplies a
-    //    `factory_registry`, plugins with a registered factory
-    //    are instantiated + their `init()` is called; the rest
-    //    record NoHandle. With `None` (today's main.rs path),
-    //    behavior matches the pre-81.12.0 branch: every plugin
-    //    records NoHandle. ctx_factory closure is `unreachable!`
-    //    because no current factory's init body actually consumes
-    //    a real `PluginInitContext` until 81.12.a-e ship.
-    // Phase 81.24 — channel adapter registry shared between the
-    // post-init `register_remote_channel_adapters` hook and the
+    //    When the operator supplies a `factory_registry`, plugins
+    //    with a registered factory are instantiated + their
+    //    `init()` is called; the rest record NoHandle. With `None`,
+    //    every plugin records NoHandle and the ctx_factory closure
+    //    is `unreachable!`.
+    // Channel adapter registry shared between the post-init
+    // `register_remote_channel_adapters` hook and the
     // `WirePluginRegistryOutput` so callers see the same Arc.
     let shared_channel_adapter_registry: Arc<ChannelAdapterRegistry> =
         Arc::new(ChannelAdapterRegistry::new());
-    // Phase 81.27 — hook registry shared between the post-init
+    // Hook registry shared between the post-init
     // `register_remote_hook_handlers` hook and the
     // `WirePluginRegistryOutput` so callers see the same Arc.
     let shared_hook_registry: Arc<crate::agent::hook_registry::HookRegistry> =
         Arc::new(crate::agent::hook_registry::HookRegistry::new());
-    // Phase 81.26 — vector backend registry shared between the
-    // post-init `register_remote_vector_backends` hook and the
+    // Vector backend registry shared between the post-init
+    // `register_remote_vector_backends` hook and the
     // `WirePluginRegistryOutput`.
     let shared_vector_backend_registry: Arc<
         crate::agent::vector_backend_registry::VectorBackendRegistry,
     > = Arc::new(crate::agent::vector_backend_registry::VectorBackendRegistry::new());
-    // Phase 81.29 — daemon's main tool registry shared between
+    // Daemon's main tool registry shared between
     // each per-plugin `ScopedToolRegistry` (built by `SubprocessCtxStubs`
     // / per-plugin context_for) and the `WirePluginRegistryOutput`
     // so callers can enumerate every subprocess-registered tool.
@@ -260,7 +244,7 @@ pub async fn wire_plugin_registry_with_runtime(
         BTreeMap<String, Arc<dyn NexoPlugin>>,
     ) = match (factory_registry, subprocess_runtime) {
         (Some(factory), Some(rt)) => {
-            // Phase 81.17.b — caller wired a real subprocess runtime,
+            // Caller wired a real subprocess runtime,
             // so the ctx_factory builds a real-enough PluginInitContext
             // for the subprocess fallback. Stubbed registries are
             // fine because SubprocessNexoPlugin::init only reads
@@ -287,8 +271,8 @@ pub async fn wire_plugin_registry_with_runtime(
             (r.outcomes, r.handles)
         }
         (Some(factory), None) => {
-            // Legacy 81.12.0 contract path: caller registered an
-            // in-tree factory whose init body does NOT consume
+            // Legacy contract path: caller registered an in-tree
+            // factory whose init body does NOT consume
             // PluginInitContext. The unreachable!() here fires only
             // if a manifest with `entrypoint.command` slips into the
             // snapshot (auto-subprocess fallback then tries to use
@@ -296,9 +280,9 @@ pub async fn wire_plugin_registry_with_runtime(
             // operator error: caller should have used
             // `wire_plugin_registry_with_runtime` with
             // `subprocess_runtime: Some(...)`.
-            // Phase 81.4 — config_dir defaults to "." for the
-            // legacy (Some-factory, None-runtime) branch since
-            // there's no SubprocessRuntime to read it from.
+            // config_dir defaults to "." for the legacy
+            // (Some-factory, None-runtime) branch since there's no
+            // SubprocessRuntime to read it from.
             // Loader returns empty config when `./plugins/<id>`
             // doesn't exist, so existing in-tree dual-trait
             // factories see Arc<empty mapping> as before.
@@ -345,7 +329,7 @@ pub async fn wire_plugin_registry_with_runtime(
     updated_report.fold_skill_merge(skill_merge);
     updated_report.fold_init_outcomes(init_outcomes);
 
-    // Phase 81.11 — aggregate plugin capability gates + check
+    // Aggregate plugin capability gates + check
     // unmet `requires.nexo_capabilities`. Snapshot for the
     // aggregator borrows the just-discovered plugins (the same
     // ones that will populate the final snapshot below).
@@ -450,16 +434,16 @@ pub async fn wire_plugin_registry_with_runtime(
     WirePluginRegistryOutput {
         registry,
         skill_roots,
-        // Phase 81.24 — same registry used by the post-init hook so
+        // Same registry used by the post-init hook so
         // callers see the registered remote adapters.
         channel_adapter_registry: shared_channel_adapter_registry,
-        // Phase 81.27 — same registry used by the post-init hook so
+        // Same registry used by the post-init hook so
         // callers see remote `RemoteHookHandler` registrations.
         hook_registry: shared_hook_registry,
-        // Phase 81.26 — same registry used by the post-init hook so
+        // Same registry used by the post-init hook so
         // callers see remote `RemoteVectorBackend` registrations.
         vector_backend_registry: shared_vector_backend_registry,
-        // Phase 81.29 — same Arc the per-plugin ScopedToolRegistry
+        // Same Arc the per-plugin ScopedToolRegistry
         // wraps, so callers can enumerate registered subprocess
         // tools.
         tool_registry: shared_tool_registry,
@@ -469,7 +453,7 @@ pub async fn wire_plugin_registry_with_runtime(
     }
 }
 
-/// Phase 81.17.b — stub registries reused across every subprocess
+/// Stub registries reused across every subprocess
 /// plugin's `PluginInitContext`. `SubprocessNexoPlugin::init` only
 /// reads `ctx.broker` + `ctx.shutdown` today, so the rest stay
 /// empty. Owned by the dispatch closure inside
@@ -483,7 +467,7 @@ struct SubprocessCtxStubs {
     reload_coord: Arc<ConfigReloadCoordinator>,
     sessions: Arc<crate::session::SessionManager>,
     channel_adapter_registry: Arc<ChannelAdapterRegistry>,
-    /// Phase 81.26 — kept on stubs so the boot helper can reach
+    /// Kept on stubs so the boot helper can reach
     /// it via `stubs.vector_backend_registry` if needed; today
     /// `PluginInitContext` doesn't expose it (consumers read
     /// from `wire.vector_backend_registry`).
@@ -492,7 +476,7 @@ struct SubprocessCtxStubs {
 }
 
 impl SubprocessCtxStubs {
-    /// Phase 81.26/27 — variant that accepts pre-built channel +
+    /// Variant that accepts pre-built channel +
     /// hook + vector backend registries so all three (stubs +
     /// post-init hook + wire output) share the same Arcs.
     fn build_with_shared_registries(
@@ -511,7 +495,7 @@ impl SubprocessCtxStubs {
     }
 
     fn build(rt: &SubprocessRuntime) -> Self {
-        // Phase 81.20.b.b — reuse rt's REAL llm_registry for the
+        // Reuse rt's REAL llm_registry for the
         // reload coordinator instead of a separate empty stub.
         // ConfigReloadCoordinator only reads the registry to
         // re-build LLM clients on hot-reload; using the same
@@ -546,7 +530,7 @@ impl SubprocessCtxStubs {
         rt: &'env SubprocessRuntime,
         plugin_config: &Arc<serde_yaml::Value>,
     ) -> crate::agent::plugin_host::PluginInitContext<'env> {
-        // Phase 81.3 — wrap the raw ToolRegistry in a per-plugin
+        // Wrap the raw ToolRegistry in a per-plugin
         // ScopedToolRegistry keyed on this manifest's tools.expose.
         // Plugins receive the proxy via PluginInitContext;
         // attempts to register out-of-namespace tools are gated
@@ -565,7 +549,7 @@ impl SubprocessCtxStubs {
             advisor_registry: self.advisor_registry.clone(),
             hook_registry: self.hook_registry.clone(),
             broker: rt.broker.clone(),
-            // Phase 81.20.b.b — pass the runtime's REAL llm
+            // Pass the runtime's REAL llm
             // registry instead of the stubs' empty one, so
             // subprocess plugins issuing `llm.complete` reach
             // operator-configured providers.
@@ -582,7 +566,7 @@ impl SubprocessCtxStubs {
     }
 }
 
-/// Phase 81.10 — register a post-reload hook with the
+/// Register a post-reload hook with the
 /// `ConfigReloadCoordinator` that re-runs `discover()` and
 /// atomically swaps the registry snapshot, so a daemon picks up
 /// new / removed plugin manifests without restart.
@@ -592,7 +576,7 @@ impl SubprocessCtxStubs {
 /// - `PluginDiscoveryConfig` — boot-time snapshot of the operator's
 ///   `plugins.discovery` config. Reloads do NOT update this; if the
 ///   operator wants new search_paths picked up, daemon restart is
-///   required (Phase 81.10.b lifts this).
+///   required.
 /// - `Version` — daemon's `CARGO_PKG_VERSION` for `min_nexo_version`
 ///   matching during re-discover.
 ///
@@ -604,14 +588,12 @@ impl SubprocessCtxStubs {
 /// - The new snapshot's `skill_roots` field is left empty. Running
 ///   agents already cloned their `LlmAgentBehavior.plugin_skill_roots`
 ///   at boot — re-merging skill roots here would not affect them.
-///   Phase 81.10.b adds per-agent skill rebuild.
-/// - `merge_plugin_contributed_agents` is NOT re-run. Phase 18
-///   does not support runtime agent removal; re-merging would
-///   leave stale config on running agents. Operator must restart
-///   the daemon to apply agent contribution changes.
+/// - `merge_plugin_contributed_agents` is NOT re-run. Runtime
+///   agent removal is not supported; re-merging would leave stale
+///   config on running agents. Operator must restart the daemon to
+///   apply agent contribution changes.
 /// - `run_plugin_init_loop` is NOT re-run. Init handles map is
-///   empty today; when the manifest-driven factory ships
-///   (81.7.b / 81.12), its hook slice augments this one.
+///   empty today.
 pub async fn register_plugin_registry_reload_hook(
     coord: Arc<ConfigReloadCoordinator>,
     registry: Arc<NexoPluginRegistry>,
@@ -632,7 +614,7 @@ pub async fn register_plugin_registry_reload_hook(
             let new_invalid = discovered.last_report.invalid;
 
             // 3. Build a fresh snapshot. `skill_roots` stays empty
-            //    in 81.10 — see the doc-comment above.
+            //    here — see the doc-comment above.
             let new_snap = Arc::new(NexoPluginRegistrySnapshot {
                 plugins: discovered.plugins.clone(),
                 last_report: discovered.last_report.clone(),

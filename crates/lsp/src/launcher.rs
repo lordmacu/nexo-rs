@@ -1,17 +1,9 @@
 //! Boot-time `which`-probe of the four built-in LSP binaries.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:158-161`
-//!     — spawn args reading `config.command`. We probe BEFORE
-//!     spawn (the leak relies on plugin contributions and only
-//!     fails at first request) so the `Lsp` tool description
-//!     never advertises a kind backed exclusively by a missing
-//!     binary.
-//!
-//! Reference (secondary):
-//!   * `research/src/agents/pi-bundle-lsp-runtime.ts:294-340` —
-//!     OpenClaw also defers to plugin contribution, no built-in
-//!     matrix.
+//! Unlike the prior art (which relies on plugin contributions and
+//! only fails at first request), we probe BEFORE spawn so the `Lsp`
+//! tool description never advertises a kind backed exclusively by a
+//! missing binary.
 
 use crate::types::{matrix_entry, LspLanguage, LANGUAGE_MATRIX};
 use std::collections::HashMap;

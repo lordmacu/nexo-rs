@@ -31,14 +31,14 @@ pub struct Goal {
     /// Every criterion must pass for the goal to be accepted.
     pub acceptance: Vec<AcceptanceCriterion>,
     pub budget: BudgetGuards,
-    /// Working directory hint — the worktree that 67.4 will create.
+    /// Working directory hint — the worktree the driver loop will create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     /// Free-form k/v metadata. Harness-specific keys live here so the
     /// core trait stays small. Convention keys (read by upstream
     /// subsystems):
     ///
-    /// - `agent_id: String` — owning agent. Phase 80.1.b.b.b.c uses
+    /// - `agent_id: String` — owning agent. The orchestrator uses
     ///   this key to route per-turn `AutoDreamHook` dispatch to the
     ///   correct runner. Use [`Goal::with_agent_id`] /
     ///   [`Goal::agent_id`] to set/read it instead of touching the
@@ -48,7 +48,7 @@ pub struct Goal {
 }
 
 impl Goal {
-    /// Phase 80.1.b.b.b.c — store the owning agent id under the
+    /// Store the owning agent id under the
     /// canonical `agent_id` metadata key. Required for goals that
     /// should trigger `auto_dream` consolidation; harmless on goals
     /// that do not.
@@ -136,18 +136,18 @@ pub struct BudgetGuards {
     pub max_wall_time: Duration,
     pub max_tokens: u64,
     pub max_consecutive_denies: u32,
-    /// Phase 67.8 — cap on consecutive transient errors classified by
+    /// Cap on consecutive transient errors classified by
     /// the replay policy as `FreshSessionRetry`. `0` disables the
-    /// axis (effectively infinite). `#[serde(default)]` so payloads
-    /// from 67.0–67.7 deserialise with the helper-default of 5.
+    /// axis (effectively infinite). `#[serde(default)]` so older
+    /// payloads deserialise with the helper-default of 5.
     #[serde(default = "default_max_consecutive_errors")]
     pub max_consecutive_errors: u32,
-    /// Phase 85.1 — cap on consecutive `PromptTooLong` (413) replay
+    /// Cap on consecutive `PromptTooLong` (413) replay
     /// decisions. Defends against an infinite reactive-compact
     /// loop when even a maximum compact pass still does not fit
     /// the prompt under the provider's limit. `0` disables the
     /// axis. `#[serde(default = "default_max_consecutive_413")]`
-    /// so payloads from pre-85.1 deserialise with the helper
+    /// so older payloads deserialise with the helper
     /// default of 2.
     #[serde(default = "default_max_consecutive_413")]
     pub max_consecutive_413: u32,
@@ -192,17 +192,17 @@ pub struct BudgetUsage {
     pub wall_time: Duration,
     pub tokens: u64,
     pub consecutive_denies: u32,
-    /// Phase 67.8 — count of consecutive `FreshSessionRetry` decisions
+    /// Count of consecutive `FreshSessionRetry` decisions
     /// the replay policy made for this goal. Reset by any successful
     /// turn (`Done` or `NeedsRetry`). `#[serde(default)]` for
-    /// backward-compat with 67.0–67.7 payloads.
+    /// backward-compat with older payloads.
     #[serde(default)]
     pub consecutive_errors: u32,
-    /// Phase 85.1 — count of consecutive `PromptTooLong` reactive
+    /// Count of consecutive `PromptTooLong` reactive
     /// retries. Reset by any successful (`Done` / `NeedsRetry`) turn
     /// since one successful run proves the compact pass fit the
     /// prompt under the limit. `#[serde(default)]` for backward-
-    /// compat with pre-85.1 payloads.
+    /// compat with older payloads.
     #[serde(default)]
     pub consecutive_413: u32,
 }
@@ -214,9 +214,9 @@ pub enum BudgetAxis {
     WallTime,
     Tokens,
     ConsecutiveDenies,
-    /// Phase 67.8.
+    /// Consecutive `FreshSessionRetry` errors exceeded the cap.
     ConsecutiveErrors,
-    /// Phase 85.1 — consecutive `PromptTooLong` (413) reactive
+    /// Consecutive `PromptTooLong` (413) reactive
     /// retries exceeded `max_consecutive_413`. Goal aborts with
     /// this axis when even a maximum compact pass cannot fit the
     /// prompt under the provider's limit.

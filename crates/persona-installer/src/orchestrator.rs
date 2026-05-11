@@ -1,6 +1,6 @@
 //! End-to-end install pipeline: resolve → validate → download
 //! → verify → extract → return [`InstalledPersona`]. Wraps
-//! [`nexo_ext_installer`]'s F1 generic resolver via
+//! [`nexo_ext_installer`]'s generic resolver via
 //! [`crate::PersonaExtractContract`] so persona-installer
 //! reuses ~60% of plugin-installer's plumbing.
 //!
@@ -34,7 +34,7 @@ pub const MAX_TARBALL_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
 
 /// Outcome of a successful install. Carries enough info for
 /// the admin layer to publish a lifecycle event + register
-/// the persona in the boot-time discovery pipeline (Phase F5).
+/// the persona in the boot-time discovery pipeline.
 ///
 /// Internal struct — no serde derive (would require pushing
 /// derives onto upstream `RepoCoords` + `PersonaManifest`).

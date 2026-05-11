@@ -1,4 +1,4 @@
-//! Phase 91.x.wasm.phase-4b — Anthropic `voice_stream` STT
+//! Anthropic `voice_stream` STT
 //! WebSocket client.
 //!
 //! Wire reference: `claude-code-leak/src/services/voiceStreamSTT.ts`
@@ -61,8 +61,7 @@
 //! If the caller passes a different `audio_mime`, we reject
 //! with `UnsupportedFormat`.
 //!
-//! Not implemented in v1 (filed as 91.x.wasm.phase-4b.\* if a
-//! microapp demands them):
+//! Not implemented in v1 (revisit if a microapp demands them):
 //!
 //! - Push-to-talk streaming chunks (single buffer only).
 //! - Auto-finalize segmentation when interim text shifts
@@ -70,15 +69,14 @@
 //! - Keyterms boosting beyond the static `with_keyterms`
 //!   constructor (no dynamic update mid-stream).
 
-// Phase 91.x.wasm.phase-4c — voice_stream WebSocket transport
-// is native-only (tokio-tungstenite drags TCP types absent on
-// wasm32). When phase-4c.3 lands a `gloo-net::websocket`
-// swap-in, the `not(wasm32)` clause drops; until then, browser
-// microapps enabling `stt-cloud-anthropic` get a no-op feature
-// flag (no symbol exposed). The REST legs (`openai.rs`,
-// `groq.rs`) are wasm-portable after phase-4c.2 — they go
-// through `build_openai_multipart_body` instead of
-// `reqwest::multipart::Form`.
+// The voice_stream WebSocket transport is native-only
+// (tokio-tungstenite drags TCP types absent on wasm32). A
+// future `gloo-net::websocket` swap-in would drop the
+// `not(wasm32)` clause; until then, browser microapps enabling
+// `stt-cloud-anthropic` get a no-op feature flag (no symbol
+// exposed). The REST legs (`openai.rs`, `groq.rs`) are
+// wasm-portable — they go through `build_openai_multipart_body`
+// instead of `reqwest::multipart::Form`.
 #![cfg(all(
     feature = "stt-cloud-wasm",
     feature = "stt-cloud-anthropic",

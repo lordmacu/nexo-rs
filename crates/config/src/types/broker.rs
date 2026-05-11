@@ -12,7 +12,7 @@ pub struct BrokerConfig {
 pub struct BrokerInner {
     #[serde(rename = "type")]
     pub kind: BrokerKind,
-    // Phase 92 — `url` is no longer required for every broker
+    // `url` is not required for every broker
     // kind. `BrokerKind::StdioBridge` (a daemon-derived value
     // that the operator never picks in YAML) inherits its
     // transport from the parent process's stdin/stdout, so no
@@ -38,7 +38,7 @@ pub enum BrokerKind {
     #[default]
     Local,
     Nats,
-    // Phase 92 — pipes broker traffic over the parent daemon's
+    // Pipes broker traffic over the parent daemon's
     // stdin/stdout JSON-RPC channel. NOT operator-set in YAML;
     // the daemon derives it for every subprocess plugin it
     // spawns when its own broker is `Local`, so the plugin
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(cfg.broker.url, "nats://127.0.0.1:4222");
     }
 
-    // Phase 92 — `stdio_bridge` is the new variant; verifies the
+    // Verifies the
     // explicit `#[serde(rename = "stdio_bridge")]` is honored so
     // the wire string is snake_case rather than the lowercase
     // default that `#[serde(rename_all = "lowercase")]` would
@@ -138,7 +138,7 @@ mod tests {
         );
     }
 
-    // Phase 92 — guard against the auto-lowercase rename leaking
+    // Guard against the auto-lowercase rename leaking
     // a second wire alias. `stdiobridge` should NOT parse so
     // operators don't accidentally pick this kind via a typo.
     #[test]
@@ -157,7 +157,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // Phase 92 — `url` is now `#[serde(default)]`. Configs that
+    // `url` is `#[serde(default)]`. Configs that
     // omit it (legitimate for `Local` / `StdioBridge`) must
     // still round-trip; `Nats` validation happens later in
     // `AnyBroker::from_config`, not here.

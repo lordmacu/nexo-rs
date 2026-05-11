@@ -1,5 +1,5 @@
-//! Phase 82.10.l production adapter — daemon-side LLM provider
-//! probe. Reads `llm.yaml.providers.<id>` (or
+//! Daemon-side LLM provider probe adapter.
+//! Reads `llm.yaml.providers.<id>` (or
 //! `tenants.<tid>.providers.<id>` when tenant-scoped) via the
 //! existing [`LlmYamlPatcher`], resolves
 //! `std::env::var(api_key_env)`, and issues `GET {base_url}/models`.
@@ -117,7 +117,7 @@ impl LlmProvidersProbe for HttpLlmProviderProbe {
         self.probe_bearer(&base_url, &api_key, None).await
     }
 
-    /// Phase 82.10.u — draft probe. Operator-supplied
+    /// Draft probe. Operator-supplied
     /// `(factory_type, base_url, auth_mode, fields)` payload; no
     /// yaml, no env var lookup. Defensive: every error path
     /// returns `Ok(_)` with `ok: false` + sanitised hint so the
@@ -426,7 +426,7 @@ fn build_models_url(base_url: &str) -> String {
     format!("{trimmed}/models")
 }
 
-/// Phase 82.10.t — combined parse for model count + names from
+/// Combined parse for model count + names from
 /// an OpenAI-compat `/v1/models` payload (`{"data":[{"id": "..."}, ...]}`).
 /// Returns `count = None` when the body isn't JSON or lacks `data`,
 /// `names = None` when no `data[].id` strings could be extracted.

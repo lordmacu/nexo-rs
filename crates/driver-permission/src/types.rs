@@ -1,5 +1,5 @@
 //! Wire types for the permission flow. All `Serialize + Deserialize`
-//! so they survive a NATS round-trip when 67.4 routes decisions
+//! so they survive a NATS round-trip when decisions are routed
 //! between the bin and the daemon.
 
 use nexo_driver_types::GoalId;
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PermissionRequest {
     /// Goal id this request belongs to. The driver loop populates
-    /// it on spawn (Phase 67.4); 67.3 standalone uses a fresh nil-ish
+    /// it on spawn; the standalone MCP server uses a fresh nil-ish
     /// id.
     #[serde(default = "GoalId::new")]
     pub goal_id: GoalId,

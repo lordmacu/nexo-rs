@@ -1,4 +1,4 @@
-//! Phase 26 — pairing protocol.
+//! Pairing protocol.
 //!
 //! Two coexisting protocols:
 //!

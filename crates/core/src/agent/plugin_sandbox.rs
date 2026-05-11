@@ -1,4 +1,4 @@
-//! Phase 81.22 — Plugin sandbox runner (bubblewrap-based on Linux).
+//! Plugin sandbox runner (bubblewrap-based on Linux).
 //!
 //! Wraps a subprocess plugin's spawn `Command` with a `bwrap` invocation
 //! that enforces the plugin's `[plugin.sandbox]` manifest section: fs
@@ -7,18 +7,12 @@
 //! cost is argv assembly only.
 //!
 //! macOS path: no-op + `tracing::warn!`. Native sandbox-exec
-//! integration deferred to 81.22.macos.
+//! integration is deferred.
 //!
-//! IRROMPIBLE refs:
-//! - `research/src/agents/sandbox/validate-sandbox-security.ts:307-345`
-//!   — `validateBindMounts` 2-pass shape (canonicalize → per-path
-//!   denylist check) inspired the [`validate_resolved_path`] helper.
-//! - `research/src/agents/sandbox/network-mode.ts:18-29` — coarse
-//!   `host` rejection without operator opt-in is OpenClaw's pattern;
-//!   we keep the same shape gated behind
-//!   [`Self::host_net_capability_allowed`] (env-driven).
-//! - claude-code-leak/: absent — process-isolation infra, no
-//!   LLM-tool surface.
+//! The path validation here uses a 2-pass shape (canonicalize →
+//! per-path denylist check); see [`validate_resolved_path`]. The
+//! coarse `host`-network rejection without operator opt-in is gated
+//! behind [`Self::host_net_capability_allowed`] (env-driven).
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -32,7 +26,7 @@ use thiserror::Error;
 
 /// Env var: when `1`, refuse to spawn any plugin without
 /// `sandbox.enabled = true`. Capability inventory entry lives in
-/// `crates/setup/src/capabilities.rs::INVENTORY` (Phase 81.22).
+/// `crates/setup/src/capabilities.rs::INVENTORY`.
 pub const ENV_SANDBOX_REQUIRE: &str = "NEXO_PLUGIN_SANDBOX_REQUIRE";
 
 /// Env var: when `1`, permits manifests declaring

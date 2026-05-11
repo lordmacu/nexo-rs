@@ -1,4 +1,4 @@
-//! Phase 82.10.l integration test — wire the production
+//! Integration test — wire the production
 //! `HttpLlmProviderProbe` against a stub HTTP server and an
 //! in-memory `LlmYamlPatcher` mock to verify a
 //! `nexo/admin/llm_providers/probe` dispatch:

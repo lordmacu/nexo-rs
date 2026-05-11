@@ -1,4 +1,4 @@
-//! Phase 82.10.h.3 — production adapters wiring the core admin
+//! Production adapters wiring the core admin
 //! RPC domain traits to the on-disk yaml + secrets surfaces.
 //!
 //! Each adapter resolves the cycle that motivated its trait:
@@ -166,7 +166,7 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
         Ok(())
     }
 
-    // Phase 83.8.12.5.c.b — tenant-scoped CRUD overrides the
+    // Tenant-scoped CRUD overrides the
     // default trait impls (which return Err). Backed by the
     // same atomic write lock as the global path so concurrent
     // tenant + global upserts don't tear the file.
@@ -214,7 +214,7 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
     }
 }
 
-/// Phase 82.10.u — production [`FactorySchemaLookup`] adapter
+/// Production [`FactorySchemaLookup`] adapter
 /// backed by the same catalog snapshot the daemon serves over
 /// `nexo/admin/llm_providers/catalog`. Forwards
 /// `factory_id → credential_schema + supported_auth_modes` from
@@ -391,7 +391,7 @@ fn write_atomic_bytes(path: &Path, body: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Filesystem-backed skills CRUD adapter — Phase 83.8.3.
+/// Filesystem-backed skills CRUD adapter.
 ///
 /// Mirrors the on-disk layout the runtime
 /// `crate::agent::skills::SkillLoader` already reads from:
@@ -406,7 +406,7 @@ fn write_atomic_bytes(path: &Path, body: &[u8]) -> anyhow::Result<()> {
 ///
 /// Hot-reload: optional `on_change` callback fired after a
 /// successful `upsert` or `delete`. Production wiring passes a
-/// closure that triggers the existing Phase 18
+/// closure that triggers the existing
 /// `ConfigReloadCoordinator`, so an agent that uses the skill
 /// reloads its system prompt on the next turn.
 pub struct FsSkillsStore {
@@ -458,7 +458,7 @@ impl FsSkillsStore {
     /// regex `^[a-z0-9][a-z0-9-]{0,63}$` already filters at the
     /// handler boundary.
     ///
-    /// Phase 83.8.12.6 — also validates `tenant_id` when set
+    /// Also validates `tenant_id` when set
     /// (same charset as skill name), prevents the literal
     /// segment `__global__` from being passed (reserved for the
     /// shared slot), and refuses paths that escape `self.root`
@@ -684,7 +684,7 @@ fn parse_frontmatter(
 }
 
 impl FsSkillsStore {
-    /// Phase 83.8.12.6 — shared list implementation. `tenant_id`
+    /// Shared list implementation. `tenant_id`
     /// `None` reads `<root>/__global__/`; `Some(tid)` reads
     /// `<root>/<tid>/`.
     async fn list_in_scope(
@@ -732,7 +732,7 @@ impl FsSkillsStore {
         Ok(out)
     }
 
-    /// Phase 83.8.12.6 — shared upsert implementation.
+    /// Shared upsert implementation.
     async fn upsert_in_scope(
         &self,
         tenant_id: Option<&str>,
@@ -770,7 +770,7 @@ impl FsSkillsStore {
         Ok((record, created))
     }
 
-    /// Phase 83.8.12.6 — shared delete implementation.
+    /// Shared delete implementation.
     async fn delete_in_scope(&self, tenant_id: Option<&str>, name: &str) -> anyhow::Result<bool> {
         let lock_key = match tenant_id {
             None => format!("__global__/{name}"),
@@ -809,7 +809,7 @@ impl SkillsStore for FsSkillsStore {
         self.delete_in_scope(None, name).await
     }
 
-    // Phase 83.8.12.6 — tenant-scoped overrides delegate to
+    // Tenant-scoped overrides delegate to
     // the same shared helpers, just with `Some(tenant_id)` on
     // the path resolver.
 
@@ -1036,7 +1036,7 @@ mod tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.10.h.b.1 — in-memory pairing challenge store.
+// In-memory pairing challenge store.
 // Mirrors OpenClaw's QR-login pattern (in-memory Map + TTL — daemon
 // restart kills in-flight pairings; the QR client-side expiry is
 // shorter than any reasonable TTL anyway).
@@ -1220,7 +1220,7 @@ fn epoch_ms_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// Phase 82.10.h.b.2 — `PairingNotifier` adapter that pushes
+/// `PairingNotifier` adapter that pushes
 /// `nexo/notify/pairing_status_changed` JSON-RPC notification
 /// frames into the same `mpsc::Sender<String>` the extension
 /// host uses for outbound stdin writes (the `outbox_tx` in
@@ -1263,7 +1263,7 @@ impl PairingNotifier for StdioPairingNotifier {
     }
 }
 
-/// Phase 82.10.h.b — `PairingNotifier` whose backing
+/// `PairingNotifier` whose backing
 /// `mpsc::Sender<String>` is bound after construction. Same
 /// chicken-and-egg as [`DeferredAdminOutboundWriter`]: the
 /// admin RPC dispatcher needs a notifier at build time
@@ -1331,7 +1331,7 @@ impl PairingNotifier for DeferredPairingNotifier {
     }
 }
 
-/// Phase 82.10.o — `TokenRotatedNotifier` whose backing
+/// `TokenRotatedNotifier` whose backing
 /// `mpsc::Sender<String>` is bound after construction. Mirrors
 /// [`DeferredPairingNotifier`]: the per-microapp deferred is
 /// built before the spawn loop runs (boot wires it into the
@@ -1390,7 +1390,7 @@ impl nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier
     }
 }
 
-/// Phase 82.10.o — fan-out token-rotation notifier that pushes
+/// Fan-out token-rotation notifier that pushes
 /// each `nexo/notify/token_rotated` frame to every connected
 /// microapp's stdin queue.
 ///
@@ -1445,7 +1445,7 @@ impl nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier
     }
 }
 
-/// Phase 82.10.h.b.5 — `AdminOutboundWriter` whose backing
+/// `AdminOutboundWriter` whose backing
 /// `mpsc::Sender<String>` is bound after construction. Solves
 /// the chicken-and-egg between [`DispatcherAdminRouter`] (needs
 /// a writer at build time, which happens before the extension
@@ -1533,7 +1533,7 @@ pub fn json_rpc_notification(method: &str, params: serde_json::Value) -> String 
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.11.3 — production `TranscriptReader` adapter wrapping the
+// Production `TranscriptReader` adapter wrapping the
 // existing `TranscriptWriter` (JSONL files) + `TranscriptsIndex`
 // (SQLite FTS5). Both subsystems are already alive in the daemon —
 // the adapter is purely a wire-shape mapper.
@@ -1553,7 +1553,7 @@ pub struct TranscriptReaderFs {
     /// Owner agent — fixed at construction. Calls scoped to a
     /// different `agent_id` return empty results.
     agent_id: String,
-    /// Phase 83.8.12.4.b — owning tenant. Defense-in-depth gate
+    /// Owning tenant. Defense-in-depth gate
     /// at every read entry: if the caller passes
     /// `filter.tenant_id` and it does NOT match this reader's
     /// tenant (or the reader has no tenant), the reader returns
@@ -1592,7 +1592,7 @@ impl TranscriptReaderFs {
         }
     }
 
-    /// Phase 83.8.12.4.b — tag the reader with its owning tenant
+    /// Tag the reader with its owning tenant
     /// so cross-tenant queries return empty (defense-in-depth)
     /// and emitted events carry `tenant_id`. `None` (default) is
     /// the legacy single-tenant path.
@@ -1611,7 +1611,7 @@ impl TranscriptReader for TranscriptReaderFs {
         if filter.agent_id != self.agent_id {
             return Ok(Vec::new());
         }
-        // Phase 83.8.12.4.b — cross-tenant requests return empty
+        // Cross-tenant requests return empty
         // (no leak of existence). Same defense-in-depth as
         // `agents/list`. A reader with `tenant_id: None` rejects
         // any tenant-scoped query.
@@ -1703,7 +1703,7 @@ impl TranscriptReader for TranscriptReaderFs {
         if params.agent_id != self.agent_id {
             return Ok(Vec::new());
         }
-        // Phase 83.8.12.4.b — `read` accepts no tenant filter on
+        // `read` accepts no tenant filter on
         // the wire (session_id alone scopes the call). The
         // `agent_id` pin above already prevents cross-agent
         // reads, which transitively blocks cross-tenant since
@@ -1794,7 +1794,7 @@ fn parse_wire_role(s: &str) -> WireTranscriptRole {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.13.b.1.3 — production `TranscriptAppender` adapter wrapping
+// Production `TranscriptAppender` adapter wrapping
 // the same `TranscriptWriter` the daemon already uses for native
 // agent appends. The adapter translates the admin-RPC-side
 // `AppenderEntry` / `AppenderRole` into the writer's own types at
@@ -1807,7 +1807,7 @@ fn parse_wire_role(s: &str) -> WireTranscriptRole {
 /// forwards `append()` calls into `writer.append_entry()`. Reuses the
 /// writer's redactor + per-session header lock + FTS index + firehose
 /// emitter — operator stamps go through the same pipeline as native
-/// agent stamps, so subscribers see them via Phase 82.11
+/// agent stamps, so subscribers see them via the
 /// `nexo/notify/agent_event` notifications without any new wiring.
 pub struct TranscriptWriterAppender {
     writer: Arc<TranscriptWriter>,
@@ -2031,7 +2031,7 @@ mod pairing_store_tests {
         assert!(parsed.get("id").is_none());
     }
 
-    // ── Phase 82.10.p — PairingChallengeStore::update_qr / update_state ──
+    // ── PairingChallengeStore::update_qr / update_state ──
 
     #[test]
     fn update_qr_flips_pending_to_qr_ready_and_stores_payload() {
@@ -2431,7 +2431,7 @@ mod transcript_reader_tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.13 — in-memory `ProcessingControlStore` adapter.
+// In-memory `ProcessingControlStore` adapter.
 // Mirrors the in-memory pairing store pattern from 82.10.h.b.1:
 // `DashMap` keyed by scope, lazy initialisation, drop = forget.
 // SQLite-backed durable variant is a 82.13.b follow-up.
@@ -2441,13 +2441,13 @@ mod transcript_reader_tests {
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryProcessingControlStore {
     inner: Arc<DashMap<ProcessingScope, ProcessingControlState>>,
-    /// Phase 82.13.b.3 — per-scope pending inbound queue.
+    /// Per-scope pending inbound queue.
     /// FIFO `VecDeque`. Capped at `pending_cap` per scope; on
     /// overflow the oldest entry is evicted. A shared cap is
     /// kept on the store so boot can override via env var
     /// without retro-fitting per-call params.
     pending: Arc<DashMap<ProcessingScope, std::collections::VecDeque<PendingInbound>>>,
-    /// Phase 82.13.b.3 — max entries per scope. Defaults to
+    /// Max entries per scope. Defaults to
     /// `DEFAULT_PENDING_INBOUNDS_CAP`; production boot reads
     /// `NEXO_PROCESSING_PENDING_QUEUE_CAP` and overrides.
     pending_cap: usize,
@@ -2463,7 +2463,7 @@ impl InMemoryProcessingControlStore {
         Self::with_pending_cap(nexo_tool_meta::admin::processing::DEFAULT_PENDING_INBOUNDS_CAP)
     }
 
-    /// Phase 82.13.b.3 — build with a custom per-scope queue
+    /// Build with a custom per-scope queue
     /// cap. Boot wiring uses this when the operator sets
     /// `NEXO_PROCESSING_PENDING_QUEUE_CAP`. `0` disables
     /// buffering entirely (every push reports a drop).
@@ -2512,7 +2512,7 @@ impl ProcessingControlStore for InMemoryProcessingControlStore {
     }
 
     async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool> {
-        // Phase 82.13.b.3 — clearing a scope (resume) does NOT
+        // Clearing a scope (resume) does NOT
         // implicitly drain the pending queue here; the resume
         // handler calls `drain_pending` first so it can stamp
         // entries on the transcript before they vanish.
@@ -2651,7 +2651,7 @@ mod processing_store_tests {
     }
 
     // ──────────────────────────────────────────────────────────
-    // Phase 82.13.b.3 — pending inbound queue tests.
+    // Pending inbound queue tests.
     // ──────────────────────────────────────────────────────────
 
     fn other_convo() -> ProcessingScope {
@@ -2756,7 +2756,7 @@ mod processing_store_tests {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 82.14 — in-memory `EscalationStore` adapter.
+// In-memory `EscalationStore` adapter.
 // Mirrors the in-memory processing store. Durable SQLite
 // variant is a 82.14.b follow-up alongside the
 // `escalate_to_human` built-in tool.
@@ -3135,7 +3135,7 @@ mod escalation_store_tests {
         // escape the root.
         let r = store.resolve_skill_path(None, "../escape");
         assert!(r.is_err(), "path traversal must be rejected");
-        // Phase 83.8.12.6 — same gatekeeper for tenant_id.
+        // Same gatekeeper for tenant_id.
         let r2 = store.resolve_skill_path(Some("../escape"), "ok");
         assert!(r2.is_err(), "tenant_id traversal must be rejected");
         let r3 = store.resolve_skill_path(Some("__global__"), "ok");
@@ -3192,7 +3192,7 @@ mod escalation_store_tests {
         tokio::fs::remove_dir_all(&root).await.ok();
     }
 
-    // ── Phase 83.8.12.6 — tenant-scoped skills ──
+    // ── tenant-scoped skills ──
 
     #[tokio::test]
     async fn fs_skills_tenant_upsert_writes_under_tenant_dir() {
@@ -3395,7 +3395,7 @@ mod escalation_store_tests {
             })
             .await
             .unwrap();
-        // Phase 83.8.12.6 — global skills now live under
+        // Global skills now live under
         // `<root>/__global__/<name>/SKILL.md` (was `<root>/<name>/`
         // pre-83.8.12.6). Test refactored accordingly.
         let blob = tokio::fs::read_to_string(root.join("__global__").join("rt").join("SKILL.md"))
@@ -3448,7 +3448,7 @@ mod escalation_store_tests {
     }
 }
 
-// ── Phase 83.8.4.b — production ChannelOutboundDispatcher ────────
+// ── production ChannelOutboundDispatcher ────────
 
 /// Per-plugin payload translator. Each plugin's existing
 /// outbound dispatcher (`crates/plugins/<channel>/src/dispatch.rs`
@@ -3552,8 +3552,7 @@ impl ChannelOutboundDispatcher for BrokerOutboundDispatcher {
             .await
             .map_err(|e| ChannelOutboundError::Transport(e.to_string()))?;
         // Plugin dispatchers are fire-and-forget; outbound
-        // message id correlation is logged in FOLLOWUPS as
-        // 83.8.4.c.
+        // message id correlation is not yet available here.
         Ok(OutboundAck {
             outbound_message_id: None,
         })
@@ -4071,7 +4070,7 @@ mod broker_outbound_tests {
     }
 }
 
-// ── Phase 83.8.12.3 — TenantsYamlPatcher ─────────────────────────
+// ── TenantsYamlPatcher ─────────────────────────
 
 /// Filesystem-backed [`TenantStore`] implementation. Mirrors the
 /// pattern of `AgentsYamlPatcher` + `FsSkillsStore`: holds the
@@ -4442,7 +4441,7 @@ mod tenants_yaml_tests {
     fn _suppress_unused_imports(_t: &TenantDetail, _u: &Utc) {}
 }
 
-// ─── Phase 90.x.plugins — LivePluginDoctorReader ───────────────
+// ─── LivePluginDoctorReader ───────────────
 
 /// Live plugin doctor snapshot. Each call to `report()` re-runs
 /// the same `wire_plugin_registry` + `doctor_render::render_json`
@@ -4513,7 +4512,7 @@ impl nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader
     }
 }
 
-// ─── Phase 90.x.memory — LiveMemoryReader ──────────────────────
+// ─── LiveMemoryReader ──────────────────────
 
 /// Live memory query reader. Constructed at boot from the
 /// daemon's `<config_dir>/memory.yaml`; the underlying
@@ -4616,7 +4615,7 @@ impl nexo_core::agent::admin_rpc::domains::memory::MemoryReader for LiveMemoryRe
     }
 }
 
-// ─── Phase 90.x.memory-snapshot — LiveMemorySnapshotReader ────
+// ─── LiveMemorySnapshotReader ────
 
 /// Shared cell holding the daemon's `Arc<dyn MemorySnapshotter>`.
 /// Built empty at admin bootstrap time, written once by main.rs
@@ -4649,8 +4648,7 @@ pub fn shared_snapshotter_cell() -> SharedMemorySnapshotter {
 /// per-agent memdir map, custom sqlite roots, etc.) so the page
 /// reflects exactly what `agent memory snapshot list` would.
 ///
-/// Surface (Phase 90.x.memory-snapshot list/delete +
-/// 90.x.memory-snapshot.create-restore): list, delete, create,
+/// Surface: list, delete, create,
 /// restore. The CLI keeps power-user knobs (`--no-auto-pre`,
 /// `--identity`, retention sweep) the UI doesn't expose.
 #[derive(Clone)]
@@ -4804,7 +4802,7 @@ impl nexo_core::agent::admin_rpc::domains::memory::MemorySnapshotReader
         let snapshotter = self.snapshotter().await?;
         let agent = nexo_memory_snapshot::AgentId::from(agent_id.to_string());
         let encrypt_key = if encrypt {
-            // Phase 90 follow-up — wrap the bundle for ALL
+            // Wrap the bundle for ALL
             // configured recipients, not just `recipients[0]`.
             // Always uses the `AgePublicKeys` variant for the
             // admin path; the bundle output is identical to the
@@ -4942,7 +4940,7 @@ mod live_memory_snapshot_tests {
         snapshot_calls: Mutex<Vec<SnapshotRequest>>,
         restore_calls: Mutex<Vec<RestoreRequest>>,
         list_returns: Mutex<Vec<nexo_memory_snapshot::SnapshotMeta>>,
-        // Phase 90 audit fix — adapter-level coverage for delete().
+        // Adapter-level coverage for delete().
         // Track each successful delete so cross-tenant + idempotency
         // tests can assert "did the snapshotter actually run?".
         delete_calls: Mutex<Vec<SnapshotId>>,
@@ -5251,7 +5249,7 @@ mod live_memory_snapshot_tests {
         );
     }
 
-    // ── Phase 90 follow-up — multi-recipient encrypt tests ──
+    // ── multi-recipient encrypt tests ──
 
     fn encryption_with_multiple_recipients() -> EncryptionSection {
         EncryptionSection {
@@ -5320,7 +5318,7 @@ mod live_memory_snapshot_tests {
         }
     }
 
-    // ── Phase 90 audit follow-ups — delete() coverage ──
+    // ── delete() coverage ──
 
     #[tokio::test]
     async fn live_delete_happy_path_removes_bundle() {
@@ -5394,9 +5392,9 @@ mod live_memory_snapshot_tests {
     }
 }
 
-// ─── Phase 81.21.b.b follow-up — LivePluginRestarter ──
+// ─── LivePluginRestarter ──
 
-/// Phase 81.21.b.b spin-off — shared cell holding the daemon's
+/// Shared cell holding the daemon's
 /// plugin handle map. Built empty at admin bootstrap time, written
 /// once by main.rs after `wire_plugin_registry` produces the map.
 /// `LivePluginRestarter` reads the cell on each `restart()` call;
@@ -5435,7 +5433,7 @@ pub fn shared_plugin_handles_cell() -> SharedPluginHandles {
 /// `SubprocessNexoPlugin`, and drives `force_restart()` with the
 /// daemon's shared lifecycle context (broker / memory / llm).
 ///
-/// Phase 81.21.b.b spin-off — handles read from a shared
+/// Handles read from a shared
 /// [`SharedPluginHandles`] cell rather than a direct map, so
 /// admin bootstrap can construct this adapter BEFORE
 /// `wire_plugin_registry` produces the handle map. Operators
@@ -5613,7 +5611,7 @@ nexo_capabilities = ["broker"]
     async fn build_restarter(
         handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
     ) -> Arc<LivePluginRestarter> {
-        // Phase 81.21.b.b spin-off — wrap the test handles in a
+        // Wrap the test handles in a
         // `SharedPluginHandles` cell + populate via `cell.write()`,
         // mirroring the production main.rs late-init pattern.
         let cell = shared_plugin_handles_cell();
@@ -5633,7 +5631,7 @@ nexo_capabilities = ["broker"]
         )
     }
 
-    /// Phase 81.21.b.b spin-off — build a restarter against an
+    /// Build a restarter against an
     /// EMPTY cell (no `cell.write()` populate) so tests can exercise
     /// the boot-window error branch.
     fn build_restarter_with_empty_cell() -> Arc<LivePluginRestarter> {
@@ -5700,7 +5698,7 @@ nexo_capabilities = ["broker"]
         );
     }
 
-    /// Phase 81.21.b.b spin-off — operator hits the restart RPC
+    /// Operator hits the restart RPC
     /// during the brief boot window between admin bootstrap and
     /// the late-init `cell.write()` in main.rs. Adapter must
     /// surface the typed "not yet populated" message so the SPA

@@ -1,4 +1,4 @@
-//! Phase 91.x.wasm.phase-4 — OpenAI Whisper REST provider.
+//! OpenAI Whisper REST provider.
 //!
 //! Posts a multipart-form-data upload to
 //! `POST https://api.openai.com/v1/audio/transcriptions`.

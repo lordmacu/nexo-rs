@@ -1,4 +1,4 @@
-//! Phase 12.4 — session-scoped MCP runtime.
+//! Session-scoped MCP runtime.
 //!
 //! Owns one `StdioMcpClient` per configured server. The catalog lives
 //! outside this crate (nexo-core builds it from the runtime's client
@@ -61,13 +61,13 @@ pub struct SessionMcpRuntime {
     last_used_at: Arc<RwLock<DateTime<Utc>>>,
     clients: Arc<RwLock<HashMap<String, Arc<dyn McpClient>>>>,
     disposed: Arc<AtomicBool>,
-    /// Phase 12.8 — spawned debounce tasks, one per client per
+    /// Spawned debounce tasks, one per client per
     /// `on_tools_changed` registration. Aborted on dispose.
     reload_tasks: Mutex<Vec<JoinHandle<()>>>,
-    /// Phase 12.5 follow-up — shared `resources/read` cache. Disabled
-    /// cache is a cheap no-op so every runtime always owns one.
+    /// Shared `resources/read` cache. Disabled cache is a cheap
+    /// no-op so every runtime always owns one.
     resource_cache: Arc<ResourceCache>,
-    /// Phase 12.5 follow-up — opt-in URI scheme allowlist. Empty means
+    /// Opt-in URI scheme allowlist. Empty means
     /// permissive. Passed through to `McpResourceReadTool` when the
     /// catalog registers resource meta-tools.
     resource_uri_allowlist: Arc<Vec<String>>,
@@ -93,8 +93,8 @@ impl SessionMcpRuntime {
         }
     }
 
-    /// Phase 12.5 follow-up — attach an (already-configured) resource
-    /// cache. Builder style so the manager can pass the cache forged from
+    /// Attach an (already-configured) resource cache. Builder style
+    /// so the manager can pass the cache forged from
     /// `McpRuntimeConfig.resource_cache`.
     pub fn with_resource_cache(mut self, cache: Arc<ResourceCache>) -> Self {
         self.resource_cache = cache;
@@ -162,7 +162,7 @@ impl SessionMcpRuntime {
         tracing::debug!(session = %self.session_id, "catalog invalidation requested");
     }
 
-    /// Phase 12.8 — register a closure that fires once per server when the
+    /// Register a closure that fires once per server when the
     /// server pushes `notifications/tools/list_changed`. Rapid bursts of
     /// notifications collapse into a single callback within a 200 ms
     /// window. Safe to call multiple times; each call spawns its own set
@@ -174,7 +174,7 @@ impl SessionMcpRuntime {
         self.spawn_event_listeners(Arc::new(f), is_tools_changed);
     }
 
-    /// Phase 12.8 — symmetric to `on_tools_changed` but fires on
+    /// Symmetric to `on_tools_changed` but fires on
     /// `notifications/resources/list_changed`. Same 200 ms debounce and
     /// same dispose semantics.
     pub fn on_resources_changed<F>(&self, f: F)
@@ -240,8 +240,8 @@ impl SessionMcpRuntime {
         if self.disposed.swap(true, Ordering::AcqRel) {
             return;
         }
-        // Phase 9.2 follow-up — fire session lifecycle metrics exactly
-        // once per live session (the `swap(true)` above guards re-entry).
+        // Fire session lifecycle metrics exactly once per live
+        // session (the `swap(true)` above guards re-entry).
         let lifetime_secs = (Utc::now() - self.created_at).num_seconds().max(0) as u64;
         crate::telemetry::dec_sessions_active();
         crate::telemetry::inc_sessions_disposed(reason);
@@ -316,7 +316,7 @@ async fn debounce_event(
 
 /// Connect every configured server in parallel. Failures are logged at
 /// `warn` and the offending server is simply absent from the returned map
-/// (consistent with 12.3 fail-open semantics).
+/// (fail-open semantics).
 pub(crate) async fn connect_all_with_sampling(
     configs: &[McpServerRuntimeConfig],
     sampling_provider: Option<Arc<dyn SamplingProvider>>,

@@ -1,4 +1,4 @@
-//! Phase 80.9 — MCP channel routing gate + XML wrap helper.
+//! MCP channel routing gate + XML wrap helper.
 //!
 //! Channels turn an MCP server into an *inbound* surface. The
 //! server declares the capability and emits
@@ -32,11 +32,11 @@ pub const CHANNEL_NOTIFICATION_METHOD: &str = "notifications/nexo/channel";
 
 /// Notification method servers MAY emit when they want to relay
 /// permission decisions structurally instead of as free text.
-/// Reserved here for the 80.9.b follow-up; the MVP gate ignores it.
+/// Reserved for the permission relay; the basic gate ignores it.
 pub const CHANNEL_PERMISSION_NOTIFICATION_METHOD: &str = "notifications/nexo/channel/permission";
 
 /// Outbound method the runtime emits to ask a channel server to
-/// surface a permission prompt (deferred to 80.9.b).
+/// surface a permission prompt.
 pub const CHANNEL_PERMISSION_REQUEST_METHOD: &str = "notifications/nexo/channel/permission_request";
 
 /// Capability key in `experimental[...]` that signals the server is
@@ -45,9 +45,8 @@ pub const CHANNEL_PERMISSION_REQUEST_METHOD: &str = "notifications/nexo/channel/
 /// upstream / community capabilities.
 pub const CHANNEL_CAPABILITY_KEY: &str = "nexo/channel";
 
-/// Same idea for the per-server permission-relay opt-in. Reserved
-/// for 80.9.b but checked here so the gate output is forward
-/// compatible.
+/// Same idea for the per-server permission-relay opt-in. Checked
+/// here so the gate output is forward compatible.
 pub const CHANNEL_PERMISSION_CAPABILITY_KEY: &str = "nexo/channel/permission";
 
 /// XML tag name used to wrap inbound channel content for the
@@ -293,7 +292,7 @@ pub fn has_channel_capability(experimental: Option<&Value>) -> bool {
     has_capability_key(experimental, CHANNEL_CAPABILITY_KEY)
 }
 
-/// Same shape for the permission-relay opt-in (deferred 80.9.b).
+/// Same shape for the permission-relay opt-in.
 pub fn has_channel_permission_capability(experimental: Option<&Value>) -> bool {
     has_capability_key(experimental, CHANNEL_PERMISSION_CAPABILITY_KEY)
 }
@@ -615,7 +614,7 @@ impl ChannelRegistry {
         self.inner.read().await.len()
     }
 
-    /// Phase 80.9.f — hot-reload re-evaluation.
+    /// Hot-reload re-evaluation.
     ///
     /// Walk every active registration and re-run the static
     /// half of the gate against the operator's *current* config.
@@ -625,7 +624,7 @@ impl ChannelRegistry {
     /// kept (the live MCP server still declares the capability
     /// or the entry wouldn't have registered in the first place).
     ///
-    /// Caller wires this to the Phase 18 reload coordinator's
+    /// Caller wires this to the config reload coordinator's
     /// post-hook so a YAML edit takes effect on the next tick
     /// without restarting the daemon. Returns a typed report so
     /// observability + setup-doctor can surface what changed.
@@ -738,7 +737,7 @@ impl From<&RegisteredChannel> for ChannelSummary {
 // ---------------------------------------------------------------
 // Broker-backed dispatcher. Publishes envelopes on the
 // mcp.channel.<binding>.<server> topic via AnyBroker (NATS or
-// in-process local). Phase 80.9.c.
+// in-process local).
 // ---------------------------------------------------------------
 
 /// `ChannelDispatcher` impl that serialises [`ChannelEnvelope`] and
@@ -785,7 +784,7 @@ impl ChannelDispatcher for BrokerChannelDispatcher {
 // ---------------------------------------------------------------
 // Inbound loop — subscribes to a live MCP client's event stream,
 // runs the gate once, and pumps `ChannelMessage` events through
-// the parser + dispatcher. Phase 80.9.c.
+// the parser + dispatcher.
 // ---------------------------------------------------------------
 
 /// Configuration for [`ChannelInboundLoop::spawn`]. Passed by
@@ -802,7 +801,7 @@ pub struct ChannelInboundLoopConfig {
     /// the loop never has to re-fetch the JSON-RPC frame.
     pub capability_declared: bool,
     /// Whether the same server also declared the permission-relay
-    /// capability (80.9.b reservation).
+    /// capability.
     pub permission_capability: bool,
     pub registry: SharedChannelRegistry,
     pub dispatcher: Arc<dyn ChannelDispatcher>,
@@ -822,7 +821,7 @@ pub enum ChannelInboundLoopHandle {
 }
 
 // ---------------------------------------------------------------
-// Phase 80.9.g — token bucket rate limiter.
+// Token bucket rate limiter.
 // ---------------------------------------------------------------
 
 /// Token-bucket implementation for per-server inbound throttling.
@@ -886,9 +885,9 @@ impl TokenBucket {
 }
 
 /// Drives a single MCP server's channel notifications: gate at
-/// startup → register → stream → parse → dispatch. Phase 80.9.g
-/// adds an optional [`TokenBucket`] consulted before each
-/// dispatch — when the bucket is empty the message is dropped
+/// startup → register → stream → parse → dispatch. An optional
+/// [`TokenBucket`] is consulted before each dispatch — when the
+/// bucket is empty the message is dropped
 /// with a structured warn rather than queued, so a noisy server
 /// can't blow up memory.
 pub struct ChannelInboundLoop {
@@ -964,7 +963,7 @@ impl ChannelInboundLoop {
         let cfg_for_task = cfg.cfg.clone();
         let server_name = cfg.server_name.clone();
         let binding_id = cfg.binding_id.clone();
-        // Phase 80.9.g — pre-compute the per-server bucket once.
+        // Pre-compute the per-server bucket once.
         // `resolve_rate_limit` returns `None` when both per-server
         // and default rate limits are absent / inactive; the loop
         // then dispatches every message without throttling.
@@ -1903,7 +1902,7 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), join).await;
     }
 
-    // ---- Phase 80.9.g token bucket ----
+    // ---- token bucket ----
 
     #[tokio::test]
     async fn token_bucket_allows_burst_size_then_blocks() {
@@ -2039,7 +2038,7 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), join).await;
     }
 
-    // ---- Phase 80.9.f hot-reload re-evaluation ----
+    // ---- hot-reload re-evaluation ----
 
     fn reg(binding: &str, server: &str, plugin_source: Option<&str>) -> RegisteredChannel {
         RegisteredChannel {

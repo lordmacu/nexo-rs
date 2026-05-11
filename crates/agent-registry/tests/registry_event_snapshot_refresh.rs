@@ -1,4 +1,4 @@
-//! Phase 67.B.3 — applying an `AttemptResult` updates the live
+//! Applying an `AttemptResult` updates the live
 //! snapshot reachable through `snapshot()` / `handle()` without
 //! the reader holding any lock.
 

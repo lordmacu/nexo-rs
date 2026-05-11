@@ -1,4 +1,4 @@
-//! Phase 12.6 — integration: stdio server end-to-end via `tokio::io::duplex`.
+//! Integration: stdio server end-to-end via `tokio::io::duplex`.
 
 use std::time::Duration;
 

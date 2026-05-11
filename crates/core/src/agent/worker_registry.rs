@@ -1,9 +1,8 @@
-//! Phase 84.3 — worker registry trait + in-memory implementation.
+//! Worker registry trait + in-memory implementation.
 //!
-//! `SendMessageToWorker` (Phase 84.3) needs a way to look up a
-//! finished worker by its task id and check whether it's eligible
-//! for continuation. The registry is the source of truth for that
-//! lookup.
+//! `SendMessageToWorker` needs a way to look up a finished worker by
+//! its task id and check whether it's eligible for continuation. The
+//! registry is the source of truth for that lookup.
 //!
 //! Registry shape:
 //!
@@ -17,8 +16,8 @@
 //!   surface.
 //! - producer side (registering workers when they start, recording
 //!   completion) lands with the fork-as-tool spawn pipeline that
-//!   Phase 84.x has not yet built; the registry today exists so the
-//!   tool's lookup path can be tested end-to-end via mocks.
+//!   is not yet built; the registry today exists so the tool's
+//!   lookup path can be tested end-to-end via mocks.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -45,8 +44,7 @@ pub enum WorkerStatus {
 
 impl WorkerStatus {
     /// True when the worker is eligible for `SendMessageToWorker`
-    /// continuation. Phase 84.3 spec gates continuation on
-    /// finished-not-running.
+    /// continuation — gated on finished-not-running.
     pub fn is_continuable(&self) -> bool {
         !matches!(self, WorkerStatus::Running)
     }
@@ -56,7 +54,7 @@ impl WorkerStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerSnapshot {
     /// Worker's stable id (the `task_id` field of the
-    /// `<task-notification>` envelope, Phase 84.2).
+    /// `<task-notification>` envelope).
     pub worker_id: String,
     pub status: WorkerStatus,
     /// Coordinator binding that spawned this worker. The lookup

@@ -185,7 +185,7 @@ pub struct InfoOut<'a> {
     pub author: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<&'a str>,
-    /// Phase 12.7 — inline MCP server declarations carried by this manifest.
+    /// Inline MCP server declarations carried by this manifest.
     /// `None` when the section is absent or empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<serde_json::Value>,

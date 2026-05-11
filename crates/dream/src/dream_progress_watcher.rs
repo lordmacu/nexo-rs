@@ -1,8 +1,4 @@
-//! Dream progress watcher. Phase 80.1.
-//!
-//! Verbatim port of
-//! `claude-code-leak/src/services/autoDream/autoDream.ts:281-313`
-//! (`makeDreamProgressWatcher`).
+//! Dream progress watcher (`makeDreamProgressWatcher`).
 //!
 //! For each assistant message in the forked dream loop:
 //! 1. Extract concatenated text from the message content.
@@ -11,12 +7,11 @@
 //! 4. Canonicalize each path:
 //!    - inside `memory_dir` → record in `files_touched`
 //!    - outside `memory_dir` → record in `escapes` (post-fork audit
-//!      defense-in-depth — leak doesn't have this layer, nexo
-//!      addition per pillar Robusto)
-//! 5. Append the turn + files to [`DreamRunStore`] (Phase 80.18).
+//!      defense-in-depth, on top of the in-loop tool gate)
+//! 5. Append the turn + files to [`DreamRunStore`].
 //!
-//! Skipping empty no-op turns is handled server-side by 80.18's
-//! `append_turn` (mirrors leak `DreamTask.ts:87-92`).
+//! Skipping empty no-op turns is handled inside `DreamRunStore`'s
+//! `append_turn`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,8 +23,8 @@ use nexo_fork::{tool_names, OnMessage};
 use nexo_llm::types::{ChatMessage, ChatRole};
 use uuid::Uuid;
 
-/// Result of a fork run for the post-fork audit. Mirror leak `:281-313`
-/// behavior + adds `escapes` for defense-in-depth (nexo addition).
+/// Result of a fork run for the post-fork audit. Includes `escapes`
+/// for defense-in-depth.
 #[derive(Debug, Clone, Default)]
 pub struct ProgressResult {
     /// Paths whose canonical resolution lives inside `memory_dir`.
@@ -42,7 +37,8 @@ pub struct ProgressResult {
 }
 
 /// Watcher that consumes assistant messages from the fork's
-/// `OnMessage` callback chain and records them in 80.18's audit store.
+/// `OnMessage` callback chain and records them in the dream-run audit
+/// store.
 pub struct DreamProgressWatcher {
     run_id: Uuid,
     audit: Arc<dyn DreamRunStore>,
@@ -84,7 +80,7 @@ impl DreamProgressWatcher {
 #[async_trait]
 impl OnMessage for DreamProgressWatcher {
     async fn on_message(&self, msg: &ChatMessage) {
-        // Only assistant turns matter. Mirror leak `:286`.
+        // Only assistant turns matter.
         if !matches!(msg.role, ChatRole::Assistant) {
             return;
         }

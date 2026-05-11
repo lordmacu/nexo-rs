@@ -1,4 +1,4 @@
-//! Phase 82.10.n — production [`ChannelCredentialPersister`]
+//! Production [`ChannelCredentialPersister`]
 //! for the telegram channel.
 //!
 //! Bridges `nexo/admin/credentials/register {channel: "telegram",

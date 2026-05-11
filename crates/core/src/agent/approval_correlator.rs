@@ -1,10 +1,10 @@
-//! Phase 79.10 — approval correlator for chat-driven operator
+//! Approval correlator for chat-driven operator
 //! approval of pending mutations.
 //!
 //! The leak's `ConfigTool` (`claude-code-leak/src/tools/ConfigTool/
 //! ConfigTool.ts:103-106`) leans on a host `'ask'` permission prompt:
 //! the user sees a modal in the CLI / IDE and clicks Allow / Deny.
-//! Over chat-based pairing (Phase 26), there is no modal — the
+//! Over chat-based pairing, there is no modal — the
 //! approval has to be a regular message on the same channel that
 //! originated the proposal.
 //!
@@ -21,9 +21,8 @@
 //!     [`MockApprovalSource`] which exposes `inject(msg)` for
 //!     deterministic flows.
 //!
-//! The same correlator is the planned anchor for Phase 79.1
-//! `ExitPlanMode { wait: true }` (see `proyecto/PHASES.md:4619,
-//! 4686-4688`), so the API is intentionally generic ("approval
+//! The same correlator is the planned anchor for
+//! `ExitPlanMode { wait: true }`, so the API is intentionally generic ("approval
 //! command" with `kind: approve | reject`); only the regex is
 //! ConfigTool-specific in this commit.
 

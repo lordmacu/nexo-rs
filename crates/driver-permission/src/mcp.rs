@@ -23,7 +23,7 @@ use crate::sed_validator::sed_command_is_allowed;
 use crate::should_use_sandbox::{should_use_sandbox, SandboxBackend, SandboxMode, SandboxProbe};
 use crate::types::{PermissionOutcome, PermissionRequest};
 
-/// Phase C4.b — process-wide sandbox probe. Lazy-initialised on
+/// Process-wide sandbox probe. Lazy-initialised on
 /// the first call to `gather_bash_warnings`; runs `which bwrap`
 /// + `which firejail` once and caches the detected backend.
 static SANDBOX_PROBE: OnceLock<SandboxProbe> = OnceLock::new();
@@ -39,7 +39,7 @@ pub struct PermissionMcpServer<D: ?Sized + PermissionDecider = dyn PermissionDec
     server_info: McpServerInfo,
     session_cache: DashMap<SessionCacheKey, PermissionOutcome>,
     decision_timeout: Duration,
-    /// Phase advisory_hook — composable advisory pipeline.
+    /// Composable advisory pipeline.
     /// Defaults to `AdvisorRegistry::with_default()` so the legacy
     /// `BashSecurityAdvisor` fires unchanged for back-compat.
     /// Plugins (marketing / payment / CRM) can override via
@@ -52,7 +52,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
         Self {
             decider,
             server_info: McpServerInfo {
-                // Phase 73 — must match the config-key used in
+                // Must match the config-key used in
                 // `.nexo-mcp.json` ("nexo-driver"). Claude Code 2.1
                 // namespaces tools by `mcp__<serverInfo.name>__<tool>`
                 // and resolves `--permission-prompt-tool` against
@@ -81,7 +81,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
         self
     }
 
-    /// Phase advisory_hook — replace the default advisor registry.
+    /// Replace the default advisor registry.
     /// The caller takes full ownership of the advisor list — pass
     /// `AdvisorRegistry::with_default()` to keep the bash advisor
     /// pre-registered, or `AdvisorRegistry::new()` for a clean
@@ -105,7 +105,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
         })
     }
 
-    /// Phase 74.2 — explicit output schema. Mirrors the Zod union
+    /// Explicit output schema. Mirrors the Zod union
     /// Claude Code 2.1 validates internally: every successful
     /// permission_prompt call returns either `{behavior:"allow",
     /// updatedInput: object}` or `{behavior:"deny", message:
@@ -114,7 +114,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
     /// instead of silently dropping the tool when its inferred
     /// schema and ours drift apart.
     fn output_schema() -> Value {
-        // Phase 75 retry — the previous strict variant declared
+        // A previous strict variant declared
         // `additionalProperties: false` and a `oneOf` union, which
         // made Claude Code 2.1 silently drop the tool from its
         // permission registry while still reporting the server as
@@ -168,13 +168,12 @@ impl<D: ?Sized + PermissionDecider> McpServerHandler for PermissionMcpServer<D> 
         // `updatedInput` is absent or non-object (see adapter.rs).
         let original_input = req.input.clone();
         let tool_name = req.tool_name.clone();
-        // Phase advisory_hook — composable advisory pipeline.
+        // Composable advisory pipeline.
         // Default registry pre-registers `BashSecurityAdvisor` so
         // bash-tier coverage is preserved; plugins can register
         // additional advisors (marketing / payment / CRM) via
-        // `with_advisors`. Output prefix changed from
-        // "WARNING — bash security" to
-        // "WARNING — tool advisories" with per-line `[<id>]`
+        // `with_advisors`. The output prefix is
+        // "WARNING — tool advisories" with a per-line `[<id>]`
         // bracket prefix.
         let warnings = self.advisors.gather(&tool_name, &original_input);
 
@@ -203,14 +202,14 @@ impl<D: ?Sized + PermissionDecider> McpServerHandler for PermissionMcpServer<D> 
 
 fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
     let is_error = matches!(value.get("behavior").and_then(Value::as_str), Some("deny"));
-    // Phase 74.3 — emit BOTH the legacy text content (for clients
+    // Emit BOTH the legacy text content (for clients
     // that still parse it) AND the structured form (for Claude
     // 2.1+ which validates `structuredContent` against the
     // tool's `outputSchema`). Same payload, two channels — costs
     // a clone but eliminates the "re-parse text as JSON" round-
-    // trip that surfaced the Zod `updatedInput` flap in Phase 73.
+    // trip that previously surfaced a Zod `updatedInput` flap.
     //
-    // Phase 77.8 — prepend bash safety warnings to text content.
+    // Prepend bash safety warnings to text content.
     // Warnings never touch structured_content (strict Claude schema).
     let text = if let Some(w) = warnings {
         format!("{w}\n{value}")
@@ -243,16 +242,16 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 ///    `PathCommand`, list up to 10 paths the command touches with
 ///    the matching action verb, so the upstream decider can reason
 ///    about workspace vs. system paths without re-parsing.
-/// 5. **Sandbox advisory (C4.b)** — fires only when at least one
+/// 5. **Sandbox advisory** — fires only when at least one
 ///    prior tier already flagged the command AND the
 ///    process-wide `SandboxProbe` detected a `bwrap` or
 ///    `firejail` backend on `PATH`. The coupling to risk keeps
 ///    the advisory signal-strong: a no-warning command on a
 ///    sandbox-equipped host stays silent. MVP hard-codes
 ///    `SandboxMode::Auto`, empty excluded list, and
-///    `dangerously_disable_sandbox: false`; YAML config schema
+///    `dangerously_disable_sandbox: false`; the YAML config schema
 ///    (`runtime.bash_safety.sandbox.{mode, excluded_commands,
-///    dangerously_disable}`) defers to slice C4.b.b.
+///    dangerously_disable}`) is a follow-up.
 ///
 /// Scope: only the first clause is inspected. Pipes / `&&` chains
 /// past the first command are out of scope here — the destructive
@@ -263,29 +262,11 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 /// upstream decider is Anthropic, MiniMax, OpenAI, Gemini,
 /// DeepSeek, xAI, or Mistral.
 ///
-/// IRROMPIBLE refs (claude-code-leak):
-/// - `src/tools/BashTool/bashSecurity.ts` — composes the tiers in
-///   the upstream permission UI prompt.
-/// - `src/tools/BashTool/sedValidation.ts:247-301` — exact source
-///   pattern for `sed_command_is_allowed`.
-/// - `src/tools/BashTool/pathValidation.ts:27-509` — command-aware
-///   path extraction (`classify_command` / `filter_out_flags` /
-///   `extract_paths`).
-/// - `src/tools/BashTool/shouldUseSandbox.ts:130-153` — pure
-///   decision shape that backs the tier-5 helper. Leak's
-///   wrapper actually wraps the command in `bwrap`/`firejail`
-///   before exec; we stay advisory because our decider is the
-///   upstream LLM, not the bash exec path.
-/// - `src/tools/BashTool/shouldUseSandbox.ts:55-58` — disclaimer:
-///   `excludedCommands` is "a user-facing convenience feature,
-///   not a security boundary". We mirror that intent; the LLM
-///   decider remains the authoritative gate.
-///
-/// IRROMPIBLE refs (research/): no significant prior art —
-/// OpenClaw is channel-side and does not implement bash command
-/// safety analysis. The only `sandbox` references in `research/`
-/// are Docker test fixtures (e.g.
-/// `research/src/docker-setup.e2e.test.ts`).
+/// Tier-5's wrapper, in the original implementation, actually wraps
+/// the command in `bwrap`/`firejail` before exec; we stay advisory
+/// because our decider is the upstream LLM, not the bash exec path.
+/// `excluded_commands` is a user-facing convenience feature, not a
+/// security boundary; the LLM decider remains the authoritative gate.
 pub(crate) fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
     let backend = sandbox_probe().backend();
     gather_bash_warnings_with_backend(tool_name, input, backend)
@@ -351,15 +332,15 @@ fn gather_bash_warnings_with_backend(
         }
     }
 
-    // Tier 5 — sandbox advisory (C4.b). Coupled to risk: only
+    // Tier 5 — sandbox advisory. Coupled to risk: only
     // fires when at least one prior tier flagged the command
     // (`!warnings.is_empty()`) AND a sandbox backend is on
     // PATH. Without coupling the advisory would fire on every
     // Bash command on a sandbox-equipped host because
     // `should_use_sandbox(_, Auto, Some_backend, false, [])`
     // is not command-aware. MVP hard-codes mode/excludes/
-    // disable to ship advisory infra without YAML schema work
-    // (see C4.b.b for the operator-config follow-up).
+    // disable to ship advisory infra without YAML schema work;
+    // the operator-config plumbing is a follow-up.
     if !warnings.is_empty()
         && sandbox_backend != SandboxBackend::None
         && should_use_sandbox(
@@ -441,7 +422,7 @@ mod tests {
         );
     }
 
-    // ── Phase C4.b — sandbox 5th tier ──
+    // ── sandbox 5th tier ──
 
     #[test]
     fn gather_bash_warnings_appends_sandbox_advisory_when_risky_and_backend_available() {
