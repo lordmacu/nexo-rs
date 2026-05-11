@@ -131,7 +131,7 @@ across 7 branches; brainstorm + spec + plan approved
 | F3 | NEW `crates/persona-installer` orchestrator + admin + lifecycle | 4h | ✅ shipped session 2026-05-11.b |
 | F4 | wiremock integration tests (11 install + 5 admin scenarios) | 2h | ✅ shipped session 2026-05-11.b |
 | F5 | boot-time persona discovery + wire to `AgentConfig` (config section + main.rs hook + InMemoryPersonaAdmin cell; admin RPC routes deferred to F6, agent_configs merge into AgentsDirectory deferred to F5.b follow-up) | 3h | ✅ shipped session 2026-05-11.b |
-| F6 | CLI surface — 7 `Mode` variants (`PersonaInstall`/`List`/`Remove`/etc.) | 2h | ✅ shipped session 2026-05-11.b (Install/List/Remove/Help fully wired; Get/Upgrade/Run as stubs returning actionable hints — tracked at F6.b below) |
+| F6 | CLI surface — 7 `Mode` variants (`PersonaInstall`/`List`/`Remove`/etc.) | 2h | ✅ shipped session 2026-05-11.b (all 7 subcommands fully wired; F6.b stubs replaced with real impls in same session) |
 | F7 | `NEXO_DISABLE_BUNDLED_PERSONAS` INVENTORY + `docs/personas/install.md` | 1.5h | ✅ shipped session 2026-05-11.b |
 | F8 | `nexo-persona-cody` v0.2.0 release prep + GH workflow CI | 2.5h | ⬜ |
 | F9 | end-to-end validation — install/list/remove + lifecycle topics | 1.5h | ⬜ |
@@ -140,22 +140,30 @@ Cut points: Session A = F1-F3 (~8h, foundation); Session B =
 F4-F7 (~8.5h, tests + CLI + docs); Session C = F8-F9 (~4h,
 persona repo v0.2.0 + e2e).
 
-**F6.b sub-followup (deferred from F6 ship)**: complete the
-3 stubbed CLI subcommands. Each currently exits non-zero with
-an actionable hint:
+**F6.b sub-followup**: ✅ shipped same session 2026-05-11.b.
+All 3 CLI subcommands now fully implemented:
 
-- `nexo persona get <id>` — surface manifest + lifecycle
-  history. Meanwhile `cat <install_root>/persona.toml` works.
-- `nexo persona upgrade <id>` — re-resolve recorded coords
-  + delegate to install path. Meanwhile
-  `nexo persona install <coords>@<newer-tag>` is idempotent.
-- `nexo persona run <path>` — inner-loop dev (mirror of
-  `nexo plugin run`). Needs an
-  `cfg.personas.discovery.search_paths[0]` override pattern
-  matching Phase 31.7.
+- `nexo persona get <id>` — prints id / version / description /
+  homepage / install_root + every contributes path resolved to
+  absolute. JSON variant returns the typed manifest sections
+  (requires + meta) verbatim.
+- `nexo persona upgrade <id>` — extracts source GitHub repo
+  from `manifest.persona.homepage`, peeks the resolved
+  `latest` version via the F1 contract resolver, refuses to
+  downgrade, runs install_persona when newer. Idempotent on
+  same-version (no_op response).
+- `nexo persona run <path>` — `PersonaRunOverride` struct +
+  `resolve_local_persona()` + `apply_persona_run_override()`
+  mirror of plugin_run.rs's pattern. Stamps
+  `args.persona_run_override` then falls through to daemon
+  boot, which prepends the pack's parent dir to
+  cfg.personas.discovery.search_paths so the F5 discovery
+  picks it up.
 
-Estimated ~1.5h for all three. Land in Session B' or after
-Session C ships persona pack v0.2.0.
+Touchpoints: src/persona_cli.rs (~310 LOC added), src/main.rs
+(handler match arms swapped + persona_run_override field on
+CliArgs + 9 CliArgs construction sites updated + apply hook
+right before plugin_run_override apply).
 
 ### Audit 2026-05-10 — admin wave P0 fixes — shipped
 
