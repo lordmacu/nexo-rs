@@ -20,6 +20,7 @@ import json
 import sys
 from typing import Any, Awaitable, Callable
 
+from . import wire
 from .broker import BrokerSender
 from .errors import WireError
 from .events import Event
@@ -27,8 +28,6 @@ from .manifest import read_manifest
 
 EventHandler = Callable[[str, Event, BrokerSender], Awaitable[None]]
 ShutdownHandler = Callable[[], Awaitable[None]]
-
-JSONRPC_VERSION = "2.0"
 
 
 class PluginAdapter:
@@ -143,19 +142,13 @@ class PluginAdapter:
             sys.stderr.flush()
 
     async def _send_response(self, req_id: Any, result: dict[str, Any]) -> None:
-        frame = {"jsonrpc": JSONRPC_VERSION, "id": req_id, "result": result}
-        line = json.dumps(frame) + "\n"
+        line = wire.serialize_frame(wire.build_response(req_id, result))
         async with self._write_lock:
             sys.stdout.write(line)
             sys.stdout.flush()
 
     async def _send_error(self, req_id: Any, code: int, message: str) -> None:
-        frame = {
-            "jsonrpc": JSONRPC_VERSION,
-            "id": req_id,
-            "error": {"code": code, "message": message},
-        }
-        line = json.dumps(frame) + "\n"
+        line = wire.serialize_frame(wire.build_error_response(req_id, code, message))
         async with self._write_lock:
             sys.stdout.write(line)
             sys.stdout.flush()
