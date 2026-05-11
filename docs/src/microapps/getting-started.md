@@ -7,7 +7,11 @@ one tool the LLM can call.
 
 For the language-agnostic protocol spec, see
 [contract.md](./contract.md). For the full Rust SDK reference,
-see [rust.md](./rust.md).
+see [rust.md](./rust.md). For a complete, shipping example —
+React UI + HTTP backend over the admin RPC + firehose SSE,
+consuming the `@lordmacu/nexo-microapp-ui-react` theme preset —
+see [`lordmacu/agent-creator-microapp`](https://github.com/lordmacu/agent-creator-microapp)
+and its write-up in [the `agent-creator` reference microapp](./agent-creator.md).
 
 ## Prerequisites
 

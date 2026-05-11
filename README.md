@@ -12,11 +12,11 @@
 
 **📘 Full documentation: <https://lordmacu.github.io/nexo-rs/>**
 
-[Quick start](https://lordmacu.github.io/nexo-rs/getting-started/quickstart.html) ·
-[Architecture](https://lordmacu.github.io/nexo-rs/architecture/overview.html) ·
-[Recipes](https://lordmacu.github.io/nexo-rs/recipes/index.html) ·
-[vs OpenClaw](https://lordmacu.github.io/nexo-rs/architecture/vs-openclaw.html) ·
-[Contributing](https://lordmacu.github.io/nexo-rs/contributing.html) ·
+[Quick start](https://lordmacu.github.io/nexo-rs/docs/getting-started/quickstart.html) ·
+[Architecture](https://lordmacu.github.io/nexo-rs/docs/architecture/overview.html) ·
+[Recipes](https://lordmacu.github.io/nexo-rs/docs/recipes/index.html) ·
+[vs OpenClaw](https://lordmacu.github.io/nexo-rs/docs/architecture/vs-openclaw.html) ·
+[Contributing](https://lordmacu.github.io/nexo-rs/docs/contributing.html) ·
 [Releases](https://github.com/lordmacu/nexo-rs/releases) ·
 [License](#license)
 
@@ -70,7 +70,7 @@ how it lands on your machine. The one-liner needs no Rust toolchain.
 Every release artifact (tarball, `.deb`, `.rpm`, `.zip`) ships a
 `.sha256` sidecar and a cosign signature. Per-OS prerequisites + the
 optional-feature (STT / voice / browser) matrix:
-[Platform support](https://lordmacu.github.io/nexo-rs/getting-started/platform-support.html).
+[Platform support](https://lordmacu.github.io/nexo-rs/docs/getting-started/platform-support.html).
 After installing, `nexo` boots with zero config — see
 [Quick start](#quick-start) below.
 
@@ -159,7 +159,7 @@ a wider audience. If your shop is JS-first, picking it up is
 faster than learning Rust. nexo-rs trades that approachability for
 the operational properties above.
 
-Full side-by-side: [docs → vs-openclaw](https://lordmacu.github.io/nexo-rs/architecture/vs-openclaw.html).
+Full side-by-side: [docs → vs-openclaw](https://lordmacu.github.io/nexo-rs/docs/architecture/vs-openclaw.html).
 
 ## Status
 
@@ -265,7 +265,7 @@ from the operator UI.
 > and crates.io (`cargo install nexo-rs`). Every release artifact is
 > cosign-signed with a `.sha256` sidecar. Some optional features (STT
 > — voice-note transcription) need extra build tools per OS. See
-> [Platform support](https://lordmacu.github.io/nexo-rs/getting-started/platform-support.html)
+> [Platform support](https://lordmacu.github.io/nexo-rs/docs/getting-started/platform-support.html)
 > for the per-OS prerequisites + feature matrix.
 >
 > A Homebrew formula auto-publish + `npm install -g @nexo-rs/cli`
@@ -328,7 +328,62 @@ Telegram poller · multi-tenant SaaS where end-users build their own
 WhatsApp agents · vertical extension packs (sales / support /
 marketing) · persona packs ([Cody](https://github.com/lordmacu/nexo-persona-cody) —
 the programmer-pair reference). Each with a recipe / template:
-[**What you can build**](https://lordmacu.github.io/nexo-rs/what-you-can-build.html).
+[**What you can build**](https://lordmacu.github.io/nexo-rs/docs/what-you-can-build.html).
+
+## Build on nexo — SDKs
+
+nexo-rs has three extension surfaces; pick by **who owns the runtime
+and the UI** (full decision table:
+[Plugin authoring overview](https://lordmacu.github.io/nexo-rs/docs/plugins/authoring.html)):
+
+| You're building | Surface | SDK | Operator installs with |
+|---|---|---|---|
+| A **channel** (Slack, Discord, …), poller, tool, LLM provider or memory backend — code the daemon spawns as a subprocess | **Plugin** | Rust · Python · TypeScript · PHP — one wire contract, four languages | `nexo plugin install <owner>/<repo>` |
+| A **bundle** of skills / advisors / prompts / YAML config | **Extension** | YAML + small Rust stubs | `nexo ext install ./<pack>` (local tarball / dir) |
+| The **product** on top of nexo-rs (multi-tenant SaaS, internal tool, white-label) — your UI, your domain, your billing | **Microapp** | `nexo-microapp-sdk` (Rust, crates.io) + `@lordmacu/nexo-microapp-ui-react` (npm — React UI kit) | bundled with the product |
+
+### Plugin SDKs
+
+Scaffold a plugin in any of the four languages and push it to GitHub —
+a release tarball is all an operator needs. The SDKs are also published
+to their language registries (mono-repo:
+[`lordmacu/nexo-plugin-sdks`](https://github.com/lordmacu/nexo-plugin-sdks)):
+
+```bash
+nexo plugin new my_plugin --lang rust --owner you   # or --lang python|typescript|php
+cd my_plugin && nexo plugin run .                   # inner-loop: build + hot-reload, no GitHub round-trip
+```
+
+| Language | Package (registry) | Add to an existing project |
+|---|---|---|
+| **Rust** | [`nexo-microapp-sdk`](https://crates.io/crates/nexo-microapp-sdk) (feature `plugin`) + [`nexo-broker`](https://crates.io/crates/nexo-broker) | `cargo add nexo-microapp-sdk -F plugin && cargo add nexo-broker` |
+| **Python** | [`nexoai`](https://pypi.org/project/nexoai/) (import name stays `nexo_plugin_sdk`) | `pip install nexoai` |
+| **TypeScript** | [`nexo-plugin-sdk`](https://www.npmjs.com/package/nexo-plugin-sdk) | `npm install nexo-plugin-sdk` |
+| **PHP** | [`nexo/plugin-sdk`](https://packagist.org/packages/nexo/plugin-sdk) | `composer require nexo/plugin-sdk` |
+
+Guides: [Plugin quickstart (10 min)](https://lordmacu.github.io/nexo-rs/docs/plugins/quickstart.html) ·
+[Authoring overview](https://lordmacu.github.io/nexo-rs/docs/plugins/authoring.html) ·
+[Plugin contract — the wire spec all four implement](https://lordmacu.github.io/nexo-rs/docs/plugins/contract.html) ·
+per-language: [Rust](https://lordmacu.github.io/nexo-rs/docs/plugins/rust-sdk.html) ·
+[Python](https://lordmacu.github.io/nexo-rs/docs/plugins/python-sdk.html) ·
+[TypeScript](https://lordmacu.github.io/nexo-rs/docs/plugins/typescript-sdk.html) ·
+[PHP](https://lordmacu.github.io/nexo-rs/docs/plugins/php-sdk.html).
+
+### Microapp SDK
+
+`nexo-microapp-sdk` (crates.io) is the Rust SDK for the **product
+layer** — feature-gated modules for voice / STT / wizard / events /
+admin RPC over the daemon. Start from the bundled `template-microapp-rust`
+template (it depends on the published crate, so a copied-out tree builds
+standalone); the React frontend kit ships as
+[`@lordmacu/nexo-microapp-ui-react`](https://www.npmjs.com/package/@lordmacu/nexo-microapp-ui-react).
+Guide: [Microapps · getting started (1-hour walkthrough)](https://lordmacu.github.io/nexo-rs/docs/microapps/getting-started.html).
+
+**Worked example — [`lordmacu/agent-creator-microapp`](https://github.com/lordmacu/agent-creator-microapp):**
+the operator control-plane microapp described above (React UI + HTTP
+backend over the admin RPC + firehose SSE, `@lordmacu/nexo-microapp-ui-react`
+theme preset, the Phase 92 local-broker shape in production). The most
+complete reference for exercising the microapp contract end to end.
 
 ## Configuration
 
@@ -439,6 +494,10 @@ with jitter up to 60 s.
 
 ## Development
 
+Building **on** nexo-rs (plugins / extensions / microapps)? See
+[**Build on nexo — SDKs**](#build-on-nexo--sdks) above. This section
+is for hacking on **the daemon itself**:
+
 ```bash
 cargo build --workspace            # whole tree
 cargo nextest run                  # parallel test runner
@@ -447,8 +506,8 @@ cargo run --bin nexo -- --help     # subcommands (init, setup, plugin, persona, 
 ```
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what's shipped per release
-and [Contributing](https://lordmacu.github.io/nexo-rs/contributing.html)
-for how to add a plugin / extension / microapp.
+and [Contributing](https://lordmacu.github.io/nexo-rs/docs/contributing.html)
+for the PR workflow.
 
 ## FAQ
 
