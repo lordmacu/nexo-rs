@@ -14,7 +14,9 @@
 #      if crates.io is unreachable.
 #   3. Installs the bundled channel plugins (whatsapp, telegram, email,
 #      browser), `nexo-plugin-admin` (the admin web UI behind
-#      `nexo admin`), and a default persona pack (a ready-to-run agent).
+#      `nexo admin`), and a default persona pack. Each plugin uses a
+#      prebuilt GitHub Release tarball when one matches the host arch,
+#      otherwise falls back to `cargo install <crate>` from crates.io.
 #      Best-effort — a failed plugin never aborts the install. Skip the
 #      whole step with --no-plugins, or just the persona with --no-persona.
 #
@@ -220,8 +222,23 @@ nexo_bin() {
     return 1
 }
 
-# Install the bundled plugins. Best-effort: a failure prints a hint
-# and the script carries on — the daemon still works without them.
+# Install one plugin: try the fast prebuilt path first (a GitHub
+# Release tarball matching the daemon's target triple, seconds), and
+# fall back to building from crates.io (`cargo install`, any arch but
+# needs the Rust toolchain). Best-effort — a failure never aborts.
+install_one_plugin() {
+    local nexo="$1" id="$2"
+    echo "→ ${id}"
+    if "$nexo" plugin install "lordmacu/${id}" </dev/null; then return 0; fi
+    if have cargo; then
+        echo "  (no prebuilt tarball for this arch — building from crates.io …)"
+        cargo install "${id}" </dev/null && return 0
+    fi
+    echo "  ⚠ skipped ${id} — retry later:  nexo plugin install lordmacu/${id}   (or: cargo install ${id})" >&2
+    return 0
+}
+
+# Install the bundled plugins + a default persona. Best-effort.
 install_plugins() {
     [ "$INSTALL_PLUGINS" -eq 1 ] || return 0
     local nexo p
@@ -232,24 +249,15 @@ install_plugins() {
     echo "  Installing bundled plugins + persona"
     echo "─────────────────────────────────────────────────────────────"
 
-    # Channel plugins — GitHub Release tarballs via `nexo plugin install`.
-    for p in $PLUGINS; do
-        echo "→ ${p}"
-        "$nexo" plugin install "lordmacu/${p}" </dev/null \
-            || echo "  ⚠ skipped ${p} — retry later:  nexo plugin install lordmacu/${p}" >&2
+    # Channel plugins + the admin web UI. Each one: prebuilt tarball
+    # (fast) → crates.io build (any arch, needs Rust) → warn.
+    for p in $PLUGINS nexo-plugin-admin; do
+        install_one_plugin "$nexo" "$p"
     done
 
-    # Admin web UI — `nexo-plugin-admin` ships on crates.io only.
-    if have cargo; then
-        echo "→ nexo-plugin-admin  (cargo install — this can take a few minutes)"
-        cargo install nexo-plugin-admin </dev/null \
-            || echo "  ⚠ skipped nexo-plugin-admin — retry later:  cargo install nexo-plugin-admin" >&2
-    else
-        echo "  ⚠ skipped nexo-plugin-admin — needs the Rust toolchain." >&2
-        echo "    Install Rust, then:  cargo install nexo-plugin-admin" >&2
-    fi
-
     # Default persona pack — a ready-to-run agent on first boot.
+    # Personas are noarch YAML packs; the GitHub Release tarball works
+    # everywhere, so no crates.io fallback is needed.
     if [ -n "$PERSONA" ]; then
         echo "→ persona ${PERSONA}"
         "$nexo" persona install "$PERSONA" </dev/null \
