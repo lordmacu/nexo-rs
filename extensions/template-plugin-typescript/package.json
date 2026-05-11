@@ -6,7 +6,7 @@
   "main": "./dist/main.js",
   "engines": { "node": ">=18.0.0" },
   "dependencies": {
-    "nexo-plugin-sdk": "file:../sdk-typescript"
+    "nexo-plugin-sdk": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
