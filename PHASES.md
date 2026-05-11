@@ -4502,6 +4502,288 @@ config inputs scoped per-subprocess (same shape as the
 existing whatsapp yaml flow); no
 `crates/setup/src/capabilities.rs::INVENTORY` entry needed.
 
+### Phase 81.20 — Plugin broker stdio-bridge (cross-process local broker)   ⬜
+
+**Goal:** Eliminate the implicit NATS dependency that
+Phase 81.18.b introduced for any subprocess-extracted plugin.
+After the subprocess flip, an extracted plugin running in a
+separate OS process cannot reach the daemon's in-process
+`Local` broker (`tokio::mpsc`) — the broker is a memory
+abstraction, not a network endpoint. The plugin's
+`BrokerInner` constructor today defaults to NATS
+(`nats://127.0.0.1:4222`), so any deployment without a
+running NATS server silently breaks every inbound /
+outbound topic for marketing, whatsapp, telegram, and
+every future extracted plugin. This phase wires a third
+broker transport — `StdioBridgeBroker` — that pipes
+`broker.publish`, `broker.subscribe`, and `broker.event`
+notifications over the existing JSON-RPC stdio channel
+between daemon and subprocess. Three deployment shapes
+become first-class instead of one:
+
+| Shape | Broker config | Plugins | Infra |
+|-------|---------------|---------|-------|
+| Server multi-host | `kind: nats, url: nats://…` | subprocess | NATS cluster |
+| Server single-host | `kind: local` | subprocess | none |
+| Embedded (Android / iOS) | `kind: local` | lib-linked (no subprocess) | none |
+
+**Background — why this matters:**
+
+- Today's `agent-creator-microapp` dev setup ships with
+  `broker.yaml` `type: local`. dev-daemon.sh inherits this.
+  Pre-81.18.b every plugin was in-process so local broker
+  worked transitively. Post-flip, marketing/whatsapp/telegram
+  subprocesses log `broker connect failed: NATS connect
+  failed: Connection refused (os error 111)` and fall back
+  to lazy start; their inbound bridges never fire. Operators
+  who notice install a private NATS; operators who don't
+  see plugins "deployed but silent" with no obvious cause.
+- Distribution paths blocked: `apt install nexo-rs.deb` /
+  `dnf install nexo-rs.rpm` / Windows `.exe` from
+  `release.yml` cannot be "just works" because subprocess
+  plugins need NATS that the package doesn't pull. The .deb
+  scriptlets cannot reasonably auto-install a NATS server.
+- Android / iOS embedded build (Phase 90 prerequisite):
+  Android process model + battery budget makes subprocess
+  spawning a non-starter; the planned escape is lib-linking
+  plugins as crates so the WhatsappPlugin / MarketingPlugin
+  type runs in-process. That path already works for
+  `broker: local` (since lib-linked → in-process → same
+  memory space). This phase doesn't block embedded shape;
+  it unblocks the server-without-NATS shape, which Android
+  cannot use anyway.
+- The `Local` broker's documented role per
+  `proyecto/CLAUDE.md > Fault tolerance` is:
+  > "NATS offline → fallback to local `tokio::mpsc` + disk
+  > queue, drain on reconnect."
+  Today `Local` is being abused as a steady-state broker in
+  every dev box. Stdio-bridge restores `Local` as a
+  legitimate steady-state mode for single-host deployments.
+
+**Status:** ⬜ planned. Surfaced 2026-05-11 during whatsapp
+plugin install on `agent-creator-microapp`. Workaround for
+the dev session: operator started NATS via `apt install
+nats-server`; plugin's eager start path connected via NATS
+default URL and inbound resumed. The followup is the proper
+fix.
+
+**Architectural overview:**
+
+```
+┌─────────────── daemon process ───────────────┐
+│                                              │
+│  AnyBroker (Local: tokio::mpsc)              │
+│   ▲                                          │
+│   │  publish / subscribe / event             │
+│   │                                          │
+│  ┌────────────────────────────┐              │
+│  │ subprocess.rs              │              │
+│  │  ─ JSON-RPC over stdin/    │              │
+│  │    stdout per child       │              │
+│  │  ─ tool.invoke (existing) │              │
+│  │  ─ broker.publish (new)   │              │
+│  │  ─ broker.subscribe (new) │              │
+│  │  ─ broker.event noti (new)│              │
+│  └────────────────────────────┘              │
+└─────┬──────────────────┬─────────────────────┘
+      │ stdin           │ stdout
+      ▼                 ▲
+┌─────────────── subprocess plugin ────────────┐
+│                                              │
+│  PluginAdapter (nexo-microapp-sdk)           │
+│   ▲                                          │
+│   │  receives broker.event notifications    │
+│   │  emits broker.publish / .subscribe RPCs │
+│   │                                          │
+│  StdioBridgeBroker (impl AnyBroker)          │
+│                                              │
+│  WhatsappPlugin / MarketingPlugin / …        │
+│   uses the StdioBridgeBroker via the         │
+│   AnyBroker trait — zero plugin code change  │
+│   beyond constructor selection.              │
+└──────────────────────────────────────────────┘
+```
+
+**Done criteria:**
+
+- `BrokerKind::StdioBridge` added to `nexo-config` and
+  `nexo-broker`'s `AnyBroker::from_config` dispatches to a
+  new `StdioBridgeBroker` impl.
+- `nexo-microapp-sdk::plugin::PluginAdapter` multiplexes
+  stdin between `tool.invoke` requests (existing) and
+  `broker.event` notifications (new); exposes a helper
+  `bridge_broker(&self) -> Arc<dyn AnyBroker>` that
+  consumers call instead of `AnyBroker::from_config` when
+  the daemon stamped `NEXO_BROKER_KIND=stdio_bridge`.
+- `proyecto/crates/core/src/agent/nexo_plugin_registry/
+  subprocess.rs` adds handlers for `broker.publish` (writes
+  message to host broker) and `broker.subscribe` (registers
+  topic pattern, attaches a forwarder that sends
+  `broker.event` notifications to the subprocess for each
+  matching message).
+- `seed_*_subprocess_env_for` helpers in `proyecto/src/
+  main.rs` set `NEXO_BROKER_KIND` to `nats` when the
+  daemon's own broker config is `kind: nats` (so the
+  subprocess connects to the same NATS server) or
+  `stdio_bridge` when `kind: local` (so the subprocess
+  bridges through the parent). The `NEXO_BROKER_URL` env
+  becomes optional and is only seeded for `kind: nats`.
+- Consumer plugins (`nexo-rs-plugin-whatsapp`,
+  `nexo-rs-extension-marketing`,
+  `nexo-rs-plugin-telegram`) replace their hardcoded
+  `BrokerInner` construction with a helper that consumes
+  `NEXO_BROKER_KIND` + (optional) URL and returns the
+  appropriate `Arc<dyn AnyBroker>`.
+- Integration test: spawn a daemon with `broker: local` and
+  two subprocess plugins (test fixtures). Plugin A subscribes
+  to topic `T`; plugin B publishes 100 messages on `T`.
+  Assert all 100 arrive at A's subscriber. NO NATS server
+  running during the test.
+- `broker.yaml` documentation updated: `kind: local` is
+  described as a legitimate steady-state mode for
+  single-host deployments. `kind: stdio_bridge` is NOT a
+  config option (operator never picks it); the daemon
+  derives it for subprocess plugins automatically.
+- `agent-creator-microapp/scripts/dev-daemon.sh` continues
+  to work with `broker.yaml type: local` without an
+  external NATS server. The workaround installed during
+  the discovery session (apt nats-server) is no longer
+  needed.
+
+**Implementation checklist (~7 dev-days, 9 changesets,
+parallelizable into 3 swimlanes):**
+
+Swimlane A — broker transport (3 days):
+
+- [ ] **A1** `nexo-config`: add `BrokerKind::StdioBridge` enum
+  variant. No `url` field needed. Serde round-trip + tests.
+  ~20 LOC.
+- [ ] **A2** `nexo-broker`: add `StdioBridgeBroker` struct
+  that holds an `Arc<Mutex<BufWriter<Stdout>>>` and a
+  `tokio::sync::broadcast` channel for received
+  `broker.event` notifications. Implement `AnyBroker` trait
+  methods (`publish`, `subscribe`, `unsubscribe`) by
+  serializing to JSON-RPC and writing to stdout. `subscribe`
+  spawns a task that filters the broadcast channel by topic
+  pattern and dispatches to the subscriber. ~300 LOC + 8
+  unit tests (round-trip per method + topic glob).
+- [ ] **A3** `AnyBroker::from_config` extended: when
+  `kind == StdioBridge`, return a `StdioBridgeBroker` wired
+  to `std::io::stdout()`. ~10 LOC.
+
+Swimlane B — daemon-side bridge (2.5 days):
+
+- [ ] **B1** `proyecto/crates/core/src/agent/
+  nexo_plugin_registry/subprocess.rs`: in the JSON-RPC
+  dispatch loop, recognize `broker.publish` and
+  `broker.subscribe` methods. For `publish`: read the
+  payload, call `self.host_broker.publish(...)`. For
+  `subscribe`: register the topic pattern, attach a
+  forwarder task that on every matching message sends
+  `broker.event { topic, payload }` over the child's
+  stdin. ~400 LOC + 6 unit tests (publish round-trip,
+  subscribe glob matching, multi-subscriber fanout).
+- [ ] **B2** `proyecto/src/main.rs::seed_*_subprocess_env_for`
+  helpers (whatsapp + telegram + marketing): set
+  `NEXO_BROKER_KIND` based on `cfg.broker.kind`. ~30 LOC
+  total across 3 helpers.
+- [ ] **B3** Daemon emits `bridge_subscribers_active` and
+  `bridge_messages_forwarded` metrics on the existing
+  `/metrics` endpoint so operators can monitor the bridge
+  load. ~40 LOC.
+
+Swimlane C — plugin consumer migrations (1.5 days):
+
+- [ ] **C1** `nexo-microapp-sdk::plugin::PluginAdapter`:
+  multiplex stdin reader. Today the reader treats every
+  line as a `tool.invoke` JSON-RPC request; extend to
+  dispatch `broker.event` notifications to a callback
+  registered by `bridge_broker()`. ~250 LOC + 4 unit tests
+  (stdin demux, notification routing, lifetime cleanup).
+- [ ] **C2** `nexo-rs-plugin-whatsapp/src/main.rs`: replace
+  the `BrokerInner` constructor block with
+  `AnyBroker::from_kind_env()` helper that reads
+  `NEXO_BROKER_KIND` + optional URL. ~50 LOC.
+- [ ] **C3** `nexo-rs-plugin-telegram/src/main.rs`: same
+  change as C2. ~50 LOC.
+- [ ] **C4** `nexo-rs-extension-marketing/src/main.rs`: same
+  change. ~50 LOC.
+
+Swimlane D — integration & docs (0.5 days):
+
+- [ ] **D1** Integration test in
+  `proyecto/crates/core/tests/plugin_broker_stdio_bridge.rs`:
+  spawn daemon with local broker + two fixture subprocess
+  plugins; assert end-to-end publish/subscribe round-trip
+  with zero NATS process. ~200 LOC.
+- [ ] **D2** `proyecto/CLAUDE.md > Fault tolerance` section
+  updated: clarify that `Local` is now a legitimate
+  steady-state broker mode for single-host deployments, not
+  just an offline fallback. Add a third row to the broker
+  options table.
+- [ ] **D3** `proyecto/docs/architecture/broker.md` (new):
+  document the three broker shapes with a diagram. Link
+  from CLAUDE.md.
+
+**Migration impact:** zero breaking changes for existing
+deployments. `broker: nats` deployments continue working
+unchanged (the daemon still seeds `NEXO_BROKER_KIND=nats`
++ URL to subprocesses). `broker: local` deployments stop
+silently breaking on subprocess plugins. The plugin
+binary's `BrokerInner` constructor changes but operators
+on a published plugin tarball / RPM only see the new
+behaviour after upgrading both daemon AND plugin to
+versions that ship this phase.
+
+**Follow-ups out of scope for this phase (parked in
+`FOLLOWUPS.md > 81.20.*`):**
+
+- `81.20.followup-flow-control` — the stdio bridge has no
+  back-pressure today; a runaway publisher could OOM the
+  daemon's forwarder buffer. Add a bounded `mpsc` per
+  subscriber and either drop-oldest or drop-newest on
+  overflow.
+- `81.20.followup-broker-auth` — `Local` broker has no
+  auth concept (single-host trust boundary). When NATS is
+  used, JWT auth gates topic access. The bridge does not
+  enforce capability allowlists today; the bridge should
+  reject `broker.publish` calls whose topic is outside
+  the plugin's `[plugin.capabilities.broker].publish`
+  list. Pulling the manifest's allowlist into the
+  subprocess host's `Inner` and checking on each publish
+  closes the gap. Same for subscribe.
+- `81.20.followup-windows-stdio` — Windows stdio is
+  notoriously line-buffered; verify the bridge works on
+  Windows runner without explicit `O_NONBLOCK` /
+  `SetNamedPipeHandleState` calls. Existing tool.invoke
+  path already runs on Windows so likely fine, but the
+  notification volume is higher.
+
+**Capability inventory:** no new env-toggle gating dangerous
+behaviour. `NEXO_BROKER_KIND` is a derived hint from the
+daemon's own config, not operator input. No
+`crates/setup/src/capabilities.rs::INVENTORY` entry needed.
+
+### Phase 91 — STT pure-Rust migration via Candle   ⬜
+
+**Goal:** Replace the `whisper-rs` (whisper.cpp C++ binding)
+backend in `nexo-microapp-sdk::stt` with HuggingFace's pure-Rust
+Candle ML framework. Eliminates the Visual Studio Build Tools 2022
+\+ CMake requirement on Windows and unblocks trivial Android NDK /
+WASM cross-compile (precondition for the Flutter Android FFI embed
+goal). Audio decode pipeline (ogg-opus → s16 PCM → f32) is
+untouched; only the inference layer swaps.
+
+**Status:** ⬜ planned, **P3 — POST-CRITICAL**. Full plan + 12
+sub-phases (91.1 API research → 91.12 deprecate `whisper-rs`):
+[`PHASE-91-STT-CANDLE-MIGRATION-PLAN.md`](PHASE-91-STT-CANDLE-MIGRATION-PLAN.md).
+
+**Trigger:** 27.2 GA shipped + microapp UI work pauses, OR a
+Windows / Android operator surfaces a hard block on the C++
+build chain.
+
+---
+
 ### Phase 89 — Locale-aware agent language (BCP-47)   ✅
 
 **Goal:** Replace the 2-letter ISO language model with full BCP-47
