@@ -15,43 +15,41 @@
 //! subprocess.rs`) already speaks:
 //!
 //! - `broker.publish { topic, event }` — subprocess → daemon
-//!   notification (no `id`, fire-and-forget). Daemon validates the
-//!   topic against the plugin manifest's
-//!   `[plugin.capabilities.broker].publish` allowlist and forwards
-//!   onto its in-process broker. Drops the frame on allowlist
-//!   reject without a reply; track as
-//!   `92.followup-publish-ack` when operators surface a real
-//!   complaint about silent drops.
-//!
+//!   notification (no `id`, fire-and-forget). Daemon validates
+//!   the topic against the plugin manifest's
+//!   `[plugin.capabilities.broker].publish` allowlist and
+//!   forwards onto its in-process broker.
 //! - `broker.event { topic, event }` — daemon → subprocess
-//!   notification. Daemon pre-subscribes (at boot) to every
-//!   pattern in the manifest's
-//!   `[plugin.capabilities.broker].subscribe` list + auto-derived
-//!   `plugin.outbound.<kind>.>` patterns, and pushes a frame for
-//!   every matching event. The subprocess-side broker filters
-//!   these locally by topic pattern using [`crate::topic::
-//!   topic_matches`] (NATS-style `*` and `>` wildcards) and
-//!   fans out to every matching `Subscription`.
+//!   notification. Daemon pre-subscribes at boot to every pattern
+//!   in the manifest's `[plugin.capabilities.broker].subscribe`
+//!   list and pushes one frame per matching event. The
+//!   subprocess-side broker filters these locally by topic
+//!   pattern using [`crate::topic::topic_matches`] (NATS-style
+//!   `*` and `>` wildcards) and fans out to every matching
+//!   `Subscription`.
 //!
-//! There is **no** explicit `broker.subscribe` RPC. The daemon's
-//! subscriber list is fixed at boot from the manifest; dynamic
-//! subscription is bounded by that allowlist (defense-in-depth
-//! per Phase 81.29). A plugin calling `subscribe(pattern)` for a
-//! pattern outside its manifest will receive zero events
-//! silently — the manifest is the source of truth.
+//! Output abstraction is `tokio::sync::mpsc::Sender<Value>` so the
+//! broker is decoupled from any concrete `Write` type. The SDK's
+//! `PluginAdapter` reuses its single async stdout writer for both
+//! `tool.invoke` responses (existing) and `broker.publish`
+//! notifications (new) by draining the mpsc end into the same
+//! writer task — see `nexo-microapp-sdk::plugin::
+//! with_stdio_bridge_broker` for the wiring.
 //!
-//! Sub-phase 92.2 ships the subprocess-side struct + wire format.
-//! Sub-phase 92.5 wires the SDK's `PluginAdapter` to feed inbound
-//! stdin lines into [`StdioBridgeBroker::handle_inbound_line`].
-//!
-//! [`handle_inbound_line`]: StdioBridgeBroker::handle_inbound_line
+//! Inbound events arrive at the bridge either via
+//! [`StdioBridgeBroker::handle_inbound_line`] (raw JSON line
+//! parsed by the bridge) or [`StdioBridgeBroker::feed_event`]
+//! (typed `(topic, event)` already parsed by the SDK's existing
+//! dispatch loop). Plugins typically use the latter — the SDK
+//! already parses the `broker.event` frame for the
+//! `on_broker_event` callback.
 
-use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::handle::{BrokerHandle, Subscription};
@@ -62,6 +60,11 @@ use crate::types::{BrokerError, Event, Message};
 /// constant so a single-host deployment behaves identically
 /// whether plugins are in-process or stdio-bridged.
 const CHANNEL_CAPACITY: usize = 256;
+
+/// Default channel capacity for the outbound JSON-RPC mpsc
+/// (publish notifications). Generous because each frame is
+/// already serialized into a `Value` upstream of this queue.
+pub const DEFAULT_OUTBOUND_CAPACITY: usize = 256;
 
 // ---------------------------------------------------------------------------
 // JSON-RPC wire types
@@ -90,23 +93,21 @@ struct BrokerEventParams {
 // Broker
 // ---------------------------------------------------------------------------
 
-/// Type alias for the boxed writer the bridge owns. Concrete type
-/// is `BufWriter<Stdout>` in production and an in-memory
-/// `Vec<u8>`-backed writer in tests.
-type BoxedWriter = Box<dyn Write + Send>;
-
 /// Subprocess-side broker that bridges through the parent
-/// daemon's stdio JSON-RPC channel. See module docs.
+/// daemon's stdio JSON-RPC channel. Output goes through an
+/// `mpsc::Sender<Value>` so the broker is decoupled from any
+/// concrete writer — the SDK's plugin adapter consumes that
+/// channel and writes through its single async stdout handle.
 #[derive(Clone)]
 pub struct StdioBridgeBroker {
     inner: Arc<Inner>,
 }
 
 struct Inner {
-    /// Lock-protected writer for outbound JSON-RPC notifications.
-    /// Sync `std::sync::Mutex` because `writeln!` + `flush` are
-    /// sync calls; near-zero hold time (one line per notify).
-    writer: std::sync::Mutex<BoxedWriter>,
+    /// Outbound JSON-RPC frames. The SDK's `PluginAdapter` owns
+    /// the matching receiver and forwards each frame onto the
+    /// process's stdout (using its existing async writer).
+    out: mpsc::Sender<Value>,
     /// Live subscribers: (topic_pattern, mpsc Sender). Vec
     /// because lookups iterate all entries anyway (topic_matches
     /// is the discriminator); also lets the same pattern have
@@ -116,42 +117,46 @@ struct Inner {
 }
 
 impl StdioBridgeBroker {
-    /// Wire the broker to the current process's stdout, buffered.
-    /// `flush` is called after every JSON-RPC line so the daemon
-    /// sees notifications immediately (stdio buffering would
-    /// otherwise stall the bridge until the buffer fills).
-    pub fn new_stdout() -> Self {
-        let writer: BoxedWriter = Box::new(BufWriter::new(std::io::stdout()));
-        Self::with_writer_boxed(writer)
-    }
-
-    /// Construct with a custom writer. Used by tests to assert
-    /// the JSON-RPC notification bytes the bridge produces, and
-    /// by future embedding scenarios (e.g. an Android FFI shim
-    /// that hands the bridge a Java-backed writer).
-    pub fn with_writer<W: Write + Send + 'static>(writer: W) -> Self {
-        Self::with_writer_boxed(Box::new(writer))
-    }
-
-    fn with_writer_boxed(writer: BoxedWriter) -> Self {
+    /// Construct a broker tied to a pre-existing outbound mpsc
+    /// Sender. The matching Receiver is owned by the caller
+    /// (typically the SDK's adapter, which drains it into the
+    /// process stdout). Returns the broker; the caller is
+    /// responsible for keeping the Receiver alive.
+    pub fn new(out: mpsc::Sender<Value>) -> Self {
         Self {
             inner: Arc::new(Inner {
-                writer: std::sync::Mutex::new(writer),
+                out,
                 subscribers: AsyncMutex::new(Vec::new()),
             }),
         }
     }
 
-    /// Feed one JSON-RPC line received from the daemon parent.
-    ///
-    /// Recognized shape: `broker.event { topic, event }`
-    /// notification. Anything else — `tool.invoke` requests,
-    /// `llm.chat.delta` streaming chunks, malformed JSON — is
-    /// logged at WARN and dropped. The caller (typically the SDK's
-    /// `PluginAdapter` stdin multiplexer in 92.5) is responsible
-    /// for filtering lines to broker-relevant ones before
-    /// invoking this method, but the method itself is defensive
-    /// and tolerates noise.
+    /// Convenience constructor that creates a fresh mpsc channel
+    /// of [`DEFAULT_OUTBOUND_CAPACITY`] and returns both the
+    /// broker and the Receiver. The caller wires the Receiver
+    /// into a forwarder task (typically inside
+    /// `nexo-microapp-sdk::plugin::PluginAdapter::
+    /// with_stdio_bridge_broker`).
+    pub fn with_channel() -> (Self, mpsc::Receiver<Value>) {
+        let (tx, rx) = mpsc::channel(DEFAULT_OUTBOUND_CAPACITY);
+        (Self::new(tx), rx)
+    }
+
+    /// Feed a typed `(topic, event)` pair to all matching local
+    /// subscribers. Used by the SDK's `on_broker_event`
+    /// callback, which already parses the `broker.event` frame
+    /// out of stdin. Bypasses JSON deserialization (the SDK
+    /// already did it).
+    pub async fn feed_event(&self, topic: String, event: Event) {
+        self.dispatch_event(BrokerEventParams { topic, event }).await;
+    }
+
+    /// Parse one raw JSON-RPC line received from the daemon
+    /// parent. Recognizes the `broker.event { topic, event }`
+    /// notification shape; anything else is logged at TRACE and
+    /// dropped. Provided for callers that bypass the SDK's
+    /// dispatch loop (tests, embedded variants without a full
+    /// PluginAdapter).
     pub async fn handle_inbound_line(&self, line: &str) {
         let frame: BrokerEventFrame = match serde_json::from_str(line) {
             Ok(f) => f,
@@ -176,8 +181,8 @@ impl StdioBridgeBroker {
     /// Fan an inbound `broker.event` out to every subscriber
     /// whose registered topic pattern matches the event topic.
     /// Lazily prunes subscribers whose receivers have been
-    /// dropped (mpsc Closed) so the subscribers list stays
-    /// bounded by live consumers.
+    /// dropped so the subscribers list stays bounded by live
+    /// consumers.
     async fn dispatch_event(&self, params: BrokerEventParams) {
         let mut subscribers = self.inner.subscribers.lock().await;
         let mut to_remove: Vec<usize> = Vec::new();
@@ -199,47 +204,35 @@ impl StdioBridgeBroker {
                 }
             }
         }
-        // Remove from tail to head so indices stay valid.
         for idx in to_remove.into_iter().rev() {
             subscribers.swap_remove(idx);
         }
-    }
-
-    /// Serialise + write a JSON-RPC notification to the outbound
-    /// channel. Sync writeln + flush under the writer mutex.
-    fn write_notification<P: Serialize>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> Result<(), BrokerError> {
-        let frame = JsonRpcNotification {
-            jsonrpc: "2.0",
-            method,
-            params,
-        };
-        let line = serde_json::to_string(&frame)
-            .map_err(|e| BrokerError::SendError(format!("serialize {method}: {e}")))?;
-        let mut writer = self.inner.writer.lock().expect("writer mutex poisoned");
-        writeln!(writer, "{}", line)
-            .map_err(|e| BrokerError::SendError(format!("write {method}: {e}")))?;
-        writer
-            .flush()
-            .map_err(|e| BrokerError::SendError(format!("flush {method}: {e}")))?;
-        Ok(())
     }
 }
 
 #[async_trait]
 impl BrokerHandle for StdioBridgeBroker {
-    /// Fire-and-forget publish over stdio. Returns `Ok(())` once
-    /// the bytes are flushed to stdout; the daemon's allowlist
-    /// check + actual broker fanout happen asynchronously on its
-    /// side. Followup `92.followup-publish-ack` will add an
-    /// optional req/reply mode for callers that need
-    /// per-publish confirmation.
+    /// Fire-and-forget publish. Serializes the broker.publish
+    /// notification + pushes it onto the outbound mpsc; the SDK's
+    /// adapter writes it to stdout. Returns `Ok(())` once the
+    /// frame is queued; the daemon's allowlist check + actual
+    /// broker fanout happen asynchronously on its side. Follow-up
+    /// `92.followup-publish-ack` will add an optional req/reply
+    /// mode for callers that need per-publish confirmation.
     async fn publish(&self, topic: &str, event: Event) -> Result<(), BrokerError> {
-        let params = serde_json::json!({ "topic": topic, "event": event });
-        self.write_notification("broker.publish", params)
+        let frame = JsonRpcNotification {
+            jsonrpc: "2.0",
+            method: "broker.publish",
+            params: serde_json::json!({ "topic": topic, "event": event }),
+        };
+        let value = serde_json::to_value(&frame)
+            .map_err(|e| BrokerError::SendError(format!("serialize broker.publish: {e}")))?;
+        self.inner
+            .out
+            .send(value)
+            .await
+            .map_err(|e| BrokerError::SendError(format!("outbound mpsc closed: {e}")))?;
+        Ok(())
     }
 
     /// Register a local subscription filter. No daemon RPC fires
@@ -260,12 +253,6 @@ impl BrokerHandle for StdioBridgeBroker {
         _msg: Message,
         _timeout: Duration,
     ) -> Result<Message, BrokerError> {
-        // Phase 92 v1 does not pipe req/reply semantics through
-        // the bridge — every extracted subprocess plugin in tree
-        // today uses only publish + subscribe. Track as a
-        // follow-up (`92.followup-request-reply`) once a plugin
-        // surfaces the need; until then, fail fast so callers
-        // notice and route around it.
         Err(BrokerError::RequestTimeout(format!(
             "stdio_bridge: request/reply not implemented for topic '{topic}' \
              (use publish + subscribe; see Phase 92 followup-request-reply)"
@@ -280,30 +267,6 @@ impl BrokerHandle for StdioBridgeBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
-
-    /// In-memory writer backed by a shared `Vec<u8>` so tests can
-    /// assert the exact JSON-RPC line bytes the bridge produced.
-    #[derive(Clone, Default)]
-    struct CapturedWriter {
-        buf: Arc<StdMutex<Vec<u8>>>,
-    }
-
-    impl Write for CapturedWriter {
-        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-            self.buf.lock().unwrap().extend_from_slice(data);
-            Ok(data.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl CapturedWriter {
-        fn snapshot(&self) -> String {
-            String::from_utf8(self.buf.lock().unwrap().clone()).unwrap()
-        }
-    }
 
     fn sample_event(topic: &str, payload: serde_json::Value) -> Event {
         Event::new(topic, "test", payload)
@@ -311,8 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn publish_writes_notification_without_id() {
-        let writer = CapturedWriter::default();
-        let broker = StdioBridgeBroker::with_writer(writer.clone());
+        let (broker, mut out_rx) = StdioBridgeBroker::with_channel();
         broker
             .publish(
                 "plugin.inbound.test",
@@ -320,110 +282,99 @@ mod tests {
             )
             .await
             .unwrap();
-        let written = writer.snapshot();
-        assert!(
-            written.contains("\"method\":\"broker.publish\""),
-            "expected broker.publish line, got: {written}"
-        );
-        assert!(
-            written.contains("\"topic\":\"plugin.inbound.test\""),
-            "expected topic field, got: {written}"
-        );
-        // Notifications must NOT carry a top-level id field —
-        // that's a JSON-RPC 2.0 invariant the daemon's dispatcher
-        // relies on to distinguish notifications from requests.
-        // Parse the frame to check the envelope structure
-        // (substring check would false-positive on Event.id
-        // nested inside params).
-        let parsed: serde_json::Value =
-            serde_json::from_str(written.trim_end()).expect("publish line is valid JSON");
-        let envelope = parsed.as_object().expect("envelope must be an object");
+        let frame = out_rx.try_recv().expect("publish must enqueue a frame");
+        let envelope = frame.as_object().expect("envelope is an object");
         assert!(
             !envelope.contains_key("id"),
-            "publish envelope must not carry id: {written}"
+            "publish must be a notification, not a request: {frame:#?}"
         );
-        assert_eq!(envelope.get("method").and_then(|v| v.as_str()), Some("broker.publish"));
+        assert_eq!(envelope.get("method").and_then(Value::as_str), Some("broker.publish"));
+        assert_eq!(
+            envelope
+                .get("params")
+                .and_then(|p| p.get("topic"))
+                .and_then(Value::as_str),
+            Some("plugin.inbound.test")
+        );
     }
 
     #[tokio::test]
-    async fn subscribe_is_synchronous_no_daemon_rpc() {
-        let writer = CapturedWriter::default();
-        let broker = StdioBridgeBroker::with_writer(writer.clone());
+    async fn subscribe_is_synchronous_no_outbound_frame() {
+        let (broker, mut out_rx) = StdioBridgeBroker::with_channel();
         let sub = broker.subscribe("plugin.outbound.>").await.unwrap();
         assert_eq!(sub.topic, "plugin.outbound.>");
-        // No RPC writes to stdout — subscribe is a local filter
-        // registration. The daemon's subscriber list is fixed at
-        // boot from the manifest's broker.subscribe list.
+        // No frames must hit the outbound channel — subscribe is a
+        // local-only filter registration.
         assert!(
-            writer.snapshot().is_empty(),
-            "subscribe must not write to stdout: {}",
-            writer.snapshot()
+            out_rx.try_recv().is_err(),
+            "subscribe must not write to outbound mpsc"
         );
     }
 
     #[tokio::test]
-    async fn broker_event_routes_to_matching_subscriber() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
+    async fn feed_event_routes_to_matching_subscriber() {
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
         let mut sub = broker.subscribe("plugin.outbound.whatsapp.>").await.unwrap();
-
         let event = sample_event(
             "plugin.outbound.whatsapp.smoketest",
             serde_json::json!({"hello": "world"}),
         );
-        let frame = format!(
-            r#"{{"jsonrpc":"2.0","method":"broker.event","params":{{"topic":"{}","event":{}}}}}"#,
-            event.topic,
-            serde_json::to_string(&event).unwrap()
-        );
-        broker.handle_inbound_line(&frame).await;
-
+        broker
+            .feed_event("plugin.outbound.whatsapp.smoketest".to_string(), event)
+            .await;
         let received = tokio::time::timeout(Duration::from_millis(200), sub.next())
             .await
             .expect("sub.next did not yield within timeout")
             .expect("subscription returned None");
-        assert_eq!(received.topic, "plugin.outbound.whatsapp.smoketest");
         assert_eq!(received.payload, serde_json::json!({"hello": "world"}));
     }
 
     #[tokio::test]
-    async fn broker_event_not_matching_pattern_dropped() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
-        let mut sub = broker.subscribe("plugin.outbound.whatsapp.>").await.unwrap();
-
-        // Event on telegram outbound — should NOT match whatsapp pattern.
-        let event = sample_event("plugin.outbound.telegram.bot1", serde_json::json!({}));
+    async fn handle_inbound_line_routes_broker_event() {
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
+        let mut sub = broker.subscribe("plugin.outbound.test.>").await.unwrap();
+        let event = sample_event("plugin.outbound.test.x", serde_json::json!({"i": 1}));
         let frame = format!(
             r#"{{"jsonrpc":"2.0","method":"broker.event","params":{{"topic":"{}","event":{}}}}}"#,
             event.topic,
             serde_json::to_string(&event).unwrap()
         );
         broker.handle_inbound_line(&frame).await;
+        let recv = tokio::time::timeout(Duration::from_millis(200), sub.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(recv.payload, serde_json::json!({"i": 1}));
+    }
 
+    #[tokio::test]
+    async fn non_matching_pattern_dropped() {
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
+        let mut sub = broker.subscribe("plugin.outbound.whatsapp.>").await.unwrap();
+        broker
+            .feed_event(
+                "plugin.outbound.telegram.bot1".to_string(),
+                sample_event("plugin.outbound.telegram.bot1", serde_json::json!({})),
+            )
+            .await;
         let result = tokio::time::timeout(Duration::from_millis(50), sub.next()).await;
         assert!(
             result.is_err(),
-            "telegram event must not arrive at whatsapp subscriber: {:?}",
-            result
+            "telegram event must not arrive at whatsapp subscriber"
         );
     }
 
     #[tokio::test]
     async fn multiple_subscribers_same_pattern_all_receive() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
         let mut sub_a = broker.subscribe("plugin.outbound.test.>").await.unwrap();
         let mut sub_b = broker.subscribe("plugin.outbound.test.>").await.unwrap();
-
-        let event = sample_event(
-            "plugin.outbound.test.bot",
-            serde_json::json!({"i": 42}),
-        );
-        let frame = format!(
-            r#"{{"jsonrpc":"2.0","method":"broker.event","params":{{"topic":"{}","event":{}}}}}"#,
-            event.topic,
-            serde_json::to_string(&event).unwrap()
-        );
-        broker.handle_inbound_line(&frame).await;
-
+        broker
+            .feed_event(
+                "plugin.outbound.test.bot".to_string(),
+                sample_event("plugin.outbound.test.bot", serde_json::json!({"i": 42})),
+            )
+            .await;
         let a = tokio::time::timeout(Duration::from_millis(200), sub_a.next())
             .await
             .unwrap()
@@ -438,31 +389,24 @@ mod tests {
 
     #[tokio::test]
     async fn dropped_subscriber_pruned_on_next_event() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
-        // Subscribe + immediately drop to close the receiver.
-        let dropped_sub = broker.subscribe("plugin.outbound.test.>").await.unwrap();
-        let mut live_sub = broker.subscribe("plugin.outbound.test.>").await.unwrap();
-        drop(dropped_sub);
-
-        // Push an event; the dead subscriber must be pruned and
-        // the live one still receives.
-        let event = sample_event("plugin.outbound.test.x", serde_json::json!({}));
-        let frame = format!(
-            r#"{{"jsonrpc":"2.0","method":"broker.event","params":{{"topic":"{}","event":{}}}}}"#,
-            event.topic,
-            serde_json::to_string(&event).unwrap()
-        );
-        broker.handle_inbound_line(&frame).await;
-
-        live_sub.next().await.expect("live subscriber must receive event");
-        // After dispatch, the subscribers vec should be down to 1.
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
+        let dropped = broker.subscribe("plugin.outbound.test.>").await.unwrap();
+        let mut live = broker.subscribe("plugin.outbound.test.>").await.unwrap();
+        drop(dropped);
+        broker
+            .feed_event(
+                "plugin.outbound.test.x".to_string(),
+                sample_event("plugin.outbound.test.x", serde_json::json!({})),
+            )
+            .await;
+        live.next().await.expect("live subscriber must receive");
         let subs = broker.inner.subscribers.lock().await;
         assert_eq!(subs.len(), 1, "dropped subscriber not pruned");
     }
 
     #[tokio::test]
     async fn malformed_inbound_line_is_dropped_silently() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
         broker.handle_inbound_line("not even json").await;
         broker
             .handle_inbound_line(r#"{"jsonrpc":"2.0","method":"tool.invoke","params":{}}"#)
@@ -470,12 +414,11 @@ mod tests {
         broker
             .handle_inbound_line(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
             .await;
-        // Must not panic; no assertions needed.
     }
 
     #[tokio::test]
     async fn request_method_returns_unsupported_error() {
-        let broker = StdioBridgeBroker::with_writer(CapturedWriter::default());
+        let (broker, _out_rx) = StdioBridgeBroker::with_channel();
         let err = broker
             .request(
                 "foo",
@@ -486,46 +429,28 @@ mod tests {
             .expect_err("request must not succeed on the stdio bridge today");
         match err {
             BrokerError::RequestTimeout(msg) => {
-                assert!(
-                    msg.contains("stdio_bridge"),
-                    "expected stdio_bridge mention in error, got: {msg}"
-                );
+                assert!(msg.contains("stdio_bridge"), "msg={msg}");
             }
             other => panic!("expected RequestTimeout, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn concurrent_publishes_serialize_through_writer_mutex() {
-        let writer = CapturedWriter::default();
-        let broker = StdioBridgeBroker::with_writer(writer.clone());
-
-        let mut tasks = Vec::new();
-        for i in 0..10 {
-            let broker = broker.clone();
-            tasks.push(tokio::spawn(async move {
-                broker
-                    .publish(
-                        &format!("plugin.inbound.test.{i}"),
-                        sample_event(&format!("plugin.inbound.test.{i}"), serde_json::json!({"i": i})),
-                    )
-                    .await
-            }));
-        }
-        for t in tasks {
-            t.await.unwrap().unwrap();
-        }
-        let written = writer.snapshot();
-        // Each publish writes exactly one line; verify the
-        // writer captured 10 newline-terminated frames AND
-        // every frame parses as a valid JSON object (no
-        // interleaving across the mutex).
-        let line_count = written.lines().count();
-        assert_eq!(line_count, 10, "expected 10 lines, got {line_count}");
-        for line in written.lines() {
-            let parsed: serde_json::Value = serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("line not valid JSON: {line} ({e})"));
-            assert_eq!(parsed.get("method").and_then(|v| v.as_str()), Some("broker.publish"));
+    async fn closed_outbound_returns_send_error() {
+        let (broker, out_rx) = StdioBridgeBroker::with_channel();
+        drop(out_rx); // simulate adapter shutdown / writer task exited
+        let err = broker
+            .publish(
+                "plugin.inbound.test",
+                sample_event("plugin.inbound.test", serde_json::json!({})),
+            )
+            .await
+            .expect_err("publish after outbound closed must fail");
+        match err {
+            BrokerError::SendError(msg) => {
+                assert!(msg.contains("outbound mpsc closed"), "msg={msg}");
+            }
+            other => panic!("expected SendError, got {other:?}"),
         }
     }
 }

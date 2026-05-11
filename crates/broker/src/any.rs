@@ -34,12 +34,18 @@ impl AnyBroker {
             }
             BrokerKind::Local => Ok(Self::Local(LocalBroker::new())),
             BrokerKind::StdioBridge => {
-                // Default wiring assumes the current process's
-                // stdout is the daemon-bound JSON-RPC channel.
-                // Callers wanting a custom writer (e.g. tests or
-                // an Android FFI shim) should call
-                // [`AnyBroker::stdio_bridge`] directly.
-                Ok(Self::StdioBridge(StdioBridgeBroker::new_stdout()))
+                // `from_config` cannot wire the stdio bridge
+                // because it has no access to the plugin
+                // adapter's outbound mpsc Sender. Callers needing
+                // a bridge-backed broker must build one via
+                // `nexo-microapp-sdk::plugin::PluginAdapter::
+                // with_stdio_bridge_broker` (which returns the
+                // wired adapter + an `Arc<StdioBridgeBroker>`)
+                // and wrap it in `AnyBroker::stdio_bridge`.
+                anyhow::bail!(
+                    "BrokerKind::StdioBridge cannot be built from config; \
+                     use PluginAdapter::with_stdio_bridge_broker() in the plugin's main.rs"
+                )
             }
         }
     }
