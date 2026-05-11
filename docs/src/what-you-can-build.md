@@ -12,6 +12,22 @@ follow the link.
 
 ## Channel agents
 
+> **Installing a channel plugin** — each card below needs one. They
+> ship as GitHub Releases tarballs; install with
+> `nexo plugin install <owner>/<repo>`:
+>
+> ```bash
+> nexo plugin install lordmacu/nexo-plugin-whatsapp
+> nexo plugin install lordmacu/nexo-plugin-telegram
+> nexo plugin install lordmacu/nexo-plugin-email
+> nexo plugin install lordmacu/nexo-plugin-browser
+> nexo plugin list
+> ```
+>
+> (Or build from source: `cargo install --git
+> https://github.com/lordmacu/nexo-plugin-whatsapp`.) Then reference
+> the channel in your agent YAML, as shown below.
+
 ### WhatsApp sales agent — qualify leads + book demos
 
 > ⏱ Build time · 1 afternoon · ⚙️ Layer · agent + WhatsApp plugin
