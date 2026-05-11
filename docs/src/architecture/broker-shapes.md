@@ -236,6 +236,7 @@ to work identically.
 | SDK `with_stdio_bridge_broker` helper | `crates/microapp-sdk/src/plugin.rs` |
 | Plugin migrations (consumers) | `nexo-rs-plugin-whatsapp/src/main.rs`, `nexo-rs-plugin-telegram/src/main.rs` |
 
-For the full Phase 92 design + remaining sub-phases (integration
-test, metrics) see
-[`PHASE-92-PLUGIN-BROKER-STDIO-BRIDGE-PLAN.md`](../../../PHASE-92-PLUGIN-BROKER-STDIO-BRIDGE-PLAN.md).
+Phase 92 (the stdio-bridge broker) shipped in v0.1.6 — see the
+[release notes](https://github.com/lordmacu/nexo-rs/releases/tag/nexo-rs-v0.1.6).
+Remaining sub-phases (an end-to-end integration test, Prometheus
+metrics for the bridge) are tracked as follow-ups.
