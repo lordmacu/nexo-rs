@@ -226,7 +226,7 @@ anyhow             = "1"
 thiserror          = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-nats         = "0.35"
+async-nats         = "0.48"
 # Phase 91.x.wasm.phase-4c.3 — base pin trimmed to ONLY the
 # wasm-clean features so resolver-2 doesn't unify wasm-broken
 # features into wasm32 SDK builds. Removed:
