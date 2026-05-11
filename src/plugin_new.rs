@@ -242,6 +242,19 @@ fn write_dir_with_substitutions(
                     .path()
                     .strip_prefix(template_root)
                     .unwrap_or_else(|_| f.path());
+                // The Rust template ships its manifest as `_Cargo.toml`
+                // so `extensions/template-plugin-rust/` doesn't read as
+                // a nested cargo package — cargo would otherwise drop
+                // the whole directory from the published `nexo-rs`
+                // `.crate` tarball and `include_dir!` would panic on the
+                // missing dir. Materialize it back as `Cargo.toml`.
+                let rel_buf: Option<PathBuf> =
+                    if rel.file_name().and_then(|n| n.to_str()) == Some("_Cargo.toml") {
+                        Some(rel.with_file_name("Cargo.toml"))
+                    } else {
+                        None
+                    };
+                let rel: &Path = rel_buf.as_deref().unwrap_or(rel);
                 let target = dest.join(rel);
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
