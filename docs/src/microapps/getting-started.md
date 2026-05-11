@@ -12,8 +12,10 @@ see [rust.md](./rust.md).
 ## Prerequisites
 
 ```text
-✅ Rust 1.75+ (`rustup default stable`)
-✅ A working nexo-rs checkout (this repo)
+✅ Rust 1.80+ (`rustup default stable`)
+✅ The `template-microapp-rust/` directory (from a `git clone` of
+   nexo-rs, or copied out — it depends on `nexo-microapp-sdk` from
+   crates.io, so the copy builds standalone)
 ✅ A configured nexo daemon (one agent, one channel binding)
 ```
 
@@ -23,23 +25,26 @@ Local files only.
 ## Step 1 — copy the template (5 min)
 
 ```bash
-# From your work directory (NOT inside nexo-rs):
+# From your work directory (a `git clone` of nexo-rs gives you the
+# template under extensions/):
 cp -r /path/to/nexo-rs/extensions/template-microapp-rust ./mi-microapp
 cd ./mi-microapp
 
 # Rename inside Cargo.toml + plugin.toml + src/main.rs:
 sed -i 's/template-microapp-rust/mi-microapp/g' Cargo.toml plugin.toml src/main.rs
 
-git init
-git add -A
-git commit -m "scaffold from nexo template"
+git init && git add -A && git commit -m "scaffold from nexo template"
+
+# Sanity-check it builds (no path-dep surgery needed — the SDK
+# resolves from crates.io):
+cargo build
 ```
 
 Now you have:
 
 ```text
 mi-microapp/
-├── Cargo.toml          # depends on nexo-microapp-sdk
+├── Cargo.toml          # depends on nexo-microapp-sdk = "0.1" (crates.io)
 ├── plugin.toml         # capabilities + transport declaration
 ├── README.md           # rename checklist + porting guide
 └── src/main.rs         # ~100 LOC including comments

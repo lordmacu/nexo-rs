@@ -12,11 +12,9 @@ name = "template-microapp-rust"
 path = "src/main.rs"
 
 [dependencies]
-# In-tree dev path. When you copy this template out of the
-# nexo-rs workspace, swap to the published version once the SDK
-# ships to crates.io:
-#   nexo-microapp-sdk = { version = "0.1", features = ["admin"] }
-nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["admin"] }
+# Published SDK crate — this template builds standalone straight
+# out of `cp -r` (or a `git clone` of nexo-rs): no path-dep surgery.
+nexo-microapp-sdk = { version = "0.1", features = ["admin"] }
 
 anyhow       = "1"
 async-trait  = "0.1"
@@ -30,7 +28,8 @@ tracing      = "0.1"
 # `MockAdminRpc` + `MicroappTestHarness::with_admin_mock` via the
 # `test-harness` feature. Authors copying this template inherit
 # the same wiring so their tool tests run without a live daemon.
-nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["admin", "test-harness"] }
+nexo-microapp-sdk = { version = "0.1", features = ["admin", "test-harness"] }
 
-[lints]
-workspace = true
+# (No `[lints] workspace = true` — this template isn't a workspace
+#  member; it's in `[workspace.exclude]` so it builds standalone
+#  after `cp -r`.)
