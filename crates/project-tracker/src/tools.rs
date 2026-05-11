@@ -270,24 +270,24 @@ mod tests {
     use crate::tracker::FsProjectTracker;
     use std::path::Path;
 
-    fn workspace_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf()
+    /// Root of the bundled `PHASES.md` / `FOLLOWUPS.md` mini-fixture
+    /// under `crates/project-tracker/tests/fixtures/`. These tests
+    /// used to read the repo-root project-tracker files, but those
+    /// aren't part of the published crate (and aren't tracked at all)
+    /// — a self-contained fixture keeps the tests hermetic.
+    fn fixture_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
     }
 
-    fn tracking_for_workspace() -> ProjectTracking {
-        let root = workspace_root();
+    fn tracking_for_fixture() -> ProjectTracking {
+        let root = fixture_root();
         let tr = FsProjectTracker::open(&root).unwrap();
         ProjectTracking::new(Arc::new(tr), &root)
     }
 
     #[tokio::test]
     async fn current_phase_returns_a_subphase() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let out = t.project_status(StatusQuery::CurrentPhase).await.unwrap();
         assert!(out.contains("**"));
         assert!(out.len() <= DEFAULT_BYTE_CAP);
@@ -295,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn phase_detail_known_id_renders() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let out = t
             .project_status(StatusQuery::PhaseDetail {
                 phase_id: "67.9".into(),
@@ -307,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn phase_detail_unknown_id_errors() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let err = t
             .project_status(StatusQuery::PhaseDetail {
                 phase_id: "9999.999".into(),
@@ -319,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn phases_list_table_caps_to_4kib() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let out = t
             .project_phases_list(PhasesListInput { filter: None })
             .await
@@ -330,7 +330,7 @@ mod tests {
 
     #[tokio::test]
     async fn followup_detail_known_code() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let out = t
             .followup_detail(FollowupDetailInput {
                 code: "PR-3".into(),
@@ -342,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn followup_detail_unknown_code_errors() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let err = t
             .followup_detail(FollowupDetailInput {
                 code: "ZZZ-999".into(),
@@ -354,12 +354,12 @@ mod tests {
 
     #[tokio::test]
     async fn last_shipped_renders_n_lines() {
-        let t = tracking_for_workspace();
+        let t = tracking_for_fixture();
         let out = t
             .project_status(StatusQuery::LastShipped { n: 3 })
             .await
             .unwrap();
-        // Workspace has many shipped phases, so 3 lines + glyphs.
+        // The fixture has several shipped sub-phases, so we get >= 1.
         let line_count = out.lines().filter(|l| l.contains("✅")).count();
         assert!(line_count >= 1, "{out}");
     }

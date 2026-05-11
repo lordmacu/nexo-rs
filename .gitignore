@@ -67,6 +67,11 @@ CLAUDE.md
 PHASES.md
 PHASES-archive.md
 FOLLOWUPS.md
+# …but the trimmed, synthetic mini-copies under
+# `crates/project-tracker/tests/fixtures/` DO ship — the crate's
+# tests parse them, and they're not the real roadmap/backlog.
+!crates/project-tracker/tests/fixtures/PHASES.md
+!crates/project-tracker/tests/fixtures/FOLLOWUPS.md
 design-agent-framework.md
 nexo-plugin-contract.md
 SECURITY.md
