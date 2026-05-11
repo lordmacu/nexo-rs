@@ -8505,24 +8505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "template-plugin-rust"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "flate2",
- "hex",
- "nexo-broker",
- "nexo-microapp-sdk",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tendril"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
