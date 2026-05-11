@@ -413,15 +413,15 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          for f in nexo-rs-*-${{ matrix.arch }}.rpm; do
+          for f in nexo-rs-*.${{ matrix.arch }}.rpm; do
             sha256sum "$f" > "${f}.sha256"
           done
       - uses: actions/upload-artifact@v4
         with:
           name: dist-rpm-${{ matrix.arch }}
           path: |
-            dist/nexo-rs-*-${{ matrix.arch }}.rpm
-            dist/nexo-rs-*-${{ matrix.arch }}.rpm.sha256
+            dist/nexo-rs-*.${{ matrix.arch }}.rpm
+            dist/nexo-rs-*.${{ matrix.arch }}.rpm.sha256
           if-no-files-found: error
 
   publish:
@@ -573,14 +573,14 @@ jobs:
         run: |
           gh release download "$TAG" \
             --repo ${{ github.repository }} \
-            --pattern 'nexo-rs-*-x86_64.rpm'
+            --pattern 'nexo-rs-*.x86_64.rpm'
       - name: Install + smoke
         env:
           EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
         run: |
           set -euo pipefail
           if command -v dnf >/dev/null; then PM=dnf; else PM=yum; fi
-          $PM install -y ./nexo-rs-*-x86_64.rpm
+          $PM install -y ./nexo-rs-*.x86_64.rpm
           out="$(nexo --version)"
           if [[ "$out" != "nexo $EXPECTED_VERSION" ]]; then
             echo "::error::version mismatch on ${{ matrix.image }}: got '$out'"
