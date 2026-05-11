@@ -87,8 +87,10 @@ nexo-rs is opinionated toward that shape.
 ## Three minutes to a running agent
 
 ```bash
-# 1. Install nexo-rs (zero-config — Phase 93):
-curl -fsSL https://nexo-rs.dev/install.sh | bash
+# 1. Install nexo-rs — pick one channel from the docs:
+#    https://lordmacu.github.io/nexo-rs/getting-started/installation.html
+#    Quick path on Linux/macOS with Rust toolchain installed:
+cargo install --git https://github.com/lordmacu/nexo-rs nexo-rs
 
 # 2. Install the Cody programmer-pair persona (or any other v2 pack):
 nexo persona install lordmacu/nexo-persona-cody
@@ -102,7 +104,9 @@ when no config dir exists; `nexo persona install` lays down a
 ready-to-run agent + plugin bindings under
 `<state_dir>/personas/`. To tune from a documented baseline
 instead of the bare defaults, run `nexo init` first to scaffold
-19 commented sample YAMLs.
+19 commented sample YAMLs. Other install channels (Docker, Nix,
+native packages, Termux): see the
+[installation guide](./getting-started/installation.md).
 
 Build your own persona pack? See
 [Installing personas](./personas/install.md) for the v2 manifest
