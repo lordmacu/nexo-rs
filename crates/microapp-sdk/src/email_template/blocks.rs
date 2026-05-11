@@ -1079,10 +1079,6 @@ mod tests {
         assert!(out.contains(r#"<p class="ed-p""#));
     }
 
-    /// Image carries alt-fallback styling so blocked-image
-    /// placeholders render readable instead of 12-px Times
-    /// New Roman in a blue-bordered box.
-    #[test]
     /// CID embed rewrites the `<img src>` to `cid:{sha}` and
     /// `collect_inline_image_refs` returns the SHA so the
     /// publisher knows to attach the bytes as a related part.
@@ -1130,6 +1126,10 @@ mod tests {
         assert_eq!(refs[0].sha256, sha);
     }
 
+    /// Image carries alt-fallback styling so blocked-image
+    /// placeholders render readable instead of 12-px Times
+    /// New Roman in a blue-bordered box.
+    #[test]
     fn image_has_alt_fallback_styling() {
         let blocks = vec![EmailBlock::Image {
             url: "https://x.com/banner.png".into(),
@@ -1150,7 +1150,6 @@ mod tests {
         assert!(out.contains("font-size:14px"));
     }
 
-    #[test]
     /// Row renders N columns side-by-side with normalised
     /// widths. Two columns at 60/40 stay 60/40; weird sums
     /// round to a clean 100.
