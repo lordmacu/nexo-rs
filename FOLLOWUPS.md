@@ -119,6 +119,27 @@ Implementation rough-sized (~1-2 days new framework code):
 Tracking item: `cody-cli-install` — start with
 `/forge brainstorm cody-cli-install` when bandwidth allows.
 
+**Wave progress** (atomic phases F1-F9, ~21h total, 15 commits
+across 7 branches; brainstorm + spec + plan approved
+2026-05-11, ejecutar in flight on session 2026-05-11.b):
+
+| # | Scope | Est | Status |
+|---|-------|-----|--------|
+| F0 | `BrokerKind::StdioBridge` blocker fix | — | ✅ no-op (already shipped via commit `1cb39ab`) |
+| F1 | `nexo-ext-installer` parameterized refactor (`PluginCoords`→`RepoCoords` + `ExtractContract` trait + `resolve_release_with_contract`) | 2h | ✅ shipped session 2026-05-11.b |
+| F2 | NEW `crates/persona-manifest` v2 schema + 12 unit tests | 2h | ⬜ |
+| F3 | NEW `crates/persona-installer` orchestrator + admin + lifecycle | 4h | ⬜ |
+| F4 | wiremock integration tests (11 install + 5 admin scenarios) | 2h | ⬜ |
+| F5 | boot-time persona discovery + wire to `AgentConfig` | 3h | ⬜ |
+| F6 | CLI surface — 7 `Mode` variants (`PersonaInstall`/`List`/`Remove`/etc.) | 2h | ⬜ |
+| F7 | `NEXO_DISABLE_BUNDLED_PERSONAS` INVENTORY + `docs/personas/install.md` | 1.5h | ⬜ |
+| F8 | `nexo-persona-cody` v0.2.0 release prep + GH workflow CI | 2.5h | ⬜ |
+| F9 | end-to-end validation — install/list/remove + lifecycle topics | 1.5h | ⬜ |
+
+Cut points: Session A = F1-F3 (~8h, foundation); Session B =
+F4-F7 (~8.5h, tests + CLI + docs); Session C = F8-F9 (~4h,
+persona repo v0.2.0 + e2e).
+
 ### Audit 2026-05-10 — admin wave P0 fixes — shipped
 
 Comprehensive audit of all admin work shipped in the
