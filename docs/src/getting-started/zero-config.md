@@ -1,10 +1,13 @@
 # Zero-config quickstart
 
-The fastest path from `apt install nexo` to a running daemon —
-**no YAML editing required, no NATS server, no API key
-needed to boot.** Once running, configure incrementally via
-`nexo init` (scaffold sample YAMLs), `nexo set-broker` (switch
-broker mode), or the operator UI (admin RPCs).
+The fastest path from an installed `nexo` binary to a running
+daemon — **no YAML editing required, no NATS server, no API key
+needed to boot.** (Install: `curl … install.sh | bash`,
+`cargo install nexo-rs`, or a `.deb`/`.rpm` — see
+[Installation](./installation.md).) Once running, configure
+incrementally via `nexo init` (scaffold sample YAMLs),
+`nexo set-broker` (switch broker mode), or the operator UI
+(admin RPCs).
 
 Total wall-clock time: **30 seconds** from installed binary
 to live daemon serving health + admin RPCs.

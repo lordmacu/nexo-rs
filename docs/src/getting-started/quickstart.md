@@ -24,10 +24,10 @@ Your agent (Ana)         →  "Looking it up..."  (via tool)
 Your agent (Ana)         →  "Currently 18 °C, light rain."
 ```
 
-Plus everything wired together — NATS broker, LLM provider, channel
-plugin, agent runtime, memory. From here you can swap personas,
-add tools, pair more channels, or move to a multi-tenant
-deployment.
+Plus everything wired together — the broker (local stdio bridge by
+default, or NATS), an LLM provider, a channel plugin, the agent
+runtime, memory. From here you can swap personas, add tools, pair
+more channels, or move to a multi-tenant deployment.
 
 ---
 
@@ -116,25 +116,31 @@ hardcoded keys.
 
 ---
 
-## 4. Pair a channel
+## 4. Install the channel plugin + pair it
 
-Easiest is **Telegram** (no QR code, no Signal protocol, just a
-bot token from BotFather):
+Channels are subprocess plugins (Phase 81.18 onward). Easiest is
+**Telegram** — no QR code, no Signal protocol, just a bot token
+from BotFather:
 
 ```bash
-# Tell BotFather to /newbot, save the token
+# Drop the Telegram plugin into the daemon's plugin dir:
+nexo plugin install lordmacu/nexo-plugin-telegram
+nexo plugin list
+
+# Tell BotFather to /newbot, save the token:
 export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ```
 
-For WhatsApp, see [Setup wizard](./setup-wizard.md) — it walks
-you through QR pairing.
+For WhatsApp: `nexo plugin install lordmacu/nexo-plugin-whatsapp`,
+then [the setup wizard](./setup-wizard.md) walks you through QR
+pairing.
 
 ---
 
 ## 5. Drop a minimal `agents.yaml`
 
-If you want a quick scaffold of every YAML the daemon knows
-about (heavily commented, sane defaults already filled in):
+Scaffold every YAML the daemon knows (heavily commented, sane
+defaults filled in):
 
 ```bash
 nexo init --output ./config
@@ -142,29 +148,28 @@ nexo init --output ./config
 # Or just the ones you need: nexo init --yaml broker,llm,agents
 ```
 
-For this quickstart, create `config/agents.d/ana.yaml`:
+Then add an agent to `config/agents.yaml` (or drop it in
+`config/agents.d/ana.yaml` — the runtime merges that directory in,
+alphabetical, and hot-reloads it):
 
 ```yaml
 agents:
   - id: ana
-    persona_path: ./personas/ana.md
-    llm: minimax-m2.5      # or claude-sonnet, gpt-4o-mini, etc.
-    channels:
-      - telegram:default   # matches the bot you paired in step 4
-    memory:
-      long_term: true
-      vector: true
+    model:
+      provider: minimax          # minimax | anthropic | openai | gemini | deepseek
+      model: MiniMax-M2.5
+    plugins: [telegram]          # the plugin you installed in step 4
+    inbound_bindings:
+      - plugin: telegram         # which channel may trigger this agent
+    system_prompt: |
+      You are Ana, a helpful assistant. You answer concisely. You
+      speak Spanish if the user does, English otherwise. When you
+      don't know something, say so — don't make it up.
 ```
 
-Create `config/personas/ana.md`:
-
-```markdown
-# Ana
-
-You are Ana, a helpful assistant. You answer concisely. You speak
-Spanish if the user does, English otherwise. When you don't know
-something, say so — don't make it up.
-```
+(YAML config uses `#[serde(deny_unknown_fields)]` — a typo'd key
+fails fast at boot rather than being silently ignored. Full field
+list: [agents.yaml reference](../config/agents.md).)
 
 ---
 
@@ -174,19 +179,23 @@ something, say so — don't make it up.
 nexo --config ./config
 ```
 
-First boot prints a startup summary. Look for:
+First boot prints a startup summary. With the defaults from
+`nexo init` (broker `type: local`), look for something like:
 
 ```
-✓ Loaded 1 agent(s): ana
+✓ broker ready — kind=Local (stdio bridge, no NATS server)
+✓ plugin telegram — registered remote tools (registered_count=6)
 ✓ Telegram bot @YourBotName online
-✓ NATS connected (nats://localhost:4222)
+✓ Loaded 1 agent(s): ana
 ✓ LLM provider: minimax-m2.5 ready
 ✓ Memory: SQLite at ./data/memory.db
-nexo-rs v0.1.5 ready
+nexo-rs v0.1.6 ready
 ```
 
-If anything is missing, the log line tells you exactly what to
-fix (missing env var, wrong YAML key, channel pair failure).
+(If you'd run `nexo set-broker nats …` in step 2, the first line
+reads `broker ready — kind=Nats url=nats://…` instead.) If
+anything is missing, the log line tells you exactly what to fix —
+missing env var, wrong YAML key, channel pair failure.
 
 ---
 
@@ -213,8 +222,8 @@ Ana: En Bogotá ahora hay 18 °C con lluvia ligera.
 ```mermaid
 sequenceDiagram
     participant U as You
-    participant CH as Telegram plugin
-    participant B as NATS broker
+    participant CH as Telegram plugin (subprocess)
+    participant B as Broker (local stdio bridge, or NATS)
     participant A as Ana (agent runtime)
     participant L as MiniMax M2.5
 
@@ -228,8 +237,9 @@ sequenceDiagram
     CH-->>U: "¡Hola! ¿En qué te puedo ayudar?"
 ```
 
-Every arrow is observable: `nexo doctor plugins`, `nexo doctor
-channels`, NATS topic subscribers — all give you live insight.
+Every arrow is observable: `nexo doctor plugins`, the daemon log
+(`plugin.inbound.*` / `plugin.outbound.*` lines), and — in NATS
+mode — topic subscribers.
 
 ---
 
