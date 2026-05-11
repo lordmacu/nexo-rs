@@ -1,8 +1,8 @@
-//! Phase 12.2 — unified trait over stdio and HTTP clients.
+//! Unified trait over stdio and HTTP clients.
 //!
-//! `StdioMcpClient` (12.1) and `HttpMcpClient` (12.2) both implement this
-//! trait so `SessionMcpRuntime`, `McpToolCatalog`, and the LLM tool
-//! registry can handle them interchangeably.
+//! `StdioMcpClient` and `HttpMcpClient` both implement this trait so
+//! `SessionMcpRuntime`, `McpToolCatalog`, and the LLM tool registry
+//! can handle them interchangeably.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -26,8 +26,8 @@ pub trait McpClient: Send + Sync {
     async fn list_tools(&self) -> Result<Vec<McpTool>, McpError>;
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError>;
 
-    /// Phase 12.8 — variant that threads an optional `_meta` object
-    /// alongside `arguments` in the `tools/call` request params (MCP
+    /// Variant that threads an optional `_meta` object alongside
+    /// `arguments` in the `tools/call` request params (MCP
     /// spec 2024-11-05). Default delegates to `call_tool` so existing
     /// mocks and third-party impls keep working without changes.
     async fn call_tool_with_meta(
@@ -41,7 +41,7 @@ pub trait McpClient: Send + Sync {
 
     async fn shutdown(&self);
 
-    /// Phase 80.9.b — fire-and-forget JSON-RPC notification.
+    /// Fire-and-forget JSON-RPC notification.
     /// Default returns `Protocol` error so legacy impls don't have
     /// to be touched. The stdio + HTTP impls override to push the
     /// frame down their respective transports. Used by the channel
@@ -53,15 +53,15 @@ pub trait McpClient: Send + Sync {
         ))
     }
 
-    /// Phase 12.5 — list data resources exposed by this server. Default
-    /// returns `Protocol` error; stdio/http impls override when connected.
+    /// List data resources exposed by this server. Default returns
+    /// `Protocol` error; stdio/http impls override when connected.
     async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
         Err(McpError::Protocol(
             "resources not supported by this client".into(),
         ))
     }
 
-    /// Phase 12.5 — read the resource identified by `uri`. Default returns
+    /// Read the resource identified by `uri`. Default returns
     /// `Protocol` error; stdio/http impls override when connected.
     async fn read_resource(&self, _uri: &str) -> Result<Vec<McpResourceContent>, McpError> {
         Err(McpError::Protocol(
@@ -69,9 +69,9 @@ pub trait McpClient: Send + Sync {
         ))
     }
 
-    /// Phase 12.8 — `resources/list` with optional `_meta`. Default
-    /// delegates to `list_resources` and ignores the meta for back-compat
-    /// with third-party mocks.
+    /// `resources/list` with optional `_meta`. Default delegates to
+    /// `list_resources` and ignores the meta for back-compat with
+    /// third-party mocks.
     async fn list_resources_with_meta(
         &self,
         _meta: Option<Value>,
@@ -79,7 +79,7 @@ pub trait McpClient: Send + Sync {
         self.list_resources().await
     }
 
-    /// Phase 12.8 — `resources/read` with optional `_meta`.
+    /// `resources/read` with optional `_meta`.
     async fn read_resource_with_meta(
         &self,
         uri: &str,
@@ -88,8 +88,8 @@ pub trait McpClient: Send + Sync {
         self.read_resource(uri).await
     }
 
-    /// Phase 12.8 — `resources/templates/list`. Default returns
-    /// `Protocol` error; stdio/http impls override when connected.
+    /// `resources/templates/list`. Default returns `Protocol`
+    /// error; stdio/http impls override when connected.
     async fn list_resource_templates(
         &self,
     ) -> Result<Vec<crate::types::McpResourceTemplate>, McpError> {
@@ -98,8 +98,8 @@ pub trait McpClient: Send + Sync {
         ))
     }
 
-    /// Phase 12.8 — subscribe to server-pushed notifications (tools/list
-    /// changed, resources/list changed, etc.). Default returns a closed
+    /// Subscribe to server-pushed notifications (tools/list changed,
+    /// resources/list changed, etc.). Default returns a closed
     /// receiver so clients without event support never fire.
     fn subscribe_events(&self) -> broadcast::Receiver<ClientEvent> {
         let (tx, rx) = broadcast::channel(1);
@@ -107,16 +107,16 @@ pub trait McpClient: Send + Sync {
         rx
     }
 
-    /// Phase 12.8 — like `shutdown`, but thread a human-readable `reason`
-    /// into every `notifications/cancelled` payload the transport emits
+    /// Like `shutdown`, but thread a human-readable `reason` into
+    /// every `notifications/cancelled` payload the transport emits
     /// before tearing down. Default delegates to `shutdown()`; stdio/http
     /// overrides implement the MCP-spec-compliant behaviour.
     async fn shutdown_with_reason(&self, _reason: &str) {
         self.shutdown().await;
     }
 
-    /// Phase 12.8 — send MCP `logging/setLevel`. Default returns a
-    /// `Protocol` error so callers can tell "not implemented" from
+    /// Send MCP `logging/setLevel`. Default returns a `Protocol`
+    /// error so callers can tell "not implemented" from
     /// transport failure. Stdio/HTTP impls override.
     async fn set_log_level(&self, _level: &str) -> Result<(), McpError> {
         Err(McpError::Protocol(

@@ -1,4 +1,4 @@
-//! Phase 12.7 — integration: extension manifest declares MCP servers,
+//! Integration: extension manifest declares MCP servers,
 //! discovery surfaces them, runtime config merges them namespaced.
 
 use std::fs;

@@ -1,4 +1,4 @@
-//! Phase 31.3 — error variants returned by the cosign signature
+//! Error variants returned by the cosign signature
 //! verification pipeline.
 
 use std::path::PathBuf;

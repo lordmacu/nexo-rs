@@ -1,4 +1,4 @@
-//! Phase 90.x.mcp — `nexo/admin/mcp/*` handlers.
+//! `nexo/admin/mcp/*` handlers.
 //!
 //! CRUD over `config/mcp.yaml.mcp.servers.<name>`. Operator UI
 //! consumes these to manage the MCP servers the agent connects

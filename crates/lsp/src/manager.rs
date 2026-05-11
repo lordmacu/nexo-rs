@@ -5,17 +5,14 @@
 //! entry-point that the [`crate::session::LspSession`] machinery
 //! plugs into.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPServerManager.ts:59-200`
-//!     — extension map + `getServerForFile`, init-loop, shutdown
-//!     `Promise.allSettled`. We mirror with `try_join_all` /
-//!     `join_all` over `Arc<LspSession>`s.
-//!   * `claude-code-leak/src/services/lsp/manager.ts:100-208` —
-//!     `isLspConnected()` gating + initialization state machine.
-//!     We collapse into a single `LspManager` rather than the
-//!     leak's mutable global because we run multiple instances per
-//!     test and Phase 18 hot-reload needs to swap the manager
-//!     atomically.
+//! The prior art is a server manager with an extension map +
+//! `getServerForFile`, an init-loop, and a `Promise.allSettled`
+//! shutdown, plus an `isLspConnected()` gate and initialization
+//! state machine. We mirror the shutdown with `try_join_all` /
+//! `join_all` over `Arc<LspSession>`s and collapse everything into
+//! a single `LspManager` (rather than a mutable global) because we
+//! run multiple instances per test and hot-reload needs to swap the
+//! manager atomically.
 
 use crate::client::FileDiagnostics;
 use crate::error::LspError;
@@ -38,7 +35,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Per-binding policy snapshot the manager needs at call time. The
 /// caller (`nexo-core::agent::lsp_tool`) constructs this from the
-/// binding's `LspPolicy` (Phase 79.5 step 9) so that this crate
+/// binding's `LspPolicy` so that this crate
 /// stays free of `nexo-config` dep.
 #[derive(Debug, Clone, Default)]
 pub struct ExecutePolicy {
@@ -209,7 +206,7 @@ impl LspManager {
     /// runs the LSP request, formats output.
     ///
     /// `is_origin_synthetic` tracks whether the call came from a
-    /// Phase 19/20 poller — synthetic calls do NOT update
+    /// poller — synthetic calls do NOT update
     /// `last_activity`, so the idle reaper can still tear down the
     /// session under poller-only load.
     pub async fn execute(

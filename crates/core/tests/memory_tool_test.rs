@@ -1,4 +1,4 @@
-//! Phase 10.5 integration test — MemoryTool.recall auto-logs recall events
+//! MemoryTool.recall auto-logs recall events
 //! so the signal store can drive the dreaming sweep later.
 
 use std::sync::Arc;

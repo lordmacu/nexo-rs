@@ -1,4 +1,4 @@
-//! Phase 81.29 — `ToolHandler` impl backed by a subprocess
+//! `ToolHandler` impl backed by a subprocess
 //! plugin's stdio bridge.
 //!
 //! Subprocess plugins declaring `[plugin.extends].tools =

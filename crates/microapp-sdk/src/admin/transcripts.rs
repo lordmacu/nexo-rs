@@ -1,4 +1,4 @@
-//! Phase 83.8.7 — `TranscriptStream` SDK helper.
+//! `TranscriptStream` SDK helper.
 //!
 //! Wraps a tokio `mpsc::Receiver<AgentEventKind>` (typically fed
 //! by the `nexo/notify/agent_event` firehose handler the SDK

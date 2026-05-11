@@ -1,7 +1,7 @@
-//! Phase advisory_hook — generic tool-call advisory framework.
+//! Generic tool-call advisory framework.
 //!
 //! Generalizes the bash-only `gather_bash_warnings` pipeline
-//! (Phase 77.8-10 + C4.a-b) into an extensible registry that any
+//! into an extensible registry that any
 //! plugin can hook into. A [`ToolAdvisor`] inspects a tool call's
 //! `(tool_name, input)` pair and optionally returns a one-line
 //! warning. The `permission_prompt` MCP response composes all
@@ -19,15 +19,10 @@
 //! the upstream decider is Anthropic / MiniMax / OpenAI / Gemini /
 //! DeepSeek / xAI / Mistral.
 //!
-//! IRROMPIBLE refs:
-//! - claude-code-leak `src/tools/BashTool/bashSecurity.ts` — the
-//!   single-tier-class pattern this module generalizes. The leak
-//!   hardcodes bash; the registry composes the bash advisor with
-//!   arbitrary plugin advisors so future surfaces (marketing,
-//!   payment, CRM) can register their own tiers without touching
-//!   `nexo-driver-permission`.
-//! - `research/` — no relevant prior art (OpenClaw is channel-side
-//!   and does not implement permission advisory layers).
+//! This generalizes a single-tier-class pattern that hardcoded bash:
+//! the registry composes the bash advisor with arbitrary plugin
+//! advisors so future surfaces (marketing, payment, CRM) can register
+//! their own tiers without touching `nexo-driver-permission`.
 
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -42,8 +37,7 @@ use serde_json::Value;
 /// block, prefixed with `[<id>]`.
 ///
 /// Implementations MUST be cheap. Heavy work (DB lookup, network)
-/// belongs behind an internal cache or in an async follow-up
-/// (`advisory_hook.b`).
+/// belongs behind an internal cache or in an async follow-up.
 pub trait ToolAdvisor: Send + Sync + 'static {
     /// Stable identifier — used as the per-line bracket prefix
     /// `[<id>]` and for telemetry. Should be lowercase /
@@ -81,7 +75,7 @@ impl AdvisorRegistry {
     /// 5-tier bash pipeline keeps composing into the
     /// `permission_prompt` response. Default for
     /// `PermissionMcpServer::new` — back-compat with the
-    /// pre-`advisory_hook` behavior.
+    /// pre-registry behavior.
     pub fn with_default() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(BashSecurityAdvisor));
@@ -143,8 +137,8 @@ impl AdvisorRegistry {
 /// Wraps the existing 5-tier bash pipeline as a
 /// registry-compatible advisor.
 ///
-/// Internal logic stays in `crate::mcp::gather_bash_warnings`
-/// (Phase 77.8-10 + C4.a-b). `BashSecurityAdvisor` strips the
+/// Internal logic stays in `crate::mcp::gather_bash_warnings`.
+/// `BashSecurityAdvisor` strips the
 /// legacy `"WARNING — bash security:\n- "` prefix so the registry
 /// can re-wrap with the unified `WARNING — tool advisories:`
 /// header. Multi-line tier output is preserved — the registry

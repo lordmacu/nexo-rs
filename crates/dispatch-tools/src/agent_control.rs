@@ -1,4 +1,4 @@
-//! Phase 67.G.2 — agent control tools: cancel / pause / resume /
+//! Agent control tools: cancel / pause / resume /
 //! update_budget.
 //!
 //! Each function is a thin façade over `AgentRegistry` +
@@ -233,7 +233,7 @@ pub async fn ask_user_question(
     })
 }
 
-/// Phase 77.16 — boot-time timeout rearm after registry reattach.
+/// Boot-time timeout rearm after registry reattach.
 /// Scans paused goals with `ask_pending` and recreates in-memory timeout
 /// tasks with the remaining duration.
 pub async fn rearm_ask_user_timeouts(
@@ -343,7 +343,7 @@ pub async fn update_budget(
             ),
         });
     }
-    // B2 — push the new cap to the orchestrator first so we don't
+    // Push the new cap to the orchestrator first so we don't
     // touch the snapshot when the goal isn't actually running.
     // set_goal_max_turns returns None when the goal isn't tracked
     // in the orchestrator's cancel_tokens map. Goals that admitted
@@ -450,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_budget_rejects_when_goal_not_in_orchestrator() {
-        // B2 contract: snapshot-only updates are rejected. The
+        // Contract: snapshot-only updates are rejected. The
         // operator update must reach the live loop or it would
         // silently lie. registry_with admits to the registry but
         // never spawns into the orchestrator, so set_goal_max_turns

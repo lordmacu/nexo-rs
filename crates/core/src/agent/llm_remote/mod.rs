@@ -1,5 +1,4 @@
-//! Phase 81.25 — `LlmClient` impl backed by a subprocess plugin's
-//! stdio bridge.
+//! `LlmClient` impl backed by a subprocess plugin's stdio bridge.
 //!
 //! Subprocess plugins declaring `[plugin.extends].llm_providers
 //! = ["cohere"]` get one `RemoteLlmFactory` per provider name
@@ -8,7 +7,7 @@
 //! `RemoteLlmClient` that translates trait calls into
 //! `llm.chat` JSON-RPC requests over the subprocess plugin's
 //! stdio pipe (the same `Inner.stdin_tx` + `pending` shared with
-//! `RemoteChannelAdapter` from Phase 81.24).
+//! `RemoteChannelAdapter`).
 //!
 //! Streaming uses a separate `streaming_pending` map keyed on
 //! request id — `llm.chat.delta` notifications push chunks into

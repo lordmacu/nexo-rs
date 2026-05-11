@@ -1,4 +1,4 @@
-//! Phase 91.8 — parity tests: Candle backend vs whisper-rs legacy.
+//! Parity tests: Candle backend vs whisper-rs legacy.
 //!
 //! Runs the two STT backends side-by-side on the same audio
 //! fixtures and computes Word Error Rate (WER) between their
@@ -22,8 +22,8 @@
 //! legacy backend; that's wildly disproportionate to a normal
 //! `cargo test` cycle. Run the parity suite manually when:
 //!
-//! - landing a Candle backend change (91.4 inference, 91.5
-//!   tokenizer, 91.7 HF Hub fetch).
+//! - landing a Candle backend change (inference, tokenizer, or
+//!   HF Hub fetch).
 //! - cutting a release candidate that targets a Candle bump.
 //! - investigating a transcript-quality regression report.
 //!

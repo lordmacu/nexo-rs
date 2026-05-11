@@ -1,4 +1,4 @@
-//! Phase 18 — end-to-end hot-reload exercises.
+//! End-to-end hot-reload exercises.
 //!
 //! Spin up a runtime, send a message to establish the "old snapshot"
 //! baseline, then swap a fresh snapshot through `ReloadCommand::Apply`

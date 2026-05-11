@@ -1,4 +1,4 @@
-//! Phase 67.B.4 — per-goal ring buffer of recent driver events.
+//! Per-goal ring buffer of recent driver events.
 //!
 //! Keeps the last `capacity` events for each `GoalId` so the
 //! `agent_logs_tail` tool can answer without re-streaming NATS.

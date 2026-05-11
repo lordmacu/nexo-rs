@@ -28,7 +28,7 @@ pub struct ExtensionsConfig {
     pub max_depth: usize,
     #[serde(default)]
     pub transport_defaults: TransportDefaults,
-    /// Phase 11.2 follow-up — opt-in watcher for `plugin.toml` files
+    /// Opt-in watcher for `plugin.toml` files
     /// across discovered extension directories. Changes log at `warn`;
     /// no auto-respawn (restart required to apply).
     #[serde(default)]
@@ -41,7 +41,7 @@ pub struct ExtensionsConfig {
     /// in. Off by default to avoid loops + surprise path escapes.
     #[serde(default)]
     pub follow_links: bool,
-    /// Phase 82.10 — per-extension entries keyed by extension id.
+    /// Per-extension entries keyed by extension id.
     /// Today only carries `capabilities_grant` (admin RPC layer);
     /// future per-extension knobs (e.g. http_server bind address,
     /// state_root override) land here too.
@@ -49,21 +49,21 @@ pub struct ExtensionsConfig {
     pub entries: std::collections::BTreeMap<String, ExtensionEntry>,
 }
 
-/// Phase 82.10 — per-extension operator settings.
+/// Per-extension operator settings.
 ///
 /// Empty by default. Operator opts in to admin RPC by listing
 /// granted capabilities in `capabilities_grant`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ExtensionEntry {
-    /// Phase 82.10 — admin RPC capabilities the operator grants
+    /// Admin RPC capabilities the operator grants
     /// to this extension. Each entry must match one declared in
     /// the plugin's `plugin.toml [capabilities.admin]` block;
     /// orphan grants (granted but not declared) trigger boot
     /// warns. Missing required capabilities fail boot.
     #[serde(default)]
     pub capabilities_grant: Vec<String>,
-    /// Phase 82.12 — opt-in for non-loopback HTTP bind. The
+    /// Opt-in for non-loopback HTTP bind. The
     /// boot validator rejects manifests whose
     /// `[capabilities.http_server] bind` is anything other than
     /// `127.0.0.1` / `::1` / `localhost` unless this flag is
@@ -139,7 +139,7 @@ pub struct TransportDefaults {
     pub nats: NatsTransportDefaults,
 }
 
-/// Defaults applied to every NATS-backed extension runtime (11.4).
+/// Defaults applied to every NATS-backed extension runtime.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NatsTransportDefaults {

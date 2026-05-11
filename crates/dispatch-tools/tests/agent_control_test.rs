@@ -1,4 +1,4 @@
-//! Phase 67.G.2 — cancel/pause/resume tool surface.
+//! Cancel/pause/resume tool surface.
 
 #![cfg(unix)]
 

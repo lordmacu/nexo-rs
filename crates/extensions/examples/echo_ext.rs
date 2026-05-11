@@ -70,7 +70,7 @@ fn main() {
                 );
             }
             m if m.starts_with("hooks/") => {
-                // Phase 11.6 — test hook handler. Defaults to {abort:false}.
+                // Test hook handler. Defaults to {abort:false}.
                 // If the event payload contains `test_abort: true`, the hook
                 // returns `{abort:true, reason:"test abort"}` so integration
                 // tests can exercise the abort short-circuit path.

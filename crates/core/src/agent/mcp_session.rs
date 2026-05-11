@@ -1,4 +1,4 @@
-//! Phase 12.4 — bridges between `SessionMcpRuntime` (owned by `nexo-mcp`)
+//! Bridges between `SessionMcpRuntime` (owned by `nexo-mcp`)
 //! and the agent's `ToolRegistry` (lives here).
 //!
 //! The runtime intentionally does NOT cache a catalog to avoid pulling in
@@ -16,7 +16,7 @@ use std::sync::Arc;
 pub async fn build_session_catalog(runtime: &SessionMcpRuntime) -> Arc<McpToolCatalog> {
     build_session_catalog_with_context(runtime, false).await
 }
-/// Phase 12.8 — context-aware catalog build. `context_passthrough=true`
+/// Context-aware catalog build. `context_passthrough=true`
 /// tags every produced `McpTool` so its wire requests carry
 /// `params._meta = { agent_id, session_id }`.
 pub async fn build_session_catalog_with_context(
@@ -41,7 +41,7 @@ pub async fn register_session_tools_with_context(
     let catalog = build_session_catalog_with_context(runtime, context_passthrough).await;
     catalog.register_into(registry);
 }
-/// Phase 12.8 — context-aware variant with per-server overrides.
+/// Context-aware variant with per-server overrides.
 /// `overrides.get(server_name)` wins over the global flag when set.
 pub async fn register_session_tools_with_overrides(
     runtime: &SessionMcpRuntime,

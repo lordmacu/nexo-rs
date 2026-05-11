@@ -129,8 +129,8 @@ impl ToolHandler for InboundTransformHandler {
                 "error": msg,
             })));
         }
-        // Phase 81.19.b locale follow-up item 6 — read the agent's
-        // resolved BCP-47 locale from `ctx.binding.language` (set by
+        // Read the agent's resolved BCP-47 locale from
+        // `ctx.binding.language` (set by
         // `nexo-core` from `EffectiveBindingPolicy.language`) and
         // pass the language-only ISO-639-1 prefix to whisper as a
         // hint. Whisper's `set_language` expects 2-letter codes

@@ -1,4 +1,4 @@
-//! Phase 82.13 — operator processing pause + intervention.
+//! Operator processing pause + intervention.
 //!
 //! Persists a small state machine per `ProcessingScope`:
 //! every scope is `AgentActive` until an operator pauses it,
@@ -60,7 +60,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
     /// but lets the store reclaim the slot.
     async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool>;
 
-    /// Phase 82.13.b.3 — push one inbound captured during a
+    /// Push one inbound captured during a
     /// pause onto the per-scope queue. Returns
     /// `(new_depth, dropped_count)`:
     /// - `new_depth` is the queue length AFTER the push +
@@ -85,7 +85,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
         ))
     }
 
-    /// Phase 82.13.b.3 — drain the queue for `scope`,
+    /// Drain the queue for `scope`,
     /// returning the captured inbounds in arrival order. The
     /// queue is cleared atomically. Default impl returns the
     /// empty vec so legacy stores keep `resume()` working
@@ -95,7 +95,7 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
         Ok(Vec::new())
     }
 
-    /// Phase 82.13.b.3 — current queue length for `scope`
+    /// Current queue length for `scope`
     /// without draining. Used by operator UIs to surface a
     /// "N inbounds pending" badge. Default impl returns 0
     /// (legacy store has no buffer).
@@ -142,7 +142,7 @@ pub async fn state(
 /// `PausedByOperator`. Idempotent: pausing an already-paused
 /// scope returns `changed = false`.
 ///
-/// Phase 82.13.b.firehose — when `emitter` is `Some` AND the
+/// When `emitter` is `Some` AND the
 /// transition was a real flip (`changed = true`), fires
 /// `AgentEventKind::ProcessingStateChanged` so operator UIs
 /// subscribed to `nexo/notify/agent_event` render the pause
@@ -240,7 +240,7 @@ pub async fn pause(
 /// Idempotent: resuming an already-active scope returns
 /// `changed = false`.
 ///
-/// Phase 82.13.b.2 — when `params.summary_for_agent` is `Some`
+/// When `params.summary_for_agent` is `Some`
 /// AND `params.session_id` is `Some` AND the appender is wired,
 /// the daemon appends a `TranscriptEntry { role: System,
 /// content: "[operator_summary] <body>", source_plugin:
@@ -273,7 +273,7 @@ pub async fn resume(
             "v0 routes only Conversation scope",
         ));
     }
-    // Phase 82.13.b.2 — validate summary BEFORE clearing state
+    // Validate summary BEFORE clearing state
     // so the operator gets a clear error and the pause stays
     // in place. Without this guard the state flip would happen
     // and the operator would see ack=changed:true even though
@@ -326,7 +326,7 @@ pub async fn resume(
             .await;
         }
     }
-    // Phase 82.13.b.2 — best-effort summary stamp. State has
+    // Best-effort summary stamp. State has
     // already flipped to Active by this point; failure here is
     // logged but does NOT roll back the resume — the alternative
     // (operator gets stuck in a paused state because their
@@ -360,7 +360,7 @@ pub async fn resume(
         (None, _, _) => None,
         _ => Some(false),
     };
-    // Phase 82.13.b.3 — drain the per-scope pending queue
+    // Drain the per-scope pending queue
     // (inbounds buffered while the scope was paused) and stamp
     // each as a `User` transcript entry with its ORIGINAL
     // timestamp so the agent reads real chronology on its next
@@ -419,7 +419,7 @@ pub async fn resume(
 /// inside a paused scope. v0 routes `Reply` on `Conversation`
 /// end-to-end through a [`ChannelOutboundDispatcher`]: the handler
 /// validates inputs, asserts the scope is paused, forwards the
-/// reply to the channel-plugin adapter, and (Phase 82.13.b.1)
+/// reply to the channel-plugin adapter, and
 /// stamps the reply onto the agent transcript so the agent sees
 /// it on resume.
 ///
@@ -478,12 +478,12 @@ pub async fn intervention(
             )
         }
     }
-    // Phase 83.8.4.a — actually dispatch the Reply through the
+    // Actually dispatch the Reply through the
     // channel-outbound adapter. Without one wired the handler
     // surfaces `channel_unavailable` so the operator UI can show
     // a helpful "no outbound configured for this channel" error.
     //
-    // Phase 82.13.b.1 — after a successful send, optionally stamp
+    // After a successful send, optionally stamp
     // the reply on the agent transcript so the agent sees it on
     // resume. The body / channel captured before the channel
     // call drives the stamp call below.
@@ -534,7 +534,7 @@ pub async fn intervention(
         _ => unreachable!("is_v0_supported gate above limited to Reply"),
     };
 
-    // Phase 82.13.b.1 — best-effort transcript stamp. Channel
+    // Best-effort transcript stamp. Channel
     // send already succeeded by this point; failure here MUST
     // NOT fail the whole RPC, only set
     // `transcript_stamped: Some(false)` so the operator UI can
@@ -619,7 +619,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockStore {
         rows: Mutex<std::collections::HashMap<ProcessingScope, ProcessingControlState>>,
-        /// Phase 82.13.b.3 — pending queue for the resume drain
+        /// Pending queue for the resume drain
         /// path. Tests seed this directly via `push_pending` to
         /// drive the drain branch of `resume()`.
         pending: Mutex<
@@ -883,7 +883,7 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 82.13.b.1 — transcript stamping behaviour.
+    // Transcript stamping behaviour.
     // ──────────────────────────────────────────────────────────────
 
     /// Recording appender used in stamping tests — captures
@@ -1179,7 +1179,7 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 82.13.b.2 — operator summary on resume.
+    // Operator summary on resume.
     // ──────────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1330,7 +1330,7 @@ mod tests {
 
     #[tokio::test]
     async fn resume_without_summary_skips_injection_and_returns_none() {
-        // Legacy path — pre-Phase 82.13.b.2 microapps that
+        // Legacy path — older microapps that
         // never send a summary. Resume MUST work identically
         // to before; transcript_stamped MUST be None (not
         // applicable) so the operator UI doesn't render a
@@ -1406,7 +1406,7 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────
-    // Phase 82.13.b.3 — drain pending inbounds on resume.
+    // Drain pending inbounds on resume.
     // ──────────────────────────────────────────────────────────────
 
     fn pending(seq: u64) -> PendingInbound {
@@ -1588,7 +1588,7 @@ mod tests {
 
     #[tokio::test]
     async fn resume_drains_alongside_summary_injection() {
-        // Combined Phase 82.13.b.2 + .b.3: summary injects as
+        // Combined summary + drain: summary injects as
         // System BEFORE drain stamps as User entries. Both
         // surface on the same resume call.
         let store = MockStore::default();
@@ -1626,7 +1626,7 @@ mod tests {
         assert_eq!(captured[1].2.content, "msg 0");
     }
 
-    /// Phase 82.13.c regression test — operator can pause and
+    /// Regression test — operator can pause and
     /// resume the same conversation N times without
     /// drag-along between cycles. Each cycle:
     /// - Pause sets state to PausedByOperator (atomic).

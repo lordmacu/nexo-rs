@@ -1,34 +1,15 @@
-//! M2 — sha256 + size of MCP `tools/call` arguments for audit rows.
+//! sha256 + size of MCP `tools/call` arguments for audit rows.
 //!
 //! Provider-agnostic: operates on `serde_json::Value` from the MCP
-//! wire envelope. Independent of which LLM client (Claude Desktop /
-//! Cursor / Continue / Cody / Aider) or which underlying LLM
-//! provider (Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI
-//! / Mistral / future) drives the call.
+//! wire envelope. Independent of which LLM client or which
+//! underlying LLM provider drives the call.
 //!
 //! ## Truncation length: 16 hex chars (64 bits)
 //!
-//! Chosen to match prior art:
-//!
-//! * `claude-code-leak/src/services/mcp/utils.ts:157-168`
-//!   `hashMcpConfig` — `slice(0, 16)`.
-//! * `claude-code-leak/src/utils/pasteStore.ts:22` — `slice(0, 16)`.
-//! * `claude-code-leak/src/utils/fileOperationAnalytics.ts:15` —
-//!   `slice(0, 16)`.
-//! * `claude-code-leak/src/utils/fileHistory.ts:729` — `slice(0, 16)`.
-//! * `claude-code-leak/src/utils/telemetry/pluginTelemetry.ts:53` —
-//!   `slice(0, 16)`.
-//!
 //! 64 bits gives ~1.8e19 unique values; collision improbable below
 //! ~4 billion rows. Sufficient for forensic correlation, not
-//! cryptographic identity.
-//!
-//! Patterns considered and discarded:
-//! * `research/src/agents/cache-trace.ts:160-162` — full sha256 hex
-//!   (no truncation). Overkill for correlation analytics.
-//! * `research/src/agents/tool-call-id.ts:201-203` `shortHash` —
-//!   `slice(0, 8)`. Different use case (collision avoidance for
-//!   provider-mandated id format), too short for correlation.
+//! cryptographic identity. A full sha256 hex would be overkill for
+//! correlation analytics; an 8-char prefix would be too short.
 
 use std::fmt::Write;
 

@@ -8,7 +8,7 @@
 //! clones, so an in-flight turn always sees a consistent view; the
 //! swap only affects *new* `snapshot.load()` reads.
 //!
-//! Phase 18 scope: this module is pure data + a builder. The runtime
+//! This module is pure data + a builder. The runtime
 //! wiring that actually swaps these in and out lives in
 //! `crates/core/src/config_reload.rs` (coordinator) and the
 //! `AgentRuntime` refactor that reads `snapshot.load()` on the intake
@@ -58,7 +58,7 @@ pub struct RuntimeSnapshot {
     /// with this so operators can correlate "session X used version Y"
     /// when debugging a reload.
     pub version: u64,
-    /// Phase F follow-up — the four context-optimization enables,
+    /// The four context-optimization enables,
     /// already resolved against `llm.context_optimization` and the
     /// agent's per-agent override. Captured at snapshot-build time so
     /// the agent loop reads the *current* enables on every turn (a
@@ -155,11 +155,10 @@ impl RuntimeSnapshot {
                 );
             }
         }
-        // Phase 83.8.12.5.b — resolve provider via tenant-first
-        // namespace when the agent declares `tenant_id`. Single-
-        // tenant deployments leave `nexo_config.tenant_id` as
-        // `None` → falls back to the legacy global path
-        // (identical bytes to pre-83.8.12.5).
+        // Resolve provider via tenant-first namespace when the
+        // agent declares `tenant_id`. Single-tenant deployments
+        // leave `nexo_config.tenant_id` as `None` → falls back to
+        // the global path.
         let llm_client = llm_registry
             .build_for_tenant(
                 llm_cfg,
@@ -198,7 +197,7 @@ impl RuntimeSnapshot {
     /// delegation to the per-snapshot `ToolRegistryCache`; the base
     /// registry stays external to the snapshot because it is owned by
     /// the `AgentRuntime` and typically shared across reloads (plugin
-    /// hot-reload is Phase 19).
+    /// hot-reload is not yet supported).
     pub fn tools_for(
         &self,
         agent_id: &str,
@@ -210,7 +209,7 @@ impl RuntimeSnapshot {
             .get_or_build(agent_id, binding_index, base, allowed_tools)
     }
 
-    /// PT-2 — dispatch-aware variant. Same lazy cache, but the
+    /// Dispatch-aware variant. Same lazy cache, but the
     /// filtered registry also has `apply_dispatch_capability`
     /// applied so dispatch tools the binding's `DispatchPolicy`
     /// disallows are not registered.

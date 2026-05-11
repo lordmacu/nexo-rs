@@ -1,4 +1,4 @@
-//! Phase 82.10.d — `nexo/admin/credentials/*` wire types.
+//! `nexo/admin/credentials/*` wire types.
 //!
 //! Many-to-many semantic: 1 channel credential
 //! (`(channel, instance)`) can serve N agents simultaneously.
@@ -9,7 +9,7 @@
 //! (`credentials/register` accepts `agent_ids`;
 //! `agents/upsert` accepts `inbound_bindings`).
 //!
-//! Phase 82.10.n adds the `metadata` field on
+//! The `metadata` field on
 //! [`CredentialRegisterInput`] + the [`CredentialRegisterResponse`]
 //! / [`CredentialValidationOutcome`] pair so the dispatcher can
 //! bridge to channel-specific plugin yaml + return a probe
@@ -75,20 +75,20 @@ pub struct CredentialRegisterInput {
     /// channel plugin's responsibility — the admin RPC layer is
     /// channel-agnostic.
     pub payload: serde_json::Value,
-    /// Phase 82.10.n — channel-specific structured hints consumed
+    /// Channel-specific structured hints consumed
     /// by the registered [`crate::admin::credentials`] persister
     /// (e.g. email = `{ imap: { host, port, tls }, smtp: {…},
     /// address }`; telegram = `{ polling: { enabled, interval_ms
     /// }, allow_agents }`; whatsapp = empty). The persister owns
     /// the schema and validates it. The admin RPC layer treats
     /// this map as opaque data passed through to the persister.
-    /// Defaults to an empty map for back-compat with pre-82.10.n
+    /// Defaults to an empty map for back-compat with older
     /// callers.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Phase 82.10.n — outcome of the channel persister's optional
+/// Outcome of the channel persister's optional
 /// connectivity probe (telegram `getMe`, email IMAP `LOGIN +
 /// NOOP`). Returned inside [`CredentialRegisterResponse`] so the
 /// operator UI can render a health badge alongside the credential
@@ -121,9 +121,9 @@ pub struct CredentialValidationOutcome {
     pub reason_code: Option<String>,
 }
 
-/// Phase 82.10.n response shape for `nexo/admin/credentials/register`.
+/// Response shape for `nexo/admin/credentials/register`.
 /// Wraps the existing [`CredentialSummary`] with the optional
-/// persister probe outcome. Pre-82.10.n callers consumed
+/// persister probe outcome. Earlier callers consumed
 /// `CredentialSummary` directly — this is a breaking change for
 /// internal SDK consumers (one-line accessor refactor).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -235,7 +235,7 @@ mod tests {
             metadata: HashMap::new(),
         };
         let v = serde_json::to_value(&i).unwrap();
-        // Empty metadata should not serialise (back-compat: pre-82.10.n
+        // Empty metadata should not serialise (back-compat: older
         // callers + parsers see no `metadata` key).
         assert!(v.get("metadata").is_none());
         let back: CredentialRegisterInput = serde_json::from_value(v).unwrap();
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn register_input_pre_82_10_n_payload_parses_with_default_metadata() {
-        // Wire frame as emitted by pre-82.10.n SDK callers (no
+        // Wire frame as emitted by older SDK callers (no
         // `metadata` field present).
         let v = serde_json::json!({
             "channel": "whatsapp",

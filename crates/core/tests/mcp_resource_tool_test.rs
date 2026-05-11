@@ -1,4 +1,4 @@
-//! Phase 12.5 — integration: McpToolCatalog registers resource meta-tools
+//! Integration: McpToolCatalog registers resource meta-tools
 //! only for servers that advertise the capability, and the registered
 //! handlers round-trip against the mock MCP server.
 

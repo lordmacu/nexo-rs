@@ -1,7 +1,7 @@
 //! Opt-out matcher.
 //!
 //! Detects opt-out / unsubscribe keywords in inbound text. Used
-//! by Phase 83.3 hooks to vote `Block` + `do_not_reply_again:
+//! by dispatch hooks to vote `Block` + `do_not_reply_again:
 //! true` when a user signals they want to be removed from
 //! automated outreach.
 //!

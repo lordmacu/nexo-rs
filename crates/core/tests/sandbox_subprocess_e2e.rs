@@ -1,4 +1,4 @@
-//! Phase 81.22 — end-to-end smoke for the bubblewrap-based sandbox.
+//! End-to-end smoke for the bubblewrap-based sandbox.
 //!
 //! Drops a manifest declaring `[plugin.sandbox] enabled = true,
 //! network = "deny", fs_read_paths = []` plus a bash mock plugin.

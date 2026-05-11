@@ -1,9 +1,9 @@
 //! Secret scanner — detects API keys, tokens, and private keys before
 //! they are committed to persistent memory storage.
 //!
-//! Rule set ported from `claude-code-leak/src/services/teamMemorySync/secretScanner.ts`
-//! (high-specificity gitleaks rules with distinctive prefixes, near-zero
-//! false-positive rate). No entropy detection — postponed to 77.7.b.
+//! Rule set: high-specificity gitleaks-style rules with distinctive
+//! prefixes and a near-zero false-positive rate. No entropy detection
+//! (a possible future addition).
 //!
 //! The Anthropic API key prefix is assembled at runtime to avoid the
 //! literal byte sequence in the binary.

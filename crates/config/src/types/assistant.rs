@@ -1,8 +1,8 @@
-//! Per-binding assistant-mode configuration. Phase 80.15.
+//! Per-binding assistant-mode configuration.
 //!
 //! Behavioural toggle for proactive-agent posture. When enabled,
 //! the binding's effective system prompt picks up an addendum and
-//! (later, via 80.15.b) auto-spawns an initial team. Default is
+//! (later) auto-spawns an initial team. Default is
 //! disabled — bindings without the block keep current behaviour.
 
 use serde::{Deserialize, Serialize};
@@ -23,9 +23,8 @@ pub struct AssistantConfig {
     pub system_prompt_addendum: Option<String>,
 
     /// Initial teammates auto-spawned at boot. Empty (default) → no
-    /// spawn. Wired by Phase 80.15.b follow-up; the field is
-    /// accepted at parse time so YAML doesn't need migration when
-    /// the spawn code lands.
+    /// spawn. The field is accepted at parse time so YAML doesn't
+    /// need migration when the spawn code lands.
     #[serde(default)]
     pub initial_team: Vec<String>,
 }

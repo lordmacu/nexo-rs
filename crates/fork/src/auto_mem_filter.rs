@@ -1,9 +1,4 @@
 //! `AutoMemFilter` — tool whitelist for forked memory-consolidation work.
-//! Phase 80.20.
-//!
-//! Verbatim port of
-//! `claude-code-leak/src/services/extractMemories/extractMemories.ts:165-222`
-//! (`createAutoMemCanUseTool`).
 //!
 //! # Provider-agnostic
 //!
@@ -17,15 +12,14 @@
 //!
 //! 1. Whitelist allow-list: only `REPL`, `FileRead`, `Glob`, `Grep`,
 //!    `Bash`, `FileEdit`, `FileWrite`. Everything else denied.
-//! 2. `Bash` requires `nexo_driver_permission::is_read_only`
-//!    (Phase 80.20 step 1) — composes Phase 77.8/77.9 classifiers
-//!    + a positive whitelist of read-only utilities.
+//! 2. `Bash` requires `nexo_driver_permission::is_read_only` — composes
+//!    the command classifiers plus a positive whitelist of read-only
+//!    utilities.
 //! 3. `FileEdit` / `FileWrite` require `file_path` post-canonicalize
-//!    to start with `memory_dir` (Phase 80.20 step 3). Symlink +
-//!    traversal defense via canonical resolution at construction
-//!    AND per-call.
-//! 4. (Defense in depth — ships in 80.1) post-fork audit of
-//!    `files_touched` paths in `crates/dream/auto_dream`.
+//!    to start with `memory_dir`. Symlink + traversal defense via
+//!    canonical resolution at construction AND per-call.
+//! 4. (Defense in depth) post-fork audit of `files_touched` paths in
+//!    `crates/dream/auto_dream`.
 
 use std::fmt::Debug;
 use std::io;
@@ -140,7 +134,7 @@ impl AutoMemFilter {
 impl ToolFilter for AutoMemFilter {
     fn allows(&self, tool_name: &str, args: &Value) -> bool {
         match tool_name {
-            // REPL allowed unrestricted. Per leak `extractMemories.ts:171-180`,
+            // REPL allowed unrestricted:
             // when REPL mode is enabled the inner primitives (Read / Bash /
             // Edit / Write) are hidden from the tool list, but REPL's VM
             // re-invokes this filter for each inner primitive — so the

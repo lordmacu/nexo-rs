@@ -1,4 +1,4 @@
-//! Phase 25 follow-up (W-1) — Prometheus telemetry for the web-search
+//! Prometheus telemetry for the web-search
 //! router. Exposes counters, histogram, and a render block that
 //! `nexo_core::telemetry::render_prometheus` stitches into the
 //! exposition response.

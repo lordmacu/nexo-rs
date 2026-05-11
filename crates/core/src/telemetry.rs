@@ -47,7 +47,7 @@ static MESSAGES_PROCESSED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(
 static CIRCUIT_BREAKER_STATE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 static PROACTIVE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
-/// Phase 9.2 follow-up — per-tool call counter with outcome label.
+/// Per-tool call counter with outcome label.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 struct ToolCallKey {
     agent: String,
@@ -65,7 +65,7 @@ struct ToolKey {
 static TOOL_CALLS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashMap::new);
 
-// Phase 79.M — MCP server boot dispatcher counters.
+// MCP server boot dispatcher counters.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 struct McpServerToolKey {
     name: String,
@@ -85,7 +85,7 @@ static MCP_SERVER_TOOL_SKIPPED: LazyLock<DashMap<McpServerSkipKey, AtomicU64>> =
 /// rate without instrumenting each handler by hand.
 static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
-/// Phase B — compaction outcome counters per (agent, outcome). Outcomes:
+/// Compaction outcome counters per (agent, outcome). Outcomes:
 /// `"ok"`, `"failed"`, `"lock_held"`, `"no_boundary"`,
 /// `"tool_result_truncated"`. Histogram on duration is keyed by
 /// (agent, outcome="ok"|"failed") only — lock_held / no_boundary cases
@@ -130,7 +130,7 @@ pub fn compaction_total(agent_id: &str, outcome: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Phase A.2 — provider-level prompt cache counters per (agent, provider).
+/// Provider-level prompt cache counters per (agent, provider).
 /// Field meaning matches `nexo_llm::CacheUsage`. The model is part of
 /// the key so a binding-driven model swap shows up as a fresh hit-ratio
 /// curve in dashboards.
@@ -138,11 +138,11 @@ static LLM_CACHE_READ: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(Dash
 static LLM_CACHE_CREATION: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static LLM_CACHE_INPUT: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static LLM_CACHE_TURNS: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
-/// Phase 11.2 follow-up — extension discovery counters by status.
+/// Extension discovery counters by status.
 /// `status` is one of `"ok" | "disabled" | "invalid"`.
 static EXTENSIONS_DISCOVERED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
-/// Phase 26.x — pairing inbound challenge delivery outcomes per
+/// Pairing inbound challenge delivery outcomes per
 /// `(channel, result)`. `result` is one of `"delivered_via_adapter"
 /// | "delivered_via_broker" | "publish_failed"
 /// | "no_adapter_no_broker_topic"`. Lets ops watch how often the
@@ -181,12 +181,12 @@ pub fn pairing_inbound_challenged_total(channel: &str, result: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Phase 21 follow-up (L-1) — link-understanding fetch outcome counter.
+/// Link-understanding fetch outcome counter.
 /// `result` is one of `"ok" | "blocked" | "timeout" | "non_html" | "too_big" | "error"`.
 static LINK_FETCH_TOTAL: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
-/// Phase 21 follow-up (L-1) — cache-hit counter. `hit` is `"true" | "false"`.
+/// Cache-hit counter. `hit` is `"true" | "false"`.
 static LINK_CACHE_TOTAL: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
-/// Phase 21 follow-up (L-1) — per-fetch latency histogram (single series,
+/// Per-fetch latency histogram (single series,
 /// no labels — keeps cardinality flat; the result counter already
 /// segments outcomes).
 static LINK_FETCH_DURATION: LazyLock<Histogram> = LazyLock::new(Histogram::new);
@@ -243,7 +243,7 @@ pub fn inc_messages_processed_total(agent_id: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase 77.20.4 — proactive runtime counters.
+/// Proactive runtime counters.
 /// `event` values include:
 /// - `tick.fired`
 /// - `sleep.entered`
@@ -273,7 +273,7 @@ pub fn inc_llm_requests_total(agent_id: &str, provider: &str, model: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase A.2 — accumulate prompt-cache token counters for the
+/// Accumulate prompt-cache token counters for the
 /// `(agent, provider, model)` key. `cache_read_input_tokens` and
 /// `cache_creation_input_tokens` add to running counters; `input_tokens`
 /// (uncached prompt) joins the same totals so a downstream dashboard
@@ -307,19 +307,19 @@ pub fn observe_cache_usage(
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase C — pre-flight estimated input tokens (last sample per key).
+/// Pre-flight estimated input tokens (last sample per key).
 /// Stored as last-value gauge; the rolling history lives in the
 /// drift histogram.
 static LLM_PROMPT_TOKENS_ESTIMATED: LazyLock<DashMap<LlmKey, AtomicU64>> =
     LazyLock::new(DashMap::new);
-/// Phase C — drift between pre-flight estimate and provider-reported
+/// Drift between pre-flight estimate and provider-reported
 /// actual prompt_tokens, in **percent** (`abs(est - actual) / actual *
 /// 100`). Histogram so dashboards can alert on p99 drift instead of
 /// average smoothing it away.
 static LLM_PROMPT_TOKENS_DRIFT_PCT: LazyLock<DashMap<LlmKey, Histogram>> =
     LazyLock::new(DashMap::new);
 
-/// Phase C — record the pre-flight token estimate for a request. The
+/// Record the pre-flight token estimate for a request. The
 /// `exact` flag should reflect `TokenCounter::is_exact()` so dashboards
 /// can group exact vs approximate samples.
 pub fn observe_prompt_tokens_estimated(
@@ -340,7 +340,7 @@ pub fn observe_prompt_tokens_estimated(
         .store(estimated as u64, Ordering::Relaxed);
 }
 
-/// Phase C — record the drift between estimate and actual after a
+/// Record the drift between estimate and actual after a
 /// request returned. `actual` should be the provider-reported total
 /// prompt tokens (cached read + cached creation + uncached input).
 /// No-op when `actual == 0` (provider didn't report usage).
@@ -433,7 +433,7 @@ pub fn observe_llm_latency_ms(agent_id: &str, provider: &str, model: &str, durat
         .observe(duration_ms);
 }
 
-/// Phase 9.2 follow-up — bump the per-tool call counter. `outcome` is
+/// Bump the per-tool call counter. `outcome` is
 /// one of `"ok" | "error" | "blocked" | "unknown"` per convention.
 pub fn inc_tool_calls_total(agent: &str, tool: &str, outcome: &str) {
     let key = ToolCallKey {
@@ -447,7 +447,7 @@ pub fn inc_tool_calls_total(agent: &str, tool: &str, outcome: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase 9.2 follow-up — record tool handler latency in milliseconds.
+/// Record tool handler latency in milliseconds.
 /// Label set is `(agent, tool)`; outcome is intentionally omitted to
 /// avoid cardinality blow-up.
 pub fn observe_tool_latency_ms(agent: &str, tool: &str, duration_ms: u64) {
@@ -475,7 +475,7 @@ pub fn inc_tool_cache_event(agent: &str, tool: &str, event: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase 11.2 follow-up — add N extension-discovery results under one
+/// Add N extension-discovery results under one
 /// status label. This is called once per discovery pass at startup.
 pub fn add_extensions_discovered(status: &str, count: u64) {
     if count == 0 {
@@ -487,7 +487,7 @@ pub fn add_extensions_discovered(status: &str, count: u64) {
         .fetch_add(count, Ordering::Relaxed);
 }
 
-/// Phase 18 — hot-reload telemetry. Tracks applied / rejected reload
+/// Hot-reload telemetry. Tracks applied / rejected reload
 /// attempts + the monotonic config version per agent so operators can
 /// correlate which snapshot was active when a session fired.
 static CONFIG_RELOAD_APPLIED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -522,7 +522,7 @@ pub fn set_circuit_breaker_state(breaker: &str, open: bool) {
         .store(if open { 1 } else { 0 }, Ordering::Relaxed);
 }
 
-/// Phase 79.M — count an MCP-server boot registration by tool name + tier.
+/// Count an MCP-server boot registration by tool name + tier.
 pub fn inc_mcp_server_tool_registered(name: &str, tier: &str) {
     MCP_SERVER_TOOL_REGISTERED
         .entry(McpServerToolKey {
@@ -533,7 +533,7 @@ pub fn inc_mcp_server_tool_registered(name: &str, tier: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-/// Phase 79.M — count an MCP-server boot skip with a reason label.
+/// Count an MCP-server boot skip with a reason label.
 pub fn inc_mcp_server_tool_skipped(name: &str, reason: &str) {
     MCP_SERVER_TOOL_SKIPPED
         .entry(McpServerSkipKey {
@@ -685,7 +685,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         ));
     }
 
-    // Phase 9.2 follow-up — per-tool counter.
+    // Per-tool counter.
     out.push_str("# HELP nexo_tool_calls_total Total tool invocations from the LLM loop.\n");
     out.push_str("# TYPE nexo_tool_calls_total counter\n");
     if TOOL_CALLS.is_empty() {
@@ -713,7 +713,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
-    // Phase 79.M — MCP server boot dispatcher counters.
+    // MCP server boot dispatcher counters.
     out.push_str(
         "# HELP mcp_server_tool_registered_total Tools registered by `nexo mcp-server` boot dispatcher, labelled by name and security tier.\n",
     );
@@ -790,7 +790,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
-    // Phase 9.2 follow-up — per-tool latency histogram.
+    // Per-tool latency histogram.
     out.push_str("# HELP nexo_tool_latency_ms Tool handler latency histogram in milliseconds.\n");
     out.push_str("# TYPE nexo_tool_latency_ms histogram\n");
     if TOOL_LATENCY.is_empty() {

@@ -6,7 +6,7 @@
 //! is a self-contained file with no journal/WAL siblings.
 //!
 //! This is the equivalent of the `sqlite3 .backup` shell command used by
-//! `scripts/nexo-backup.sh` (Phase 36.1) but as a pure SQL query, so we
+//! `scripts/nexo-backup.sh` but as a pure SQL query, so we
 //! can drive it through the workspace's `sqlx` pool without a second
 //! SQLite client dependency.
 

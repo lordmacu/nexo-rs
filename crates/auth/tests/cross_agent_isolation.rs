@@ -1,4 +1,4 @@
-//! Step 19 E2E (scoped): assert that a config with two agents + two
+//! E2E (scoped): assert that a config with two agents + two
 //! accounts per channel cannot cross-send — i.e. Kate cannot resolve
 //! Ana's handle even if her declared binding names Ana's instance.
 //! The resolver catches this at boot with

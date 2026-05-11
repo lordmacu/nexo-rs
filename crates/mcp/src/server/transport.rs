@@ -1,7 +1,7 @@
-//! Phase 76.2 — transport abstraction shared by the stdio server and
-//! the future HTTP server (76.1). Each transport impl owns its
-//! framing rules (newline-delimited JSON for stdio, body+SSE for
-//! HTTP) and yields parsed JSON `Value`s upstream. The dispatcher in
+//! Transport abstraction shared by the stdio server and the HTTP
+//! server. Each transport impl owns its framing rules
+//! (newline-delimited JSON for stdio, body+SSE for HTTP) and yields
+//! parsed JSON `Value`s upstream. The dispatcher in
 //! `super::dispatch` is transport-agnostic: it never sees frames, it
 //! only sees parsed JSON-RPC method/params and emits a typed
 //! `DispatchOutcome` that the transport renders on the wire.
@@ -36,7 +36,7 @@ pub enum TransportError {
 /// hint. For stdio every frame is independent and `route` is `None`.
 /// For HTTP the read side fills `route` with a per-request id so the
 /// write side can match the response back to the originating HTTP
-/// call (used in 76.1).
+/// call.
 #[derive(Debug, Clone)]
 pub struct Frame {
     /// Parsed JSON-RPC envelope. Validated as JSON; NOT yet

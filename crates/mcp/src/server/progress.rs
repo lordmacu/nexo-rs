@@ -1,4 +1,4 @@
-//! Phase 76.7 — server-side `notifications/progress` emission.
+//! Server-side `notifications/progress` emission.
 //!
 //! `ProgressReporter` is the thin handle a tool gets when the
 //! caller's request supplied a `params._meta.progressToken`. The
@@ -22,18 +22,13 @@
 //! Setting `min_interval = Duration::ZERO` disables coalescing
 //! entirely (every `report` emits immediately).
 //!
-//! ## Reference
+//! ## Wire shape
 //!
-//! The leak is client-side and consumes `notifications/progress`
-//! from upstream MCP servers
-//! (`/home/familia/claude-code-leak/src/services/mcp/useManageMCPConnections.ts:618-664`
-//! for the analogous `tools/list_changed` flow); it does NOT
-//! implement server-side progress emission. We port the wire
-//! shape (JSON-RPC notification with `params._meta.progressToken`
-//! echoed from the originating request) and build the
-//! coalescing + per-session sink ourselves on top of the in-tree
-//! `broadcast::Sender<SessionEvent>` primitive
-//! (Phase 76.1, `crates/mcp/src/server/http_session.rs:39-46`).
+//! A JSON-RPC notification with `params._meta.progressToken`
+//! echoed from the originating request. The coalescing +
+//! per-session sink are built on top of the in-tree
+//! `broadcast::Sender<SessionEvent>` primitive in
+//! `crates/mcp/src/server/http_session.rs`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

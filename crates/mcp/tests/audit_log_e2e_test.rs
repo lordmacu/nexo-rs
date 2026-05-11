@@ -1,7 +1,7 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.11 — end-to-end test: dispatcher emits one audit row
-//! per `tools/call` dispatch, regardless of outcome.
+//! End-to-end test: dispatcher emits one audit row per
+//! `tools/call` dispatch, regardless of outcome.
 //!
 //! Boots a `Dispatcher` with a `MemoryAuditLogStore` + an
 //! `AuditWriter`, fires a mix of Reply / Error / Cancelled

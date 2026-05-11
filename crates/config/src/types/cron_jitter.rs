@@ -1,8 +1,8 @@
-//! Phase 80.2-80.6 — cron jitter + killswitch config.
+//! Cron jitter + killswitch config.
 //!
 //! Six-knob configuration replacing the legacy single-`pct` jitter.
-//! Hot-reloadable via Phase 18 ArcSwap path. Per-binding override
-//! is deferred to 80.2.b — slim MVP is global config.
+//! Hot-reloadable via the ArcSwap path. Per-binding override is
+//! deferred — slim MVP is global config.
 
 use serde::{Deserialize, Serialize};
 

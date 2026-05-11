@@ -1,4 +1,4 @@
-//! Phase 67.4 + 67.7 — `DecisionMemory` trait and impls.
+//! `DecisionMemory` trait and impls.
 
 /// Deterministic embedder for tests. Hidden from public docs but
 /// reachable from integration tests in `tests/`.

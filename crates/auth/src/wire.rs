@@ -163,7 +163,7 @@ pub fn build_credentials(
 
     // Migrate legacy inline `agents[].google_auth` into the store with
     // a warning. The account id is the agent id — 1:1 per agent. In
-    // Strict mode the legacy form is an error: Phase 17 V2 forces the
+    // Strict mode the legacy form is an error: forces the
     // move to google-auth.yaml.
     let mut legacy_warnings: Vec<String> = Vec::new();
     for agent in agents {
@@ -194,9 +194,8 @@ pub fn build_credentials(
         // strings, so emit synthetic in-memory paths. The gmail-poller
         // legacy path uses files; this synthetic path is marked by the
         // `inline:` prefix so the store knows to read the value
-        // directly rather than load from disk. (Consumer logic lives
-        // in step 16 of the plan; V1 ignores these accounts if the
-        // files do not exist.)
+        // directly rather than load from disk. (Older consumers
+        // ignore these accounts if the files do not exist.)
         goog_accounts.push(GoogleAccount {
             id: agent.id.clone(),
             agent_id: agent.id.clone(),

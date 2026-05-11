@@ -1,29 +1,22 @@
-//! Phase 79.4 — intra-turn scratch todo list.
+//! Intra-turn scratch todo list.
 //!
-//! Distinct from Phase 14 TaskFlow:
+//! Distinct from the persistent TaskFlow:
 //! * **TaskFlow** is persistent, cross-session, DAG-shaped; owned by
 //!   the operator + flows.
 //! * **Todo** (this module) is in-memory, per-goal, flat list; owned
 //!   by the model. Lives on `AgentContext.todos` and dies with the
-//!   goal — long Phase 67 driver-loop turns use it to coordinate
-//!   sub-steps without spawning sub-goals.
+//!   goal — long driver-loop turns use it to coordinate sub-steps
+//!   without spawning sub-goals.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/TodoWriteTool/TodoWriteTool.ts:31-103`
-//!     (zero permission checks, full-replace semantics, wipe-on-all-completed,
-//!     `oldTodos` + `newTodos` diff in the response).
-//!   * `claude-code-leak/src/utils/todo/types.ts:1-19` (`TodoItem`
-//!     schema with `content` + `status` + `activeForm`).
-//!
-//! Reference (secondary):
-//!   * OpenClaw — no equivalent. `grep -rln "todo" research/src/` only
-//!     surfaces unrelated cron / delivery files.
+//! Semantics: zero permission checks, full-replace on every write,
+//! wipe when all items are completed, and an `oldTodos` + `newTodos`
+//! diff in the response. Items carry `content`, `status`, and
+//! `activeForm`.
 
 use serde::{Deserialize, Serialize};
 
-/// Hard cap on items per goal. The leak does not enforce one; nexo-rs
-/// adds the cap defensively so a runaway model cannot grow the list
-/// unbounded.
+/// Hard cap on items per goal. Defensive so a runaway model cannot
+/// grow the list unbounded.
 pub const MAX_TODO_ITEMS: usize = 50;
 
 /// Per-field UTF-8 byte cap. Keeps a single bad item from saturating
@@ -31,8 +24,7 @@ pub const MAX_TODO_ITEMS: usize = 50;
 /// "Run cargo test --workspace and fix red".
 pub const MAX_TODO_FIELD_BYTES: usize = 200;
 
-/// Three-state lifecycle. Mirrors the leak's
-/// `TodoStatusSchema = pending | in_progress | completed`.
+/// Three-state lifecycle: pending | in_progress | completed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
@@ -41,10 +33,9 @@ pub enum TodoStatus {
     Completed,
 }
 
-/// One scratch list item. Lift from
-/// `claude-code-leak/src/utils/todo/types.ts:8-15`. The leak has no
-/// `id` field — items are identified by position + content. Full
-/// replace on every write keeps the model's mental model simple.
+/// One scratch list item. There is no `id` field — items are
+/// identified by position + content. Full replace on every write
+/// keeps the model's mental model simple.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoItem {
     /// Imperative form: "Run tests", "Update docs". Shown in the
@@ -58,9 +49,9 @@ pub struct TodoItem {
     pub active_form: String,
 }
 
-/// Convenience alias — the leak's `TodoListSchema = z.array(TodoItemSchema())`
-/// is just `Vec<TodoItem>` here, but a named alias keeps signatures
-/// across the codebase honest about what kind of `Vec` they hold.
+/// Convenience alias — just `Vec<TodoItem>`, but a named alias keeps
+/// signatures across the codebase honest about what kind of `Vec`
+/// they hold.
 pub type TodoList = Vec<TodoItem>;
 
 /// Validation outcome for a candidate todo write.

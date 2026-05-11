@@ -1,4 +1,4 @@
-//! Optional `config/pairing.yaml` schema. FOLLOWUPS PR-6.
+//! Optional `config/pairing.yaml` schema.
 //!
 //! Until this lands the daemon hardcodes:
 //!   - store path:      `<memory_dir>/pairing.db`

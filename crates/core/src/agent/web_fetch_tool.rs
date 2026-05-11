@@ -1,10 +1,10 @@
-//! FOLLOWUPS W-2 — `web_fetch` built-in tool.
+//! `web_fetch` built-in tool.
 //!
 //! Companion to `web_search`: takes one or more URLs the agent
 //! already knows (from a prior `web_search` hit, a user message,
 //! a `link_understanding` summary, …) and returns the cleaned
 //! body text + title for each. Reuses the runtime's existing
-//! `LinkExtractor` (Phase 21) so:
+//! `LinkExtractor` so:
 //!
 //! - The fetch budget, deny-host list, max-bytes cap, timeout
 //!   and host blocklist are exactly the same as the auto-link

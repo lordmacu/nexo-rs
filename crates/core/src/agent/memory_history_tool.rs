@@ -1,4 +1,4 @@
-//! Phase 10.9 — `memory_history` native tool. Gives the LLM cheap access
+//! `memory_history` native tool. Gives the LLM cheap access
 //! to its own recent git log + optional unified diff (DiffMem pattern).
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;

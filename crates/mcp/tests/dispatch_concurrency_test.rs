@@ -1,7 +1,7 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.6 — `Dispatcher` integration tests with the
-//! per-principal concurrency cap + per-call timeout wired in.
+//! `Dispatcher` integration tests with the per-principal
+//! concurrency cap + per-call timeout wired in.
 //!
 //! These exercise the dispatch path end-to-end (no HTTP transport),
 //! so the assertions cover:

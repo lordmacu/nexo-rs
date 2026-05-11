@@ -1,12 +1,11 @@
-//! Phase 81.26 — `VectorBackend` trait + wire shapes.
+//! `VectorBackend` trait + wire shapes.
 //!
 //! Subprocess plugins declaring
 //! `[plugin.extends].memory_backends = [...]` register
 //! implementations of this trait into the daemon's
 //! `VectorBackendRegistry`. Operator-side consumers
-//! (`LongTermMemory.recall_vector` lookup) wire to the
-//! registry in 81.26.b — v1 ships the trait + wire surface
-//! only.
+//! (`LongTermMemory.recall_vector` lookup) wire to the registry
+//! separately.
 //!
 //! Vector-only scope: short-term + long-term memory keep their
 //! existing SQLite implementation. Plugins replace ONLY the
@@ -73,8 +72,7 @@ pub struct DeleteAck {
 #[async_trait]
 pub trait VectorBackend: Send + Sync + 'static {
     /// Stable backend identifier matching the operator's
-    /// `agents.yaml.<id>.vector_backend = "<name>"` selector
-    /// (consumer wiring lands in 81.26.b).
+    /// `agents.yaml.<id>.vector_backend = "<name>"` selector.
     fn name(&self) -> &str;
 
     async fn upsert(

@@ -87,7 +87,7 @@ pub struct AgentDashboard {
     pub skills_total: usize,
     /// `allowed_tools` is a wildcard AND at least one inbound binding has
     /// `dispatch_policy.mode: full`. Means the agent can launch
-    /// Phase 67 Claude Code goals from a paired channel.
+    /// Claude Code goals from a paired channel.
     pub coding_enabled: bool,
     pub heartbeat_enabled: bool,
 }
@@ -830,7 +830,7 @@ fn handle_skills(
 }
 
 /// Handle the `Capacidades` action — flip "agent can program"
-/// (Phase 67 dispatch) and the heartbeat toggle in one place.
+/// (the coding-goal dispatch toggle) and the heartbeat toggle in one place.
 ///
 /// "Programar" enabled means:
 ///   * `allowed_tools` contains `"*"` (so `claude_code_*` and

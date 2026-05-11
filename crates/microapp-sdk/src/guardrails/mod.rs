@@ -1,4 +1,4 @@
-//! Topic guardrails (M15.23.d).
+//! Topic guardrails.
 //!
 //! Operator-configured regex tagger that scans inbound text
 //! against a list of `(id, patterns, action)` rules and

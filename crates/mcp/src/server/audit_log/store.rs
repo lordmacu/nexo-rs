@@ -1,6 +1,5 @@
 //! `AuditLogStore` trait + an in-memory impl for tests. The
-//! production SQLite impl lives in `sqlite_store.rs` (Phase 76.11
-//! step 3).
+//! production SQLite impl lives in `sqlite_store.rs`.
 
 use async_trait::async_trait;
 use parking_lot::Mutex;

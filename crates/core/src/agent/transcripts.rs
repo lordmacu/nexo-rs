@@ -1,6 +1,6 @@
-//! Session transcripts — Phase 10.4.
+//! Session transcripts.
 //!
-//! Append-only JSONL log per session. Layout modeled on OpenClaw's
+//! Append-only JSONL log per session. Layout:
 //! `agents/<agent>/sessions/<sessionId>.jsonl`:
 //!   - First line: `{ "type": "session", "version": N, "id": "...",
 //!     "timestamp": "...", "agent_id": "...", "source_plugin": "..." }`
@@ -12,7 +12,7 @@
 //!
 //! The writer is intentionally decoupled from `SessionManager` — transcripts
 //! are a *record*, not a source of truth. `SessionManager` still owns live
-//! history; transcripts are what dreaming (Phase 10.6) will later ingest.
+//! history; transcripts are what the dreaming pass later ingests.
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub const TRANSCRIPT_VERSION: u32 = 1;
 pub enum TranscriptLine {
     Session(SessionHeader),
     Entry(TranscriptEntry),
-    /// Phase 77.3 — marks a compact turn boundary in the transcript.
+    /// Marks a compact turn boundary in the transcript.
     CompactBoundary {
         uuid: String,
         token_count: u64,
@@ -76,7 +76,7 @@ pub struct TranscriptWriter {
     agent_id: String,
     redactor: Arc<Redactor>,
     index: Option<Arc<TranscriptsIndex>>,
-    /// Phase 82.11 — optional firehose emitter. Called after
+    /// Optional firehose emitter. Called after
     /// the redactor runs (defense-in-depth: emitted body matches
     /// the persisted body). Default is
     /// [`NoopAgentEventEmitter`] so existing callers stay
@@ -86,13 +86,13 @@ pub struct TranscriptWriter {
     /// writer writes the Session line, and every other writer waits
     /// for the header to be flushed before opening in append mode.
     header_locks: DashMap<PathBuf, Arc<TokioMutex<()>>>,
-    /// Phase 82.11 — per-session monotonic counter handed to the
+    /// Per-session monotonic counter handed to the
     /// firehose as `seq`. Counts only `TranscriptLine::Entry`
     /// records — must stay in lockstep with `TranscriptReaderFs`'s
     /// entry-only enumeration so backfill `agent_events/read` and
     /// the live notification stream agree on `seq`.
     entry_seq: DashMap<Uuid, Arc<AtomicU64>>,
-    /// Phase 83.8.12.4.b — owning tenant. Stamped on every
+    /// Owning tenant. Stamped on every
     /// `TranscriptAppended` firehose event. `None` for
     /// single-tenant deployments (default) — multi-tenant boot
     /// passes the agent's `tenant_id` through
@@ -113,7 +113,7 @@ impl TranscriptWriter {
         }
     }
 
-    /// Phase 83.8.12.4.b — tag the writer with its owning tenant so
+    /// Tag the writer with its owning tenant so
     /// every emitted `TranscriptAppended` event carries `tenant_id`.
     /// Boot wire reads `agent.tenant_id` and threads it through.
     /// `None` is the legacy / single-tenant case (default).
@@ -142,7 +142,7 @@ impl TranscriptWriter {
         }
     }
 
-    /// Phase 82.11 — install a firehose emitter. Replaces the
+    /// Install a firehose emitter. Replaces the
     /// default `NoopAgentEventEmitter`. Call AFTER `with_extras`
     /// (or use the standalone factory from boot wiring).
     pub fn with_emitter(mut self, emitter: Arc<dyn AgentEventEmitter>) -> Self {
@@ -152,7 +152,7 @@ impl TranscriptWriter {
     pub fn root(&self) -> &Path {
         &self.root
     }
-    /// Phase 82.13.b.1.3 — owning agent id this writer was
+    /// Owning agent id this writer was
     /// pinned to at construction. The
     /// `TranscriptWriterAppender` adapter (in `nexo-setup`)
     /// uses it for a defense-in-depth check that operator
@@ -259,7 +259,7 @@ impl TranscriptWriter {
             }
         }
 
-        // Phase 82.11 — fire the firehose AFTER both JSONL +
+        // Fire the firehose AFTER both JSONL +
         // FTS persistence so subscribers never see a frame the
         // backfill RPC can't return. `seq` is per-session +
         // entry-only so it matches `TranscriptReaderFs`'s
@@ -284,7 +284,7 @@ impl TranscriptWriter {
             } else {
                 entry.source_plugin.clone()
             },
-            // Phase 83.8.12.4.b — stamped from the writer's
+            // Stamped from the writer's
             // own `tenant_id` field (set at boot via
             // `with_tenant_id` from `agent.tenant_id`). `None`
             // for single-tenant deployments.
@@ -321,7 +321,7 @@ impl TranscriptWriter {
         Ok(out)
     }
 }
-/// Phase 82.11 — bridge `TranscriptRole` (core) ↔ wire role
+/// Bridge `TranscriptRole` (core) ↔ wire role
 /// enum used by the firehose. Inline because the enum is tiny
 /// and the call is on the hot path.
 fn map_wire_role(r: TranscriptRole) -> WireTranscriptRole {

@@ -1,7 +1,7 @@
-//! Phase 11 — extension system for third-party plugins.
+//! Extension system for third-party plugins.
 //!
-//! 11.1 ships only the manifest parser. Later sub-phases add discovery,
-//! runtime spawn, tool registration, lifecycle hooks, and CLI integration.
+//! Covers the manifest parser, discovery, runtime spawn, tool
+//! registration, lifecycle hooks, and CLI integration.
 
 pub mod cli;
 pub mod discovery;

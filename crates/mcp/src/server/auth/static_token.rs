@@ -1,8 +1,7 @@
-//! Phase 76.3 — `StaticTokenAuthenticator`. Equivalent to the
-//! 76.1 `auth_token` field but routed through the new trait.
-//! Token is held in a `Zeroizing<String>` so the underlying
-//! buffer is wiped at drop; comparison runs in constant time via
-//! `subtle`.
+//! `StaticTokenAuthenticator`. Equivalent to the legacy
+//! `auth_token` field but routed through the authenticator trait.
+//! Token is held in a `Zeroizing<String>` so the underlying buffer
+//! is wiped at drop; comparison runs in constant time via `subtle`.
 
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -19,7 +18,7 @@ pub struct StaticTokenAuthenticator {
 }
 
 impl StaticTokenAuthenticator {
-    /// Phase 76.3 entry point — keeps the old shape (no tenant override).
+    /// Entry point that keeps the old shape (no tenant override).
     pub fn new(token: String) -> Self {
         Self {
             expected: Zeroizing::new(token),
@@ -27,7 +26,7 @@ impl StaticTokenAuthenticator {
         }
     }
 
-    /// Phase 76.4 entry point — operator may pin the tenant for this
+    /// Entry point where the operator may pin the tenant for this
     /// token via YAML `auth.tenant: ...`.
     pub fn with_tenant(token: String, tenant: TenantId) -> Self {
         Self {

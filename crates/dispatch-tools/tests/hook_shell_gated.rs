@@ -1,4 +1,4 @@
-//! Phase 67.F.4 — Shell action: disabled by default, runs cmd via
+//! Shell action: disabled by default, runs cmd via
 //! `sh -c` when `allow_shell=true`, surfaces exit + timeout errors.
 
 #![cfg(unix)]

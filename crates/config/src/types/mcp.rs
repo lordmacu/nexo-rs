@@ -1,4 +1,4 @@
-//! Phase 12.4 — `mcp.yaml` schema.
+//! `mcp.yaml` schema.
 //!
 //! Loads a declarative list of MCP servers plus session/reap timing knobs.
 //! `nexo-mcp` converts this into `McpRuntimeConfig` at startup; subsequent
@@ -41,43 +41,43 @@ pub struct McpConfig {
     /// for regular YAML-native servers.
     #[serde(default)]
     pub servers: BTreeMap<String, McpServerYaml>,
-    /// Phase 12.8 — opt-in file watcher for `mcp.yaml`. Re-parses the
+    /// Opt-in file watcher for `mcp.yaml`. Re-parses the
     /// file on disk change and calls `McpRuntimeManager::update_config`.
     #[serde(default)]
     pub watch: McpWatchConfig,
-    /// Phase 11.5 follow-up symmetric with extensions — opt-in
+    /// Symmetric with extensions — opt-in
     /// propagation of `{ agent_id, session_id }` into `tools/call`
     /// requests via `params._meta`.
     #[serde(default)]
     pub context: McpContextConfig,
-    /// Phase 12.1 follow-up — client-side sampling policy for
+    /// Client-side sampling policy for
     /// server-originated `sampling/createMessage`.
     #[serde(default)]
     pub sampling: McpSamplingConfig,
-    /// Phase 12.8 follow-up — when `true`, removing `log_level` from a
+    /// When `true`, removing `log_level` from a
     /// server on hot-reload fires `set_log_level` (with
     /// `default_reset_level`) instead of leaving the previous level in
     /// place. Default false for zero regression vs pre-flag behavior.
     #[serde(default)]
     pub reset_level_on_unset: bool,
-    /// Phase 12.8 follow-up — level emitted when `reset_level_on_unset`
+    /// Level emitted when `reset_level_on_unset`
     /// fires. MCP spec does not define a "default", so operator picks.
     /// Default "info".
     #[serde(default = "default_reset_level")]
     pub default_reset_level: String,
-    /// Phase 12.5 follow-up — opt-in LRU+TTL cache for `resources/read`
+    /// Opt-in LRU+TTL cache for `resources/read`
     /// results. Off by default for zero regression; keyed by
     /// `(server_name, uri)`, invalidated on `notifications/resources/list_changed`.
     #[serde(default)]
     pub resource_cache: McpResourceCacheConfig,
-    /// Phase 12.5 follow-up — if non-empty, the `read_resource` tool
+    /// If non-empty, the `read_resource` tool
     /// logs a warning (and increments a Prometheus counter) when the
     /// requested URI uses a scheme outside this allowlist. Defense in
     /// depth against LLM-crafted URIs that bypass the server's own
     /// validation. Empty list = permissive (default).
     #[serde(default)]
     pub resource_uri_allowlist: Vec<String>,
-    /// Phase 12.7 follow-up — when true, an extension manifest that
+    /// When true, an extension manifest that
     /// declares an MCP server whose `command` / `args` / `cwd` escape
     /// the extension's own root dir is rejected at load time instead of
     /// just emitting a warning. Default `false` for back-compat.
@@ -118,7 +118,7 @@ fn default_reset_level() -> String {
     "info".to_string()
 }
 
-/// Phase 12.8 — MCP-wide context propagation flag. Off by default.
+/// MCP-wide context propagation flag. Off by default.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpContextConfig {
@@ -126,7 +126,7 @@ pub struct McpContextConfig {
     pub passthrough: bool,
 }
 
-/// Phase 12.1 follow-up — policy knobs for MCP sampling.
+/// Policy knobs for MCP sampling.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpSamplingConfig {
@@ -199,7 +199,7 @@ fn default_sampling_server_max_tokens_cap() -> u32 {
     4096
 }
 
-/// Phase 12.8 — watcher knobs. Off by default.
+/// Watcher knobs. Off by default.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpWatchConfig {
@@ -223,7 +223,7 @@ fn default_watch_debounce_ms() -> u64 {
 }
 
 impl McpConfig {
-    /// Phase 12.2 follow-up — verify every HTTP header value is a legal
+    /// Verify every HTTP header value is a legal
     /// `field-value` per RFC 7230 (ASCII visible 0x20–0x7E plus HTAB).
     /// `reqwest::HeaderValue::from_str` would otherwise silently drop
     /// offending entries at runtime; parsing is the right place to fail.
@@ -288,11 +288,11 @@ pub enum McpServerYaml {
         env: BTreeMap<String, String>,
         #[serde(default)]
         cwd: Option<String>,
-        /// Phase 12.8 — if set and server advertises `logging`
+        /// If set and server advertises `logging`
         /// capability, the client sends `logging/setLevel` post-init.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         log_level: Option<String>,
-        /// Phase 12.8 — per-server override for `mcp.context.passthrough`.
+        /// Per-server override for `mcp.context.passthrough`.
         /// `None` falls back to the global flag; `Some(bool)` forces.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_passthrough: Option<bool>,
@@ -315,7 +315,7 @@ pub enum McpServerYaml {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_passthrough: Option<bool>,
     },
-    /// Phase 12.2 follow-up — try `streamable_http` first; on 404/405/415
+    /// Try `streamable_http` first; on 404/405/415
     /// during the initialize POST, retry once over `sse`. Saves operators
     /// from knowing which variant a given server actually speaks.
     Auto {

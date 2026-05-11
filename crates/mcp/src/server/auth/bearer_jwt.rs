@@ -1,4 +1,4 @@
-//! Phase 76.3 — `BearerJwtAuthenticator`. Validates incoming JWTs
+//! `BearerJwtAuthenticator`. Validates incoming JWTs
 //! against a JWKS document with rotation, single-flight refresh
 //! and stale-OK fallback (see `jwks_cache.rs`).
 //!
@@ -201,7 +201,7 @@ impl McpAuthenticator for BearerJwtAuthenticator {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        // Phase 76.4 — tenant claim is mandatory and must parse
+        // Tenant claim is mandatory and must parse
         // through the strict `TenantId` validator. Missing or
         // malformed → uniform 401 (`TenantClaimMissing`). The
         // detail goes only to `tracing::warn!`.

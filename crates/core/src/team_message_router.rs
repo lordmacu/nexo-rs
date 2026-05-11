@@ -1,4 +1,4 @@
-//! Phase 79.6 — broker bridge for team DM + broadcast messages.
+//! Broker bridge for team DM + broadcast messages.
 //!
 //! Two topic patterns:
 //! * `team.<team_id>.dm.<member_name>` — point-to-point.
@@ -10,19 +10,13 @@
 //! broadcast). The broker side listens to `team.>` once per
 //! process; per-member subscriptions are in-memory.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/SendMessageTool/SendMessageTool.ts:1-58`
-//!     — leak's discriminated union of structured messages
-//!     (`shutdown_request`, `shutdown_response`,
-//!     `plan_approval_response`). The leak persists DMs in a
-//!     per-teammate file (`writeToMailbox`); we replace with
-//!     broker subjects so members can be idle (goal in
-//!     `Pending`) and still receive messages.
-//!   * `claude-code-leak/src/tools/TeamCreateTool/prompt.ts:53-61`
-//!     — "Messages from teammates are automatically delivered to
-//!     you. You do NOT need to manually check your inbox." We
-//!     mirror that semantics: a DM landing on a `Pending` goal
-//!     transitions it to `Running` via Phase 67's wake-on hook.
+//! Messages are a discriminated union of structured frames
+//! (`shutdown_request`, `shutdown_response`, `plan_approval_response`).
+//! Using broker subjects rather than a per-teammate mailbox file lets
+//! members be idle (goal in `Pending`) and still receive messages: a
+//! DM landing on a `Pending` goal transitions it to `Running` via the
+//! wake-on hook, so messages from teammates are delivered
+//! automatically without the member polling an inbox.
 
 use nexo_broker::{BrokerHandle, Event};
 use serde::{Deserialize, Serialize};

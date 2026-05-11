@@ -1,4 +1,4 @@
-//! Phase 83.8.1 — `nexo/admin/skills/*` wire types.
+//! `nexo/admin/skills/*` wire types.
 //!
 //! Daemon side handlers in `nexo_core::agent::admin_rpc::domains
 //! ::skills` consume these as params / produce as results. SDK side
@@ -95,11 +95,11 @@ pub struct SkillsListParams {
     /// skill.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
-    /// Phase 83.8.12.6 — list under a specific tenant scope.
+    /// List under a specific tenant scope.
     /// When `Some(tenant_id)`, returns only skills under
     /// `<root>/<tenant_id>/<name>/SKILL.md`. When `None`,
     /// returns the global / shared `<root>/__global__/<name>/`
-    /// slot (= legacy default; pre-Phase 83.8.12.6 layout).
+    /// slot (the legacy default layout).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
 }
@@ -116,7 +116,7 @@ pub struct SkillsListResponse {
 pub struct SkillsGetParams {
     /// Stable name.
     pub name: String,
-    /// Phase 83.8.12.6 — read from a specific tenant scope.
+    /// Read from a specific tenant scope.
     /// `None` reads from `__global__`. Same precedence as the
     /// SkillLoader runtime fallback (tenant first when set,
     /// global otherwise).
@@ -154,7 +154,7 @@ pub struct SkillsUpsertParams {
     /// Author-declared dependency requirements. Defaults to empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<SkillRequiresRecord>,
-    /// Phase 83.8.12.6 — write under a specific tenant scope.
+    /// Write under a specific tenant scope.
     /// `Some(tenant_id)` writes
     /// `<root>/<tenant_id>/<name>/SKILL.md`. `None` writes the
     /// shared global slot `<root>/__global__/<name>/`. Same
@@ -178,7 +178,7 @@ pub struct SkillsUpsertResponse {
 pub struct SkillsDeleteParams {
     /// Stable name.
     pub name: String,
-    /// Phase 83.8.12.6 — delete from a specific tenant scope.
+    /// Delete from a specific tenant scope.
     /// `None` deletes from `__global__`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,

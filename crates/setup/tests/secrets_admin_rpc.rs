@@ -1,4 +1,4 @@
-//! Phase 82.10.k integration test — wire the production
+//! Integration test — wire the production
 //! `FsSecretsStore` adapter through `AdminRpcDispatcher` and
 //! verify a `nexo/admin/secrets/write` dispatch produces:
 //! - a file at `<secrets_dir>/<NAME>.txt` with mode 0600,

@@ -1,7 +1,7 @@
 //! Resolve outbound deliveries from a `TickOutcome` and publish them
 //! to the right per-instance topic. Modules return `OutboundDelivery`
 //! instances; the runner calls [`publish`] once per item — that's the
-//! one place that touches Phase 17 resolver semantics so audit /
+//! one place that touches credential-resolver semantics so audit /
 //! metrics happen in a single spot.
 
 use nexo_auth::{AgentCredentialResolver, Channel};

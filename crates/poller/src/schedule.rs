@@ -102,9 +102,9 @@ impl Schedule {
             job: "<schedule>".into(),
             reason: format!("invalid cron expression '{}': {e}", cfg.cron),
         })?;
-        // V1: tz field accepted in YAML but evaluation is in UTC. With
-        // the `cron-tz` feature on, this branch swaps to chrono-tz.
-        // Surfaced in FOLLOWUPS until DST-correct evaluation lands.
+        // For now the tz field is accepted in YAML but evaluation
+        // is in UTC. With the `cron-tz` feature on, this branch
+        // swaps to chrono-tz for DST-correct evaluation.
         if cfg.tz.is_some() {
             tracing::trace!("schedule.cron.tz set but `cron-tz` feature off — evaluating in UTC");
         }

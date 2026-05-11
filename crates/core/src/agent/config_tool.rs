@@ -1,11 +1,9 @@
-//! Phase 79.10 — `Config` LLM tool, gated by the
-//! `config-self-edit` Cargo feature.
+//! `Config` LLM tool, gated by the `config-self-edit` Cargo
+//! feature.
 //!
-//! Step 8 ships the read path + the full handler scaffold + the
-//! traits used to bridge to the YAML-patch helpers in nexo-setup.
-//! Step 9 replaces the placeholder `propose` / `apply` arms with
-//! the full proposal-staging + approval-correlator + reload-rollback
-//! flow.
+//! The `read` op surfaces config; `propose` / `apply` drive the
+//! proposal-staging + approval-correlator + reload-rollback flow,
+//! bridging to the YAML-patch helpers in nexo-setup.
 //!
 //! Per-binding policy resolution (selection of agent, allowed_paths,
 //! approval_timeout) happens at construction time. Per-turn actor
@@ -1126,7 +1124,7 @@ mod tests {
         }
 
         fn apply(&self, _patch: &PatchInfo) -> Result<(), PatchAppliedError> {
-            // Step 9 exercises this.
+            // Test stub: applying a patch is a no-op here.
             Ok(())
         }
 

@@ -1,9 +1,7 @@
-//! Phase 77.5 — extraction prompt constants.
+//! Extraction prompt constants.
 //!
-//! Ported from `claude-code-leak/src/services/extractMemories/prompts.ts`
-//! and `claude-code-leak/src/memdir/memoryTypes.ts`. Four-type taxonomy
-//! (user/feedback/project/reference), WHAT NOT TO SAVE exclusion list,
-//! frontmatter format, and the main prompt builder.
+//! Four-type taxonomy (user/feedback/project/reference), WHAT NOT TO
+//! SAVE exclusion list, frontmatter format, and the main prompt builder.
 
 /// Build the extraction prompt for a given new-message count and existing
 /// memory manifest. The manifest string is injected verbatim — it should

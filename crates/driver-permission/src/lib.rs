@@ -1,8 +1,8 @@
-//! Phase 67.3 — MCP `permission_prompt` tool.
+//! MCP `permission_prompt` tool.
 //!
 //! See `README.md` for the layering rationale and bin modes. The
 //! crate exposes the contract (types + trait + handler); the daemon
-//! wiring lands in 67.4.
+//! wiring lives elsewhere.
 
 pub mod adapter;
 pub mod advisor;

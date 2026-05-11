@@ -1,6 +1,6 @@
-#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once the server module set is stable
 
-//! Phase 76.3 — adversarial HTTP-level auth tests.
+//! Adversarial HTTP-level auth tests.
 //!
 //! Booted server uses 127.0.0.1:0 so each test gets a kernel-assigned
 //! port. The test handler is intentionally trivial — what we care
@@ -208,9 +208,8 @@ async fn mtls_from_header_wrong_cn_returns_401() {
 
 #[tokio::test]
 async fn mtls_from_header_allowlisted_cn_passes() {
-    // CNs with dots require a `cn_to_tenant` remap (Phase 76.4) —
-    // a dotted CN cannot pass the strict `TenantId` validator on
-    // its own.
+    // CNs with dots require a `cn_to_tenant` remap — a dotted CN
+    // cannot pass the strict `TenantId` validator on its own.
     let cfg = cfg_with_auth(AuthConfig::MutualTls(MutualTlsConfig::FromHeader {
         header_name: "x-client-cert-cn".into(),
         cn_allowlist: vec!["agent-1.internal".into(), "agent-2.internal".into()],
@@ -565,7 +564,7 @@ async fn auth_none_non_loopback_refused_at_boot() {
     assert!(res.is_err(), "auth=none on 0.0.0.0 must be refused at boot");
 }
 
-// --- Phase 76.4 tenant flow ---------------------------------------
+// --- tenant flow --------------------------------------------------
 
 #[tokio::test]
 async fn static_token_with_invalid_tenant_refused_at_boot() {

@@ -1,6 +1,6 @@
-//! Phase 12.3 — bridge an MCP server's tools into the agent's `ToolRegistry`.
+//! Bridge an MCP server's tools into the agent's `ToolRegistry`.
 //!
-//! Parallel to `extension_tool.rs` (11.5). The LLM sees tools prefixed with
+//! Parallel to `extension_tool.rs`. The LLM sees tools prefixed with
 //! `mcp_` and attributed with `[mcp:<server>]` in the description; calls
 //! are routed to the owning `dyn McpClient`.
 use super::context::AgentContext;
@@ -45,7 +45,7 @@ impl McpTool {
             context_passthrough: false,
         }
     }
-    /// Phase 12.8 — builder that enables `_meta` propagation (agent_id,
+    /// Builder that enables `_meta` propagation (agent_id,
     /// session_id) on every `tools/call` this handler emits.
     pub fn with_context_passthrough(mut self, enabled: bool) -> Self {
         self.context_passthrough = enabled;
@@ -111,10 +111,10 @@ impl McpTool {
 #[async_trait]
 impl ToolHandler for McpTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        // Phase 82.1 Step 6 — share `_meta` builder with
-        // ExtensionTool so the MCP `tools/call` wire and the
-        // Phase 11 stdio wire emit identical shapes (legacy
-        // flat block + nested `nexo.binding` when bound).
+        // Share the `_meta` builder with ExtensionTool so the MCP
+        // `tools/call` wire and the extension stdio wire emit
+        // identical shapes (legacy flat block + nested
+        // `nexo.binding` when bound).
         let meta = if self.context_passthrough {
             Some(ctx.build_meta_value())
         } else {

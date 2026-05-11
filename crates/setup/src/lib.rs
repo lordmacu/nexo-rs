@@ -157,7 +157,7 @@ fn run_guided_first_run(
         }
     }
 
-    // Phase 17 — gauntlet at wizard close. Surfaces any
+    // Credential gauntlet at wizard close. Surfaces any
     // `credentials.<ch>` binding that points at a non-existent
     // instance / account before the user boots the daemon.
     if let Ok(summary) = credentials_check::run(config_dir) {
@@ -463,7 +463,7 @@ pub fn run_one(config_dir: &Path, service_id: &str) -> Result<()> {
             )
         })?;
     run_service(svc, &secrets_dir, config_dir)?;
-    // Phase 17 — always close a setup run with the gauntlet so the
+    // Always close a setup run with the credential gauntlet so the
     // user sees stale `credentials` bindings immediately.
     if matches!(
         svc.id,
@@ -514,7 +514,7 @@ pub fn run_telegram_link(config_dir: &Path, agent_id: Option<&str>) -> Result<()
     }
 }
 
-/// Phase C4.c — render the latest LLM quota events per provider.
+/// Render the latest LLM quota events per provider.
 /// Reads the process-wide cache from
 /// `nexo_llm::rate_limit_info::last_quota_events_all`. In a fresh
 /// `setup doctor` invocation the cache is empty (no LLM calls have
@@ -548,8 +548,8 @@ fn print_llm_quota_section() {
 }
 
 /// Non-interactive audit — exits with non-zero when any required field
-/// is missing OR the credential gauntlet reports errors. Async since
-/// Phase 70.6 added a sqlx-backed pairing-store check; callers from
+/// is missing OR the credential gauntlet reports errors. Async because
+/// the sqlx-backed pairing-store check needs it; callers from
 /// the binary's `#[tokio::main]` await it directly.
 pub async fn run_doctor(config_dir: &Path) -> Result<()> {
     let secrets_dir = config_dir
@@ -561,7 +561,7 @@ pub async fn run_doctor(config_dir: &Path) -> Result<()> {
     let missing = report.missing_required();
     status::print_report(&report);
 
-    // Phase 17 — credential gauntlet on top of the per-service audit.
+    // Credential gauntlet on top of the per-service audit.
     // Non-fatal on missing optional services but surfaces binding /
     // allow_agents mismatches before the daemon tries to boot.
     let cred_summary = credentials_check::run(config_dir).ok();
@@ -569,7 +569,7 @@ pub async fn run_doctor(config_dir: &Path) -> Result<()> {
         credentials_check::print(s);
     }
 
-    // Phase 70.6 — pairing-store audit. Flags bindings that have
+    // Pairing-store audit. Flags bindings that have
     // `pairing.auto_challenge: true` but an empty allowlist, so the
     // operator notices before the gate silently drops their first
     // message. Non-fatal: doctor already returns the missing-fields
@@ -577,7 +577,7 @@ pub async fn run_doctor(config_dir: &Path) -> Result<()> {
     let pairing_findings = pairing_check::audit(config_dir).await;
     pairing_check::print(&pairing_findings);
 
-    // Phase C4.c — surface the most recent LLM quota rejections per
+    // Surface the most recent LLM quota rejections per
     // provider. Reads the process-wide cache populated by
     // `nexo_llm::retry::classify_429_error`. In `setup doctor`
     // invocations the cache is always empty (fresh process) — but
@@ -606,7 +606,7 @@ pub async fn run_doctor(config_dir: &Path) -> Result<()> {
 }
 
 fn run_service(svc: &ServiceDef, secrets_dir: &Path, config_dir: &Path) -> Result<()> {
-    // Phase 17 — hijack WhatsApp / Telegram / Google so they prompt
+    // Hijack WhatsApp / Telegram / Google so they prompt
     // for `instance`, allow_agents, and auto-write the `credentials:`
     // block on the chosen agent. The declarative form cannot express
     // array entries + cross-file patches.

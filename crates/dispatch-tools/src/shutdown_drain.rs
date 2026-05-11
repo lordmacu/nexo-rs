@@ -1,4 +1,4 @@
-//! Phase 71.3 — graceful shutdown drain helper.
+//! Graceful shutdown drain helper.
 //!
 //! Walks every `Running` row in the registry, fires
 //! `notify_origin` / `notify_channel` hooks with a clean
@@ -11,7 +11,7 @@
 //! Lifted out of `src/main.rs` so the behaviour is unit-testable
 //! without spinning a full daemon. The bin's shutdown path is the
 //! only production caller, but keeping the function here means
-//! Phase 71.4's regression tests can drive it directly with a
+//! regression tests can drive it directly with a
 //! counting dispatcher.
 
 use std::sync::Arc;

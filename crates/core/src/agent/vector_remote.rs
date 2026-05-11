@@ -1,4 +1,4 @@
-//! Phase 81.26 — `VectorBackend` impl backed by a subprocess
+//! `VectorBackend` impl backed by a subprocess
 //! plugin's stdio bridge. One instance is registered per backend
 //! name listed in `manifest.plugin.extends.memory_backends`.
 //!

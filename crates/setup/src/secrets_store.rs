@@ -1,4 +1,4 @@
-//! Phase 82.10.k production adapter — file-based secrets store
+//! File-based secrets store adapter
 //! at `<state_root>/secrets/<NAME>.txt` (mode 0600) + process
 //! env injection via `std::env::set_var`.
 //!
@@ -9,7 +9,7 @@
 //! 2. Atomic file write (tmp file mode 0600 → fsync → rename)
 //!    so the value survives daemon restart.
 //!
-//! Microapp wizard's M9 Step 1 uses this to skip the operator's
+//! The microapp wizard uses this to skip the operator's
 //! manual `export MINIMAX_API_KEY=…` + restart cycle.
 
 use std::path::{Path, PathBuf};
@@ -103,7 +103,7 @@ impl SecretsStore for FsSecretsStore {
     }
 }
 
-/// Phase 82.10.s.4 — sync read path used at config-load by
+/// Sync read path used at config-load by
 /// `LlmConfig::resolve_all_keys` to populate `api_key` from the
 /// `api_key_secret_id` reference. Reads `<secrets_dir>/<id>.txt`,
 /// trims trailing whitespace (matching the write side's behaviour

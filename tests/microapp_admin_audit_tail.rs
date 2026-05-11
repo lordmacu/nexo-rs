@@ -1,4 +1,4 @@
-//! Phase 82.10.h.b.4 — integration test for
+//! Integration test for
 //! `nexo microapp admin audit tail`.
 //!
 //! Seeds a real SQLite admin audit DB via the production

@@ -1,4 +1,4 @@
-//! Phase 82.10.o — `nexo/admin/auth/*` wire types.
+//! `nexo/admin/auth/*` wire types.
 //!
 //! Today exposes `auth/rotate_token` only. Operator triggers
 //! a rotation via the microapp UI; daemon validates the new

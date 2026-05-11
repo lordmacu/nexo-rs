@@ -1,4 +1,4 @@
-//! Phase 81.8 — `ChannelAdapter` trait extension point.
+//! `ChannelAdapter` trait extension point.
 //!
 //! Lets plugins ship new channel kinds (SMS, Discord, IRC, Matrix,
 //! custom webhooks) without modifying nexo-core. Plugins register
@@ -8,12 +8,12 @@
 //!
 //! The trait stays intentionally minimal — `kind() / start() /
 //! stop() / send_outbound()`. Pairing / security / groups /
-//! threading sub-traits land as Phase 81.8.x extensions when real
+//! threading sub-traits land as extensions when real
 //! microapps demand them. Most channels need only the four
 //! methods below.
 //!
 //! Conflict semantic: **first-registers-wins-rest-rejected** (NOT
-//! first-plugin-wins like Phase 81.6/81.7). Channels compete for
+//! first-plugin-wins like the other plugin registries). Channels compete for
 //! broker topic exclusivity (`plugin.inbound.{kind}`); two plugins
 //! registering the same kind would cause routing ambiguity, so the
 //! second registration returns
@@ -93,7 +93,7 @@ pub enum ChannelAdapterError {
     },
 }
 
-/// Phase 81.8 — extension trait that lets plugins ship new channel
+/// Extension trait that lets plugins ship new channel
 /// kinds. Trait-object-safe (no `Self` returns, no async fn that
 /// returns `impl Trait`). `'static` so adapters live for the
 /// daemon lifetime.
@@ -205,7 +205,7 @@ impl ChannelAdapterRegistry {
         !guard.is_empty()
     }
 
-    /// Phase 81.24 — remove an adapter only when it was registered
+    /// Remove an adapter only when it was registered
     /// by `plugin_id`. Defends against one plugin unregistering
     /// another's adapter. Returns `true` when removed; `false` when
     /// absent or owned by a different plugin.

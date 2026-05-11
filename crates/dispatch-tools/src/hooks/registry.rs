@@ -1,6 +1,6 @@
-//! Phase 67.G.3 — in-memory map keyed by `GoalId` of every hook
+//! In-memory map keyed by `GoalId` of every hook
 //! attached to that goal. Persistence + restart safety lives in the
-//! idempotency store (67.F.3); this map is the live "who's
+//! idempotency store; this map is the live "who's
 //! listening on this goal" surface that `add_hook` / `remove_hook`
 //! / `agent_hooks_list` consume.
 //!
@@ -199,7 +199,7 @@ impl HookRegistry {
         pos
     }
 
-    /// B19 — append a hook only when no hook with the same `id` is
+    /// Append a hook only when no hook with the same `id` is
     /// already attached. Idempotent: a replay of the auto-audit
     /// hook attachment finds the slot taken and skips. Returns
     /// `Some(position)` when the hook was inserted, `None` when
@@ -336,7 +336,7 @@ mod tests {
 
     #[tokio::test]
     async fn persistence_round_trip_through_sqlite() {
-        // B17 — hooks attached against a registry with a store
+        // Hooks attached against a registry with a store
         // survive a fresh registry built against the same store.
         let store = Arc::new(SqliteHookRegistryStore::open_memory().await.unwrap())
             as Arc<dyn HookRegistryStore>;

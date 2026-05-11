@@ -1,4 +1,4 @@
-//! Phase 81.21.b.b follow-up — `nexo/admin/plugins/restart` wire types.
+//! `nexo/admin/plugins/restart` wire types.
 //!
 //! Operator-driven plugin restart. Distinct from the auto-respawn
 //! loop (which fires on crash detection); this is an intentional

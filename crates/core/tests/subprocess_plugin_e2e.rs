@@ -1,4 +1,4 @@
-//! Phase 81.17.b — end-to-end smoke for the auto-subprocess
+//! End-to-end smoke for the auto-subprocess
 //! pipeline. Builds a tempdir with a `nexo-plugin.toml` that
 //! points `[plugin.entrypoint] command` at a small bash mock,
 //! runs `wire_plugin_registry_with_runtime`, asserts the init

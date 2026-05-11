@@ -2,19 +2,12 @@
 //! [`LspClient`], file-open cache, retry on `-32801 ContentModified`,
 //! synthetic-origin-aware `last_activity` tracking.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:74-150`
-//!     — FSM `stopped → starting → running → stopping → stopped` +
-//!     `error` + `maxRestarts ?? 3`. Mirror.
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:17-28`
-//!     — `LSP_ERROR_CONTENT_MODIFIED = -32801`,
-//!     `MAX_RETRIES_FOR_TRANSIENT_ERRORS = 3`,
-//!     `RETRY_BASE_DELAY_MS = 500`. Mirror.
-//!   * `claude-code-leak/src/tools/LSPTool/LSPTool.ts:53` — file
-//!     size cap 10 MB. Mirror.
-//!   * `claude-code-leak/src/tools/LSPTool/LSPTool.ts:259-278` —
-//!     `didOpen`-on-first-touch pattern, with cached open set.
-//!     Mirror.
+//! The design mirrors a well-known prior art: an FSM `stopped →
+//! starting → running → stopping → stopped` (+ `error`) with a
+//! max-restart count of 3; `LSP_ERROR_CONTENT_MODIFIED = -32801`
+//! with 3 transient retries and a 500 ms base delay; a 10 MB
+//! file-size cap; and a `didOpen`-on-first-touch pattern backed by
+//! a cached open set.
 
 use crate::client::{FileDiagnostics, LspClient};
 use crate::error::LspError;
@@ -50,11 +43,9 @@ impl Default for SessionConfig {
 }
 
 /// Numeric LSP error code for "content modified" (server reindexing).
-/// Lifted from `LSPServerInstance.ts:17`.
 pub const LSP_ERROR_CONTENT_MODIFIED: i64 = -32801;
 
-/// Retry delays in ms for `ContentModified`. Mirror leak
-/// `LSPServerInstance.ts:23-28`.
+/// Retry delays in ms for `ContentModified`.
 pub const RETRY_DELAYS_MS: [u64; 3] = [500, 1000, 2000];
 
 /// Per-`(workspace, language)` session.
@@ -123,7 +114,7 @@ impl LspSession {
     }
 
     /// Update `last_activity_ms` UNLESS the call is
-    /// synthetic-origin (Phase 19/20 poller). Synthetic callers
+    /// synthetic-origin (a poller). Synthetic callers
     /// must not keep the session warm or we never idle-teardown.
     pub fn touch(&self, is_origin_synthetic: bool) {
         if !is_origin_synthetic {

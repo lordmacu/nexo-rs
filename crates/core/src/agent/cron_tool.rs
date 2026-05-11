@@ -1,5 +1,5 @@
-//! Phase 79.7 — `cron_create` / `cron_list` / `cron_delete` LLM
-//! tools that read/write the [`CronStore`].
+//! `cron_create` / `cron_list` / `cron_delete` LLM tools that
+//! read/write the [`CronStore`].
 //!
 //! Reference (PRIMARY):
 //!   * `claude-code-leak/src/tools/ScheduleCronTool/CronCreateTool.ts:1-157`
@@ -129,9 +129,9 @@ impl ToolHandler for CronCreateTool {
             } else {
                 Some(model_name)
             },
-            // Phase 83.8.12.5.cron — pin the agent's tenant on
-            // every cron entry so the cron LLM dispatcher
-            // resolves the tenant's own provider keys.
+            // Pin the agent's tenant on every cron entry so the
+            // cron LLM dispatcher resolves the tenant's own
+            // provider keys.
             ctx.config.tenant_id.as_deref(),
         )
         .await

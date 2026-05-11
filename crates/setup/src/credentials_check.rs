@@ -1,4 +1,4 @@
-//! Phase 17 — run the credential gauntlet from inside the wizard.
+//! Run the credential gauntlet from inside the wizard.
 //!
 //! The wizard finishes by calling [`run`] which loads the just-written
 //! config, runs `nexo_auth::build_credentials` in lenient mode, and

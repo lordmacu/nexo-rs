@@ -1,4 +1,4 @@
-//! Phase 80.11.b — receive side for the agent inbox.
+//! Receive side for the agent inbox.
 //!
 //! Subscribes once to `agent.inbox.>` and routes incoming
 //! `InboxMessage`s into per-goal in-memory buffers. The runtime
@@ -7,7 +7,7 @@
 //! and prepends them to `channel_meta_parts` so the LLM sees the
 //! messages on its next turn.
 //!
-//! Mirrors the `TeamMessageRouter` (Phase 79.6) pattern: single
+//! Mirrors the `TeamMessageRouter` pattern: single
 //! broker subscriber + per-key dashmap of in-memory consumers,
 //! cancelled by a `CancellationToken`. Buffer-on-demand: messages
 //! addressed to a goal that hasn't registered yet still queue in

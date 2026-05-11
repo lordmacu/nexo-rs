@@ -1,4 +1,4 @@
-//! Phase 90.x.mcp — `nexo/admin/mcp/*` wire types.
+//! `nexo/admin/mcp/*` wire types.
 //!
 //! Operates on `config/mcp.yaml.mcp.servers.<name>`. Mirrors the
 //! daemon's [`nexo_config::types::mcp::McpServerYaml`] enum but

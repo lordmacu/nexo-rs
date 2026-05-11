@@ -1,4 +1,4 @@
-//! Phase 88.1 — `nexo/admin/pollers/*` wire types.
+//! `nexo/admin/pollers/*` wire types.
 //!
 //! Microapp-facing surface for managing periodic tasks
 //! (cron / interval / one-shot) without dropping to YAML
@@ -141,7 +141,7 @@ pub struct PollerEntry {
     /// kinds: `agent_turn` | `gmail` | `google_calendar` |
     /// `rss` | `webhook_poll`. Future kinds extend this.
     pub kind: String,
-    /// Agent whose Phase 17 credentials this job uses.
+    /// Agent whose channel credentials this job uses.
     /// Cross-checked against `agents.yaml` at upsert time.
     pub agent: String,
     /// Schedule expression.

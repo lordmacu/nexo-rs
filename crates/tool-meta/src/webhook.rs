@@ -81,12 +81,12 @@ pub struct WebhookEnvelope {
     pub client_ip: Option<IpAddr>,
 }
 
-/// Phase 72 turn-log marker.
+/// Turn-log marker.
 ///
 /// Returns `"webhook:<source_id>"` so a downstream audit row can
 /// distinguish webhook-originated turns from native-channel
-/// inbounds. Mirrors the `"channel:<server>"` convention shipped
-/// for Phase 80.9 MCP channels.
+/// inbounds. Mirrors the `"channel:<server>"` convention used
+/// for MCP channels.
 ///
 /// # Example
 ///

@@ -1,5 +1,5 @@
 //! Shared conformance handler used by both `http_conformance_test`
-//! and `stdio_conformance_test` (Phase 76.12).
+//! and `stdio_conformance_test`.
 
 use async_trait::async_trait;
 use nexo_mcp::types::{

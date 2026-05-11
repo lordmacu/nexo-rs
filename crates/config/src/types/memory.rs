@@ -24,7 +24,7 @@ pub struct MemoryConfig {
     /// schema, change BOTH this struct AND `secret_config.rs`.
     #[serde(default)]
     pub secret_guard: SecretGuardYamlConfig,
-    /// Phase 36.2 — memory snapshot subsystem. When omitted, defaults
+    /// Memory snapshot subsystem. When omitted, defaults
     /// match `nexo_memory_snapshot::MemorySnapshotConfig::default()`:
     /// enabled, retention 30/90d/1h, encryption off, no auto-pre-dream,
     /// auto-pre-restore on. Wire-shape duplicated to keep
@@ -42,14 +42,8 @@ pub struct MemoryConfig {
 /// operates on rule IDs (kebab-case like `github-pat`,
 /// `aws-access-token`, `openai-api-key`), not on providers.
 ///
-/// Prior art (validated, not copied):
-///   * `claude-code-leak/src/services/teamMemorySync/secretScanner.ts:48,596-615,312-324`
-///     — hardcoded scanner with no YAML knob; activation via build
-///     flag (`feature('TEAMMEM')`) only. We adopt a richer
-///     operator-facing config rather than the hardcoded model.
-///   * `research/src/config/zod-schema.ts` — OpenClaw uses 2-value
-///     enums (`redactSensitive: off|tools`, `mode: enforce|warn`).
-///     We extend to 3 (`block|redact|warn`) for richer behaviour.
+/// The `mode` knob has three values (`block|redact|warn`) for
+/// richer behaviour than a simple enforce/warn toggle.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SecretGuardYamlConfig {
@@ -226,7 +220,7 @@ impl Default for LongTermConfig {
         Self {
             backend: default_backend(),
             // Default to a sqlite-backed memory at the default
-            // path so daemon zero-config (Phase 93) boots without
+            // path so the zero-config daemon boots without
             // requiring memory.yaml on disk. Operators that want
             // Redis or a custom path edit memory.yaml.
             sqlite: Some(SqliteConfig {
@@ -261,7 +255,7 @@ pub struct RedisConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct VectorConfig {
-    /// Phase 5.4 — opt-in. Absent or false means no vector index.
+    /// Opt-in. Absent or false means no vector index.
     #[serde(default = "default_vector_enabled")]
     pub enabled: bool,
     #[serde(default = "default_vector_backend")]

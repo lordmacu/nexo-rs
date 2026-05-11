@@ -1,30 +1,20 @@
-//! Phase 79.3 — `SyntheticOutput` typed-output tool.
+//! `SyntheticOutput` typed-output tool.
 //!
 //! Forces a goal to terminate with a JSON value that matches a
 //! caller-provided JSONSchema. Closes the gap between "model
 //! produces free prose" and "downstream consumer needs a struct" —
-//! Phase 19/20 pollers, Phase 51 eval harness, and any future
-//! contract-shaped goal can require this tool to be the last call.
+//! pollers, eval harnesses, and any future contract-shaped goal can
+//! require this tool to be the last call.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/SyntheticOutputTool/SyntheticOutputTool.ts:1-163`.
-//!     The leak builds one tool *per schema* via
-//!     `createSyntheticOutputTool(jsonSchema)` so the model's input
-//!     IS the schema. Nexo-rs runs as a daemon — building a fresh
-//!     tool per call breaks tool-registry semantics. Instead we
-//!     ship a single tool whose input carries BOTH the schema and
-//!     the value. Pollers and eval harnesses inject the schema via
-//!     prompt template; ad-hoc goals can pass it inline. See
-//!     `terminal_schema` follow-up below for the lift-from-leak
-//!     variant where the runtime carries the schema.
-//!
-//! Reference (secondary):
-//!   * OpenClaw `research/` — no equivalent. The single-process TS
-//!     reference shapes its outputs via Zod parsing inline; no
-//!     separate "force structured output" tool exists.
+//! Because nexo-rs runs as a daemon, building a fresh tool per
+//! schema would break tool-registry semantics, so this is a single
+//! tool whose input carries BOTH the schema and the value. Pollers
+//! and eval harnesses inject the schema via prompt template; ad-hoc
+//! goals can pass it inline. See the `terminal_schema` follow-up
+//! below for the variant where the runtime carries the schema.
 //!
 //! Validation: `jsonschema = "0.20"` (already an optional dep on
-//! nexo-core for Phase 9.2 tool-args validation). When the
+//! nexo-core for tool-args validation). When the
 //! `schema-validation` feature is off the tool refuses with a clear
 //! "feature disabled" error rather than silently passing through —
 //! synthesised output without validation is worse than no synthesis.

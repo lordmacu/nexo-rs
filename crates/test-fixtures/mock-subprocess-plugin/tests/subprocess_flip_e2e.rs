@@ -1,4 +1,4 @@
-//! Phase 81.18.b.e2e-mock-binary — daemon-side end-to-end coverage
+//! Daemon-side end-to-end coverage
 //! of the subprocess plugin spawn wire shape. Pairs the proyecto
 //! daemon's `SubprocessNexoPlugin` adapter with a synthetic mock
 //! binary (`tests/fixtures/mock_subprocess_plugin.rs`) so the test

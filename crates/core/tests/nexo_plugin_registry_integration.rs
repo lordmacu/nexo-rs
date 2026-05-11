@@ -1,4 +1,4 @@
-//! Phase 81.5 — end-to-end integration covering on-disk discovery
+//! End-to-end integration covering on-disk discovery
 //! plus `ArcSwap` snapshot semantics. Builds a real plugin tree in a
 //! tempdir, runs the discover walker, swaps two snapshots, and
 //! asserts the registry observes the new snapshot atomically.

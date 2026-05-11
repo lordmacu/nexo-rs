@@ -1,4 +1,4 @@
-//! Phase 87.1 — LLM-as-judge `AcceptanceEvaluator`.
+//! LLM-as-judge `AcceptanceEvaluator`.
 //!
 //! Routes `AcceptanceCriterion::LlmJudge` variants to a forked
 //! subagent running the judge persona prompt. The judge reads
@@ -6,11 +6,11 @@
 //! returns JSON `{verdict: "pass"|"fail", reasons: [string]}`.
 //!
 //! The actual fork dispatch + LlmClient wiring lives behind a
-//! [`JudgeBackend`] trait that 87.1.b implements with the real
+//! [`JudgeBackend`] trait that a separate impl wires up with the real
 //! `nexo-fork` machinery. This crate-internal module ships the
 //! parser, the persona prompt asset, the trait, and the
 //! `AcceptanceEvaluator` impl that converts a verdict into the
-//! Phase 67/68 [`AcceptanceFailure`] / pass shape.
+//! [`AcceptanceFailure`] / pass shape.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -56,9 +56,9 @@ pub enum JudgeError {
     Malformed(String),
 }
 
-/// Provider-agnostic backend the evaluator delegates to. Real
-/// implementation (LLM dispatch via `nexo-fork`) lands in 87.1.b;
-/// tests pass a closure-backed mock.
+/// Provider-agnostic backend the evaluator delegates to. The real
+/// implementation dispatches the LLM call via `nexo-fork`; tests
+/// pass a closure-backed mock.
 #[async_trait]
 pub trait JudgeBackend: Send + Sync + 'static {
     /// Render the judge prompt + dispatch the call. Returns the
@@ -72,8 +72,8 @@ pub trait JudgeBackend: Send + Sync + 'static {
     ) -> Result<String, JudgeError>;
 }
 
-/// Phase 87.1 — `AcceptanceEvaluator` that routes `LlmJudge`
-/// criteria to its [`JudgeBackend`]. Other criterion variants are
+/// `AcceptanceEvaluator` that routes `LlmJudge` criteria to its
+/// [`JudgeBackend`]. Other criterion variants are
 /// passed through to a fallback evaluator (typically the default
 /// rules-based one) so an operator can mix-and-match.
 pub struct LlmJudgeEvaluator {
@@ -83,8 +83,8 @@ pub struct LlmJudgeEvaluator {
     /// `DefaultAcceptanceEvaluator`; LlmJudge gets the model.
     pub fallback: Arc<dyn AcceptanceEvaluator>,
     /// Snapshot of the worker's final output the judge inspects.
-    /// Phase 87.1 ships this as a per-instance field; 87.1.b will
-    /// thread it from the orchestrator's per-goal context.
+    /// Held as a per-instance field; a follow-up will thread it from
+    /// the orchestrator's per-goal context.
     pub worker_output: String,
     /// Optional transcript summary the judge sees alongside the
     /// criterion. Empty = "no transcript".

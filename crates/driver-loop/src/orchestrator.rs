@@ -57,33 +57,33 @@ pub struct DriverOrchestrator {
     acceptance: Arc<dyn AcceptanceEvaluator>,
     workspace_manager: Arc<WorkspaceManager>,
     event_sink: Arc<dyn DriverEventSink>,
-    /// Phase 67.8 — replay-policy classifies mid-turn errors.
+    /// Replay-policy classifies mid-turn errors.
     replay_policy: Arc<dyn ReplayPolicy>,
-    /// Phase 67.9 + 77.2 — opportunistic /compact policy.
+    /// Opportunistic /compact policy.
     compact_policy: Arc<dyn CompactPolicy>,
     compact_context_window: u64,
-    /// Phase 77.2 — token + age auto-compaction config.
+    /// Token + age auto-compaction config.
     auto_config: Option<AutoCompactionConfig>,
-    /// Phase 77.2 — circuit breaker for compaction failures.
+    /// Circuit breaker for compaction failures.
     compact_breaker: Mutex<AutoCompactBreaker>,
-    /// Phase 77.3 — persist compact summaries for session resume.
+    /// Persist compact summaries for session resume.
     compact_store: Arc<dyn CompactSummaryStore>,
-    /// Phase 67.C.1 — emit `DriverEvent::Progress` after every Nth
-    /// completed attempt so chat hooks can show 'still going'. `0`
-    /// disables periodic progress beacons.
+    /// Emit `DriverEvent::Progress` after every Nth completed attempt
+    /// so chat hooks can show 'still going'. `0` disables periodic
+    /// progress beacons.
     progress_every_turns: u32,
-    /// Phase 67.C.2 — per-goal pause flag. `pause_goal(id)` flips
-    /// the watch to `true`; the loop blocks on the next iteration
-    /// until `resume_goal(id)` flips it back. The current Claude
-    /// turn is *not* killed — pause only takes effect at the
-    /// natural boundary between turns.
+    /// Per-goal pause flag. `pause_goal(id)` flips the watch to
+    /// `true`; the loop blocks on the next iteration until
+    /// `resume_goal(id)` flips it back. The current Claude turn is
+    /// *not* killed — pause only takes effect at the natural boundary
+    /// between turns.
     pause_signals: Arc<DashMap<GoalId, watch::Sender<bool>>>,
-    /// Phase 67.G.2 — per-goal CancellationToken so `cancel_agent`
-    /// can stop one goal without taking down the whole orchestrator
-    /// via `cancel_root`. The token is a child of `cancel_root`
-    /// so a global shutdown still cancels every running goal.
+    /// Per-goal CancellationToken so `cancel_agent` can stop one goal
+    /// without taking down the whole orchestrator via `cancel_root`.
+    /// The token is a child of `cancel_root` so a global shutdown
+    /// still cancels every running goal.
     cancel_tokens: Arc<DashMap<GoalId, CancellationToken>>,
-    /// B2 — operator overrides for in-flight goal budgets. The
+    /// Operator overrides for in-flight goal budgets. The
     /// loop consults this map at the top of every iteration so
     /// `update_budget` actually changes the cap (not just the
     /// snapshot). Currently only `max_turns` is grow-only mutable.
@@ -94,13 +94,13 @@ pub struct DriverOrchestrator {
     /// Claude sees the operator's note in its next turn input.
     /// FIFO so multiple rapid interrupts arrive in order.
     pending_interrupts: Arc<DashMap<GoalId, std::collections::VecDeque<String>>>,
-    /// Phase 77.5 — post-turn LLM memory extraction.
+    /// Post-turn LLM memory extraction.
     extract_memories: Option<Arc<ExtractMemories>>,
-    /// Phase 77.5 — root directory for persistent memory files.
+    /// Root directory for persistent memory files.
     memory_dir: Option<PathBuf>,
-    /// Phase 80.1.b — post-turn autoDream consolidation hooks.
-    /// Phase 80.1.b.b.b.c — multi-runner registry. Routing key
-    /// is the owning agent id (`goal.metadata["agent_id"]`).
+    /// Post-turn autoDream consolidation hooks — a multi-runner
+    /// registry. Routing key is the owning agent id
+    /// (`goal.metadata["agent_id"]`).
     /// Empty map = no auto_dream wired. Dispatch reads the agent
     /// id from the active goal and looks up the hook here;
     /// missing key = silent skip (debug log). HashMap chosen
@@ -132,7 +132,7 @@ pub struct DriverOrchestratorBuilder {
     compact_store: Option<Arc<dyn CompactSummaryStore>>,
     extract_memories: Option<Arc<ExtractMemories>>,
     memory_dir: Option<PathBuf>,
-    /// Phase 80.1.b — post-turn autoDream hook.
+    /// Post-turn autoDream hook.
     auto_dream: Option<Arc<dyn AutoDreamHook>>,
     progress_every_turns: u32,
     bin_path: Option<PathBuf>,
@@ -205,8 +205,8 @@ impl DriverOrchestratorBuilder {
         self.memory_dir = Some(p.into());
         self
     }
-    /// Phase 80.1.b — wire the autoDream post-turn hook. `None`
-    /// disables. Mirror Phase 77.5 `extract_memories` builder.
+    /// Wire the autoDream post-turn hook. `None` disables. Mirrors
+    /// the `extract_memories` builder.
     pub fn auto_dream(mut self, hook: Arc<dyn AutoDreamHook>) -> Self {
         self.auto_dream = Some(hook);
         self
@@ -259,8 +259,7 @@ impl DriverOrchestratorBuilder {
         // path (`socket_cancel.cancel()` + `_socket_handle.await`)
         // works without changes. The permission-prompt
         // forwarder feature is unavailable on Windows until
-        // we add a named-pipe / TCP-loopback alternative
-        // (Phase 27.x follow-up).
+        // we add a named-pipe / TCP-loopback alternative.
         let socket_cancel = TokioCancel::new();
         #[cfg(unix)]
         let socket_handle = {
@@ -290,9 +289,8 @@ impl DriverOrchestratorBuilder {
             extract_memories: self.extract_memories,
             memory_dir: self.memory_dir,
             auto_dream: {
-                // Phase 80.1.b.b.b.c — preserve the
-                // `builder.auto_dream(hook).build()` shape by
-                // registering the legacy single hook under the
+                // Preserve the `builder.auto_dream(hook).build()`
+                // shape by registering the single hook under the
                 // sentinel `"_default"` key. New code calls
                 // `register_auto_dream(agent_id, hook)` directly.
                 let mut m: std::collections::HashMap<String, Arc<dyn AutoDreamHook>> =
@@ -321,7 +319,7 @@ impl DriverOrchestrator {
         DriverOrchestratorBuilder::default()
     }
 
-    /// Phase 80.1.b.b.b.c — register a runner for `agent_id`.
+    /// Register a runner for `agent_id`.
     /// Returns the previous runner under that key (if any) so
     /// callers can take ownership of the displaced hook for
     /// cleanup. Atomic + thread-safe: subsequent `run_turn` calls
@@ -336,15 +334,15 @@ impl DriverOrchestrator {
         guard.insert(agent_id, hook)
     }
 
-    /// Phase 80.1.b.b.b.c — atomically remove the runner for
-    /// `agent_id`. Returns the removed hook if one was registered.
+    /// Atomically remove the runner for `agent_id`. Returns the
+    /// removed hook if one was registered.
     pub fn unregister_auto_dream(&self, agent_id: &str) -> Option<Arc<dyn AutoDreamHook>> {
         let mut guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
         guard.remove(agent_id)
     }
 
-    /// Phase 80.1.b.b.b.c — sorted list of agent ids that
-    /// currently have a runner registered. Used by tests +
+    /// Sorted list of agent ids that currently have a runner
+    /// registered. Used by tests +
     /// admin-ui observability; the sort makes assertions stable.
     pub fn auto_dream_agents(&self) -> Vec<String> {
         let guard = self.auto_dream.lock().unwrap_or_else(|p| p.into_inner());
@@ -362,7 +360,7 @@ impl DriverOrchestrator {
             .is_empty()
     }
 
-    /// Phase 80.1.b.b.b.b compat shim. New code should call
+    /// Compat shim. New code should call
     /// [`register_auto_dream(agent_id, hook)`](Self::register_auto_dream)
     /// for multi-runner routing. `Some(hook)` registers under the
     /// sentinel `"_default"` key; `None` clears every registered
@@ -388,11 +386,11 @@ impl DriverOrchestrator {
         }
     }
 
-    /// Phase 67.C.2 — request the goal's loop to hold before its
-    /// next turn. Idempotent. No-op when the goal isn't running.
+    /// Request the goal's loop to hold before its next turn.
+    /// Idempotent. No-op when the goal isn't running.
     pub fn pause_goal(&self, goal_id: GoalId) -> bool {
         if let Some(tx) = self.pause_signals.get(&goal_id) {
-            // B11 — `send` returns Err when no receivers exist
+            // `send` returns Err when no receivers exist
             // (e.g. between pre_register_goal and run_goal start).
             // `send_replace` updates the value unconditionally so
             // the loop sees `true` whenever it does subscribe.
@@ -402,7 +400,7 @@ impl DriverOrchestrator {
         false
     }
 
-    /// Phase 67.C.2 — release a paused goal's loop. Idempotent.
+    /// Release a paused goal's loop. Idempotent.
     pub fn resume_goal(&self, goal_id: GoalId) -> bool {
         if let Some(tx) = self.pause_signals.get(&goal_id) {
             tx.send_replace(false);
@@ -420,8 +418,8 @@ impl DriverOrchestrator {
             .unwrap_or(false)
     }
 
-    /// B2 — install or grow the budget override for a running
-    /// goal. `max_turns` only goes up (caller is expected to
+    /// Install or grow the budget override for a running goal.
+    /// `max_turns` only goes up (caller is expected to
     /// guard against shrink-below-used). Returns the effective
     /// `max_turns` after merge with the prior override (if any).
     pub fn set_goal_max_turns(&self, goal_id: GoalId, new_max: u32) -> Option<u32> {
@@ -468,8 +466,8 @@ impl DriverOrchestrator {
             .unwrap_or_default()
     }
 
-    /// B11 — pre-register the per-goal cancel + pause tokens for a
-    /// goal that's being reattached after daemon restart but whose
+    /// Pre-register the per-goal cancel + pause tokens for a goal
+    /// that's being reattached after daemon restart but whose
     /// `run_goal` hasn't started yet. Lets `cancel_agent` /
     /// `pause_agent` target the goal in the gap between reattach
     /// and the actual respawn. The tokens are removed when the
@@ -485,7 +483,7 @@ impl DriverOrchestrator {
             .or_insert_with(|| self.cancel_root.child_token());
     }
 
-    /// Phase 67.G.2 — cancel a single in-flight goal. Idempotent.
+    /// Cancel a single in-flight goal. Idempotent.
     /// Returns `true` when a goal was found and signalled. The
     /// underlying `run_goal` loop will exit at the next safe point
     /// (between turns, or when the active turn's
@@ -506,7 +504,7 @@ impl DriverOrchestrator {
             .unwrap_or(false)
     }
 
-    /// Phase 67.C.1 — fire-and-forget spawn. Returns the
+    /// Fire-and-forget spawn. Returns the
     /// [`tokio::task::JoinHandle`] so the caller (typically the
     /// `program_phase` tool) can register the goal in the agent
     /// registry without waiting for completion. The orchestrator is
@@ -524,8 +522,8 @@ impl DriverOrchestrator {
         let started = Instant::now();
         let goal_id = goal.id;
 
-        // Phase 67.C.2 + B11 — register pause signal. If
-        // pre_register_goal already populated the entry (reattach
+        // Register pause signal. If pre_register_goal already
+        // populated the entry (reattach
         // path), reuse the existing sender so any in-flight
         // pause request is honoured by the new loop.
         let mut pause_rx = match self.pause_signals.get(&goal_id) {
@@ -536,8 +534,8 @@ impl DriverOrchestrator {
                 rx
             }
         };
-        // Phase 67.G.2 + B11 — same reuse rule for the cancel
-        // token: a pre-registered token has already been handed
+        // Same reuse rule for the cancel token: a pre-registered
+        // token has already been handed
         // out to anyone holding `cancel_goal`; clobbering it here
         // would silently drop the cancellation signal.
         let goal_cancel = match self.cancel_tokens.get(&goal_id) {
@@ -564,8 +562,8 @@ impl DriverOrchestrator {
         let mut last_acceptance: Option<AcceptanceVerdict> = None;
         let mut final_text: Option<String> = None;
         let mut total_turns: u32 = 0;
-        // Phase 67.9 + 77.2 compact-policy state.
-        // Phase 77.3 — load prior compact summary for session resume.
+        // Compact-policy state.
+        // Load prior compact summary for session resume.
         let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> = match self
             .compact_store
             .load(&goal.id.0.to_string(), &goal_id)
@@ -582,14 +580,14 @@ impl DriverOrchestrator {
             _ => None,
         };
         let mut last_was_compact = false;
-        // Phase 77.3 — token count before the compact turn (captured at
+        // Token count before the compact turn (captured at
         // schedule time, consumed in the compact-turn handler for
         // CompactSummary persistence).
         let mut compact_before_tokens: u64 = 0;
         let final_outcome: AttemptOutcome;
 
         loop {
-            // Phase 67.C.2 — honour pause requests before advancing
+            // Honour pause requests before advancing
             // to the next turn. We hold here in a cancellation-aware
             // wait; cancel still wins over a stuck pause.
             while *pause_rx.borrow() {
@@ -602,7 +600,7 @@ impl DriverOrchestrator {
                 }
             }
 
-            // B2 — operator override (set_goal_max_turns) lifts the
+            // Operator override (set_goal_max_turns) lifts the
             // turn cap for in-flight goals. Other axes still come
             // from the original goal.budget.
             let effective_budget = match self.budget_overrides.get(&goal_id) {
@@ -666,8 +664,8 @@ impl DriverOrchestrator {
                 extras,
             };
 
-            // Phase 67.6 — checkpoint pre-attempt. Sentinel
-            // `<no-git>` short-circuits diff_stat below.
+            // Checkpoint pre-attempt. Sentinel `<no-git>`
+            // short-circuits diff_stat below.
             let cp_label = format!("turn-{total_turns}-pre");
             let cp_sha = self
                 .workspace_manager
@@ -702,7 +700,7 @@ impl DriverOrchestrator {
                 "phase78: attempt returned",
             );
 
-            // Phase 67.6 — best-effort diff_stat injection.
+            // Best-effort diff_stat injection.
             if cp_sha != crate::workspace::WorkspaceManager::NO_GIT_SENTINEL {
                 if let Ok(diff) = self.workspace_manager.diff_stat(&workspace, &cp_sha).await {
                     if !diff.trim().is_empty() {
@@ -719,7 +717,7 @@ impl DriverOrchestrator {
 
             usage = result.usage_after.clone();
 
-            // Phase 67.9 + 77.2 — compact turns are meta: absorb tokens,
+            // Compact turns are meta: absorb tokens,
             // do not bump turn counter, do not process outcome as work.
             if last_was_compact {
                 last_was_compact = false;
@@ -750,7 +748,7 @@ impl DriverOrchestrator {
                         after_tokens: usage.tokens,
                     })
                     .await;
-                // Phase 77.3 — persist compact summary for session resume.
+                // Persist compact summary for session resume.
                 if compact_ok {
                     if let Some(ref summary_text) = result.final_text {
                         let summary = CompactSummary {
@@ -774,7 +772,7 @@ impl DriverOrchestrator {
                             after_tokens: usage.tokens,
                         })
                         .await;
-                    // Phase 77.3 + 77.5 — post-compact cleanup + extraction tick.
+                    // Post-compact cleanup + extraction tick.
                     let mut cleanup = PostCompactCleanup::new();
                     if let (Some(ref extract), Some(ref memory_dir)) =
                         (&self.extract_memories, &self.memory_dir)
@@ -799,7 +797,7 @@ impl DriverOrchestrator {
                 })
                 .await;
 
-            // Phase 67.C.1 — periodic progress beacon. `0` disables.
+            // Periodic progress beacon. `0` disables.
             if self.progress_every_turns > 0
                 && total_turns > 0
                 && total_turns % self.progress_every_turns == 0
@@ -815,7 +813,7 @@ impl DriverOrchestrator {
                     .await;
             }
 
-            // Phase 77.5 — post-turn memory extraction.
+            // Post-turn memory extraction.
             if let Some(ref extract) = self.extract_memories {
                 extract.tick();
                 match extract.check_gates() {
@@ -841,15 +839,14 @@ impl DriverOrchestrator {
                 }
             }
 
-            // Phase 80.1.b — post-turn autoDream consolidation. Mirrors
-            // leak's stopHooks invocation (`autoDream.ts:316-324`).
+            // Post-turn autoDream consolidation, invoked as a stop hook.
             // Per-turn cost when enabled: one stat (lock mtime) — gates
             // fail cheap when cadence not yet due. Errors absorbed via
             // `let _ = ...` so a runner failure NEVER breaks the
             // driver-loop turn.
             //
-            // Phase 80.1.b.b.b.c — multi-runner dispatch. Resolve
-            // agent_id from goal.metadata (canonical convention,
+            // Multi-runner dispatch: resolve agent_id from goal.metadata
+            // (canonical convention,
             // see `Goal::with_agent_id`) and look up the runner
             // for that agent in the orchestrator's HashMap. Empty
             // agent_id with a non-empty registry → warn (operator
@@ -892,7 +889,7 @@ impl DriverOrchestrator {
                     goal_id,
                     session_id: goal_id.0.to_string(),
                     transcript_dir,
-                    kairos_active: false, // Phase 80.15 future
+                    kairos_active: false,
                     remote_mode: false,
                 };
                 let outcome_kind: AutoDreamOutcomeKind = ad.check_and_run(&dream_ctx).await;
@@ -905,7 +902,7 @@ impl DriverOrchestrator {
                     .await;
             }
 
-            // Phase 67.9 + 77.2 — opportunistic /compact: if pressure
+            // Opportunistic /compact: if pressure
             // crosses threshold or session age expires, schedule next
             // iteration as a compact turn.
             let session_age_minutes = started.elapsed().as_secs() / 60;
@@ -1008,8 +1005,8 @@ impl DriverOrchestrator {
                     }
                 }
                 AttemptOutcome::Continue { reason } | AttemptOutcome::Escalate { reason } => {
-                    // Phase 67.8 — replay-policy classifies the
-                    // error and decides whether to retry the same
+                    // Replay-policy classifies the error and decides
+                    // whether to retry the same
                     // turn with a fresh session, advance to the
                     // next turn, or escalate.
                     let hint = match &result.outcome {
@@ -1081,14 +1078,10 @@ impl DriverOrchestrator {
                             continue;
                         }
                         ReplayDecision::CompactAndRetry => {
-                            // Phase 85.1 — reactive 413 recovery: bump
+                            // Reactive 413 recovery: bump
                             // `consecutive_413`, undo the turn bump,
                             // let the proactive compact path fire on
-                            // the retry loop. The full integration
-                            // (force `Trigger::Reactive413` without
-                            // consulting the proactive estimator)
-                            // lands in 85.1.b alongside provider 413
-                            // detection.
+                            // the retry loop.
                             usage.consecutive_413 = usage.consecutive_413.saturating_add(1);
                             total_turns = total_turns.saturating_sub(1);
                             usage.turns = total_turns;
@@ -1148,14 +1141,14 @@ impl DriverOrchestrator {
                 outcome: outcome.clone(),
             })
             .await;
-        // Phase 67.C.2 — clean up pause signal once the loop exits.
+        // Clean up pause signal once the loop exits.
         self.pause_signals.remove(&goal_id);
-        // Phase 67.G.2 — drop the per-goal cancel token.
+        // Drop the per-goal cancel token.
         self.cancel_tokens.remove(&goal_id);
-        // B2 — drop budget override entry so a new spawn of the
+        // Drop budget override entry so a new spawn of the
         // same id starts fresh.
         self.budget_overrides.remove(&goal_id);
-        // S3 — also clear any queued operator interrupts that
+        // Also clear any queued operator interrupts that
         // never made it into a turn (e.g. queued late while the
         // goal was already wrapping up). Without this they leak.
         self.pending_interrupts.remove(&goal_id);

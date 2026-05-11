@@ -1,8 +1,8 @@
 //! CLI wrapper around `nexo_llm_auth::anthropic` — OAuth PKCE flow
 //! for Claude.ai subscriptions.
 //!
-//! Phase 82.10.u.1 extracted the cryptographic + HTTP-exchange
-//! primitives into `nexo-llm-auth` so the admin RPC handler
+//! The cryptographic + HTTP-exchange
+//! primitives live in `nexo-llm-auth` so the admin RPC handler
 //! (`oauth_start` / `oauth_finish`) can reuse them. This file keeps
 //! the interactive glue: print URL banner, best-effort browser
 //! open, read pasted `<code>#<state>` from stdin, hand off to the

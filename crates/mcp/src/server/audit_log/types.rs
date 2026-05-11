@@ -92,8 +92,8 @@ mod tests {
 
     #[test]
     fn audit_outcome_re_exported_from_telemetry() {
-        // Sanity: the alias resolves to the bounded set 76.10
-        // exposed. `outcome.as_label()` is reused.
+        // Sanity: the alias resolves to the bounded `Outcome` set
+        // and `outcome.as_label()` is reused.
         let o: AuditOutcome = Outcome::RateLimited;
         assert_eq!(o.as_label(), "rate_limited");
     }

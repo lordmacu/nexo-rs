@@ -1,6 +1,6 @@
-//! Phase 81.13 — shared plugin id regex + reserved id list.
+//! Shared plugin id regex + reserved id list.
 //!
-//! Before 81.13 these constants were duplicated across
+//! These constants used to be duplicated across
 //! `nexo-extensions::manifest` (legacy `^[a-z][a-z0-9_-]*$`,
 //! up to `MAX_ID_LEN = 64`) and `nexo-plugin-manifest::validate`
 //! (stricter `^[a-z][a-z0-9_]{0,31}$`, length 32, no hyphens).

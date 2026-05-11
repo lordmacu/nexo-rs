@@ -1,4 +1,4 @@
-//! Phase 82.12 — HTTP server boot supervisor.
+//! HTTP server boot supervisor.
 //!
 //! Microapps that declare `[capabilities.http_server]` in
 //! `plugin.toml` get a side-channel health check:
@@ -213,7 +213,7 @@ pub fn validate_bind_policy(
 /// Convenience type alias used by boot wiring.
 pub type SharedHttpSupervisor = Arc<HttpServerSupervisor>;
 
-/// Phase 82.12 — sha256-hex digest of a bearer token,
+/// Sha256-hex digest of a bearer token,
 /// truncated to the first 16 chars. Used in
 /// `nexo/notify/token_rotated.old_hash` so microapps verify
 /// the rotation message matches the token they hold without

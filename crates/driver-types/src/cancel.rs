@@ -29,7 +29,7 @@ impl CancellationToken {
         self.inner.cancelled().await
     }
 
-    /// Phase 67.G.2 — derive a child token tied to this one. The
+    /// Derive a child token tied to this one. The
     /// child can be cancelled independently; cancelling the parent
     /// also cancels the child. Lets the orchestrator give each
     /// in-flight goal its own cancel knob without losing the

@@ -1,8 +1,8 @@
 //! Runtime-side MCP config — per-server launch descriptors.
 //!
-//! Produced from `nexo_config::McpConfig` at startup. 12.2 expanded the
-//! shape with HTTP variants; the existing stdio `McpServerConfig` (12.1)
-//! is unchanged and embedded in `McpServerRuntimeConfig::Stdio`.
+//! Produced from `nexo_config::McpConfig` at startup. The shape
+//! carries both stdio and HTTP variants; the stdio `McpServerConfig`
+//! is embedded in `McpServerRuntimeConfig::Stdio`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -28,10 +28,10 @@ pub enum McpServerRuntimeConfig {
         initialize_timeout: Duration,
         call_timeout: Duration,
         shutdown_grace: Duration,
-        /// Phase 12.8 — if Some and server advertises `logging`
-        /// capability, client sends `logging/setLevel` post-init.
+        /// If Some and server advertises `logging` capability,
+        /// client sends `logging/setLevel` post-init.
         log_level: Option<String>,
-        /// Phase 12.8 — per-server override for `mcp.context.passthrough`.
+        /// Per-server override for `mcp.context.passthrough`.
         context_passthrough: Option<bool>,
     },
 }
@@ -52,22 +52,21 @@ pub struct McpRuntimeConfig {
     pub servers: Vec<McpServerRuntimeConfig>,
     pub session_ttl: Duration,
     pub idle_reap_interval: Duration,
-    /// Phase 12.8 follow-up — opt-in reset when a live server's
-    /// `log_level` is unset on hot-reload (Some→None).
+    /// Opt-in reset when a live server's `log_level` is unset on
+    /// hot-reload (Some→None).
     pub reset_level_on_unset: bool,
-    /// Phase 12.8 follow-up — level sent when `reset_level_on_unset`
-    /// fires. Default `"info"`.
+    /// Level sent when `reset_level_on_unset` fires. Default
+    /// `"info"`.
     pub default_reset_level: String,
-    /// Phase 12.5 follow-up — LRU+TTL cache for `resources/read`. Off
-    /// by default.
+    /// LRU+TTL cache for `resources/read`. Off by default.
     pub resource_cache: ResourceCacheConfig,
-    /// Phase 12.5 follow-up — opt-in URI scheme allowlist (e.g.
+    /// Opt-in URI scheme allowlist (e.g.
     /// `["file", "db"]`). Empty = permissive; otherwise unknown schemes
     /// are rejected before dispatch (and logged + counted).
     pub resource_uri_allowlist: Vec<String>,
 }
 
-/// Phase 12.7 — extension-declared MCP servers to merge into the runtime.
+/// Extension-declared MCP servers to merge into the runtime.
 /// Caller (nexo-core / main) obtains these via
 /// `nexo_extensions::collect_mcp_declarations`.
 #[derive(Debug, Clone)]

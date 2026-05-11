@@ -1,4 +1,4 @@
-//! Integration tests for Phase 12.1 — `StdioMcpClient` against the
+//! Integration tests for `StdioMcpClient` against the
 //! `mock_mcp_server` example binary.
 
 use std::collections::HashMap;

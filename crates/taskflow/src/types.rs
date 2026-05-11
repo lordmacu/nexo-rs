@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Lifecycle states a flow can be in. Transitions are enforced in Phase 14.2.
+/// Lifecycle states a flow can be in. Transitions are enforced by
+/// `can_transition_to`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowStatus {
@@ -25,7 +26,7 @@ impl FlowStatus {
 
     /// Legal direct transitions from this status. Cancellation is allowed
     /// from any non-terminal status; the rest are constrained to a small
-    /// graph that mirrors the documented Phase 14 lifecycle.
+    /// graph that mirrors the documented flow lifecycle.
     pub fn can_transition_to(&self, next: FlowStatus) -> bool {
         if self.is_terminal() {
             return false;

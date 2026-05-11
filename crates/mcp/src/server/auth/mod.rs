@@ -1,15 +1,14 @@
-//! Phase 76.3 — pluggable authentication for the MCP HTTP transport.
+//! Pluggable authentication for the MCP HTTP transport.
 //!
 //! The trait [`McpAuthenticator`] is what the HTTP handlers call.
-//! Three production impls ship in this sub-phase:
+//! Three production impls ship:
 //!   * [`static_token::StaticTokenAuthenticator`] — bearer token,
 //!     constant-time compared via `subtle`.
 //!   * [`bearer_jwt::BearerJwtAuthenticator`] — JWT validated against
 //!     a JWKS document with rotation, single-flight refresh and
 //!     stale-OK fallback.
 //!   * [`mutual_tls::MutualTlsAuthenticator`] — peer-cert identity
-//!     forwarded by a trusted reverse proxy (76.13 will add native
-//!     in-process rustls).
+//!     forwarded by a trusted reverse proxy.
 //!
 //! Plus a [`none::NoneAuthenticator`] for dev/loopback work that
 //! refuses to construct on a non-loopback bind.
@@ -166,8 +165,8 @@ pub enum AuthConfig {
         /// Env var name for callers to resolve at YAML-load time.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token_env: Option<String>,
-        /// Phase 76.4 — operator-pinned tenant for this token. When
-        /// absent, the principal carries [`TenantId::DEFAULT`].
+        /// Operator-pinned tenant for this token. When absent, the
+        /// principal carries [`TenantId::DEFAULT`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant: Option<String>,
     },

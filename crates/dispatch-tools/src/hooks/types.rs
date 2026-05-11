@@ -1,6 +1,6 @@
 //! Hook type surface — serde-friendly so completion hooks can be
-//! attached at dispatch time and round-trip through SQLite (67.F.3)
-//! / NATS payloads.
+//! attached at dispatch time and round-trip through SQLite / NATS
+//! payloads.
 
 use std::time::Duration;
 
@@ -79,7 +79,6 @@ pub enum HookAction {
         recipient: String,
     },
     /// Spawn another goal when this transition fires (chaining).
-    /// Wired in 67.F.2.
     DispatchPhase {
         phase_id: String,
         /// Trigger guard — usually `done` so chaining only happens
@@ -96,7 +95,7 @@ pub enum HookAction {
     /// Publish the hook payload as JSON on a NATS subject.
     NatsPublish { subject: String },
     /// Run an arbitrary shell command. Gated by config
-    /// `program_phase.allow_shell_hooks`. Wired in 67.F.4.
+    /// `program_phase.allow_shell_hooks`.
     Shell {
         cmd: String,
         #[serde(default = "default_hook_timeout", with = "humantime_serde")]

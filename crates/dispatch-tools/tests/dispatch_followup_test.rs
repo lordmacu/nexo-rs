@@ -1,4 +1,4 @@
-//! Phase 67.E.2 — `dispatch_followup` decision paths. Same shape
+//! `dispatch_followup` decision paths. Same shape
 //! as the program_phase tests: queue / cap / capability checks
 //! exercise without requiring a real subprocess.
 

@@ -1,7 +1,7 @@
-//! Phase 80.9 boot helper — wires the channel pipeline together.
+//! Channel boot helper — wires the channel pipeline together.
 //!
-//! Composes the four building blocks shipped in this phase into
-//! the smallest set of handles `main.rs` has to manage:
+//! Composes the four channel building blocks into the smallest set
+//! of handles `main.rs` has to manage:
 //!
 //! ```text
 //! per process:
@@ -120,10 +120,10 @@ pub fn enumerate_targets<'a>(
         .collect()
 }
 
-/// Phase 80.9.f — build a [`crate::channel::ReevaluateInputs`]
-/// from a flat list of `(binding_id, ChannelsConfig,
-/// allowed_servers)` tuples. Caller produces this from the
-/// freshly-loaded YAML inside the Phase 18 reload post-hook.
+/// Build a [`crate::channel::ReevaluateInputs`] from a flat list
+/// of `(binding_id, ChannelsConfig, allowed_servers)` tuples.
+/// Caller produces this from the freshly-loaded YAML inside the
+/// config reload post-hook.
 pub fn build_reevaluate_inputs(
     bindings: impl IntoIterator<Item = (String, Arc<ChannelsConfig>, Vec<String>)>,
 ) -> crate::channel::ReevaluateInputs {

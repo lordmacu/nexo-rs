@@ -1,7 +1,6 @@
-//! Phase 81.1 — `nexo-plugin.toml` schema definitions + parser.
+//! `nexo-plugin.toml` schema definitions + parser.
 //!
-//! See `lib.rs` module doc for IRROMPIBLE refs and architectural
-//! context.
+//! See `lib.rs` module doc for architectural context.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,23 +16,22 @@ pub const PLUGIN_MANIFEST_FILENAME: &str = "nexo-plugin.toml";
 // ── Top-level wrapper ────────────────────────────────────────────
 
 /// Top-level TOML structure. Always `[plugin]` table at root.
-/// Top-level plugin manifest. Phase 81.13 introduces
-/// [`PluginManifest::manifest_version`] so future schema bumps
-/// can land without an immediate breaking change for plugin
-/// authors. Today only `1` (legacy compat mode, auto-translated
-/// from the pre-81.13 dual-file shape) and `2` (canonical, this
-/// file) are accepted.
+/// [`PluginManifest::manifest_version`] lets future schema bumps
+/// land without an immediate breaking change for plugin authors.
+/// Today only `1` (legacy compat mode, auto-translated from the
+/// older dual-file shape) and `2` (canonical, this file) are
+/// accepted.
 ///
-/// Plugins authored before 81.13 omitted the field entirely;
-/// the parser maps that to v1 + emits a one-shot deprecation
-/// warning. New plugins set `manifest_version = 2` explicitly.
+/// Older plugins omitted the field entirely; the parser maps
+/// that to v1 + emits a one-shot deprecation warning. New
+/// plugins set `manifest_version = 2` explicitly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     /// Schema revision of this manifest file. `1` = legacy
-    /// (auto-migrated by the parser); `2` = canonical Phase
-    /// 81.13 shape. Defaults to `1` so manifests authored
-    /// before 81.13 (which omitted the field) keep parsing.
+    /// (auto-migrated by the parser); `2` = canonical shape.
+    /// Defaults to `1` so older manifests (which omitted the
+    /// field) keep parsing.
     #[serde(default = "default_manifest_version")]
     pub manifest_version: u32,
     pub plugin: PluginSection,
@@ -106,12 +104,10 @@ pub struct PluginSection {
     #[serde(default)]
     pub config: ConfigSection,
 
-    /// Phase 81.28 — per-registry capability declarations.
+    /// Per-registry capability declarations.
     /// Subprocess plugins use this to declare which channel
     /// kinds / LLM provider IDs / memory backend IDs / hook IDs
-    /// they contribute. Daemon dispatch wiring lands in 81.24
-    /// (channels), 81.25 (llm_providers), 81.26 (memory_backends),
-    /// 81.27 (hooks). Empty section is the legacy default —
+    /// they contribute. Empty section is the legacy default —
     /// in-tree plugins keep working unchanged.
     #[serde(default)]
     pub extends: ExtendsSection,
@@ -131,34 +127,33 @@ pub struct PluginSection {
     #[serde(default)]
     pub meta: MetaSection,
 
-    /// Phase 81.14 — optional subprocess entrypoint. When `command`
+    /// Optional subprocess entrypoint. When `command`
     /// is `Some`, the daemon spawns this binary as a child process
     /// and drives the plugin via newline-delimited JSON-RPC over
     /// stdio (`SubprocessNexoPlugin` adapter). When `command` is
     /// `None` (the default), the manifest describes an in-tree
-    /// native Rust plugin linked into the daemon binary —
-    /// 81.12.a/b/c/d's dual-trait migration shape.
+    /// native Rust plugin linked into the daemon binary.
     ///
-    /// All in-tree plugin manifests shipped by 81.12.a-d (browser /
-    /// telegram / whatsapp / email) parse cleanly without this
-    /// section because every field defaults.
+    /// In-tree plugin manifests (browser / telegram / whatsapp /
+    /// email) parse cleanly without this section because every
+    /// field defaults.
     #[serde(default)]
     pub entrypoint: EntrypointSection,
 
-    /// Phase 81.21.b — supervisor knobs (auto-respawn config +
+    /// Supervisor knobs (auto-respawn config +
     /// stderr tail capture for crashed events). Every field
     /// defaults so manifests without `[plugin.supervisor]` keep
     /// today's behavior (no respawn, 32-line stderr tail).
     #[serde(default)]
     pub supervisor: SupervisorSection,
 
-    /// Phase 81.22 — bubblewrap-based sandbox manifest section.
+    /// Bubblewrap-based sandbox manifest section.
     /// Default = disabled, so every existing manifest parses
     /// unchanged. Subprocess plugins opt in via
     /// `[plugin.sandbox] enabled = true` to get fs/network
     /// allowlist enforcement at spawn time on Linux. macOS
     /// is currently a no-op + warn (native sandbox-exec
-    /// integration deferred to 81.22.macos).
+    /// integration is a future addition).
     #[serde(default)]
     pub sandbox: crate::sandbox::SandboxSection,
 
@@ -189,12 +184,12 @@ pub struct PluginSection {
     pub http_server: Option<toml::Value>,
 }
 
-// ── Subprocess entrypoint (Phase 81.14) ─────────────────────────
+// ── Subprocess entrypoint ───────────────────────────────────────
 
-/// Phase 81.14 — declares how the daemon launches an out-of-tree
+/// Declares how the daemon launches an out-of-tree
 /// plugin as a child process. Empty / absent means "this manifest
-/// describes an in-tree Rust plugin" — preserved as the default so
-/// every existing 81.12.a-d manifest stays valid.
+/// describes an in-tree Rust plugin" — the default, so existing
+/// in-tree manifests stay valid.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntrypointSection {
@@ -220,7 +215,7 @@ impl EntrypointSection {
     /// plugin. The daemon's `wire_plugin_registry` reads this to
     /// pick `SubprocessNexoPlugin` factory over the in-tree closure
     /// path. Empty / unset always returns `false` for backward
-    /// compatibility with 81.12.a-d in-tree manifests.
+    /// compatibility with in-tree manifests.
     pub fn is_subprocess(&self) -> bool {
         self.command
             .as_deref()
@@ -229,19 +224,19 @@ impl EntrypointSection {
     }
 }
 
-// ── Supervisor (Phase 81.21.b) ──────────────────────────────────
+// ── Supervisor ──────────────────────────────────────────────────
 
-/// Phase 81.21.b — supervisor configuration. Controls how the
+/// Supervisor configuration. Controls how the
 /// daemon reacts when a subprocess plugin's child process exits
 /// unexpectedly.
 ///
-/// Today (81.21.b) only `stderr_tail_lines` is read — the host
+/// Today only `stderr_tail_lines` is read — the host
 /// captures that many recent stderr lines and attaches them to
 /// the `plugin.lifecycle.<id>.crashed` broker event so operators
 /// can debug without grepping logs. Auto-respawn fields parse
-/// + validate cleanly but are NOT yet wired (deferred to
-/// 81.21.b.b which adds the higher-level supervisor that owns
-/// the spawn lifecycle).
+/// + validate cleanly but are NOT yet wired (the higher-level
+/// supervisor that owns the spawn lifecycle is a future
+/// addition).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SupervisorSection {
@@ -251,8 +246,8 @@ pub struct SupervisorSection {
     /// `false` — opt-in because community-tier plugins should
     /// not silently keep restarting if they're broken.
     ///
-    /// Phase 81.21.b ships the manifest field; 81.21.b.b ships
-    /// the actual respawn loop. With this set today, the host
+    /// The manifest field exists today; the actual respawn loop
+    /// is a future addition. With this set today, the host
     /// logs a `tracing::info!(target: "plugin.supervisor",
     /// respawn_requested = true, "respawn config not yet wired")`
     /// reminder on first crash so operators know the field is
@@ -309,14 +304,14 @@ impl Default for SupervisorSection {
 /// requesting megabytes of in-memory ring buffer.
 pub const SUPERVISOR_STDERR_TAIL_MAX: usize = 512;
 
-/// Phase 90 audit fix — minimum allowed `backoff_ms`. A smaller
+/// Minimum allowed `backoff_ms`. A smaller
 /// base degenerates the documented exponential schedule into a
 /// tight retry loop. 100ms is generous enough for the cheapest
 /// healthy plugin and small enough to allow legitimate "fast
 /// recovery" tuning.
 pub const SUPERVISOR_BACKOFF_MS_MIN: u64 = 100;
 
-/// Phase 90 audit fix — maximum allowed `backoff_ms`. Larger bases
+/// Maximum allowed `backoff_ms`. Larger bases
 /// saturate the `base * max_attempts * 2` reset-counter heuristic
 /// (capped internally at 600s) so per-window recovery silently
 /// stops working. 5min upper limit keeps the heuristic meaningful
@@ -330,20 +325,20 @@ pub const SUPERVISOR_BACKOFF_MS_MAX: u64 = 300_000;
 pub struct Capabilities {
     #[serde(default)]
     pub provides: Vec<Capability>,
-    /// Phase 82.10 — admin RPC capabilities this microapp needs
+    /// Admin RPC capabilities this microapp needs
     /// from the daemon. Layered grant model: required/optional
     /// declared here; operator decides which to grant via
     /// `extensions.yaml.<id>.capabilities_grant`.
     #[serde(default)]
     pub admin: AdminCapabilities,
-    /// Phase 82.12 — HTTP server capability. When set, the
+    /// HTTP server capability. When set, the
     /// microapp serves an HTTP UI / API; the boot supervisor
     /// waits for the health endpoint to return 200 before
     /// marking the extension `ready`. Default `None` keeps
     /// stdio-only microapps unaffected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_server: Option<HttpServerCapability>,
-    /// Phase 83.2 — extension-contributed skill names. Each
+    /// Extension-contributed skill names. Each
     /// entry MUST have a matching `<plugin_root>/skills/<name>/SKILL.md`
     /// file (validated by [`validate_contributed_skills`]). The
     /// daemon's skill loader auto-discovers these and merges
@@ -356,7 +351,7 @@ pub struct Capabilities {
     /// skills are unaffected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
-    /// Phase 82.15.bx — extension broker subscriptions /
+    /// Extension broker subscriptions /
     /// publish allowlist. Lifts the channel-plugin assumption
     /// that the only broker traffic of interest is
     /// `plugin.outbound.<kind>` (subscribe) +
@@ -372,7 +367,7 @@ pub struct Capabilities {
     pub broker: Option<BrokerCapability>,
 }
 
-/// Phase 82.15.bx — declarative broker access. Patterns use the
+/// Declarative broker access. Patterns use the
 /// NATS-style wildcard grammar (`plugin.inbound.email.>` matches
 /// every instance suffix, `*` matches a single segment). Publish
 /// patterns are exact-string allowlist entries; the daemon's
@@ -396,7 +391,7 @@ pub struct BrokerCapability {
     pub publish: Vec<String>,
 }
 
-/// Phase 82.12 — HTTP server declaration.
+/// HTTP server declaration.
 ///
 /// `bind` defaults to `127.0.0.1` (loopback). External bind
 /// (`0.0.0.0`, public IP, etc.) requires the operator to flip
@@ -458,7 +453,7 @@ impl HttpServerCapability {
     }
 }
 
-/// Phase 82.10 — admin RPC capability declaration.
+/// Admin RPC capability declaration.
 ///
 /// Two-tier semantics:
 /// - `required`: boot fails if operator did not grant. The
@@ -598,7 +593,7 @@ pub struct ChannelDecl {
     pub adapter: String,
 }
 
-// ── Extends section (Phase 81.28) ───────────────────────────────
+// ── Extends section ─────────────────────────────────────────────
 
 /// Stable section names for `[plugin.extends]`. Ordered to match
 /// validator iteration + [`ExtendsSection::all_ids`] output.
@@ -612,43 +607,41 @@ pub const EXTENDS_SECTIONS: &[&str] = &[
 
 /// Per-registry capability declaration. Each list names the IDs
 /// this plugin contributes to the daemon's corresponding registry
-/// slot. Daemon dispatch wiring lands in 81.24 (channels), 81.25
-/// (llm_providers), 81.26 (memory_backends), 81.27 (hooks).
-/// Empty section has no runtime effect — the manifest schema
-/// simply records intent so out-of-tree plugins declare what they
-/// extend.
+/// slot. Empty section has no runtime effect — the manifest
+/// schema simply records intent so out-of-tree plugins declare
+/// what they extend.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExtendsSection {
     /// Channel kinds (e.g. `["slack", "discord"]`) the plugin's
     /// subprocess implements via the future remote
-    /// `ChannelAdapter` wrapper (Phase 81.24).
+    /// `ChannelAdapter` wrapper.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channels: Vec<String>,
 
     /// LLM provider IDs (e.g. `["cohere", "mistral"]`) the
     /// plugin's subprocess implements via the future remote
-    /// `LlmClient` wrapper (Phase 81.25).
+    /// `LlmClient` wrapper.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub llm_providers: Vec<String>,
 
     /// Memory backend IDs (e.g. `["pinecone", "qdrant"]`) the
     /// plugin's subprocess implements via the future remote
-    /// memory wrapper (Phase 81.26). One namespace covers
+    /// memory wrapper. One namespace covers
     /// short-term, long-term, and vector tiers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory_backends: Vec<String>,
 
     /// HookInterceptor IDs (e.g. `["pii_redact", "rate_limit"]`)
     /// the plugin's subprocess implements via the future remote
-    /// hook wrapper (Phase 81.27).
+    /// hook wrapper.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
 
-    /// Phase 81.29 — tool names (e.g. `["browser_navigate",
+    /// Tool names (e.g. `["browser_navigate",
     /// "browser_click"]`) the plugin's subprocess implements via
     /// the remote `ToolHandler` wrapper. Each tool name MUST also
-    /// satisfy the per-plugin namespace rule from Phase 81.3
+    /// satisfy the per-plugin namespace rule
     /// (`<plugin_id>_*` or `ext_<plugin_id>_*`); the validator
     /// runs `validate_tool_namespace` against this list as well
     /// as `tools.expose`. Tool schemas (description +
@@ -737,7 +730,7 @@ pub struct ConfigSection {
     #[serde(default)]
     pub schema_path: Option<PathBuf>,
 
-    /// `true` (default) — config changes hot-reload via Phase 18
+    /// `true` (default) — config changes hot-reload via the
     /// file watcher. Plugin opts out if its config touches
     /// global state that requires restart.
     #[serde(default = "default_true")]
@@ -757,7 +750,7 @@ fn default_true() -> bool {
     true
 }
 
-// ── Phase 83.2 — contributed-skills validation ───────────────────
+// ── contributed-skills validation ────────────────────────────────
 
 /// Errors surfaced when the manifest's declared
 /// `[capabilities] skills = [...]` list does not match what's
@@ -785,11 +778,10 @@ fn is_valid_skill_slug(name: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Phase 83.2 — verify every name in `caps.skills` has a
+/// Verify every name in `caps.skills` has a
 /// matching `<plugin_root>/skills/<name>/SKILL.md` on disk and
 /// passes the slug rule. Returns the list of validated relative
-/// paths the daemon's `SkillLoader` should register; the
-/// SkillLoader merge itself is deferred to 83.2.b.
+/// paths the daemon's `SkillLoader` should register.
 pub fn validate_contributed_skills(
     caps: &Capabilities,
     plugin_root: &std::path::Path,
@@ -894,8 +886,7 @@ pub struct UiSection {
     pub fields: BTreeMap<String, UiHint>,
 }
 
-/// Mirror of OpenClaw's `PluginConfigUiHint` (research/src/
-/// plugins/manifest-types.ts:1-8).
+/// UI hint metadata for a single config field.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UiHint {
@@ -947,7 +938,7 @@ pub struct MetaSection {
 // ── Public API ──────────────────────────────────────────────────
 
 impl PluginManifest {
-    /// Parse a manifest from a TOML string. Phase 81.13: routes
+    /// Parse a manifest from a TOML string. Routes
     /// through [`crate::compat_v1::try_parse_v2_or_v1`] so legacy
     /// (`manifest_version = 1` or absent) docs auto-migrate to
     /// the canonical v2 shape in memory. v1 plugins emit a
@@ -976,7 +967,7 @@ impl PluginManifest {
         Self::from_str(&raw)
     }
 
-    /// Phase 81.13 — parse + auto-migrate + auto-validate. Most
+    /// Parse + auto-migrate + auto-validate. Most
     /// callers should reach for this so the silent-skip bug in
     /// `admin_capability_collect` (parsing without validating)
     /// goes away framework-wide. Returns the parsed manifest on
@@ -1043,7 +1034,7 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(m.id(), "marketing");
         assert_eq!(m.version().to_string(), "0.1.0");
         assert!(!m.plugin.enabled_by_default, "default opt-in is false");
-        // M15.21.followup-override sweep — `subscriptions`
+        // `subscriptions`
         // defaults to an empty section so legacy manifests
         // (no `[plugin.subscriptions]`) keep parsing.
         assert!(m.plugin.subscriptions.broker_topics.is_empty());
@@ -1302,7 +1293,7 @@ min_nexo_version = ">=0.1.0"
         assert!(err.to_string().contains("extra"), "got: {err}");
     }
 
-    // ── Phase 83.2 — contributed-skills tests ───────────────────
+    // ── contributed-skills tests ────────────────────────────────
 
     #[test]
     fn contributed_skills_field_round_trips() {
@@ -1429,7 +1420,7 @@ min_nexo_version = ">=0.1.0"
         assert!(paths.is_empty());
     }
 
-    // ── Phase 81.28 — [plugin.extends] section ─────────────────
+    // ── [plugin.extends] section ────────────────────────────────
 
     #[test]
     fn manifest_extends_section_parses_minimal() {
@@ -1513,7 +1504,7 @@ hooks = ["pii_redact"]
         assert_eq!(parsed, extends);
     }
 
-    // ── Phase 81.29 — extends.tools field ──────────────────────────
+    // ── extends.tools field ─────────────────────────────────────────
 
     #[test]
     fn manifest_extends_tools_round_trip() {

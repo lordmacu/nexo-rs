@@ -1,4 +1,4 @@
-//! Phase 10.9 — `forge_memory_checkpoint` native tool. Lets the LLM mark a
+//! `forge_memory_checkpoint` native tool. Lets the LLM mark a
 //! moment in the workspace git history (end of project, significant fact
 //! learned, etc.) with an arbitrary note.
 use super::context::AgentContext;

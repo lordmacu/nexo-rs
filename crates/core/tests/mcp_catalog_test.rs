@@ -1,4 +1,4 @@
-//! Phase 12.3 — integration tests for `McpToolCatalog` backed by the
+//! Integration tests for `McpToolCatalog` backed by the
 //! `mock_mcp_server` binary shipped in the `nexo-mcp` crate.
 //!
 //! The mock is a sibling workspace bin; we locate it via

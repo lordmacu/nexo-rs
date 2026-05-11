@@ -1,10 +1,10 @@
-//! Phase 76.2 — newline-delimited JSON `McpTransport` over arbitrary
+//! Newline-delimited JSON `McpTransport` over arbitrary
 //! `AsyncRead`/`AsyncWrite` halves. Used by:
 //!   * `super::stdio::run_with_io_auth` (real `tokio::io::stdin/stdout`)
 //!   * the inline integration tests in `super::stdio` and the
 //!     `tests/server_test.rs` fixture (both feed `tokio::io::duplex`).
 //!
-//! Framing rules (preserved byte-for-byte from Phase 12.6):
+//! Framing rules:
 //!   * One JSON object per line, terminated by `\n`.
 //!   * Empty / whitespace-only lines are skipped (NOT errors).
 //!   * Invalid JSON is surfaced as `TransportError::InvalidFrame`;
@@ -97,8 +97,8 @@ where
 /// Generic driver loop: read frames from the transport, dispatch
 /// against the supplied `Dispatcher`, write responses back.
 /// Sequential per-connection (one inbound request at a time), which
-/// matches both the pre-refactor stdio behaviour and the
-/// per-session contract that HTTP (76.1) will inherit.
+/// matches both the stdio behaviour and the per-session contract
+/// the HTTP transport inherits.
 ///
 /// Termination conditions, in order of precedence:
 ///   1. `shutdown` cancelled → break, close transport, return Ok.
@@ -118,9 +118,9 @@ where
     T: McpTransport + ?Sized,
     H: McpServerHandler + 'static,
 {
-    // Phase 79.M — stdio has one implicit connection/session.
-    // Stamp a stable per-process session id so context-aware tools
-    // (taskflow owner scoping) can rely on `ctx.session_id`.
+    // Stdio has one implicit connection/session. Stamp a stable
+    // per-process session id so context-aware tools (taskflow owner
+    // scoping) can rely on `ctx.session_id`.
     let stdio_session_id = uuid::Uuid::new_v4().to_string();
     loop {
         tokio::select! {
@@ -161,9 +161,9 @@ where
                 );
 
                 let cancel = shutdown.child_token();
-                // Phase 76.3 — stdio is process-trusted; populate
-                // `principal` with the constant `stdio_local()`
-                // identity so 76.4 / 76.11 see a uniform field.
+                // Stdio is process-trusted; populate `principal`
+                // with the constant `stdio_local()` identity so the
+                // tenant + audit paths see a uniform field.
                 let ctx = DispatchContext {
                     session_id: Some(stdio_session_id.clone()),
                     request_id: id.clone(),

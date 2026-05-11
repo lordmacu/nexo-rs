@@ -31,7 +31,7 @@ pub struct ToolPolicyConfig {
     /// hammered by a 20-tool tool-call batch.
     #[serde(default)]
     pub parallel: ParallelConfig,
-    /// Phase 3 — TF-cosine relevance filter. When `enabled`, the agent
+    /// TF-cosine relevance filter. When `enabled`, the agent
     /// only sends top-K ranked tools to the LLM per turn instead of
     /// the full catalog.
     #[serde(default)]

@@ -18,7 +18,7 @@ use crate::types::{FollowUp, Phase, PhaseStatus, SubPhase, TrackerError};
 
 #[async_trait]
 pub trait ProjectTracker: Send + Sync + 'static {
-    /// Phase 76 — the on-disk directory the tracker is rooted at.
+    /// The on-disk directory the tracker is rooted at.
     /// Default returns `None` so existing impls keep building; the
     /// concrete `FsProjectTracker` / `MutableTracker` types
     /// override with their actual root so `program_phase_dispatch`

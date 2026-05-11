@@ -1,5 +1,5 @@
-//! Phase 67.3/67.4 bin. Default: AllowAllDecider with a loud warning
-//! (DEV ONLY). With `--socket <path>` (Phase 67.4) it forwards every
+//! Permission MCP bin. Default: AllowAllDecider with a loud warning
+//! (DEV ONLY). With `--socket <path>` it forwards every
 //! request to the daemon-side decider over a Unix socket.
 
 use std::path::PathBuf;

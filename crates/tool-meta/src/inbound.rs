@@ -47,8 +47,8 @@ pub enum InboundKind {
 /// Per-turn metadata about the inbound message that triggered the
 /// agent turn.
 ///
-/// Stamped on every tool call dispatched to a Phase 11 stdio
-/// extension or a Phase 12 MCP server (under
+/// Stamped on every tool call dispatched to a stdio
+/// extension or an MCP server (under
 /// `params._meta.nexo.inbound`). All fields except `kind` are
 /// optional; consumers must tolerate absence and branch
 /// gracefully.

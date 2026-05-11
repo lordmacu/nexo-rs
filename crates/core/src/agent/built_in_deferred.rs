@@ -1,4 +1,4 @@
-//! Phase M8 — canonical list of built-in tools that ship deferred
+//! Canonical list of built-in tools that ship deferred
 //! by default. Deferred tools are excluded from
 //! `ToolRegistry::to_tool_defs_non_deferred()` (the slice every
 //! provider shim — Anthropic / MiniMax / OpenAI / Gemini / DeepSeek
@@ -65,11 +65,11 @@ use super::tool_registry::{ToolMeta, ToolRegistry};
 /// definition, e.g. `TaskListTool.ts:35`).
 ///
 /// Out of scope (deferred to follow-up slices):
-/// - `EnterPlanMode` / `ExitPlanMode` (M8.b — plan-mode flow
+/// - `EnterPlanMode` / `ExitPlanMode` (plan-mode flow
 ///   control mid-turn warrants separate UX consideration).
-/// - 5 cron tools (M8.c — surface differs from leak's 3-tool
-///   shape; defer until cron UX settles post-Phase 80.2-80.6).
-/// - `WebSearch` / `WebFetch` (M8.d — Phase 21/25 surface still
+/// - 5 cron tools (surface differs from leak's 3-tool
+///   shape; defer until cron UX settles).
+/// - `WebSearch` / `WebFetch` (web-tools surface still
 ///   in flux).
 pub const BUILT_IN_DEFERRED_TOOLS: &[(&str, &str)] = &[
     ("TodoWrite", "todo, tasks, in-progress checklist"),

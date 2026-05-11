@@ -1,6 +1,6 @@
 //! Strip lone UTF-16 surrogate code points before sending text to the
 //! Anthropic API. Mirrors OpenClaw's
-//! `sanitizeTransportPayloadText` (research/src/agents/transport-stream-shared.ts:22-27).
+//! `sanitizeTransportPayloadText`.
 //!
 //! Rust `&str` is guaranteed UTF-8, so surrogate halves (U+D800–U+DFFF)
 //! cannot appear in well-formed input. The helper is a defensive guard

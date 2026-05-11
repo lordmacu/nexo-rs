@@ -1,6 +1,6 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)]
 
-//! Phase 79.13 — `NotebookEdit` Jupyter `.ipynb` cell editor.
+//! `NotebookEdit` Jupyter `.ipynb` cell editor.
 //!
 //! Cell-level edits with output-preservation. Pure Rust round-trip
 //! through `serde_json::Value` — no `jupyter` binary required, no
@@ -8,20 +8,11 @@
 //! document (nbformat 4.x); unknown top-level fields survive
 //! untouched (forward-compat).
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/NotebookEditTool/NotebookEditTool.ts:30-489`
-//!     (input schema, validate-input, JSON parse + mutate + write,
-//!     `IPYNB_INDENT = 1` formatting, replace-at-end auto-converts
-//!     to insert).
-//!   * `claude-code-leak/src/utils/notebook.ts::parseCellId` —
-//!     accepts both UUIDv4-style ids and `cell-N` numeric fallback.
+//! Formatting uses an indent of 1 space; a replace at the end of the
+//! cell list auto-converts to an insert. `cell_id` accepts both
+//! UUIDv4-style ids and a `cell-N` numeric fallback.
 //!
-//! Reference (secondary):
-//!   * OpenClaw `research/` — no equivalent
-//!     (`grep -rln "ipynb|jupyter|nbformat" research/src/` returns
-//!     nothing relevant).
-//!
-//! MVP scope (Phase 79.13):
+//! Scope:
 //!   * Replace / insert / delete a single cell.
 //!   * cell_id may be a UUID-style id (`notebook.cells[i].id`) or a
 //!     `cell-N` numeric index fallback.
@@ -40,7 +31,7 @@ use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
 /// Indent used by Jupyter's canonical writer (`json.dumps(indent=1)`
-/// in `nbformat`). Matches `claude-code-leak/src/tools/NotebookEditTool/NotebookEditTool.ts:430`.
+/// in `nbformat`).
 pub const IPYNB_INDENT: usize = 1;
 
 pub struct NotebookEditTool;
@@ -100,8 +91,7 @@ fn parse_edit_mode(s: Option<&str>) -> anyhow::Result<EditMode> {
     }
 }
 
-/// Lift from `claude-code-leak/src/utils/notebook.ts::parseCellId` —
-/// accepts `cell-N` form returning `Some(N)`. Only used as a
+/// Accepts the `cell-N` form returning `Some(N)`. Only used as a
 /// fallback when the literal id lookup misses.
 fn parse_cell_index(cell_id: &str) -> Option<usize> {
     cell_id
@@ -137,14 +127,13 @@ fn nbformat_supports_cell_id(notebook: &Value) -> bool {
     major > 4 || (major == 4 && minor >= 5)
 }
 
-/// 12-char base-36 id matching the leak's
-/// `Math.random().toString(36).substring(2, 15)`. Generated only
-/// when `nbformat >= 4.5` so older notebooks stay valid.
+/// 12-char base-36 cell id. Generated only when `nbformat >= 4.5`
+/// so older notebooks stay valid.
 fn fresh_cell_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     // Cheap pseudo-random — combines high-resolution time with a
-    // process-local counter. Good enough for nbformat ids; the leak
-    // also uses `Math.random()` (not a CSPRNG).
+    // process-local counter. Good enough for nbformat ids (not a
+    // CSPRNG, and doesn't need to be).
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -314,7 +303,7 @@ impl ToolHandler for NotebookEditTool {
                 let idx = anchor_index.unwrap();
                 if idx == cells.len() {
                     // Defensive: replace-at-end auto-converts to
-                    // insert. Lift from leak `:372-377`.
+                    // insert.
                     let ct = effective_cell_type.clone().unwrap_or_else(|| "code".into());
                     let fresh_id = if nbformat_minor_5 {
                         Some(fresh_cell_id())

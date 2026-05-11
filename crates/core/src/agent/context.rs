@@ -1,4 +1,4 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)]
 
 use super::agent_events::AgentEventEmitter;
 use super::effective::EffectiveBindingPolicy;
@@ -30,9 +30,9 @@ pub struct AgentContext {
     /// which ids to pass to `delegate(...)`. `None` in test/bootstrap
     /// contexts where peer discovery doesn't apply.
     pub peers: Option<Arc<PeerDirectory>>,
-    /// Phase 12.4 — MCP runtime scoped to this session (if MCP is enabled).
+    /// MCP runtime scoped to this session (if MCP is enabled).
     pub mcp: Option<Arc<SessionMcpRuntime>>,
-    /// Phase 11.5 follow-up — active session id when the context is built
+    /// Active session id when the context is built
     /// inside an LLM turn. None for contexts built outside the loop
     /// (heartbeat bootstrap, tests). Used by tool handlers that opt into
     /// context passthrough.
@@ -50,13 +50,13 @@ pub struct AgentContext {
     /// match (delegation receive, heartbeat, tests); consumers fall
     /// back to the behavior's base registry in that case.
     pub effective_tools: Option<Arc<ToolRegistry>>,
-    /// Phase 17 — resolver that maps this agent's id to the opaque
-    /// credential handles it is allowed to use for outbound traffic.
+    /// Resolver that maps this agent's id to the opaque credential
+    /// handles it is allowed to use for outbound traffic.
     /// `None` in early-boot / test contexts; consumers must treat that
     /// as "no credentials configured" (tools return an unbound error
     /// rather than publishing from an arbitrary account).
     pub credentials: Option<Arc<nexo_auth::AgentCredentialResolver>>,
-    /// Phase 17 — per-(channel, instance) breaker registry shared by
+    /// Per-(channel, instance) breaker registry shared by
     /// plugin outbound tools. `None` for runtimes without credentials.
     pub breakers: Option<Arc<nexo_auth::BreakerRegistry>>,
     /// Pre-persistence redactor for transcript content. `None` in
@@ -66,16 +66,16 @@ pub struct AgentContext {
     /// is disabled or initialization failed; consumers fall back to
     /// JSONL-only persistence + substring scan.
     pub transcripts_index: Option<Arc<TranscriptsIndex>>,
-    /// Phase 21 — shared link extractor (HTTP client + LRU cache).
+    /// Shared link extractor (HTTP client + LRU cache).
     /// `None` in early-boot / test contexts; llm_behavior treats
     /// that as "link understanding disabled regardless of config".
     pub link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
-    /// Phase 25 — shared multi-provider web-search router. `None`
+    /// Shared multi-provider web-search router. `None`
     /// when no provider is configured for this process; the
     /// `web_search` tool errors out cleanly in that case.
     pub web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
-    /// Phase F follow-up (hot-reload) — current effective enables for
-    /// the four context-optimization mechanisms. Set per-event by
+    /// Current effective enables for the four context-optimization
+    /// mechanisms (hot-reloadable). Set per-event by
     /// `AgentRuntime` from `RuntimeSnapshot::context_optimization`, so
     /// a config reload that flips a flag is observed on the *next*
     /// turn without restarting the behavior. `None` for legacy /
@@ -83,7 +83,7 @@ pub struct AgentContext {
     /// in that case `llm_behavior` falls back to the boot-time
     /// `prompt_cache_enabled` / `compaction_runtime.enabled` flags.
     pub context_optimization: Option<nexo_config::types::llm::ResolvedContextOptimization>,
-    /// Phase 82.11.c — agent event emitter threaded from the
+    /// Agent event emitter threaded from the
     /// `AgentRuntime` so `llm_behavior` can attach it to
     /// per-turn `TranscriptWriter` instances. Without this,
     /// transcript appends emit through the default
@@ -93,93 +93,90 @@ pub struct AgentContext {
     /// `None` for test/bootstrap contexts; consumers fall back
     /// to no-op emission in that case.
     pub event_emitter: Option<Arc<dyn AgentEventEmitter>>,
-    /// PT-1 — bundle of services consumed by the dispatch tool
+    /// Bundle of services consumed by the dispatch tool
     /// handlers (program_phase, list_agents, etc.). Populated at
     /// boot when the project tracker is enabled. `None` keeps the
     /// dispatch tools off — handlers return a friendly error so
     /// the LLM doesn't pretend they worked.
     pub dispatch: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
-    /// Phase 79.12 — REPL session registry. `Some` when `repl-tool`
+    /// REPL session registry. `Some` when `repl-tool`
     /// feature is enabled AND the binding config has `repl.enabled`.
     /// Holds persistent Python/Node/bash subprocesses.
     pub repl_registry: Option<Arc<super::repl_registry::ReplRegistry>>,
-    /// B3 — sender's pairing-trust bit, set by intake after the
-    /// pairing gate runs (Phase 26). Defaults to `false` so any
-    /// path that forgets to thread it through fails closed under
+    /// Sender's pairing-trust bit, set by intake after the
+    /// pairing gate runs. Defaults to `false` so any path that
+    /// forgets to thread it through fails closed under
     /// `require_trusted=true`. Read-only tools bypass this gate.
     pub sender_trusted: bool,
-    /// B3 — `(plugin, instance, sender_id)` of the inbound event
+    /// `(plugin, instance, sender_id)` of the inbound event
     /// that produced this turn, when the runtime matched a binding.
     /// Lets the dispatch handler synthesise an `OriginChannel` for
     /// `program_phase` so `notify_origin` lands back in the chat.
     pub inbound_origin: Option<(String, String, String)>,
-    /// Phase 79.1 — plan-mode state for this goal. Shared across the
+    /// Plan-mode state for this goal. Shared across the
     /// dispatcher (read on every tool call) and the EnterPlanMode /
     /// ExitPlanMode tools (write). SQLite is canonical (column on
     /// `agent_registry.goals.plan_mode`); this is a hot cache. New
     /// contexts default to `Off`; the runtime hydrates the value from
-    /// the registry at goal spawn / reattach (Phase 71).
+    /// the registry at goal spawn / reattach.
     pub plan_mode: Arc<RwLock<PlanModeState>>,
-    /// Phase 79.1 — process-shared registry of pending plan-mode
-    /// approvals. `EnterPlanMode` does not touch it; `ExitPlanMode`
+    /// Process-shared registry of pending plan-mode approvals.
+    /// `EnterPlanMode` does not touch it; `ExitPlanMode`
     /// installs a waiter when `plan_mode.require_approval` is on; the
     /// `plan_mode_resolve` operator tool fires the matching waiter.
     /// Tests construct their own registry to avoid cross-test races.
     pub plan_approval_registry: Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
-    /// Phase 79.4 — intra-turn scratch todo list. Owned by the model
-    /// (mutated via `TodoWrite`). Distinct from Phase 14 TaskFlow:
+    /// Intra-turn scratch todo list. Owned by the model
+    /// (mutated via `TodoWrite`). Distinct from TaskFlow:
     /// Todo is in-memory + per-goal + flat; TaskFlow is persistent
     /// + cross-session + DAG. Reattach does not restore todos —
     /// they die with the goal because re-deriving them mid-turn is
     /// cheap and stale items are confusing.
     pub todos: Arc<RwLock<TodoList>>,
-    /// Phase 79.6 — when set, this goal is running as a member
-    /// of a named team. The lead's `team_id` is its own team's
-    /// id; ordinary sub-agents stay `None`.
+    /// When set, this goal is running as a member of a named team.
+    /// The lead's `team_id` is its own team's id; ordinary
+    /// sub-agents stay `None`.
     pub team_id: Option<String>,
-    /// Phase 79.6 — human-readable member name within
-    /// `team_id` (e.g. `"researcher"`). `None` ⇔ `team_id.is_none()`.
+    /// Human-readable member name within `team_id` (e.g.
+    /// `"researcher"`). `None` ⇔ `team_id.is_none()`.
     /// `Some(TEAM_LEAD_NAME)` for the lead's own goal.
     pub team_member_name: Option<String>,
-    /// Phase 79.6 — DMs the team router delivered while this
-    /// goal was running. Consumed at the start of each turn by
-    /// the prompt-assembly path. Concurrent appends are
-    /// serialised by the goal's tokio task scheduler — there is
-    /// no inner lock because the consume is single-threaded
-    /// per-goal.
+    /// DMs the team router delivered while this goal was running.
+    /// Consumed at the start of each turn by the prompt-assembly
+    /// path. Concurrent appends are serialised by the goal's tokio
+    /// task scheduler — there is no inner lock because the consume
+    /// is single-threaded per-goal.
     pub inbox: Arc<RwLock<Vec<DmMessage>>>,
-    /// Phase 77.20 — whether this goal runs in proactive tick-loop mode.
+    /// Whether this goal runs in proactive tick-loop mode.
     /// Set at goal spawn from `EffectiveBindingPolicy::proactive().enabled`.
     /// Read by `llm_behavior` to inject the proactive system hint.
     pub proactive_enabled: bool,
-    /// Phase 77.20 — binding role tag (`"coordinator"`, `"worker"`, `"proactive"`,
+    /// Binding role tag (`"coordinator"`, `"worker"`, `"proactive"`,
     /// or `None`). Stored here so `llm_behavior` can inject the coordinator
     /// hint without re-reading the binding config on every turn.
     pub binding_role: Option<String>,
-    /// Phase 80.15 — boot-resolved assistant-mode view. Read by
-    /// downstream consumers (driver-loop tick generator, cron default
-    /// flip, brief mode auto-on, dream-context kairos signal,
-    /// remote-control auto-tier in Phase 80.17). The `enabled` flag
-    /// is boot-immutable; the addendum text inside it can be
-    /// hot-reloaded through the Phase 18 path. `Default::default()`
-    /// is the zero-cost disabled view — fixtures and bootstrap
-    /// contexts can rely on it without opting in.
+    /// Boot-resolved assistant-mode view. Read by downstream
+    /// consumers (driver-loop tick generator, cron default flip,
+    /// brief mode auto-on, dream-context kairos signal,
+    /// remote-control auto-tier). The `enabled` flag is
+    /// boot-immutable; the addendum text inside it can be
+    /// hot-reloaded. `Default::default()` is the zero-cost
+    /// disabled view — fixtures and bootstrap contexts can rely on
+    /// it without opting in.
     #[doc(hidden)]
     pub assistant: nexo_assistant::ResolvedAssistant,
-    /// Phase 82.1 Step 3 — composed binding context propagated
-    /// to tool calls via `_meta.nexo.binding`. `Some` when
-    /// intake matched an `InboundBinding`; `None` for
-    /// bindingless paths (delegation receive, heartbeat
-    /// bootstrap, tests).
+    /// Composed binding context propagated to tool calls via
+    /// `_meta.nexo.binding`. `Some` when intake matched an
+    /// `InboundBinding`; `None` for bindingless paths (delegation
+    /// receive, heartbeat bootstrap, tests).
     ///
     /// Construct via `super::binding_context_from_effective(&policy,
-    /// agent_id, session_id)` at the intake site that matches
-    /// the binding (Step 4). Tool dispatch reads this through
-    /// `inject_context_meta` to populate the JSON-RPC
-    /// `params._nexo_context` block (Step 5).
+    /// agent_id, session_id)` at the intake site that matches the
+    /// binding. Tool dispatch reads this to populate the JSON-RPC
+    /// `params._meta` block.
     pub binding: Option<BindingContext>,
 
-    /// Phase 82.5 — per-turn metadata about the inbound message
+    /// Per-turn metadata about the inbound message
     /// that triggered this agent turn (sender id, msg id,
     /// timestamp, …). `Some` when the intake site populated it
     /// (whatsapp plugin, event-subscriber binding, webhook
@@ -201,8 +198,8 @@ pub struct DmMessage {
     pub received_at: i64,
 }
 
-/// Phase 82.1 — binding context propagated to tool calls so
-/// extensions and MCP servers can route per-(channel, account_id,
+/// Binding context propagated to tool calls so extensions and MCP
+/// servers can route per-(channel, account_id,
 /// agent_id) tuple without re-deriving it from each tool call's
 /// payload.
 ///
@@ -216,21 +213,20 @@ pub struct DmMessage {
 /// sentinel string.
 ///
 /// `mcp_channel_source` is populated when the inbound that
-/// triggered this turn arrived via a Phase 80.9 MCP channel
-/// server (e.g., `"slack"`, `"telegram"`). Lets a tool
-/// distinguish "telegram-binding answered via MCP slack server"
-/// from "telegram-binding answered via native Telegram plugin"
-/// while still seeing the same `(channel, account_id)` binding
-/// tuple. Matches the `goal_turns.source = "channel:slack"`
-/// audit column shipped with Phase 80.9.
-// Phase 82.2.b — `BindingContext` lives in the standalone
-// `nexo-tool-meta` crate so third-party microapps can `cargo add
-// nexo-tool-meta` without pulling the agent runtime. Re-exported
-// here for backward compat with internal callers.
+/// triggered this turn arrived via an MCP channel server (e.g.,
+/// `"slack"`, `"telegram"`). Lets a tool distinguish
+/// "telegram-binding answered via MCP slack server" from
+/// "telegram-binding answered via native Telegram plugin" while
+/// still seeing the same `(channel, account_id)` binding tuple.
+/// Matches the `goal_turns.source = "channel:slack"` audit column.
+// `BindingContext` lives in the standalone `nexo-tool-meta` crate
+// so third-party microapps can `cargo add nexo-tool-meta` without
+// pulling the agent runtime. Re-exported here for backward compat
+// with internal callers.
 pub use nexo_tool_meta::{BindingContext, InboundKind, InboundMessageMeta};
 
 /// Construct a [`BindingContext`] from an already-resolved
-/// Phase 16 binding policy + agent / session identity.
+/// binding policy + agent / session identity.
 ///
 /// Lives here (not on `BindingContext` itself) because it depends
 /// on [`EffectiveBindingPolicy`], which is internal to the agent
@@ -245,8 +241,8 @@ pub use nexo_tool_meta::{BindingContext, InboundKind, InboundMessageMeta};
 /// carry through.
 ///
 /// `mcp_channel_source` is propagated separately by the intake
-/// site that received a Phase 80.9 MCP-channel inbound. This fn
-/// never infers it from the policy alone; callers chain
+/// site that received an MCP-channel inbound. This fn never
+/// infers it from the policy alone; callers chain
 /// `.with_mcp_channel_source(s)` when applicable.
 pub fn binding_context_from_effective(
     policy: &EffectiveBindingPolicy,
@@ -260,8 +256,8 @@ pub fn binding_context_from_effective(
         ctx.account_id = policy.account_id.clone();
         ctx.binding_id = policy.binding_id();
     }
-    // Phase 81.19.b locale follow-up item 6 — surface the
-    // resolved binding > agent locale on the wire so the SDK's
+    // Surface the resolved binding > agent locale on the wire so
+    // the SDK's
     // STT inbound transform handler can read it from
     // `ctx.binding.language` and pass it as a whisper hint
     // (BCP-47 trimmed to ISO-639-1 inside the handler).
@@ -310,15 +306,14 @@ impl AgentContext {
             binding_role: None,
             assistant: nexo_assistant::ResolvedAssistant::disabled(),
             repl_registry: None,
-            // Phase 82.1 Step 3 — `None` is the default for
-            // `AgentContext::new`. Intake sites that match an
-            // inbound to an `InboundBinding` populate this via
+            // `None` is the default for `AgentContext::new`. Intake
+            // sites that match an inbound to an `InboundBinding`
+            // populate this via
             // `super::binding_context_from_effective(&policy, agent_id,
-            // session_id)` (Step 4). Bindingless paths
-            // (delegation receive, heartbeat bootstrap, tests)
-            // keep `None`.
+            // session_id)`. Bindingless paths (delegation receive,
+            // heartbeat bootstrap, tests) keep `None`.
             binding: None,
-            // Phase 82.5 — populated by the intake site that
+            // Populated by the intake site that
             // produced the turn (whatsapp plugin, event-subscriber,
             // webhook receiver, delegation, heartbeat). `None`
             // from the bare constructor; producers layer their
@@ -327,7 +322,7 @@ impl AgentContext {
         }
     }
 
-    /// Phase 79.6 — mark this context as running as a teammate.
+    /// Mark this context as running as a teammate.
     /// `name` is the human-readable handle within the team
     /// (`"researcher"`, `"tester"`, or `TEAM_LEAD_NAME`).
     pub fn with_team(mut self, team_id: impl Into<String>, name: impl Into<String>) -> Self {
@@ -336,14 +331,14 @@ impl AgentContext {
         self
     }
 
-    /// Phase 79.6 — `true` when both `team_id` and
+    /// `true` when both `team_id` and
     /// `team_member_name` are set. The runtime's
     /// teammate-cannot-spawn-teammate guard inspects this.
     pub fn is_teammate(&self) -> bool {
         self.team_id.is_some() && self.team_member_name.is_some()
     }
 
-    /// Phase 79.1 — install a pre-built plan-mode handle. Used at
+    /// Install a pre-built plan-mode handle. Used at
     /// goal hydration so the runtime can share the same `Arc<RwLock>`
     /// between the dispatcher (gate) and the registry mirror (write
     /// path).
@@ -352,8 +347,8 @@ impl AgentContext {
         self
     }
 
-    /// Phase 79.1 — install a process-shared plan-mode approval
-    /// registry. Production wiring constructs one per process and
+    /// Install a process-shared plan-mode approval registry.
+    /// Production wiring constructs one per process and
     /// hands it to every `AgentContext`; tests build their own to
     /// avoid cross-test races.
     pub fn with_plan_approval_registry(
@@ -364,7 +359,7 @@ impl AgentContext {
         self
     }
 
-    /// Phase 79.1 — `true` when this goal is rooted in a live channel
+    /// `true` when this goal is rooted in a live channel
     /// that can deliver an operator approval message. Sub-agent goals
     /// (delegations, future TeamCreate workers), cron / poller /
     /// heartbeat-spawned goals, and bootstrap contexts all return
@@ -392,8 +387,8 @@ impl AgentContext {
         self
     }
 
-    /// Phase 82.5 — install per-turn [`InboundMessageMeta`] on the
-    /// context. Producers (channel plugins, event-subscriber,
+    /// Install per-turn [`InboundMessageMeta`] on the context.
+    /// Producers (channel plugins, event-subscriber,
     /// delegation, heartbeat) build the meta at the intake site and
     /// the per-turn dispatch loop layers it on the cloned context
     /// before invoking tools / hooks.
@@ -425,7 +420,7 @@ impl AgentContext {
         self.redactor = Some(redactor);
         self
     }
-    /// Phase 82.11.c — install the firehose emitter so per-turn
+    /// Install the firehose emitter so per-turn
     /// `TranscriptWriter` instances built in `llm_behavior` can
     /// chain `.with_emitter()` and broadcast `TranscriptAppended`
     /// to subscribers.
@@ -467,17 +462,16 @@ impl AgentContext {
     pub fn with_effective(mut self, effective: Arc<EffectiveBindingPolicy>) -> Self {
         self.proactive_enabled = effective.proactive.enabled;
         self.binding_role = effective.role.clone();
-        // Phase 82.1 Step 4 — populate the BindingContext as a
-        // side effect of installing the policy. Every intake
-        // path that resolves an inbound to an `InboundBinding`
-        // funnels through `with_effective`, so this single call
-        // site is sufficient — no need to chase N intake-side
-        // call paths individually. Bindingless paths
-        // (delegation receive / heartbeat bootstrap / tests)
-        // never call `with_effective` and therefore keep
-        // `binding == None`. `mcp_channel_source` stays None
-        // here; it is layered on top by the channel-aware
-        // intake site that received the Phase 80.9 MCP-channel
+        // Populate the BindingContext as a side effect of
+        // installing the policy. Every intake path that resolves
+        // an inbound to an `InboundBinding` funnels through
+        // `with_effective`, so this single call site is sufficient
+        // — no need to chase N intake-side call paths individually.
+        // Bindingless paths (delegation receive / heartbeat
+        // bootstrap / tests) never call `with_effective` and
+        // therefore keep `binding == None`. `mcp_channel_source`
+        // stays None here; it is layered on top by the
+        // channel-aware intake site that received the MCP-channel
         // inbound (`with_mcp_channel_source` chained after).
         self.binding = Some(binding_context_from_effective(
             &effective,
@@ -488,9 +482,8 @@ impl AgentContext {
         self
     }
 
-    /// Phase 82.1 Step 4 — layer the Phase 80.9 MCP channel
-    /// source on top of the BindingContext after
-    /// `with_effective` has run. No-op if `binding` is `None`
+    /// Layer the MCP channel source on top of the BindingContext
+    /// after `with_effective` has run. No-op if `binding` is `None`
     /// (paths without a binding match cannot have an
     /// MCP-channel source — the source rides alongside an
     /// already-matched binding, not as a substitute).
@@ -505,8 +498,8 @@ impl AgentContext {
         self
     }
 
-    /// Phase 82.4.b.b — populate `binding.event_source` when the
-    /// inbound was synthesised from a NATS event subscriber.
+    /// Populate `binding.event_source` when the inbound was
+    /// synthesised from a NATS event subscriber.
     /// No-op when `self.binding` is `None`; logged at debug level
     /// so the call-site can stay branchless if the caller doesn't
     /// want to gate the call. Caller is expected to gate at the
@@ -542,16 +535,15 @@ impl AgentContext {
         Arc::new(EffectiveBindingPolicy::from_agent_defaults(&self.config))
     }
 
-    /// Phase 82.1 Step 6 — single source of truth for the `_meta`
-    /// payload exposed to extension tools (Phase 11 stdio JSON-RPC)
-    /// and MCP tools (`tools/call` `params._meta`). Both surfaces
-    /// must emit identical wire shapes so a microapp speaks the
-    /// same dialect regardless of which transport delivered the
-    /// call.
+    /// Single source of truth for the `_meta` payload exposed to
+    /// extension tools (stdio JSON-RPC) and MCP tools (`tools/call`
+    /// `params._meta`). Both surfaces must emit identical wire
+    /// shapes so a microapp speaks the same dialect regardless of
+    /// which transport delivered the call.
     ///
     /// Returned value is a JSON object with two layers:
     /// - flat `agent_id` + `session_id` for backward-compat with
-    ///   pre-Phase-82 consumers,
+    ///   older consumers,
     /// - nested `nexo.binding` carrying `BindingContext` when the
     ///   intake matched a binding (omitted otherwise to keep the
     ///   wire compact for delegation receive / heartbeat
@@ -684,7 +676,7 @@ mod plan_mode_tests {
     }
 
     // -----------------------------------------------------------
-    // Phase 79.6 — team fields
+    // team fields
     // -----------------------------------------------------------
 
     #[tokio::test]
@@ -733,7 +725,7 @@ mod plan_mode_tests {
     }
 
     // -----------------------------------------------------------
-    // Phase 82.1 Step 4 — `with_effective` populates `binding`
+    // `with_effective` populates `binding`
     // -----------------------------------------------------------
 
     #[tokio::test]
@@ -782,7 +774,7 @@ mod plan_mode_tests {
         // Native binding tuple from policy
         assert_eq!(b.channel.as_deref(), Some("telegram"));
         assert_eq!(b.account_id.as_deref(), Some("kate_tg"));
-        // Phase 80.9 source layered on top
+        // MCP source layered on top
         assert_eq!(b.mcp_channel_source.as_deref(), Some("slack"));
     }
 
@@ -824,10 +816,7 @@ mod plan_mode_tests {
 
 #[cfg(test)]
 mod binding_context_tests {
-    //! Phase 82.1 Step 1 tests — `BindingContext` struct +
-    //! standalone helpers. `from_effective` (which closes the
-    //! loop with `EffectiveBindingPolicy`) lands at Step 3 once
-    //! Step 2 extends the policy struct.
+    //! `BindingContext` struct + standalone helpers.
 
     use super::BindingContext;
     use uuid::Uuid;
@@ -943,7 +932,7 @@ mod binding_context_tests {
         assert_eq!(ctx, back);
     }
 
-    // -- Phase 82.1 Step 3 — from_effective constructor --
+    // -- from_effective constructor --
 
     fn mini_agent() -> nexo_config::types::agents::AgentConfig {
         use nexo_config::types::agents::{
@@ -1095,11 +1084,10 @@ mod binding_context_tests {
 
 #[cfg(test)]
 mod build_meta_value_tests {
-    //! Phase 82.1 Step 6 — `AgentContext::build_meta_value` is the
-    //! single source of truth for the `_meta` shape sent over both
-    //! Phase 11 stdio and Phase 12 MCP `tools/call`. These tests
-    //! lock down the dual-write contract so a refactor that breaks
-    //! either surface fails here first.
+    //! `AgentContext::build_meta_value` is the single source of
+    //! truth for the `_meta` shape sent over both stdio and MCP
+    //! `tools/call`. These tests lock down the dual-write contract
+    //! so a refactor that breaks either surface fails here first.
     use super::{AgentContext, BindingContext};
     use crate::session::SessionManager;
     use nexo_broker::AnyBroker;

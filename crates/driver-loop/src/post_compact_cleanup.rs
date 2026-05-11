@@ -1,7 +1,7 @@
-//! Phase 77.3 — PostCompactCleanup.
+//! PostCompactCleanup.
 //!
-//! Called after compact summary persistence. Phase 77.5 adds memory
-//! extraction support.
+//! Called after compact summary persistence. Optionally triggers memory
+//! extraction.
 
 use std::path::PathBuf;
 use std::sync::Arc;

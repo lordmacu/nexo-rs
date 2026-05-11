@@ -195,9 +195,8 @@ impl Locale {
     /// [`LangCode`] paired with `None`, then with each
     /// [`RegionCode`]. Output is the full cross-product
     /// (8 × (1 + 17) = 144 entries) regardless of voice picker /
-    /// addendum coverage; the lint script (Phase 81.19.b locale
-    /// item 2) intersects this against the curated frontend
-    /// `SUPPORTED_LOCALES` list to catch drift.
+    /// addendum coverage; the lint script intersects this against
+    /// the curated frontend `SUPPORTED_LOCALES` list to catch drift.
     ///
     /// Order is deterministic (alphabetical by language code,
     /// then language-only first, then alphabetical by region
@@ -461,7 +460,7 @@ mod tests {
         }
     }
 
-    /// Phase 81.19.b locale follow-up item 6 — STT lang_hint trim.
+    /// STT lang_hint trim.
     /// `Locale::language().as_str()` is the documented path the SDK's
     /// `InboundTransformHandler` uses to convert a binding's BCP-47
     /// (`es-AR`) into the ISO-639-1 prefix (`es`) that whisper's
@@ -491,7 +490,7 @@ mod tests {
         }
     }
 
-    /// Phase 81.19.b locale follow-up item 2 — `iter_supported()` is
+    /// `iter_supported()` is
     /// the source of truth for `cargo run -p nexo-microapp-sdk
     /// --bin locale_dump`. Verify it yields the documented count
     /// (8 lang × (1 + 17 region) = 144) and no duplicates.

@@ -1,16 +1,15 @@
-//! Agent workspace loader — Phase 10.1–10.3.
+//! Agent workspace loader.
 //!
 //! Loads the set of markdown files that make up an agent's "self":
 //! IDENTITY.md (parsed), SOUL.md + USER.md + AGENTS.md (raw text), recent
-//! daily notes, and MEMORY.md. Modeled on OpenClaw's workspace layout
-//! (`docs/concepts/agent-workspace.md`) but scoped to what `LlmAgentBehavior`
+//! daily notes, and MEMORY.md. Scoped to what `LlmAgentBehavior`
 //! needs to inject into the system prompt.
 //!
 //! Design rules:
 //! - `MEMORY.md` only loads in **main** sessions (direct DMs). Group/broadcast
 //!   sessions must not see it — enforced at load time, not via query filters.
-//! - Bootstrap char limits (`max_per_file`, `max_total`) mirror OpenClaw's
-//!   defaults (12_000 / 60_000) to keep prompt overhead predictable.
+//! - Bootstrap char limits (`max_per_file`, `max_total`) keep prompt
+//!   overhead predictable.
 //! - Missing files are silently skipped; a missing workspace is not an error
 //!   (agents without workspaces still work — they just have no persona layer).
 //! - No writes here — the loader is read-only. Writes belong to memory tools.
@@ -52,7 +51,7 @@ pub enum SessionScope {
     /// Group chat, broadcast, or any shared context. `MEMORY.md` is NOT loaded.
     Shared,
 }
-/// Bootstrap char limits. OpenClaw defaults: 12_000 per file, 60_000 total.
+/// Bootstrap char limits applied while loading workspace docs.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadLimits {
     pub max_per_file: usize,
@@ -60,8 +59,8 @@ pub struct LoadLimits {
 }
 impl Default for LoadLimits {
     fn default() -> Self {
-        // Phase 67 roadmaps grow into the 100KB+ range
-        // (PHASES.md, FOLLOWUPS.md) and the 12K/60K legacy
+        // Large roadmap docs grow into the 100KB+ range
+        // (PHASES.md, FOLLOWUPS.md) and the old 12K/60K
         // defaults silently truncated them to ~10%, hiding the
         // tail from the LLM. Modern Claude 4.x context is 200K
         // tokens (1M on Opus 4.7 / Sonnet 4.6), so loading

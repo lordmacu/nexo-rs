@@ -1,7 +1,4 @@
 //! HTTP MCP client — both `streamable-http` (modern) and `sse` (legacy).
-//!
-//! Skeleton defined in step 6; the handshake/request methods land in the
-//! subsequent steps of Phase 12.2.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -39,9 +36,9 @@ const EVENT_CAP: usize = 32;
 pub enum HttpTransportMode {
     StreamableHttp,
     Sse,
-    /// Phase 12.2 follow-up — try `StreamableHttp` first; if the initial
-    /// POST returns 404/405/415 (server doesn't speak streamable), fall
-    /// back to `Sse`. The client's `transport()` accessor reports the
+    /// Try `StreamableHttp` first; if the initial POST returns
+    /// 404/405/415 (server doesn't speak streamable), fall back to
+    /// `Sse`. The client's `transport()` accessor reports the
     /// resolved mode after `connect`, not `Auto`.
     Auto,
 }
@@ -56,8 +53,8 @@ pub struct HttpMcpOptions {
     pub sse_reconnect_base: Duration,
     pub sse_reconnect_max: Duration,
     pub sse_reconnect_max_attempts: u32,
-    /// Phase 12.8 — if Some and server advertises `logging` capability,
-    /// client sends `logging/setLevel` once post-handshake.
+    /// If Some and server advertises `logging` capability, client
+    /// sends `logging/setLevel` once post-handshake.
     pub log_level: Option<String>,
 }
 
@@ -388,8 +385,8 @@ impl HttpMcpClient {
         self.call_tool_with_meta(name, arguments, None).await
     }
 
-    /// Phase 12.8 — `tools/call` with optional spec-level `_meta`
-    /// alongside `arguments` (MCP 2024-11-05).
+    /// `tools/call` with optional spec-level `_meta` alongside
+    /// `arguments` (MCP 2024-11-05).
     pub async fn call_tool_with_meta(
         &self,
         name: &str,
@@ -408,7 +405,7 @@ impl HttpMcpClient {
         serde_json::from_value(v).map_err(McpError::Decode)
     }
 
-    /// Phase 12.8 — `logging/setLevel`. Mirror of `StdioMcpClient`.
+    /// `logging/setLevel`. Mirror of `StdioMcpClient`.
     pub async fn set_log_level(&self, level: &str) -> Result<(), McpError> {
         if !crate::client_trait::MCP_LOG_LEVELS.contains(&level) {
             return Err(McpError::Protocol(format!("invalid log level '{level}'")));
@@ -432,7 +429,7 @@ impl HttpMcpClient {
         self.list_resources_with_meta(None).await
     }
 
-    /// Phase 12.8 — `resources/list` with optional `_meta`.
+    /// `resources/list` with optional `_meta`.
     pub async fn list_resources_with_meta(
         &self,
         meta: Option<serde_json::Value>,
@@ -479,7 +476,7 @@ impl HttpMcpClient {
         self.read_resource_with_meta(uri, None).await
     }
 
-    /// Phase 12.8 — `resources/read` with optional `_meta`.
+    /// `resources/read` with optional `_meta`.
     pub async fn read_resource_with_meta(
         &self,
         uri: &str,
@@ -504,7 +501,7 @@ impl HttpMcpClient {
         Ok(out.contents)
     }
 
-    /// Phase 12.8 — paginated `resources/templates/list`.
+    /// Paginated `resources/templates/list`.
     pub async fn list_resource_templates(
         &self,
     ) -> Result<Vec<crate::types::McpResourceTemplate>, McpError> {
@@ -726,8 +723,8 @@ enum StreamableResponse {
     Empty,
 }
 
-/// Phase 12.2 follow-up — classify `Auto` mode fallback signals. Servers
-/// that only speak SSE typically respond to a streamable POST with 404
+/// Classify `Auto` mode fallback signals. Servers that only speak
+/// SSE typically respond to a streamable POST with 404
 /// (unknown route), 405 (method not allowed), or 415 (unsupported media
 /// type — most SSE-only servers reject `application/json` POST).
 pub(crate) fn is_streamable_unsupported(e: &McpError) -> bool {
@@ -898,8 +895,8 @@ async fn handshake_sse(
     Ok((init, composite))
 }
 
-/// Phase 12.2 follow-up — spec-compliant wrapper: when the server
-/// returns 404 on a request that carried a live `Mcp-Session-Id`, the
+/// Spec-compliant wrapper: when the server returns 404 on a request
+/// that carried a live `Mcp-Session-Id`, the
 /// session was invalidated server-side. Drop it and retry once without
 /// the header so the next response reseeds a fresh session id.
 async fn post_streamable_raw(

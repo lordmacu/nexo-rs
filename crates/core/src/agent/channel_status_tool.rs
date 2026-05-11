@@ -1,4 +1,4 @@
-//! Phase 80.9 — `channel_status` LLM tool.
+//! `channel_status` LLM tool.
 //!
 //! Read-only introspection of the channel registry for one
 //! server: connection state (registered or not), capabilities
@@ -24,7 +24,7 @@ pub const TOOL_NAME: &str = "channel_status";
 #[derive(Clone)]
 pub struct ChannelStatusTool {
     registry: SharedChannelRegistry,
-    /// Phase 80.9.j — `None` => resolve from `ctx.effective` at call time.
+    /// `None` => resolve from `ctx.effective` at call time.
     binding_id: Option<String>,
 }
 
@@ -36,7 +36,7 @@ impl ChannelStatusTool {
         }
     }
 
-    /// Phase 80.9.j — dynamic-binding constructor.
+    /// Dynamic-binding constructor.
     pub fn new_dynamic(registry: SharedChannelRegistry) -> Self {
         Self {
             registry,

@@ -66,7 +66,7 @@ pub struct AgentTurnJobConfig {
     pub user_prompt: String,
     pub deliver: DeliverCfg,
     /// Optional output-language directive — same semantics as
-    /// `AgentConfig.language` (Phase 19). Rendered as a
+    /// `AgentConfig.language`. Rendered as a
     /// `# OUTPUT LANGUAGE` system block.
     #[serde(default)]
     pub language: Option<String>,

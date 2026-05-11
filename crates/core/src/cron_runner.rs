@@ -1,5 +1,5 @@
-//! Phase 79.7 runtime firing — tokio task that polls the
-//! [`CronStore`] and dispatches due entries.
+//! Runtime firing — tokio task that polls the [`CronStore`] and
+//! dispatches due entries.
 //!
 //! Without this loop the cron tools (`cron_create` etc.) ship
 //! durable entries that NEVER fire. This module closes the gap.
@@ -27,12 +27,12 @@
 //!    cleanly.
 //!
 //! Related primitives:
-//!   * Phase 20 `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs`)
+//!   * the `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs`)
 //!     — similar dispatch shape (`LlmRegistry::build` → `chat` →
 //!     optional outbound publish).
-//!   * Phase 80.2-80.6 jitter knobs live in
+//!   * jitter knobs live in
 //!     [`nexo_config::types::cron_jitter::CronJitterConfig`] and are
-//!     hot-reloaded through the Phase 18 `ArcSwap` snapshot — the
+//!     hot-reloaded through the config `ArcSwap` snapshot — the
 //!     runner reads them every tick.
 //!
 //! Runtime status:
@@ -160,8 +160,8 @@ pub struct CronRunner {
     dispatcher: Arc<dyn CronDispatcher>,
     tick_interval: Duration,
     one_shot_retry: OneShotRetryPolicy,
-    /// Hot-reloaded jitter + killswitch config. Phase 80.2-80.6.
-    /// Wrapped in `Arc<ArcSwap<_>>` so a Phase 18 reload swaps the
+    /// Hot-reloaded jitter + killswitch config.
+    /// Wrapped in `Arc<ArcSwap<_>>` so a config reload swaps the
     /// inner value atomically and the running tick observes the
     /// new config on the next read.
     jitter_cfg: Arc<ArcSwap<CronJitterConfig>>,
@@ -198,7 +198,7 @@ impl CronRunner {
         self
     }
 
-    /// Wire a hot-reloaded jitter config (Phase 80.2-80.6).
+    /// Wire a hot-reloaded jitter config.
     pub fn with_jitter_cfg(mut self, cfg: Arc<ArcSwap<CronJitterConfig>>) -> Self {
         self.jitter_cfg = cfg;
         self
@@ -207,7 +207,7 @@ impl CronRunner {
     /// Run a single tick at `now_unix` and advance state. Returns
     /// one outcome per entry that was due. Test-friendly.
     pub async fn tick_once(&self, now_unix: i64) -> Vec<FireOutcome> {
-        // Phase 80.6 killswitch — observed every tick, hot-reloadable.
+        // Killswitch — observed every tick, hot-reloadable.
         // When `enabled` flips to `false` the runner stops dispatching;
         // entries stay in storage and resume on the next `true` tick.
         let cfg = self.jitter_cfg.load_full();
@@ -679,7 +679,7 @@ mod tests {
         assert!(LoggingCronDispatcher.fire(&entry).await.is_ok());
     }
 
-    // ----- Phase 80.6 killswitch -----
+    // ----- killswitch -----
 
     #[tokio::test]
     async fn killswitch_off_skips_dispatch_and_keeps_entry() {

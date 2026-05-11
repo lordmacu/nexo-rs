@@ -1,4 +1,4 @@
-//! Phase 76.15 — MCP server template (stdio + optional HTTP).
+//! MCP server template (stdio + optional HTTP).
 //!
 //! Boot model:
 //!   * Always opens the stdio transport (the agent's extension
@@ -9,13 +9,9 @@
 //!     `curl` or `claude mcp` without going through the agent.
 //!
 //! Reference patterns:
-//!   * `claude-code-leak/src/entrypoints/mcp.ts:35-78` — minimal
-//!     stdio MCP server. The leak uses `setRequestHandler` per
-//!     schema; we use `McpServerBuilder::tool(impl Tool)` for the
-//!     same effect.
-//!   * `claude-code-leak/src/utils/computerUse/mcpServer.ts:60-78`
-//!     — `createXxxMcpServer()` factory + post-construction
-//!     handler swap. We collapse that into one builder chain.
+//!   * `McpServerBuilder::tool(impl Tool)` registers tools with
+//!     auto-derived JSON Schema, and one builder chain replaces a
+//!     factory + post-construction handler swap.
 //!   * `crates/mcp/src/bin/mock_mcp_server.rs` — exhaustive
 //!     reference for protocol corner cases (initialize, paginate,
 //!     errors, notifications). Treat this template as the
@@ -57,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = CancellationToken::new();
 
-    // Phase 76.15 — optional HTTP transport. Boots only when the
+    // Optional HTTP transport. Boots only when the
     // operator opts in by setting `MCP_TEMPLATE_HTTP_BIND`. The
     // returned `HttpServerHandle` is dropped at end of main; the
     // server exits when `shutdown` is cancelled (SIGTERM below).

@@ -1,4 +1,4 @@
-//! Phase 67.G.3 — read-only query tools.
+//! Read-only query tools.
 //!
 //! Each tool returns a markdown string capped to ~3.5 KiB so a
 //! single chat message stays under Telegram / WhatsApp's 4 KiB
@@ -47,7 +47,7 @@ pub struct ListAgentsInput {
     #[serde(default)]
     pub filter: Option<String>,
     /// Optional phase id substring filter (case-sensitive prefix
-    /// or exact). Lets a chat user say "only 67.x agents".
+    /// or exact). Lets a chat user filter to agents on a given phase.
     #[serde(default)]
     pub phase_prefix: Option<String>,
 }
@@ -199,7 +199,7 @@ fn default_turns() -> usize {
     20
 }
 
-/// Phase 72.3 — read the durable turn log. Markdown table with one
+/// Read the durable turn log. Markdown table with one
 /// row per recorded turn, oldest first so the operator can scroll
 /// the table top-to-bottom and follow the run. The header reports
 /// `<shown> of <total>` so a 200-turn goal isn't silently

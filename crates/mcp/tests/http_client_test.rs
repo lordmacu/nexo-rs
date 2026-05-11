@@ -1,4 +1,4 @@
-//! Phase 12.2 — integration tests against a minimal axum-based MCP server.
+//! Integration tests against a minimal axum-based MCP server.
 //!
 //! Scope: cover streamable-http happy path (initialize, list_tools,
 //! call_tool), JSON-RPC error mapping, and SSE legacy bootstrap.
@@ -357,7 +357,7 @@ async fn sse_connect_receives_endpoint_event() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Phase 12.2 follow-up — Mcp-Session-Id mid-call invalidation (404 → retry).
+// Mcp-Session-Id mid-call invalidation (404 → retry).
 // ──────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Default)]
@@ -550,7 +550,7 @@ async fn streamable_does_not_retry_404_when_no_session() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Phase 12.2 follow-up — `transport: auto` fallback from streamable → sse
+// `transport: auto` fallback from streamable → sse
 // ──────────────────────────────────────────────────────────────────────
 
 async fn auto_fallback_streamable_handler(_body: String) -> axum::response::Response {

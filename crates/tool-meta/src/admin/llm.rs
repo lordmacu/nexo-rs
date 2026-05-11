@@ -1,4 +1,4 @@
-//! Phase 82.10.t.x — `nexo/admin/llm/complete` wire types.
+//! `nexo/admin/llm/complete` wire types.
 //!
 //! Lets a microapp / extension delegate an LLM completion to the
 //! daemon, which holds the provider configs (`llm.yaml`) +

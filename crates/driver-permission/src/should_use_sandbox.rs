@@ -1,6 +1,5 @@
-//! Phase 77.10 — shouldUseSandbox heuristic.
+//! shouldUseSandbox heuristic.
 //!
-//! Ported from `claude-code-leak/src/tools/BashTool/shouldUseSandbox.ts`.
 //! Decides whether a Bash command should be wrapped in a sandbox
 //! (bubblewrap / firejail). Probes for the sandbox backend once at
 //! construction time; the decision function is pure and allocation-free.

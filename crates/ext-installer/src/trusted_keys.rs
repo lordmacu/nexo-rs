@@ -1,4 +1,4 @@
-//! Phase 31.3 — operator-side trust policy loaded from
+//! Operator-side trust policy loaded from
 //! `<config_dir>/extensions/trusted_keys.toml`.
 //!
 //! Three trust modes (`ignore | warn | require`) compose with a

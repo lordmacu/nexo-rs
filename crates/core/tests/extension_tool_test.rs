@@ -1,4 +1,4 @@
-//! Phase 11.5 — end-to-end: spawn `echo_ext`, wrap in Arc, register in
+//! End-to-end: spawn `echo_ext`, wrap in Arc, register in
 //! `ToolRegistry` via `ExtensionTool`, dispatch a call through the registry.
 
 use std::path::PathBuf;
@@ -169,7 +169,7 @@ async fn extension_tool_registers_and_dispatches() {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// Phase 82.1 Step 8 — e2e BindingContext propagation
+// e2e BindingContext propagation
 // ───────────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -185,14 +185,14 @@ async fn extension_tool_passthrough_emits_nexo_binding_block() {
 
     // Build the ExtensionTool with passthrough ON — same wiring an
     // operator gets via `[context] passthrough = true` in
-    // `plugin.toml` (Phase 11.5 follow-up).
+    // `plugin.toml`.
     let pid = manifest.id();
     let desc = rt.handshake().tools[0].clone();
     let handler =
         ExtensionTool::new(pid, desc.name.clone(), Arc::clone(&rt)).with_context_passthrough(true);
 
     // Simulate what the runtime intake does when an inbound message
-    // matches a Phase 17 binding: AgentContext gets a populated
+    // matches a binding: AgentContext gets a populated
     // BindingContext carrying (channel, account_id, binding_id).
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -220,7 +220,7 @@ async fn extension_tool_passthrough_emits_nexo_binding_block() {
     assert_eq!(echoed["_meta"]["agent_id"], "ana");
     assert_eq!(echoed["_meta"]["session_id"], session.to_string());
 
-    // Nested binding block — Phase 82.1 contract.
+    // Nested binding block.
     let binding = &echoed["_meta"]["nexo"]["binding"];
     assert_eq!(binding["agent_id"], "ana");
     assert_eq!(binding["channel"], "whatsapp");

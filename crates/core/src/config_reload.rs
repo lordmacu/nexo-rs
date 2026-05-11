@@ -1,4 +1,4 @@
-//! Phase 18 — runtime config reload coordinator.
+//! Runtime config reload coordinator.
 //!
 //! Watches the config directory, re-runs boot validation, builds a
 //! fresh `RuntimeSnapshot` per agent, and dispatches
@@ -8,9 +8,9 @@
 //! fails or a snapshot cannot be built — servicing never drops to a
 //! broken config.
 //!
-//! Scope (Phase 18): hot-swap of **existing** agents only. Adding a
-//! brand-new agent id or removing a running one requires spawn/teardown
-//! plumbing that lives in `src/main.rs` today; that is Phase 19.
+//! Scope: hot-swap of **existing** agents only. Adding a brand-new
+//! agent id or removing a running one requires spawn/teardown
+//! plumbing that lives in `src/main.rs` today.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -163,7 +163,7 @@ impl ConfigReloadCoordinator {
         };
 
         // 2. Structural + provider validation (aggregate errors).
-        // Phase 82.10.s: providers are LLM yaml instance ids
+        // Providers are LLM yaml instance ids
         // (`anthropic-a5b8`), NOT factory ids — agents bind to
         // yaml-key instances that map to a factory via
         // `factory_type`. Mirror the boot validation path in
@@ -194,7 +194,7 @@ impl ConfigReloadCoordinator {
 
         // 3. Bump version + build snapshots per agent present in BOTH
         //    old (registered handles) and new (config). Agents that
-        //    disappear or appear are Phase 19 scope — we skip them
+        //    disappear or appear are out of scope — we skip them
         //    with a rejection entry so the operator sees the diff.
         let mut version_guard = self.version.lock().await;
         *version_guard += 1;
@@ -288,7 +288,7 @@ impl ConfigReloadCoordinator {
                 hook();
             }
             drop(hooks);
-            // Phase 18 follow-up — broadcast the event so extensions
+            // Broadcast the event so extensions
             // and dashboards can react without polling. Non-fatal if
             // the publish fails; the metrics + log already record the
             // swap.
@@ -391,17 +391,17 @@ impl ConfigReloadCoordinator {
 
 #[cfg(test)]
 impl ConfigReloadCoordinator {
-    /// Phase 81.10 — test-only: count of registered post hooks.
+    /// Test-only: count of registered post hooks.
     /// Used by `register_plugin_registry_reload_hook` to verify
     /// it pushes exactly one hook.
     pub async fn post_hooks_len_for_test(&self) -> usize {
         self.post_hooks.lock().await.len()
     }
 
-    /// Phase 81.10 — test-only: fire every registered post-hook in
-    /// FIFO order. Mirrors the production fire path (line 275-284)
-    /// but skips the gate + reload itself; callers exercise the
-    /// hook contract, not the reload mechanics.
+    /// Test-only: fire every registered post-hook in FIFO order.
+    /// Mirrors the production fire path but skips the gate + reload
+    /// itself; callers exercise the hook contract, not the reload
+    /// mechanics.
     pub async fn fire_post_hooks_for_test(&self) {
         let hooks = self.post_hooks.lock().await;
         for hook in hooks.iter() {
@@ -451,7 +451,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_hooks_register_and_can_be_invoked_in_order() {
-        // Phase 70.7 — verify the hook list grows and runs in
+        // Verify the hook list grows and runs in
         // registration order. The reload() success path that fires
         // them needs a full AppConfig on disk; that's covered by the
         // boot smoke tests. Here we just check the storage / FIFO.

@@ -2,17 +2,12 @@
 //! discriminator, capabilities snapshot, session state, status,
 //! tool output.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/LSPTool/schemas.ts:13-191` —
-//!     discriminated union per `operation`. We collapse the 9 ops
-//!     into 5 for the MVP (go_to_def, hover, references,
-//!     workspace_symbol, diagnostics).
-//!   * `claude-code-leak/src/services/lsp/LSPServerInstance.ts:74-150`
-//!     — FSM states. We add an explicit `Unavailable` for binaries
-//!     missing on PATH so the manager never tries to spawn them.
-//!
-//! Spec citation: `proyecto/PHASES.md:4955-4963` defines the
-//! built-in matrix.
+//! The request type is a discriminated union per operation; we
+//! collapse the prior art's 9 operations into 5 for the MVP
+//! (go_to_def, hover, references, workspace_symbol, diagnostics).
+//! The session FSM adds an explicit `Unavailable` state for
+//! binaries missing on PATH so the manager never tries to spawn
+//! them.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -67,7 +62,6 @@ pub struct LanguageMatrixEntry {
 }
 
 /// Built-in matrix. Order = probe order = whitelist iteration order.
-/// Lifted from `proyecto/PHASES.md:4955-4963`.
 pub const LANGUAGE_MATRIX: &[LanguageMatrixEntry] = &[
     LanguageMatrixEntry {
         language: LspLanguage::Rust,
@@ -118,13 +112,9 @@ pub fn matrix_entry(lang: LspLanguage) -> &'static LanguageMatrixEntry {
 }
 
 /// 5-op MVP request shape. Discriminated by `kind` for serde wire
-/// compatibility with the LLM tool surface. Lift from
-/// `claude-code-leak/src/tools/LSPTool/schemas.ts:13-191` collapsed
-/// to MVP set.
+/// compatibility with the LLM tool surface.
 ///
-/// `line` and `character` are **1-based** to match editor UX —
-/// the same convention the leak uses
-/// (`claude-code-leak/src/tools/LSPTool/schemas.ts:75-84`). The
+/// `line` and `character` are **1-based** to match editor UX. The
 /// session converts to 0-based on the wire.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -191,8 +181,8 @@ pub struct ResolvedCapabilities {
     pub hover: bool,
     pub workspace_symbol: bool,
     /// Server pushes `textDocument/publishDiagnostics`. Always true
-    /// in practice; we still track it for parity with the leak's
-    /// `passiveFeedback.ts` registration gate.
+    /// in practice; we still track it for parity with the prior
+    /// art's passive-feedback registration gate.
     pub publish_diagnostics: bool,
 }
 
@@ -224,9 +214,9 @@ impl ResolvedCapabilities {
     }
 }
 
-/// FSM state per session. Mirrors the leak's
-/// `LSPServerInstance.ts:74-150` plus an explicit `Unavailable`
-/// for binaries missing on PATH.
+/// FSM state per session. Mirrors the prior art's server-instance
+/// states plus an explicit `Unavailable` for binaries missing on
+/// PATH.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
     Stopped,
@@ -254,7 +244,7 @@ pub struct LspToolOutput {
 
 /// Operator-facing summary of one `(workspace, language)` session.
 /// Surfaced by `LspManager::server_status()` for `nexo setup doctor`
-/// and for diagnostics rendering in admin-ui (Phase 79.14 follow-up).
+/// and for diagnostics rendering in admin-ui.
 #[derive(Debug, Clone)]
 pub struct ServerStatus {
     pub language: LspLanguage,

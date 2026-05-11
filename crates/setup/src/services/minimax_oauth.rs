@@ -1,8 +1,8 @@
 //! CLI wrapper around `nexo_llm_auth::minimax` — Token-Plan
 //! device-code OAuth flow.
 //!
-//! Phase 82.10.u.1 extracted the cryptographic + HTTP primitives
-//! into `nexo-llm-auth` so the admin RPC handler (`oauth_start` /
+//! The cryptographic + HTTP primitives
+//! live in `nexo-llm-auth` so the admin RPC handler (`oauth_start` /
 //! `oauth_finish`) can reuse them. This file keeps the interactive
 //! glue: print the verification URL + user code banner, then poll
 //! `/oauth/token` blocking until the user approves or the code

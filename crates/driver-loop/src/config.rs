@@ -27,10 +27,10 @@ pub struct DriverConfig {
     pub driver: DriverBinConfig,
     #[serde(default)]
     pub acceptance: AcceptanceConfig,
-    /// Phase 67.8 — replay-policy + LlmDecider deny-shortcut tuning.
+    /// Replay-policy + LlmDecider deny-shortcut tuning.
     #[serde(default)]
     pub replay_policy: ReplayPolicyConfig,
-    /// Phase 67.9 + 77.2 — opportunistic /compact injection.
+    /// Opportunistic /compact injection.
     #[serde(default)]
     pub compact_policy: CompactPolicyConfig,
 }
@@ -46,13 +46,13 @@ pub struct CompactPolicyConfig {
     pub threshold: f64,
     #[serde(default = "default_compact_min_gap")]
     pub min_turns_between_compacts: u32,
-    /// Phase 77.2 — auto-compaction triggers (token pressure + age).
+    /// Auto-compaction triggers (token pressure + age).
     #[serde(default)]
     pub auto: Option<AutoCompactionConfig>,
-    /// Phase 77.3 — session-memory compact persistence config.
+    /// Session-memory compact persistence config.
     #[serde(default)]
     pub sm_compact: Option<SmCompactConfig>,
-    /// Phase 77.5 — post-turn memory extraction config.
+    /// Post-turn memory extraction config.
     #[serde(default)]
     pub extract_memories: Option<ExtractMemoriesConfig>,
 }
@@ -170,7 +170,7 @@ pub enum DeciderConfig {
         max_tokens: u32,
         #[serde(default)]
         system_prompt_path: Option<PathBuf>,
-        /// Phase 67.7 — semantic memory of past decisions.
+        /// Semantic memory of past decisions.
         #[serde(default)]
         memory: Option<DeciderMemoryConfig>,
     },
@@ -250,8 +250,8 @@ pub struct DriverBinConfig {
 pub struct AcceptanceConfig {
     #[serde(default, with = "humantime_serde::option")]
     pub default_shell_timeout: Option<Duration>,
-    /// Phase 67.5 — bytes of stdout+stderr attached as evidence on
-    /// each `AcceptanceFailure`. Default 4 KiB.
+    /// Bytes of stdout+stderr attached as evidence on each
+    /// `AcceptanceFailure`. Default 4 KiB.
     #[serde(default)]
     pub evidence_byte_limit: Option<usize>,
 }

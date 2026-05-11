@@ -1,11 +1,11 @@
-//! B5 + B6 + B7 — `EventForwarder` is a `DriverEventSink` impl that
+//! `EventForwarder` is a `DriverEventSink` impl that
 //! the orchestrator publishes to. On every event it:
 //!
-//! - B6: feeds `AttemptResult` into `AgentRegistry::apply_attempt`
+//! - feeds `AttemptResult` into `AgentRegistry::apply_attempt`
 //!   so `agent_status` / `list_agents` show live turn / acceptance.
-//! - B7: pushes a one-line summary into `LogBuffer` so
+//! - pushes a one-line summary into `LogBuffer` so
 //!   `agent_logs_tail` returns recent activity.
-//! - B5: on `GoalCompleted`, looks up hooks attached to the goal
+//! - on `GoalCompleted`, looks up hooks attached to the goal
 //!   in `HookRegistry`, computes the right `HookTransition`, and
 //!   asks `HookDispatcher::dispatch` to fire each. Failures log
 //!   and continue (failure isolation).
@@ -35,14 +35,14 @@ pub struct EventForwarder {
     pub log_buffer: Arc<LogBuffer>,
     pub hook_registry: Arc<HookRegistry>,
     pub hook_dispatcher: Arc<dyn HookDispatcher>,
-    /// Phase 72.2 — durable per-turn audit log. `None` keeps the
+    /// Durable per-turn audit log. `None` keeps the
     /// legacy in-memory-only behaviour (LogBuffer + AgentSnapshot
     /// only); production boot wires `SqliteTurnLogStore` so a
     /// post-mortem can replay every turn after a restart. Best-
     /// effort: append failures log a warn but never block the
     /// driver loop.
     pub turn_log: Option<Arc<dyn TurnLogStore>>,
-    /// PT-4 — idempotency store for hook firings. When `Some`,
+    /// Idempotency store for hook firings. When `Some`,
     /// `forget_goal` is called after every goal completes so old
     /// claim rows don't accumulate indefinitely. The dispatcher
     /// itself holds the same `Arc` for pre-action claiming.
@@ -69,7 +69,7 @@ impl EventForwarder {
         }
     }
 
-    /// Attach the durable turn log (Phase 72.2). Builder-style so
+    /// Attach the durable turn log. Builder-style so
     /// the existing `EventForwarder::new` call sites stay
     /// untouched — only the bin opts in.
     pub fn with_turn_log(mut self, store: Arc<dyn TurnLogStore>) -> Self {
@@ -77,7 +77,7 @@ impl EventForwarder {
         self
     }
 
-    /// Attach the hook idempotency store (PT-4). Builder-style so
+    /// Attach the hook idempotency store. Builder-style so
     /// existing call sites stay untouched — only the bin opts in.
     pub fn with_idempotency(
         mut self,
@@ -100,7 +100,7 @@ impl DriverEventSink for EventForwarder {
         // 2) Side effects local to this process.
         match &event {
             DriverEvent::AttemptCompleted { result } => {
-                // B6 — refresh snapshot.
+                // Refresh snapshot.
                 if let Err(e) = self.registry.apply_attempt(result).await {
                     tracing::warn!(target: "event_forwarder", "apply_attempt failed: {e}");
                 }
@@ -119,14 +119,14 @@ impl DriverEventSink for EventForwarder {
                         tracing::warn!(target: "event_forwarder", "set_sleeping failed: {e}");
                     }
                 }
-                // B7 — log line.
+                // Log line.
                 let outcome_label = outcome_label(&result.outcome);
                 self.log_buffer.push(
                     result.goal_id,
                     "agent.driver.attempt.completed",
                     format!("turn {} → {}", result.turn_index, outcome_label),
                 );
-                // Phase 72.2 — durable turn record. Looked-up
+                // Durable turn record. Looked-up
                 // summary mirrors what `agent_status` shows so the
                 // audit log stays in sync with the live snapshot.
                 if let Some(log) = &self.turn_log {
@@ -197,7 +197,7 @@ impl DriverEventSink for EventForwarder {
                     "agent.driver.goal.completed",
                     format!("goal terminal: {:?}", outcome.outcome),
                 );
-                // B20 — audit findings (carried in final_text) are
+                // Audit findings (carried in final_text) are
                 // logged unconditionally so console-originated
                 // dispatches don't lose them when notify_origin
                 // no-ops on the 'console' plugin.
@@ -222,7 +222,7 @@ impl DriverEventSink for EventForwarder {
                         );
                     }
                 }
-                // B5 — fire completion hooks.
+                // Fire completion hooks.
                 let transition = match &outcome.outcome {
                     AttemptOutcome::Done => HookTransition::Done,
                     AttemptOutcome::Cancelled => HookTransition::Cancelled,
@@ -231,7 +231,7 @@ impl DriverEventSink for EventForwarder {
                 self.fire_hooks_for(outcome.goal_id, transition).await;
                 // Drop hook entries so the registry doesn't leak.
                 self.hook_registry.drop_goal(outcome.goal_id);
-                // PT-4 — evict idempotency claim rows for this goal so
+                // Evict idempotency claim rows for this goal so
                 // the hook_dispatched table doesn't grow unbounded.
                 if let Some(store) = &self.idempotency {
                     if let Err(e) = store.forget_goal(outcome.goal_id).await {
@@ -314,7 +314,7 @@ impl EventForwarder {
     }
 }
 
-/// Phase 72.2 — render an `AttemptResult` into a row for the
+/// Render an `AttemptResult` into a row for the
 /// durable turn log. `summary` / `diff_stat` come from the live
 /// `AgentSnapshot` so the row matches what `agent_status` would
 /// report for the same turn.
@@ -361,16 +361,16 @@ fn build_turn_record(
         diff_stat,
         error,
         raw_json,
-        // Phase 80.9.h — `source` is set by the channel inbound
+        // `source` is set by the channel inbound
         // path before this builder runs (the channel sink
         // populates it via `with_source` style helper). The
         // forwarder never knows the inbound origin directly, so
         // it always emits `None` — the default-empty contract
         // matches what audit tools expect.
         source: None,
-        // Phase 82.8 — same default-None pattern as `source`.
+        // Same default-None pattern as `source`.
         // The channel inbound path populates `account_id` from
-        // BindingContext (Phase 82.1) via the same with_*
+        // BindingContext via the same with_*
         // helper before persistence; the forwarder doesn't
         // know the binding directly.
         account_id: None,

@@ -1,4 +1,4 @@
-//! Phase 82.14.c — SQLite-backed `EscalationStore`.
+//! SQLite-backed `EscalationStore`.
 //!
 //! Durable variant of the in-memory escalation store so pending
 //! human-review requests survive daemon restarts. Without

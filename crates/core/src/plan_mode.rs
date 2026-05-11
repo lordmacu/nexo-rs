@@ -1,6 +1,6 @@
-#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+#![allow(clippy::all)] // scaffolding — re-enable once fully shipped
 
-//! Phase 79.1 — plan-mode state, refusal, and tool classification.
+//! Plan-mode state, refusal, and tool classification.
 //!
 //! Plan mode is a per-goal toggle that puts the agent into a read-only
 //! "exploration + design" phase. While active, every mutating tool call
@@ -10,13 +10,8 @@
 //! channel that owns the goal) unlocks plan mode and lets the model
 //! resume mutating work.
 //!
-//! Design references:
-//!   * `claude-code-leak/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts`
-//!   * `claude-code-leak/src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts`
-//!   * `claude-code-leak/src/utils/permissions/permissionSetup.ts:1458-1489`
-//!     (`prepareContextForPlanMode` saves `prePlanMode`, restored on exit).
-//!   * `research/src/acp/approval-classifier.ts:24-38` — taxonomy peer for
-//!     [`ToolKind`].
+//! On entering plan mode the prior mode is saved so it can be
+//! restored on exit, mirroring established plan-mode implementations.
 //!
 //! Centralised gate: every mutating tool MUST appear in
 //! [`MUTATING_TOOLS`] and every read-only tool in [`READ_ONLY_TOOLS`].
@@ -58,24 +53,24 @@ pub enum PlanModeReason {
         /// Optional free-form reason from the model.
         reason: Option<String>,
     },
-    /// Operator forced plan mode via channel command (Phase 26 pairing).
+    /// Operator forced plan mode via channel command.
     OperatorRequested,
-    /// Soft-dep on Phase 77.8: dispatcher pre-empted a destructive
-    /// command and auto-entered plan mode. `tripped_check` carries the
-    /// classifier verdict (e.g. `"rm -rf $HOME"`, `"sed -i without
-    /// validated path"`).
+    /// Dispatcher pre-empted a destructive command and auto-entered
+    /// plan mode. `tripped_check` carries the destructive-classifier
+    /// verdict (e.g. `"rm -rf $HOME"`, `"sed -i without validated
+    /// path"`).
     AutoDestructive {
-        /// 77.8 destructive-classifier verdict that triggered the
+        /// Destructive-classifier verdict that triggered the
         /// auto-enter.
         tripped_check: String,
     },
 }
 
 /// Plan-mode state machine kept on the goal's [`AgentContext`] and
-/// mirrored in `agent_registry.goals.plan_mode` (column added in step 4).
+/// mirrored in `agent_registry.goals.plan_mode`.
 ///
-/// SQLite is canonical so daemon restart preserves the state via Phase
-/// 71 reattach; the in-memory copy is a hot cache.
+/// SQLite is canonical so daemon restart preserves the state via goal
+/// reattach; the in-memory copy is a hot cache.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PlanModeState {
@@ -113,26 +108,24 @@ impl PlanModeState {
 /// Coarse classification surfaced inside [`PlanModeRefusal`] so the
 /// model can react with the right framing without parsing tool names.
 ///
-/// Peer reference: `research/src/acp/approval-classifier.ts:24-32`
-/// (`AcpApprovalClass` — same intent, larger surface).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolKind {
     /// Bash / shell command. Mutating subset gated; read-only subset
-    /// allowed (Phase 77.8 classifier provides the verdict at runtime).
+    /// allowed (the destructive classifier provides the verdict at runtime).
     Bash,
     /// `FileWrite`, `FileEdit`, `NotebookEdit`.
     FileEdit,
     /// Plugin outbound — WhatsApp/Telegram/email send, browser
     /// click/type/navigate, etc.
     Outbound,
-    /// `delegate_to`, future `TeamCreate` (79.6).
+    /// `delegate_to`, `TeamCreate`.
     Delegate,
     /// `program_phase`, `dispatch_followup`.
     Dispatch,
-    /// 79.7 `ScheduleCron`, future schedulers.
+    /// `ScheduleCron`, future schedulers.
     Schedule,
-    /// 79.10 `Config { op: apply }`.
+    /// `Config { op: apply }`.
     Config,
     /// `FileRead`, `Glob`, `Grep`, `WebSearch`, MCP read tools, plan
     /// mode tools themselves, `AskUserQuestion`, `Sleep`, etc.
@@ -176,10 +169,8 @@ impl PlanModeRefusal {
 /// Frozen system-prompt suffix injected on every turn while plan
 /// mode is on. The string is intentionally `&'static` (no
 /// timestamps, no per-goal substitutions) so the Anthropic prompt
-/// cache stays warm across turns — see
-/// `claude-code-leak/src/services/api/promptCacheBreakDetection.ts`
-/// for the inverse: cache-misses caused by sneaking variable text
-/// into "stable" blocks.
+/// cache stays warm across turns: sneaking variable text into
+/// "stable" blocks would cause cache misses.
 pub const PLAN_MODE_SYSTEM_HINT: &str = "[plan-mode] Active. Read-only exploration. Mutating tools refuse with PlanModeRefusal. Call ExitPlanMode { final_plan } when ready.";
 
 /// Return the canonical plan-mode hint when plan mode is active,
@@ -191,7 +182,7 @@ pub fn plan_mode_system_hint(state: &PlanModeState) -> Option<&'static str> {
 }
 
 /// Acceptance verdict surfaced via the `[plan-mode] acceptance: ...`
-/// notify line. The variants match the two terminal states a Phase 75
+/// notify line. The variants match the two terminal states an
 /// acceptance run can reach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcceptanceOutcome {
@@ -227,7 +218,7 @@ pub fn format_notify_entered(entered_at: i64, reason: &PlanModeReason) -> String
 
 /// Format the canonical `[plan-mode] exited — plan: ...` notify
 /// line. The plan body is truncated to 200 chars with an ellipsis;
-/// the full body lives in the Phase 72 turn log (referenced by index).
+/// the full body lives in the turn log (referenced by index).
 pub fn format_notify_exited(plan: &str, turn_log_index: u64) -> String {
     let snippet: String = plan.chars().take(200).collect();
     let ellipsis = if plan.chars().count() > 200 {
@@ -275,12 +266,10 @@ pub fn format_notify_refused(refusal: &PlanModeRefusal) -> String {
 /// listing it here (or in [`READ_ONLY_TOOLS`]) makes
 /// [`assert_registry_classified`] panic at boot.
 ///
-/// Forward references (entries already valid even when their owning
-/// sub-phase has not shipped — the gate just never fires for an
-/// unregistered name):
-///   * 79.7 `ScheduleCron`, 79.8 `RemoteTrigger`, 79.10
-///     `Config { op: apply }`.
-///   * 79.13 `NotebookEdit`, 79.6 `TeamCreate`.
+/// Forward references (entries already valid even when not yet
+/// registered — the gate just never fires for an unregistered
+/// name): `ScheduleCron`, `RemoteTrigger`, `Config { op: apply }`,
+/// `NotebookEdit`, `TeamCreate`.
 pub const MUTATING_TOOLS: &[&str] = &[
     // Bash is special-cased — see `is_mutating_tool_call` below.
     "Bash",
@@ -301,13 +290,13 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "start_followup",
     "cancel_followup",
     "RemoteTrigger",
-    // Phase 79.12 — REPL can exec arbitrary code (similar risk to Bash).
+    // REPL can exec arbitrary code (similar risk to Bash).
     "Repl",
-    // Config self-edit (79.10) — only `apply` op is mutating; the gate
+    // Config self-edit — only `apply` op is mutating; the gate
     // resolves the op at call time. `Config` as a name is listed here
     // so an unclassified registration fails the boot assert.
     "Config",
-    // Phase 79.6 — team-management tools. All three either spawn /
+    // Team-management tools. All three either spawn /
     // tear down N goals or deliver DMs that wake idle teammates.
     "TeamCreate",
     "TeamDelete",
@@ -336,27 +325,27 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "Sleep",
     "EnterPlanMode",
     "ExitPlanMode",
-    // Phase 79.4 — intra-turn scratch list. Mutates only the
+    // Intra-turn scratch list. Mutates only the
     // per-goal todos cache; never touches the workspace, broker, or
     // external state.
     "TodoWrite",
-    // Phase 79.3 — terminal output validator. Pure validate-and-echo;
+    // Terminal output validator. Pure validate-and-echo;
     // never touches any external state.
     "SyntheticOutput",
-    // Phase 79.7 — cron list reads the schedule store.
+    // Cron list reads the schedule store.
     "cron_list",
     "check_followup",
-    // Phase 79.5 — LSP tool. All 5 MVP ops (go_to_def, hover,
+    // LSP tool. All ops (go_to_def, hover,
     // references, workspace_symbol, diagnostics) are pure
     // queries against the language server; classifying once at
     // tool name level is enough since the discriminator lives
     // INSIDE the args, not the tool name.
     "Lsp",
-    // Phase 79.10 — read-only audit-log tool for ConfigTool
+    // Read-only audit-log tool for ConfigTool
     // proposals. Always available (not gated by the Cargo
     // feature flag); reads only.
     "config_changes_tail",
-    // Phase 79.6 — read-only team query tools.
+    // Read-only team query tools.
     "TeamList",
     "TeamStatus",
     // Memory + observability tools that read but never write.
@@ -371,8 +360,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 
 /// Decides whether `tool_name` is currently subject to plan-mode
 /// gating. `Bash` returns `Some(ToolKind::Bash)` regardless — the
-/// dispatcher pairs the verdict with the Phase 77.8 destructive
-/// classifier (when shipped) to decide whether to actually refuse.
+/// dispatcher pairs the verdict with the destructive classifier
+/// to decide whether to actually refuse.
 pub fn classify_tool(tool_name: &str) -> Option<ToolKind> {
     if MUTATING_TOOLS.contains(&tool_name) {
         return Some(match tool_name {
@@ -403,11 +392,10 @@ pub fn classify_tool(tool_name: &str) -> Option<ToolKind> {
 /// `Some(refusal)` when the call must be blocked, `None` to let it
 /// through.
 ///
-/// Bash short-circuit: when the 77.8 destructive classifier ships,
-/// callers will pass `bash_is_mutating: Some(verdict)`. Until then
-/// (`None` is the only value), Bash is treated as mutating in plan
-/// mode — fail-safe behaviour matches the spec ("default to blocking
-/// if the classifier returns Unknown").
+/// Bash short-circuit: callers pass `bash_is_mutating: Some(verdict)`
+/// from the destructive classifier. When `None`, Bash is treated as
+/// mutating in plan mode — fail-safe default to blocking when the
+/// classifier returns Unknown.
 pub fn gate_tool_call(
     state: &PlanModeState,
     tool_name: &str,
@@ -418,7 +406,7 @@ pub fn gate_tool_call(
 
 /// Args-aware gate. Same contract as [`gate_tool_call`] but
 /// accepts the tool's call args so per-op discriminators can be
-/// honoured. Phase 79.10 `Config { op: read }` is read-only and
+/// honoured. `Config { op: read }` is read-only and
 /// should pass under plan-mode; `op: propose | apply` is mutating
 /// and should refuse. Other tools fall through to the simple
 /// classifier.
@@ -437,7 +425,7 @@ pub fn gate_tool_call_with_args(
         return None;
     };
     let kind = classify_tool(tool_name)?;
-    // Phase 79.10 — `Config { op: read }` is read-only despite
+    // `Config { op: read }` is read-only despite
     // `Config` being in MUTATING_TOOLS. Fast path: when the tool is
     // `Config` and the op is `read`, bypass the gate entirely.
     if tool_name == "Config" {
@@ -609,7 +597,7 @@ mod tests {
         assert!(gate_tool_call(&state, "config_changes_tail", None).is_none());
     }
 
-    // Phase 79.6 — team tool classification.
+    // Team tool classification.
 
     #[test]
     fn team_create_classified_as_delegate() {
@@ -671,7 +659,7 @@ mod tests {
 
     #[test]
     fn gate_bash_with_classifier_unknown_blocks() {
-        // 77.8 not yet shipped: caller passes None → fail-safe block.
+        // Caller passes None → fail-safe block.
         let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         let refusal = gate_tool_call(&state, "Bash", None).unwrap();
         assert_eq!(refusal.tool_kind, ToolKind::Bash);

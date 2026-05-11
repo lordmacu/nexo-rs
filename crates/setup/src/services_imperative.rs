@@ -1,4 +1,4 @@
-//! Phase 17 — imperative wizard flows for multi-instance channels.
+//! Imperative wizard flows for multi-instance channels.
 //!
 //! The declarative `ServiceDef` pipeline can only write root-level
 //! mapping fields; WhatsApp/Telegram multi-account and Google Auth
@@ -318,7 +318,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
     yaml_patch::patch_agent_credentials(&agent_file, &agent_id, "google", &id)?;
     println!("✔ {}: credentials.google = `{id}`.", agent_file.display());
 
-    // Phase 17 — offer the device-code consent flow inline so headless
+    // Offer the device-code consent flow inline so headless
     // setups (servers without a browser) can get a refresh_token
     // without firing up `google_auth_start` as an LLM tool.
     if crate::prompt::yes_no(
@@ -347,7 +347,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
     Ok(Outcome::Handled)
 }
 
-/// Phase 17 — device-code OAuth runner. Posts to
+/// Device-code OAuth runner. Posts to
 /// `oauth2.googleapis.com/device/code`, prints the verification URL +
 /// user code for the operator, polls until approval, then writes the
 /// token JSON at `token_path` with mode 0o600. Headless-friendly.

@@ -428,7 +428,7 @@ secret_guard:
     );
 }
 
-// ---- Phase 36.2: memory.snapshot YAML round-trip ----
+// ---- memory.snapshot YAML round-trip ----
 
 #[test]
 fn memory_snapshot_omitted_uses_defaults() {

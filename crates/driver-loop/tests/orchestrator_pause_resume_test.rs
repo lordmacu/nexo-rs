@@ -1,4 +1,4 @@
-//! Phase 67.C.2 — `pause_goal` / `resume_goal` API surface test.
+//! `pause_goal` / `resume_goal` API surface test.
 //! We don't drive a real goal here (that needs a multi-turn fixture
 //! with deterministic timing); instead we verify the orchestrator
 //! exposes the pause/resume hooks idempotently and the unknown-goal

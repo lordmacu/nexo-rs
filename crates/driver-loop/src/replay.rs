@@ -1,4 +1,4 @@
-//! Phase 67.8 — replay-policy. Classifies mid-turn errors observed by
+//! Replay-policy. Classifies mid-turn errors observed by
 //! `attempt::run_attempt` into a `ReplayDecision` the orchestrator
 //! acts on (mark_invalid, rollback, bump consecutive_errors).
 
@@ -39,7 +39,7 @@ pub enum ReplayDecision {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rollback_to: Option<String>,
     },
-    /// Phase 85.1 — provider returned `PromptTooLong` (413). Force a
+    /// Provider returned `PromptTooLong` (413). Force a
     /// compact pass (`Trigger::Reactive413`) without consulting the
     /// proactive estimator, then retry the same turn once. Bumps
     /// `consecutive_413`; reset by any successful turn. Distinct
@@ -78,7 +78,7 @@ impl ReplayPolicy for DefaultReplayPolicy {
             || msg.contains("rate limit")
             || msg.contains("unavailable")
             || msg.contains("temporarily");
-        // Phase 85.1 — reactive 413 recovery.
+        // Reactive 413 recovery.
         let prompt_too_long = msg.contains("prompt too long")
             || msg.contains("prompt_too_long")
             || msg.contains("context_length_exceeded")
@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_too_long_returns_compact_and_retry() {
-        // Phase 85.1 spec test 1: classification of `PromptTooLong`.
+        // Classification of `PromptTooLong`.
         let pol = DefaultReplayPolicy::default();
         let usage = BudgetUsage::default();
         let d = pol
@@ -251,8 +251,8 @@ mod tests {
 
     #[tokio::test]
     async fn compact_and_retry_classification_does_not_consult_consecutive_413_cap() {
-        // Phase 85.1 spec test 2: budget axis exhaustion is
-        // centralised in the orchestrator (BudgetGuards.is_exhausted),
+        // Budget axis exhaustion is centralised in the orchestrator
+        // (BudgetGuards.is_exhausted),
         // NOT inside the classifier. The classifier returns
         // CompactAndRetry unconditionally; the orchestrator decides
         // when to convert to Escalate via the budget axis.
@@ -267,8 +267,8 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_too_long_short_circuits_other_classifiers() {
-        // Phase 85.1 spec test 3: when an error mentions both
-        // "session" markers and "prompt too long", the 413
+        // When an error mentions both "session" markers and
+        // "prompt too long", the 413
         // classifier wins (no double-route into FreshSessionRetry).
         let pol = DefaultReplayPolicy::default();
         let usage = BudgetUsage::default();

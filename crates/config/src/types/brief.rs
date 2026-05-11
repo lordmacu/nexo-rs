@@ -1,15 +1,15 @@
-//! Phase 80.8 — brief mode config.
+//! Brief mode config.
 //!
 //! Brief mode tells the agent that its visible output channel is
-//! the new `send_user_message` tool. When `enabled = true`:
+//! the `send_user_message` tool. When `enabled = true`:
 //!
 //! 1. The tool is registered for the binding.
 //! 2. A short system-prompt section reminds the model to route
 //!    user-visible replies through the tool instead of free text.
-//! 3. (Deferred — 80.8.b) channel adapters can opt in to *hide*
+//! 3. (Deferred) channel adapters can opt in to *hide*
 //!    free-text output and only render `send_user_message` calls.
 //!
-//! Activation composes with Phase 80.15 `assistant_mode`: when the
+//! Activation composes with `assistant_mode`: when the
 //! agent is in assistant mode, brief is implicitly entitled even if
 //! the operator did not flip `brief.enabled` — assistant mode's
 //! system addendum already tells the model to use the tool.
@@ -58,8 +58,8 @@ impl Default for BriefConfig {
 }
 
 impl BriefConfig {
-    /// Validate at boot. Mirrors the defensive validation the rest
-    /// of the Phase 80 cluster ships (`cron_jitter`, `away_summary`).
+    /// Validate at boot. Mirrors the defensive validation that
+    /// `cron_jitter` and `away_summary` ship.
     pub fn validate(&self) -> Result<(), String> {
         // Sanity cap — no-one needs 1 000 attachments per turn, and
         // the tool's worst-case path-validation pass is O(N).
@@ -74,7 +74,7 @@ impl BriefConfig {
 
     /// Convenience used by the boot path to decide whether the
     /// tool should be registered for a binding. Composes with
-    /// Phase 80.15 `assistant_mode` — assistant-mode bindings are
+    /// `assistant_mode` — assistant-mode bindings are
     /// implicitly entitled even when the operator did not opt in.
     pub fn is_active_with_assistant_mode(&self, assistant_mode_active: bool) -> bool {
         self.enabled || assistant_mode_active

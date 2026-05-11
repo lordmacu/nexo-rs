@@ -1,10 +1,9 @@
-//! Phase 67.H.1 + PT-6 — unified operator-facing CLI.
+//! Unified operator-facing CLI.
 //!
-//! Original `nexo-driver` bin (run / list-active / list-worktrees
+//! The original `nexo-driver` bin (run / list-active / list-worktrees
 //! / rollback) lived in `crates/driver-loop/src/bin/nexo_driver.rs`.
-//! Phase 67.H.1 added the dispatch-side commands here. PT-6 folds
-//! the surfaces by re-exposing the legacy subcommands from this
-//! binary too, so a single `nexo-driver-tools` covers both
+//! This binary adds the dispatch-side commands and also re-exposes
+//! the legacy subcommands, so a single `nexo-driver-tools` covers both
 //! Claude-subprocess driving and project-tracker dispatch.
 //!
 //! The legacy `nexo-driver` binary keeps building for back-compat;
@@ -58,11 +57,11 @@ async fn run() -> Result<ExitCode> {
         .next()
         .ok_or_else(|| anyhow!("missing subcommand — see --help"))?;
     match cmd.as_str() {
-        // Phase 67.H.1 dispatch surface.
+        // Dispatch surface.
         "status" => cmd_status(args).await,
         "dispatch" => cmd_dispatch(args).await,
         "agents" => cmd_agents(args).await,
-        // PT-6 legacy surface — re-spawn the nexo-driver process
+        // Legacy surface — re-spawn the nexo-driver process
         // for these subcommands so the legacy bin stays the
         // single source of truth for run/list-active/rollback
         // semantics. Avoids duplicating the orchestrator boot
@@ -208,7 +207,7 @@ async fn cmd_dispatch(mut args: impl Iterator<Item = String>) -> Result<ExitCode
         .next()
         .ok_or_else(|| anyhow!("dispatch: <phase_id> required"))?;
     while args.next().is_some() {
-        // Reserved: --budget-turns / --hook flags — wired in 67.H.x.
+        // Reserved: --budget-turns / --hook flags — not yet wired.
     }
     let tracker = open_tracker()?;
     let registry = Arc::new(AgentRegistry::new(
@@ -284,7 +283,7 @@ async fn cmd_agents(mut args: impl Iterator<Item = String>) -> Result<ExitCode> 
         .next()
         .ok_or_else(|| anyhow!("agents: subcommand required (list | show | cancel)"))?;
     // The CLI can't share a registry with a long-running daemon
-    // here — that's the binary refactor in 67.H.x. For now this
+    // here — that's a future binary refactor. For now this
     // helper renders against a fresh in-memory registry just to
     // exercise the tool plumbing end-to-end.
     let registry = Arc::new(AgentRegistry::new(

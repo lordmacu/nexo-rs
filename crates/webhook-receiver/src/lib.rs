@@ -1,4 +1,4 @@
-//! Phase 80.12 — generic webhook receiver primitives.
+//! Generic webhook receiver primitives.
 //!
 //! Provider-agnostic: operator configures sources in YAML with HTTP
 //! path + signature spec + event-kind extraction + NATS publish

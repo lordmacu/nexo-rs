@@ -1,4 +1,4 @@
-//! Phase 91 — shared audio decode chain for both STT backends.
+//! Shared audio decode chain for both STT backends.
 //!
 //! Originally lived inside `transcribe.rs` (the whisper-rs path);
 //! lifted here so the Candle backend (`transcribe_candle.rs`) can
@@ -13,8 +13,8 @@
 //! ```
 //!
 //! Both [`super::transcribe::transcribe_file`] (legacy whisper-rs)
-//! and [`super::transcribe_candle::transcribe_file`] (Phase 91
-//! Candle) call into [`decode_to_pcm_mono`] and then [`pcm_s16_to_f32`]
+//! and [`super::transcribe_candle::transcribe_file`] (Candle)
+//! call into [`decode_to_pcm_mono`] and then [`pcm_s16_to_f32`]
 //! before handing samples off to their respective inference backends.
 
 #![cfg(any(feature = "stt", feature = "stt-candle"))]

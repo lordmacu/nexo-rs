@@ -1,4 +1,4 @@
-//! Phase 12.4 — `nexo-core` helpers that bridge `SessionMcpRuntime` to
+//! `nexo-core` helpers that bridge `SessionMcpRuntime` to
 //! the agent's `ToolRegistry`. Reuses the manager from `nexo-mcp` and the
 //! mock server binary (rebuilt on demand).
 

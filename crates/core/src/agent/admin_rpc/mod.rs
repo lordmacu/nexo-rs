@@ -1,4 +1,4 @@
-//! Phase 82.10 — admin RPC dispatcher.
+//! Admin RPC dispatcher.
 //!
 //! Receives JSON-RPC requests with `app:` ID prefix initiated by
 //! microapps over their stdio transport, looks up the handler for

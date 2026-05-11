@@ -1,5 +1,5 @@
-//! Phase 9.2 follow-up — JSON Schema validation of `tools/call`
-//! arguments before handler dispatch. Gated behind the
+//! JSON Schema validation of `tools/call` arguments before handler
+//! dispatch. Gated behind the
 //! `schema-validation` feature so the `jsonschema` dep is optional.
 //!
 //! When the feature is off the validator is a no-op; when on, callers

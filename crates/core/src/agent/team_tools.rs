@@ -1,25 +1,17 @@
-//! Phase 79.6 — five `Team*` tools sharing one `Arc<TeamTools>`
-//! inner.
+//! Five `Team*` tools sharing one `Arc<TeamTools>` inner.
 //!
-//! Step 8 ships:
+//! Components:
 //!   * `TeamTools` shared inner (bag of `Arc`s the handlers
 //!     consume).
 //!   * Five `pub struct *Tool { inner: Arc<TeamTools> }`
 //!     wrappers, each with its `tool_def() -> ToolDef`.
-//!   * Placeholder `ToolHandler::call` impls returning
-//!     `{"ok": false, "kind": "NotImplemented"}` so the tool
-//!     surface is stable while step 9 wires the real handlers.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/tools/TeamCreateTool/TeamCreateTool.ts:37-49`
-//!     — `inputSchema { team_name, description?, agent_type? }`.
-//!     We add `worktree_per_member?`.
-//!   * `claude-code-leak/src/tools/TeamDeleteTool/TeamDeleteTool.ts:21-22`
-//!     — empty `strictObject`. We widen to `team_id` because we
-//!     allow multiple teams per leader (relaxed from the leak's
-//!     single-team guard).
-//!   * `claude-code-leak/src/tools/SendMessageTool/SendMessageTool.ts:46-58`
-//!     — discriminated union of structured messages.
+//! Schema notes:
+//!   * `TeamCreate`: `{ team_name, description?, agent_type?,
+//!     worktree_per_member? }`.
+//!   * `TeamDelete`: `team_id` — multiple teams per leader are
+//!     allowed.
+//!   * `SendMessage`: discriminated union of structured messages.
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
@@ -36,13 +28,11 @@ use std::sync::Arc;
 /// Handlers read from `store`, publish to `router`, and stamp audit
 /// rows with `agent_id` + `current_goal_id`.
 ///
-/// C2 — `policy` is no longer captured at construction. Each handler
-/// reads the per-call [`TeamPolicy`] from `ctx.effective_policy().team`
+/// `policy` is not captured at construction. Each handler reads the
+/// per-call [`TeamPolicy`] from `ctx.effective_policy().team`
 /// via [`TeamTools::policy_for`] so a hot-reload of `team.max_*` (or
 /// per-binding override) is observed on the next intake event without
-/// re-registration. Mirrors the pattern in
-/// `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:624`
-/// (invalidate-and-refetch, no actor teardown).
+/// re-registration (invalidate-and-refetch, no actor teardown).
 pub struct TeamTools {
     pub store: Arc<dyn TeamStore>,
     pub router: Arc<TeamMessageRouter<AnyBroker>>,
@@ -270,20 +260,15 @@ impl TeamStatusTool {
 //     handler level too — main.rs only registers when enabled,
 //     but a handler called without the gate (e.g. via tests with
 //     a default policy) still refuses cleanly.
-//   * Output shape mirrors Phase 79.5/79.10: `{ok: true, ...}`
+//   * Output shape: `{ok: true, ...}`
 //     or `{ok: false, kind: "...", error: "..."}`.
 //   * Audit rows go through `store.record_event` best-effort —
 //     a failed insert is logged via tracing but does not fail
 //     the user-visible call.
-//
-// Reference (PRIMARY):
-//   * `claude-code-leak/src/tools/TeamCreateTool/TeamCreateTool.ts:128-237`
-//     — full `call()` body (single-team-per-leader guard at
-//     `:133-140` we explicitly relax via `max_concurrent`).
-//   * `claude-code-leak/src/tools/TeamDeleteTool/TeamDeleteTool.ts:71-135`
-//     — call body, active-member guard.
-//   * `claude-code-leak/src/tools/SendMessageTool/SendMessageTool.ts:1-58`
-//     — discriminated union of structured messages.
+//   * `TeamCreate` relaxes a single-team-per-leader guard via
+//     `max_concurrent`; `TeamDelete` enforces an active-member
+//     guard; `SendMessage` carries a discriminated union of
+//     structured messages.
 
 use nexo_team_store::{
     sanitize_name, validate_member_name_for_lead, validate_team_name, TeamEventRow, TeamMemberRow,
@@ -338,9 +323,8 @@ async fn record_event(
 impl ToolHandler for TeamCreateTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         // Guard: only the main goal of this agent (not a teammate
-        // running inside another team) can spawn a team. Mirror
-        // of leak's `claude-code-leak/src/tools/AgentTool/prompt.ts:279-282`
-        // ("teammates cannot spawn other teammates").
+        // running inside another team) can spawn a team — teammates
+        // cannot spawn other teammates.
         if ctx.is_teammate() {
             return Ok(err(
                 "TeammateCannotSpawnTeammate",
@@ -419,8 +403,8 @@ impl ToolHandler for TeamCreateTool {
             description: description.clone(),
             lead_agent_id: self.inner.agent_id.clone(),
             lead_goal_id: self.inner.current_goal_id.clone(),
-            // 79.6.b will wire the real Phase 14 FlowFlow id;
-            // the team_id is a stable placeholder so downstream
+            // A follow-up will wire the real FlowFlow id; the
+            // team_id is a stable placeholder so downstream
             // queries (TeamStatus) have a non-empty value.
             flow_id: team_id.clone(),
             worktree_per_member,
@@ -835,9 +819,9 @@ impl ToolHandler for TeamStatusTool {
         let is_lead = team.lead_agent_id == self.inner.agent_id;
         let is_member = members.iter().any(|m| m.agent_id == self.inner.agent_id);
         if !is_lead && !is_member {
-            // Mirror the leak's "tool only available within the team"
-            // semantics — a non-member shouldn't even confirm the
-            // team's existence beyond the explicit refusal.
+            // Tool is only available within the team — a non-member
+            // shouldn't even confirm the team's existence beyond the
+            // explicit refusal.
             let _ = ctx; // silence unused
             return Ok(err(
                 "NotMember",
@@ -876,8 +860,8 @@ impl ToolHandler for TeamStatusTool {
                 "worktree_per_member": team.worktree_per_member,
             },
             "members": json_members,
-            // Phase 14 FlowFlow integration is 79.6.b. Until
-            // then, surface zero counts so the field is stable.
+            // FlowFlow integration is a follow-up. Until then,
+            // surface zero counts so the field is stable.
             "task_summary": {
                 "pending": 0,
                 "running": n_running,
@@ -1489,9 +1473,7 @@ mod tests {
     }
 
     /// `team.enabled = false → true` on a hot-reload is observed by
-    /// the same tool instance via the new ctx. This is the
-    /// behaviour-equivalent of leak's
-    /// `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:624`
+    /// the same tool instance via the new ctx
     /// (invalidate-and-refetch — no actor restart).
     #[tokio::test]
     async fn team_enabled_flip_picked_up_via_new_ctx() {

@@ -1,4 +1,4 @@
-//! Phase 83.8.4.b.3 — end-to-end test that an `OutboundMessage`
+//! End-to-end test that an `OutboundMessage`
 //! dispatched through `BrokerOutboundDispatcher` lands on the
 //! per-channel `plugin.outbound.<channel>[.<account>]` topic
 //! with the payload shape the plugin's existing dispatcher

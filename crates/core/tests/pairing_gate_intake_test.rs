@@ -1,4 +1,4 @@
-//! Phase 26 — pairing gate intake test.
+//! Pairing gate intake test.
 //!
 //! Verifies that the runtime, when given a `PairingGate` and a binding
 //! whose `pairing_policy.auto_challenge=true`, drops events from

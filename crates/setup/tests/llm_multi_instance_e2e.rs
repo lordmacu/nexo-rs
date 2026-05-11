@@ -1,4 +1,4 @@
-//! Phase 82.10.s.4 integration test — exercise the full
+//! Integration test — exercise the full
 //! multi-instance LLM flow end-to-end:
 //!
 //! 1. `nexo/admin/llm_providers/upsert` with `factory_type` +

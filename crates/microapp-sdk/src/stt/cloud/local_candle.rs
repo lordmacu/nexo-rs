@@ -1,6 +1,5 @@
-//! Phase 91.x.wasm.phase-4d — bridge that lets the local Candle
-//! Whisper backend participate in a [`CompositeProvider`] chain
-//! as the offline fallback leg.
+//! Bridge that lets the local Candle Whisper backend participate
+//! in a [`CompositeProvider`] chain as the offline fallback leg.
 //!
 //! The cloud providers (OpenAI / Groq / Anthropic) all speak the
 //! [`SttProvider`] trait, which takes an in-memory audio buffer.

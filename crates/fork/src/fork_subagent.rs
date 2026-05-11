@@ -1,7 +1,6 @@
 //! `ForkSubagent` trait + `DefaultForkSubagent` impl.
-//! Step 80.19 / 9.
 //!
-//! Verbatim from `runForkedAgent` (leak `forkedAgent.ts:489-541`):
+//! Running a fork:
 //! 1. Apply [`ForkOverrides`] → forked [`AgentContext`].
 //! 2. Spawn the standalone [`run_turn_loop`].
 //! 3. Sync mode awaits inline; ForkAndForget mode `tokio::spawn`s.
@@ -34,15 +33,15 @@ use crate::turn_loop::{run_turn_loop, ToolDispatcher, TurnLoopParams};
 /// Tag for telemetry — identifies the call site that fired the fork.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum QuerySource {
-    /// Phase 80.1 autoDream deep-pass consolidation.
+    /// autoDream deep-pass consolidation.
     AutoDream,
-    /// Phase 80.14 AWAY_SUMMARY re-connection digest.
+    /// AWAY_SUMMARY re-connection digest.
     AwayDigest,
-    /// Phase 77.5 extract_memories post-turn extraction.
+    /// `extract_memories` post-turn extraction.
     SessionMemory,
     /// Speculation / look-ahead exploration.
     Speculation,
-    /// Phase 51 eval harness.
+    /// Eval harness.
     Eval,
     /// Custom static label (held in code as a literal).
     Custom(&'static str),
@@ -70,7 +69,7 @@ pub struct ForkParams {
     pub on_message: Option<Arc<dyn OnMessage>>,
     /// When true, no row is written to [`AgentRegistryStore`].
     /// The fork is invisible to `agent ps` and survives daemon restart
-    /// only via consumer-specific audit (e.g. Phase 80.18 `dream_runs`).
+    /// only via consumer-specific audit (e.g. the `dream_runs` ledger).
     pub skip_transcript: bool,
     pub mode: DelegateMode,
     pub timeout: Duration,
@@ -79,8 +78,8 @@ pub struct ForkParams {
     pub external_abort: Option<CancellationToken>,
 }
 
-/// Default impl — same-process fork. Cross-process forks (Phase 32
-/// multi-host) ship as a follow-up `NatsForkSubagent`.
+/// Default impl — same-process fork. Cross-process forks (multi-host)
+/// will ship as a follow-up `NatsForkSubagent`.
 pub struct DefaultForkSubagent {
     registry: Option<Arc<dyn AgentRegistryStore>>,
 }
@@ -126,9 +125,9 @@ impl ForkSubagent for DefaultForkSubagent {
         let run_id = Uuid::new_v4();
         tracing::Span::current().record("fork_run_id", tracing::field::display(run_id));
 
-        // Mirror leak `:96-104` — warn when max_output_tokens (via
-        // cache_safe.max_tokens) differs from parent: it clamps
-        // budget_tokens and may invalidate the cache.
+        // Warn when max_output_tokens (via cache_safe.max_tokens)
+        // differs from the parent: it clamps budget_tokens and may
+        // invalidate the cache.
         // NOTE: at this point cache_safe.max_tokens IS the parent's
         // when built via `from_parent_request`; if a caller manually
         // adjusted it after, they accept the cache miss risk.

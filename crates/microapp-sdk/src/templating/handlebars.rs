@@ -1,4 +1,4 @@
-//! Sandboxed Handlebars renderer (F26).
+//! Sandboxed Handlebars renderer.
 //!
 //! Strictly additive on top of the [`super::render`] mustache-
 //! lite default. When operator templates outgrow simple

@@ -216,7 +216,7 @@ fn flush_sub(current_phase: &mut Option<Phase>, current_sub: &mut Option<(SubPha
 /// block. Returns `None` when no marker was found OR no bullets
 /// followed it.
 pub(crate) fn parse_acceptance_block(body: &str) -> Option<Vec<String>> {
-    // B21 — concatenate every Acceptance block in the body.
+    // Concatenate every Acceptance block in the body.
     // A sub-phase can ship multiple `Acceptance:` sections
     // (happy-path + edge-case) and all bullets count toward the
     // goal's verdict.

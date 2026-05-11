@@ -1,4 +1,4 @@
-//! Phase 11.2 follow-up — file watcher for `plugin.toml` manifests.
+//! File watcher for `plugin.toml` manifests.
 //!
 //! Observes the extension search roots and emits structured `warn` logs
 //! on add/edit/remove events. No auto-respawn — subprocess lifecycle is

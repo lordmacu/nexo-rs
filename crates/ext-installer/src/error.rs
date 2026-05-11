@@ -1,4 +1,4 @@
-//! Phase 31.1 — error variants returned by the installer.
+//! Error variants returned by the installer.
 
 /// Errors surfaced by [`crate::resolve_release`],
 /// [`crate::download_and_verify`], and the

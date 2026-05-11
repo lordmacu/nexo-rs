@@ -2,7 +2,7 @@
 //!
 //! Typed API for `nexo/dispatch` JSON-RPC requests the microapp
 //! sends to the daemon. **v0 stub** — the daemon-side runtime
-//! lands with Phase 82.3.b; until then every method returns
+//! is not wired yet; until then every method returns
 //! [`DispatchError::Transport`] with a clear "82.3.b runtime not
 //! ready" message so calling code is forced to handle the
 //! error path.
@@ -70,7 +70,7 @@ impl OutboundDispatcher {
     /// Dispatch a plain-text outbound message.
     ///
     /// v0: returns `DispatchError::Transport("82.3.b runtime not
-    /// ready")`. Real impl arrives with Phase 82.3.b daemon
+    /// ready")`. The real implementation arrives with daemon-side
     /// support.
     pub async fn send_text(
         &self,

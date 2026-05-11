@@ -1,11 +1,11 @@
-// Phase 82.15 — wire types for the `nexo-rs-extension-marketing`
+// Wire types for the `nexo-rs-extension-marketing`
 // extension + `agent-creator` microapp. Per-field rustdoc lives
 // inline; the crate-wide `deny(missing_docs)` is relaxed for
 // this module while it stabilises (followup: complete docs once
 // the extension lands a v0.1.0 the operator can install).
 #![allow(missing_docs)]
 
-//! Phase 82.15 — `marketing` wire types for the
+//! `marketing` wire types for the
 //! `nexo-rs-extension-marketing` extension + `agent-creator`
 //! microapp.
 //!
@@ -276,7 +276,7 @@ pub struct Seller {
     /// Optional language hint that biases the LLM toward this
     /// seller's preferred outbound style.
     pub preferred_language: Option<String>,
-    /// M15.35 — bound `agents.yaml.<id>`. When set, marketing
+    /// Bound `agents.yaml.<id>`. When set, marketing
     /// reuses the agent's `ModelRef` + `system_prompt` for AI
     /// drafts / intent detection / identity resolution. The
     /// daemon's admin RPC `agents/get` is the source of truth;
@@ -285,14 +285,14 @@ pub struct Seller {
     /// — operator writes drafts in the UI without LLM help).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// M15.35 — per-seller model override. When `Some`, takes
+    /// Per-seller model override. When `Some`, takes
     /// precedence over the agent's default `ModelRef` for
     /// every email-related LLM call. Use case: agent uses
     /// `minimax-flash` for quick WA chat but emails benefit
     /// from `claude-opus-4-7` reasoning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<crate::admin::agents::ModelRef>,
-    /// M15.38 — per-event notification toggles + target channel.
+    /// Per-event notification toggles + target channel.
     /// `None` = seller receives no notifications about email
     /// events. When `Some`, the marketing extension publishes to
     /// `agent.email.notification.<agent_id>` for every
@@ -301,7 +301,7 @@ pub struct Seller {
     /// the agent's existing inbound binding).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_settings: Option<SellerNotificationSettings>,
-    /// M15.16 — per-seller SMTP credentials. `None` means
+    /// Per-seller SMTP credentials. `None` means
     /// the operator hasn't registered creds yet — outbound
     /// publish refuses to fire for this seller and surfaces
     /// a clear "missing SMTP creds" error. The `password_env`
@@ -310,7 +310,7 @@ pub struct Seller {
     /// extension's existing `${ENV_VAR}` posture).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp_credential: Option<SmtpCredential>,
-    /// Phase 82.10.t.x — denormalised agent system prompt.
+    /// Denormalised agent system prompt.
     /// Stamped by the operator microapp at PUT-time from the
     /// bound agent's config (`nexo/admin/agents/get`); reads
     /// it back at draft-generation time so the LLM uses the
@@ -322,19 +322,19 @@ pub struct Seller {
     /// `agents/upsert`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    /// Phase 82.10.t.x — denormalised provider id from the
+    /// Denormalised provider id from the
     /// bound agent's `ModelRef.provider`. Same staleness
     /// caveat as `system_prompt`. `None` when no agent is
     /// bound; drafts then refuse to fire (operator must wire
     /// an agent or pick `model_override` explicitly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
-    /// Phase 82.10.t.x — denormalised model id paired with
+    /// Denormalised model id paired with
     /// `model_provider`. `model_override`, when set, takes
     /// precedence over both fields at draft time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
-    /// M15.21.seller-template — per-seller Handlebars draft
+    /// Per-seller Handlebars draft
     /// template that overrides the tenant default when set.
     /// `None` (default) inherits the tenant template (the
     /// hot-swappable handle wired by `PUT /config/draft_template`).
@@ -348,13 +348,13 @@ pub struct Seller {
     pub draft_template: Option<String>,
 }
 
-/// M15.16 — operator-registered outbound SMTP credentials per
+/// Operator-registered outbound SMTP credentials per
 /// seller. The marketing extension reads `host` / `port` /
 /// `username` directly; resolves `password` at send time by
 /// reading `${password_env}` from the process environment.
 ///
 /// Storage: persisted alongside the seller row in
-/// `sellers.yaml`. The framework's Phase 82.10.n credential
+/// `sellers.yaml`. The framework's credential
 /// persister is for daemon-side channel registries; SMTP creds
 /// for marketing-extension-owned sellers stay on the
 /// extension's per-tenant config plane.
@@ -390,7 +390,7 @@ fn default_smtp_starttls() -> bool {
     true
 }
 
-// ── Notification settings + event payload (M15.38) ──────────────
+// ── Notification settings + event payload ───────────────────────
 
 /// Where a notification gets forwarded. Tagged enum so JS
 /// clients pattern-match on `kind`. Each non-trivial variant
@@ -484,7 +484,7 @@ impl Default for SellerNotificationSettings {
     }
 }
 
-// ── Custom notification templates (M15.44) ──────────────────────
+// ── Custom notification templates ───────────────────────────────
 
 /// Per-tenant template overrides for notification summaries.
 /// Operator writes one of these to
@@ -668,7 +668,7 @@ pub struct Lead {
     /// readable strings; surfaced in the lead context panel
     /// "why this lead?" section.
     pub why_routed: Vec<String>,
-    /// M15.21.notes — free-form operator notes (markdown).
+    /// Free-form operator notes (markdown).
     /// Editable from the lead drawer in the microapp; never
     /// authored by the LLM — strictly a human-only scratch pad
     /// for context that doesn't fit any other column ("called
@@ -1059,7 +1059,7 @@ mod tests {
         assert!(s.contains("\"provider\":\"anthropic\""), "{s}");
     }
 
-    /// M15.21.seller-template — `draft_template = Some(...)`
+    /// `draft_template = Some(...)`
     /// round-trips through serde and surfaces in the JSON
     /// payload so the operator UI can render the editor.
     #[test]

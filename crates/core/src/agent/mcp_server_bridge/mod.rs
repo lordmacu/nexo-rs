@@ -1,6 +1,6 @@
 //! MCP-server-side bridge: adapt the runtime tool registry into the
 //! `McpServerHandler` shape consumed by `crates/mcp` transports, plus
-//! the Phase 79.M boot dispatcher that decides which runtime tools may
+//! the boot dispatcher that decides which runtime tools may
 //! be advertised to external MCP clients.
 
 pub mod bridge;

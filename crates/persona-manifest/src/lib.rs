@@ -6,8 +6,8 @@
 //!
 //! # v1 vs v2
 //!
-//! - **v1** (`manifest_version = 1`) — install.sh-driven flow
-//!   (Phase B of cody-extraction). The current Cody persona
+//! - **v1** (`manifest_version = 1`) — install.sh-driven flow.
+//!   The current Cody persona
 //!   pack ships v1. Stays supported by install.sh; this crate
 //!   does NOT parse v1 and rejects it with a clear migration
 //!   error.
@@ -15,8 +15,7 @@
 //!   `nexo persona install` consumes v2 manifests, applies
 //!   the same path-safety + id/semver validation the plugin
 //!   manifest enforces, and writes contributed files into the
-//!   operator's nexo state dir. Phase F2 of the
-//!   `cody-cli-install` follow-up wave.
+//!   operator's nexo state dir.
 //!
 //! # Surface
 //!

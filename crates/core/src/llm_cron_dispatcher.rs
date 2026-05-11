@@ -1,4 +1,4 @@
-//! Phase 79.7 runtime — `LlmCronDispatcher`.
+//! `LlmCronDispatcher`.
 //!
 //! Real LLM-call cron dispatcher: builds a `ChatRequest` from the
 //! entry's prompt, calls `LlmClient::chat`, and logs the response
@@ -7,9 +7,9 @@
 //! event shape as user-facing channel tools.
 //!
 //! Related primitives:
-//!   * Phase 20 `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs:157-260`)
+//!   * the `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs`)
 //!     — same pattern: build messages, call `chat`, take response.
-//!   * Phase 79.7 [`CronRunner`](crate::cron_runner::CronRunner)
+//!   * [`CronRunner`](crate::cron_runner::CronRunner)
 //!     — sequential fire loop that calls into this dispatcher.
 //!
 //! Design choices:
@@ -181,7 +181,7 @@ impl RoutedClientResolver {
         entry: &CronEntry,
     ) -> anyhow::Result<(Arc<dyn LlmClient>, ModelConfig)> {
         let model = self.model_for_entry(entry)?;
-        // Phase 83.8.12.5.cron — cache key extends with tenant
+        // Cache key extends with tenant
         // scope so tenant-A's cron client doesn't collide with
         // tenant-B's even when both pin the same `provider:model`
         // pair (their resolved provider keys differ via
@@ -194,7 +194,7 @@ impl RoutedClientResolver {
         if let Some(hit) = self.cache.get(&key) {
             return Ok((Arc::clone(hit.value()), model));
         }
-        // Phase 83.8.12.5.cron — resolve via tenant-first
+        // Resolve via tenant-first
         // /global-fallback so cron fires charge the tenant's
         // own provider key when one exists; falls back to the
         // global namespace when tenant_id is None.
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[tokio::test]
     async fn routed_dispatcher_caches_per_tenant_separately() {
-        // Phase 83.8.12.5.cron — same provider/model, different
+        // Same provider/model, different
         // tenant → distinct cache slots so each tenant's
         // LlmClient is built separately (and uses its own
         // resolved provider config). Two fires per tenant + one

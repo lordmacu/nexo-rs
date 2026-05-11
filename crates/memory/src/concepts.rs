@@ -1,10 +1,8 @@
 // Concept vocabulary — derives stable, normalized concept tags from a (path,
 // snippet) pair. Pure function; no IO, no async.
 //
-// Inspired by OpenClaw's `extensions/memory-core/src/concept-vocabulary.ts`.
-// Phase 10.7 ships a Rust port of the normalization + stop-word + glossary
-// pipeline. Dreaming promotes tags to memory rows; recall uses them for query
-// expansion against FTS5.
+// A normalization + stop-word + glossary pipeline. Dreaming promotes tags to
+// memory rows; recall uses them for query expansion against FTS5.
 
 use std::collections::HashSet;
 use std::path::Path;

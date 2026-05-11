@@ -119,8 +119,8 @@ impl LlmDeciderBuilder {
 }
 
 impl LlmDecider {
-    /// Phase 67.8 — fast-path Deny when recalled decisions show a
-    /// strong prior pattern of denials for similar requests.
+    /// Fast-path Deny when recalled decisions show a strong prior
+    /// pattern of denials for similar requests.
     fn try_shortcut(&self, recalled: &[Decision]) -> Option<String> {
         if !self.deny_shortcut.enabled || recalled.is_empty() {
             return None;
@@ -218,8 +218,8 @@ impl PermissionDecider for LlmDecider {
     ) -> Result<PermissionResponse, PermissionError> {
         let recalled: Vec<Decision> = self.memory.recall(&request, self.recall_k).await;
 
-        // Phase 67.8 — short-circuit Deny when memory shows a
-        // consistent pattern of past denials for similar requests.
+        // Short-circuit Deny when memory shows a consistent pattern of
+        // past denials for similar requests.
         if let Some(message) = self.try_shortcut(&recalled) {
             tracing::info!(
                 target: "llm-decider",
@@ -281,8 +281,8 @@ impl PermissionDecider for LlmDecider {
             .map(|d| rationale_from(&d))
             .unwrap_or_default();
 
-        // Phase 67.7 — record this decision into long-term memory so
-        // future similar requests can recall it. Best-effort.
+        // Record this decision into long-term memory so future similar
+        // requests can recall it. Best-effort.
         let decision = Decision {
             id: nexo_driver_types::DecisionId::new(),
             goal_id: request.goal_id,

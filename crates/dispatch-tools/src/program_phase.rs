@@ -1,4 +1,4 @@
-//! Phase 67.E.1 — `program_phase` tool entry-point.
+//! `program_phase` tool entry-point.
 //!
 //! Inputs: `phase_id` (required), optional `acceptance_override`.
 //! The handler:
@@ -17,7 +17,7 @@
 //! Returns `ProgramPhaseOutput` so the calling agent can echo
 //! `goal_id` / `status` back to the chat.
 //!
-//! Hook + completion-router wiring lands in 67.F.x; this step
+//! Hook + completion-router wiring lives elsewhere; this module
 //! exposes the dispatch surface itself.
 
 use std::sync::Arc;
@@ -52,7 +52,7 @@ pub struct ProgramPhaseInput {
     /// default.
     #[serde(default)]
     pub budget_override: Option<BudgetOverride>,
-    /// B4 — hooks attached at dispatch time. Common usage from a
+    /// Hooks attached at dispatch time. Common usage from a
     /// chat tool call is `[{ id: "h1", on: "done", action: {
     /// kind: "notify_origin" } }]`. The handler stores them in the
     /// HookRegistry under the new goal id; the completion router
@@ -104,9 +104,9 @@ pub enum ProgramPhaseError {
 }
 
 /// Default budget — modest enough to fit a single dev session,
-/// generous enough to ship a sub-phase. 67.E.1 does not yet read
+/// generous enough to ship a sub-phase. This does not yet read
 /// `program_phase.yaml`; that wiring lands when the tool is
-/// registered into the runtime by the binary (67.H.1).
+/// registered into the runtime by the binary.
 pub fn apply_default_budget(ov: Option<BudgetOverride>) -> BudgetGuards {
     apply_budget_override(default_budget(), ov)
 }
@@ -141,7 +141,7 @@ fn apply_budget_override(mut budget: BudgetGuards, ov: Option<BudgetOverride>) -
     budget
 }
 
-/// Phase 75.1 — runtime project-type autodetect.
+/// Runtime project-type autodetect.
 ///
 /// The previous default hardcoded `cargo build --workspace` +
 /// `cargo test --workspace`, which:
@@ -180,7 +180,7 @@ fi"#;
     vec![AcceptanceCriterion::shell(script)]
 }
 
-/// Phase 77.1 — render the prompt the Claude Code subprocess
+/// Render the prompt the Claude Code subprocess
 /// receives as its first user message. Wraps the operator's raw
 /// `(title, body)` from PHASES.md with a verb-first goal line, the
 /// acceptance commands, and a HARD RULES checklist. Without this
@@ -201,9 +201,9 @@ pub fn build_goal_prompt(
 /// acceptance block. Use this when the sub-phase body references
 /// `PR-N` codes — without the referenced FOLLOWUPS content the
 /// LLM has no spec to implement against and routinely claims the
-/// goal "done" at turn 0 (see Phase 78 incident: 26.z body was
-/// "Tracks PR-3 in FOLLOWUPS.md … Blocked on …" → Claude wrote
-/// nothing). Each follow-up is rendered as `### {code} — {title}`
+/// goal "done" at turn 0 (a body that only points to a follow-up,
+/// e.g. "Tracks PR-3 in FOLLOWUPS.md … Blocked on …", left Claude
+/// with nothing to do). Each follow-up is rendered as `### {code} — {title}`
 /// followed by its body verbatim.
 pub fn build_goal_prompt_with_followups(
     phase_id: &str,
@@ -371,7 +371,7 @@ fn extract_pr_codes(body: &str) -> Vec<String> {
 
 /// Dispatch implementation, decoupled from the `ToolHandler` trait
 /// so tests can drive it directly. The runtime registration that
-/// adapts this into a `nexo_core::ToolHandler` lands in 67.E.x once
+/// adapts this into a `nexo_core::ToolHandler` lands once
 /// the dispatcher identity / origin context plumbing is in place.
 #[allow(clippy::too_many_arguments)]
 pub async fn program_phase_dispatch(
@@ -441,8 +441,8 @@ pub async fn program_phase_dispatch(
     };
     let budget = apply_budget_override(default_budget(), input.budget_override.clone());
 
-    // Phase 77.1 — directive prompt. The previous form just
-    // concatenated `title + body`, leaving Claude to infer the verb
+    // Directive prompt. A naive form that just
+    // concatenated `title + body` left Claude to infer the verb
     // (`implement`, `add`, `fix`). On vague phase descriptions
     // ("Tracks PR-3 in FOLLOWUPS.md. … Blocked on …") Claude would
     // interpret the goal as already-done and exit at turn 0
@@ -453,7 +453,7 @@ pub async fn program_phase_dispatch(
     // declare done until the build / tests it sees here actually
     // pass.
     //
-    // Phase 78.3 — when the body cross-references `PR-N` items
+    // When the body cross-references `PR-N` items
     // tracked in FOLLOWUPS.md, splice the referenced entries into
     // the prompt verbatim. Without this Claude only sees the
     // pointer ("Tracks PR-3") and has no spec to implement.
@@ -470,7 +470,7 @@ pub async fn program_phase_dispatch(
         &referenced_view,
     );
 
-    // B1 — stamp origin + dispatcher into goal.metadata so
+    // Stamp origin + dispatcher into goal.metadata so
     // attempt.rs can lift them into the SessionBinding when the
     // first turn lands. Persists across daemon restart so reattach
     // can find the chat that triggered the goal.
@@ -486,7 +486,7 @@ pub async fn program_phase_dispatch(
         serde_json::to_value(&dispatcher).unwrap_or(serde_json::Value::Null),
     );
 
-    // Phase 76 — when the active tracker root is itself a git repo
+    // When the active tracker root is itself a git repo
     // (i.e. `init_project` ran `git init` on a fresh project, or
     // the operator pointed `set_active_workspace` at a stand-alone
     // checkout), stamp it as the per-goal source so the
@@ -538,7 +538,7 @@ pub async fn program_phase_dispatch(
         .await
         .map_err(|e| ProgramPhaseError::Registry(e.to_string()))?;
 
-    // B4 — attach hooks before spawn so the completion router
+    // Attach hooks before spawn so the completion router
     // sees them when the goal terminates. Done for both Admitted
     // (will spawn) and Queued (will spawn after promote).
     if let Some(hr) = &hook_registry {
@@ -571,7 +571,7 @@ pub async fn program_phase_dispatch(
 
 #[cfg(test)]
 mod default_acceptance_tests {
-    //! Phase 75.2 — the default acceptance script branches on
+    //! The default acceptance script branches on
     //! project-marker files inside the worktree. These tests run
     //! the script through `bash -c` (same shell the orchestrator
     //! uses) inside a tempdir per case and assert the right

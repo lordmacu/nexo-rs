@@ -1,14 +1,13 @@
-//! Phase 76.3 — `MutualTlsAuthenticator`. Currently supports the
+//! `MutualTlsAuthenticator`. Currently supports the
 //! `FromHeader` source — the cert identity is forwarded by a trusted
 //! reverse proxy (nginx `ssl_client_s_dn`, Envoy
 //! `x-forwarded-client-cert`, Caddy `tls.client.subject.cn`, …).
 //!
 //! Boot validation forces a loopback bind so a misconfigured public
 //! deployment cannot accept spoofed certificate headers from
-//! arbitrary attackers. 76.13 will introduce a `Native` variant
-//! that reads the peer certificate from an in-process rustls
-//! TLS layer; the enum is `#[non_exhaustive]` to make that
-//! addition non-breaking.
+//! arbitrary attackers. A future `Native` variant could read the
+//! peer certificate from an in-process rustls TLS layer; the enum
+//! is `#[non_exhaustive]` to make that addition non-breaking.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -35,7 +34,7 @@ pub enum MutualTlsConfig {
         /// Allowlisted CN / SAN values (exact match — no glob, no
         /// substring).
         cn_allowlist: Vec<String>,
-        /// Phase 76.4 — optional CN → tenant remap. When absent,
+        /// Optional CN → tenant remap. When absent,
         /// the CN itself is parsed as a [`TenantId`] (a CN that
         /// can't pass the strict validator — e.g. one with `.` —
         /// is rejected with `TenantClaimMissing` so the operator
@@ -122,7 +121,7 @@ impl McpAuthenticator for MutualTlsAuthenticator {
                         detail: format!("cn `{provided}` not allowlisted"),
                     });
                 }
-                // Phase 76.4 — derive tenant: prefer the remap, fall
+                // Derive tenant: prefer the remap, fall
                 // back to parsing the CN itself. CNs that don't pass
                 // the strict TenantId validator (e.g. contain a dot)
                 // require a remap or are rejected.

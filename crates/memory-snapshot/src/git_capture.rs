@@ -8,8 +8,7 @@
 //! via `git reflog`.
 //!
 //! Defensive: no shell-out to `git`. libgit2 is already a workspace
-//! dependency through `workspace_git.rs` (Phase 10.9 memdir + Phase
-//! 80.1.g checkpointer).
+//! dependency through `workspace_git.rs` (memdir + checkpointer).
 
 use std::path::{Path, PathBuf};
 

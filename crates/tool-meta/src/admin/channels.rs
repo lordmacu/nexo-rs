@@ -1,7 +1,7 @@
-//! Phase 82.10.f — `nexo/admin/channels/*` wire types (Phase 80.9
-//! MCP-channel servers in `agents.yaml.<id>.channels.approved`).
+//! `nexo/admin/channels/*` wire types (MCP-channel servers in
+//! `agents.yaml.<id>.channels.approved`).
 //!
-//! Distinct from `credentials/*` (Phase 17 native-channel
+//! Distinct from `credentials/*` (native-channel
 //! credentials). Channels here are MCP server adapters
 //! (slack / telegram-bridge / iMessage relay) the operator
 //! pre-approves per agent.

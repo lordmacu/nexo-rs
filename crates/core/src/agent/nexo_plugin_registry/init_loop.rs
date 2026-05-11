@@ -1,11 +1,9 @@
-//! Phase 81.6 — sequential `NexoPlugin::init()` driver. Each plugin
-//! gets its outcome recorded; a single failure logs a warn and the
-//! loop continues. 81.6 ships with an empty handles map (every
-//! plugin records `NoHandle`); 81.7+ will populate it.
+//! Sequential `NexoPlugin::init()` driver. Each plugin gets its
+//! outcome recorded; a single failure logs a warn and the loop
+//! continues. Plugins without a constructed handle record `NoHandle`.
 //!
 //! `tokio::spawn` / panic-catch sandbox is intentionally NOT used —
-//! callers assume `init()` is well-behaved. If a real plugin starts
-//! misbehaving, the follow-up wraps each call in `tokio::time::timeout`.
+//! callers assume `init()` is well-behaved.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,21 +32,19 @@ pub enum InitOutcome {
     Failed {
         error: String,
     },
-    /// 81.6 placeholder — the manifest declares a plugin but no
-    /// concrete `NexoPlugin` handle was produced. Manifest-driven
-    /// instantiation lands in Phase 81.7.
+    /// The manifest declares a plugin but no concrete `NexoPlugin`
+    /// handle was produced (no matching factory).
     NoHandle,
 }
 
 /// Drive `NexoPlugin::init()` once per plugin in registry order.
 /// Sequential — single failure logs warn + records `Failed`; the
-/// loop never aborts. Plugins absent from `handles` record
-/// `NoHandle` (the common case until 81.7 ships).
+/// loop never aborts. Plugins absent from `handles` record `NoHandle`.
 ///
 /// `ctx_factory` is a closure invoked once per plugin id that
-/// constructs a fresh [`PluginInitContext`]. The closure must be
-/// callable but is never called for plugins recording `NoHandle`,
-/// so 81.6 callers can pass an `unreachable!()` body.
+/// constructs a fresh [`PluginInitContext`]. The closure is never
+/// called for plugins recording `NoHandle`, so callers without
+/// handles can pass an `unreachable!()` body.
 pub async fn run_plugin_init_loop<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     handles: &BTreeMap<String, Arc<dyn NexoPlugin>>,
@@ -87,14 +83,12 @@ where
     outcomes
 }
 
-/// Phase 81.12.0 — factory-driven init loop. For each plugin in
-/// the snapshot, look up a factory in `factory_registry`; if
-/// found, instantiate via the factory closure + call its `init()`.
-/// Plugins WITHOUT a factory record `InitOutcome::NoHandle` so
-/// operators with partial migration see consistent output during
-/// the 81.12.a-e per-plugin slices. Sequential per snapshot order;
-/// one failure logs `tracing::warn!` and the loop never aborts.
-/// Phase 81.17.b — return shape for the factory-driven init loop.
+/// Return shape for the factory-driven init loop. For each plugin in
+/// the snapshot, look up a factory in `factory_registry`; if found,
+/// instantiate via the factory closure + call its `init()`. Plugins
+/// WITHOUT a factory record `InitOutcome::NoHandle`. Sequential per
+/// snapshot order; one failure logs `tracing::warn!` and the loop
+/// never aborts.
 /// Outcomes describe what happened per plugin id; `handles` carries
 /// the live `Arc<dyn NexoPlugin>` instances that successfully
 /// passed `init()`. Callers MUST retain `handles` for the daemon's
@@ -106,7 +100,7 @@ pub struct FactoryInitResult {
     pub handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
 }
 
-/// Phase 81.3 — convert collected violations into a human-readable
+/// Convert collected violations into a human-readable
 /// "first-3-then-count" sample string. Used by the init loop to
 /// enrich `InitOutcome::Failed` when Strict mode rejects.
 fn format_violation_sample(violations: &[NamespaceViolation]) -> String {
@@ -123,10 +117,10 @@ fn format_violation_sample(violations: &[NamespaceViolation]) -> String {
     }
 }
 
-/// Phase 81.4 — load + validate per-plugin config dir BEFORE
-/// `init()` runs. On failure, returns `InitOutcome::Failed` so the
-/// caller skips `init()` and records the outcome. `tracing::warn!`
-/// is the operator-visible signal; broker emit deferred to 81.4.b.
+/// Load + validate per-plugin config dir BEFORE `init()` runs. On
+/// failure, returns `InitOutcome::Failed` so the caller skips
+/// `init()` and records the outcome. `tracing::warn!` is the
+/// operator-visible signal.
 fn try_load_plugin_config(
     plugin_id: &str,
     plugin_root: &Path,
@@ -152,8 +146,8 @@ fn try_load_plugin_config(
     }
 }
 
-/// Phase 81.26 — after `init()` + channel + LLM + hook
-/// registrations succeed, register every backend name from
+/// After `init()` + channel + LLM + hook registrations succeed,
+/// register every backend name from
 /// `manifest.plugin.extends.memory_backends` as a
 /// `RemoteVectorBackend`. Only fires when the handle is a
 /// `SubprocessNexoPlugin`. Failure escalates to
@@ -188,8 +182,8 @@ async fn register_remote_vector_backends_after_init(
     }
 }
 
-/// Phase 81.29 — after `init()` + channel + LLM + hook + vector
-/// registrations succeed, register every tool name from
+/// After `init()` + channel + LLM + hook + vector registrations
+/// succeed, register every tool name from
 /// `manifest.plugin.extends.tools` (intersected with the
 /// initialize-reply tools array) as a `RemoteToolHandler` in the
 /// per-plugin scoped tool registry. Only fires when the handle
@@ -248,8 +242,8 @@ async fn register_remote_tool_handlers_after_init(
     }
 }
 
-/// Phase 81.27 — after `init()` + channel + LLM registrations
-/// succeed, register every hook name from
+/// After `init()` + channel + LLM registrations succeed, register
+/// every hook name from
 /// `manifest.plugin.extends.hooks` as a `RemoteHookHandler`.
 /// Only fires when the handle is a `SubprocessNexoPlugin`; other
 /// concrete types skip silently. Failure escalates to
@@ -284,8 +278,8 @@ async fn register_remote_hook_handlers_after_init(
     }
 }
 
-/// Phase 81.25 — after `init()` + channel registration succeed,
-/// register every provider name from
+/// After `init()` + channel registration succeed, register every
+/// provider name from
 /// `manifest.plugin.extends.llm_providers` as a `RemoteLlmFactory`.
 /// Only fires when the handle is a `SubprocessNexoPlugin`; other
 /// concrete types skip silently. Failure escalates to
@@ -317,7 +311,7 @@ async fn register_remote_llm_providers_after_init(
     }
 }
 
-/// Phase 81.24 — after `init()` returns Ok, register every kind
+/// After `init()` returns Ok, register every kind
 /// from `manifest.plugin.extends.channels` as a
 /// `RemoteChannelAdapter`. Only fires when the handle is a
 /// `SubprocessNexoPlugin`; other concrete types skip silently.
@@ -352,8 +346,8 @@ async fn register_remote_channels_after_init(
     }
 }
 
-/// Phase 81.21.b.b — after every other post-init step succeeds,
-/// spawn the per-plugin auto-respawn supervisor task. Only fires
+/// After every other post-init step succeeds, spawn the per-plugin
+/// auto-respawn supervisor task. Only fires
 /// when the handle is a `SubprocessNexoPlugin`; in-tree plugins
 /// don't need a respawn loop (they share the daemon's lifetime).
 /// Returns `None` always — `spawn_supervisor_loop` is
@@ -408,7 +402,7 @@ fn start_plugin_supervisor_loop_after_init(
     None
 }
 
-/// Phase 81.3 — drain ScopedToolRegistry after `init()` returns and,
+/// Drain ScopedToolRegistry after `init()` returns and,
 /// in Strict mode, escalate any violations to `InitOutcome::Failed`.
 /// Returns `None` when the post-init outcome is unchanged.
 fn check_namespace_after_init(plugin_id: &str, ctx: &PluginInitContext<'_>) -> Option<InitOutcome> {
@@ -458,8 +452,8 @@ where
     let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
     for plugin in &snapshot.plugins {
         let id = plugin.manifest.plugin.id.clone();
-        // Phase 81.4 — load + validate the plugin's config dir
-        // BEFORE any factory work. Failure here aborts the
+        // Load + validate the plugin's config dir BEFORE any
+        // factory work. Failure here aborts the
         // plugin's load with `InitOutcome::Failed`; the factory
         // closure (and any subsequent init step) never runs.
         // We pre-compute eagerly so both the auto-subprocess
@@ -473,14 +467,13 @@ where
                     continue;
                 }
             };
-        // Phase 81.17 — auto-subprocess fallback. If no in-tree
-        // factory was registered for this id BUT the manifest
-        // declares an `[plugin.entrypoint]` with a non-empty
-        // `command`, build a `SubprocessNexoPlugin` factory inline
-        // and use it. Operator-registered factories take priority
-        // — they're the override path for in-tree migrations.
-        // Manifests without entrypoint.command keep recording
-        // NoHandle (the partial-migration shape from 81.12.a-d).
+        // Auto-subprocess fallback. If no in-tree factory was
+        // registered for this id BUT the manifest declares an
+        // `[plugin.entrypoint]` with a non-empty `command`, build a
+        // `SubprocessNexoPlugin` factory inline and use it.
+        // Operator-registered factories take priority — they're the
+        // override path for in-tree migrations. Manifests without
+        // entrypoint.command keep recording NoHandle.
         if !factory_registry.is_registered(&id) {
             if plugin.manifest.plugin.entrypoint.is_subprocess() {
                 let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
@@ -750,7 +743,7 @@ mod tests {
         assert!(s.contains("\"outcome\":\"no_handle\""));
     }
 
-    /// Phase 81.12.0 — factory-driven init loop records `Failed`
+    /// The factory-driven init loop records `Failed`
     /// for plugins whose factory closure errors and `NoHandle` for
     /// the unregistered ones. We use a closure that returns Err so
     /// the helper short-circuits BEFORE invoking `ctx_factory` —
@@ -806,7 +799,7 @@ mod tests {
         assert!(result.handles.is_empty());
     }
 
-    /// Phase 81.17 — auto-subprocess fallback wires
+    /// The auto-subprocess fallback wires
     /// `subprocess_plugin_factory(manifest)` inline when no in-tree
     /// factory is registered for a manifest with
     /// `entrypoint.command`. We verify the factory itself produces a
@@ -863,11 +856,10 @@ mod tests {
         }
     }
 
-    /// Phase 81.17 — manifests WITHOUT `entrypoint.command` keep
-    /// their pre-81.17 `NoHandle` outcome. Empty entrypoint section
-    /// is the in-tree-plugin shape (browser/telegram/whatsapp/email
-    /// dormant manifests in 81.12.a-d) — those must NOT accidentally
-    /// be instantiated as subprocesses.
+    /// Manifests WITHOUT `entrypoint.command` keep their `NoHandle`
+    /// outcome. An empty entrypoint section is the in-tree-plugin
+    /// shape — those must NOT accidentally be instantiated as
+    /// subprocesses.
     #[tokio::test]
     async fn auto_subprocess_fallback_skips_manifests_without_entrypoint() {
         use super::super::factory::PluginFactoryRegistry;
@@ -905,7 +897,7 @@ mod tests {
         assert!(result.handles.is_empty(), "no handles for NoHandle outcome");
     }
 
-    /// Phase 81.4 — when the plugin's manifest declares
+    /// When the plugin's manifest declares
     /// `config.schema_path` pointing at a non-existent file,
     /// the loader returns `SchemaRead` and the init-loop
     /// records `InitOutcome::Failed` BEFORE invoking the

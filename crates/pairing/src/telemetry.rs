@@ -1,6 +1,6 @@
-//! Phase 26.y — Prometheus telemetry for the pairing flow.
+//! Prometheus telemetry for the pairing flow.
 //!
-//! Counters and one push-tracked gauge that close out follow-up PR-2:
+//! Counters and one push-tracked gauge:
 //!
 //! - `pairing_approvals_total{channel,result}` — counter
 //! - `pairing_codes_expired_total` — counter

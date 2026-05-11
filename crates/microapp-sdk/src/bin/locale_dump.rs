@@ -1,5 +1,5 @@
-//! Phase 81.19.b locale follow-up item 2 — dump every BCP-47
-//! locale that `nexo_microapp_sdk::locale::Locale::from_str`
+//! Dump every BCP-47 locale that
+//! `nexo_microapp_sdk::locale::Locale::from_str`
 //! accepts as a JSON array. Consumed by
 //! `scripts/lint-locale-list-sync.sh` to verify the operator-facing
 //! `agent-creator-microapp/frontend/src/data/locales.ts`

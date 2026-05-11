@@ -1,4 +1,4 @@
-#![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
+#![allow(clippy::all)] // In-flux scaffolding
 
 mod init_cli;
 mod persona_cli;
@@ -36,11 +36,11 @@ use nexo_core::{
 };
 use nexo_llm::LlmRegistry;
 use nexo_memory::LongTermMemory;
-// Phase 81.17.c — `nexo_plugin_browser` no longer used in-process.
-// The crate stays in the workspace dormant until 81.17.c.in-tree-removal.
+// `nexo_plugin_browser` no longer used in-process.
+// The crate stays in the workspace dormant pending in-tree removal.
 // `seed_browser_subprocess_env` (below) translates yaml config into
 // env vars the standalone subprocess reads.
-// Phase 81.18.b.2 — `WhatsappPlugin` import dropped after the
+// `WhatsappPlugin` import dropped after the
 // daemon's subprocess flip; the lib type is reachable on demand
 // via `nexo_plugin_whatsapp::WhatsappPlugin` from the standalone
 // repo path-dep, but the daemon no longer constructs it directly.
@@ -53,7 +53,7 @@ enum Mode {
     DlqList,
     DlqReplay(String),
     DlqPurge,
-    /// Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+    /// `nexo set-broker <kind> [--url <url>] [--no-signal]`
     /// edits `broker.yaml` in the daemon's config dir to switch
     /// between `nats` and `local` transports without an operator
     /// learning sed syntax. After the edit, sends SIGTERM to any
@@ -66,7 +66,7 @@ enum Mode {
         url: Option<String>,
         no_signal: bool,
     },
-    /// Phase 95 — `nexo init [--yaml <names>] [--output <dir>]
+    /// `nexo init [--yaml <names>] [--output <dir>]
     /// [--force] [--stdout]` scaffolds the 19 sample YAML files
     /// the daemon's `AppConfig::load` knows about, each densely
     /// commented with field semantics + sane defaults. Operators
@@ -116,12 +116,12 @@ enum Mode {
         json: bool,
     },
     ExtHelp,
-    /// Phase 31.1.c — `nexo plugin install <owner>/<repo>[@<tag>]`.
+    /// `nexo plugin install <owner>/<repo>[@<tag>]`.
     /// Decentralized GitHub Releases install; downloads + sha-verifies
     /// + extracts under `plugins.discovery.search_paths[0]` (or
     /// `--dest`). Best-effort `plugin.lifecycle.<id>.installed` event
-    /// emitted when broker is up. Phase 31.3 added cosign signature
-    /// verification per `config/extensions/trusted_keys.toml`; the
+    /// emitted when broker is up. Cosign signature
+    /// verification runs per `config/extensions/trusted_keys.toml`; the
     /// two flags below force `Require` / `Ignore` modes for a single
     /// invocation respectively.
     PluginInstall {
@@ -132,9 +132,9 @@ enum Mode {
         require_signature: bool,
         skip_signature_verify: bool,
     },
-    /// Phase 31.1.c — static help block for the plugin subcommand.
+    /// Static help block for the plugin subcommand.
     PluginHelp,
-    /// Phase 31.6 — `nexo plugin new <id> --lang <lang>` scaffolds
+    /// `nexo plugin new <id> --lang <lang>` scaffolds
     /// a fresh out-of-tree plugin from one of the four bundled
     /// templates (rust / python / typescript / php). Templates
     /// are embedded at compile time via `include_dir!`.
@@ -148,7 +148,7 @@ enum Mode {
         force: bool,
         json: bool,
     },
-    /// Phase 31.7 — `nexo plugin run <path>` boots the daemon
+    /// `nexo plugin run <path>` boots the daemon
     /// with a local plugin directory injected as
     /// `cfg.plugins.discovery.search_paths[0]`. Inner-loop dev
     /// without going through install + verify pipeline. Falls
@@ -161,7 +161,7 @@ enum Mode {
         verbose: bool,
         json: bool,
     },
-    /// Phase 31.8 — `nexo plugin list [--include-orphan] [--json]`.
+    /// `nexo plugin list [--include-orphan] [--json]`.
     /// Walks `cfg.plugins.discovery.search_paths` and tabulates
     /// every installed plugin. Orphans (no `.nexo-install.json`)
     /// hidden by default.
@@ -169,7 +169,7 @@ enum Mode {
         include_orphan: bool,
         json: bool,
     },
-    /// Phase 31.8 — `nexo plugin upgrade <id> [...]`. Re-resolves
+    /// `nexo plugin upgrade <id> [...]`. Re-resolves
     /// the plugin's recorded GitHub Releases coordinates +
     /// delegates to the install pipeline. Refuses to downgrade.
     PluginUpgrade {
@@ -179,7 +179,7 @@ enum Mode {
         skip_signature_verify: bool,
         json: bool,
     },
-    /// Phase 31.8 — `nexo plugin remove <id> [--purge-cache] [--yes]`.
+    /// `nexo plugin remove <id> [--purge-cache] [--yes]`.
     /// Atomically renames the plugin dir aside then deletes it.
     /// `--purge-cache` also purges `nexo_state_dir/plugins/<id>`
     /// and `plugins/cache/<id>`.
@@ -189,7 +189,7 @@ enum Mode {
         yes: bool,
         json: bool,
     },
-    /// Phase F6 of `cody-cli-install` — `nexo persona install
+    /// `nexo persona install
     /// <owner>/<repo>[@<tag>] [--dest <dir>] [--target
     /// <triple>] [--json]`. Mirror of `Mode::PluginInstall`
     /// but for v2 persona packs (out-of-tree agent
@@ -202,45 +202,45 @@ enum Mode {
         target: Option<String>,
         json: bool,
     },
-    /// Phase F6 — `nexo persona list [--json]`. Walks
+    /// `nexo persona list [--json]`. Walks
     /// `cfg.personas.discovery.search_paths`, applies
     /// disabled / allowlist filters, tabulates each survivor.
     PersonaList {
         json: bool,
     },
-    /// Phase F6 — `nexo persona remove <id> [--yes] [--json]`.
+    /// `nexo persona remove <id> [--yes] [--json]`.
     /// Atomic dir removal of the install root for `<id>`.
     PersonaRemove {
         id: String,
         yes: bool,
         json: bool,
     },
-    /// Phase F6 — `nexo persona get <id> [--json]`. STUB; will
-    /// surface manifest + lifecycle history in F6.b. Meanwhile
+    /// `nexo persona get <id> [--json]`. STUB; will
+    /// surface manifest + lifecycle history later. Meanwhile
     /// suggests the operator-equivalent shell.
     PersonaGet {
         id: String,
         json: bool,
     },
-    /// Phase F6 — `nexo persona upgrade <id> [--json]`. STUB;
-    /// re-resolve recorded coords + delegate to install path
-    /// in F6.b. Meanwhile suggests the install-with-newer-tag
+    /// `nexo persona upgrade <id> [--json]`. STUB;
+    /// will re-resolve recorded coords + delegate to the install
+    /// path. Meanwhile suggests the install-with-newer-tag
     /// workaround.
     PersonaUpgrade {
         id: String,
         json: bool,
     },
-    /// Phase F6 — `nexo persona run <path> [--json]`. STUB;
-    /// inner-loop dev (mirror of `nexo plugin run`) deferred
-    /// to F6.b.
+    /// `nexo persona run <path> [--json]`. STUB;
+    /// inner-loop dev (mirror of `nexo plugin run`) is not yet
+    /// wired.
     PersonaRun {
         path: PathBuf,
         json: bool,
     },
-    /// Phase F6 — static help block printed by
+    /// Static help block printed by
     /// `nexo persona help`.
     PersonaHelp,
-    /// Phase 82.6 — `nexo ext state-dir <id>` prints the
+    /// `nexo ext state-dir <id>` prints the
     /// canonical state directory for `<id>` resolved against
     /// the current `NEXO_HOME` (created if absent). Operators
     /// pipe the output into `cd`, `sqlite3 .backup`, etc.
@@ -249,13 +249,13 @@ enum Mode {
         ensure: bool,
     },
     /// `nexo memory <sub>` — operator surface for the snapshot
-    /// subsystem (Phase 36.2). Every subcommand is standalone: it
+    /// subsystem. Every subcommand is standalone: it
     /// constructs a fresh `LocalFsSnapshotter` from `--state-root` (+
     /// optional `--memdir-root` / `--sqlite-root`) and exits when the
     /// action completes. No daemon contact required.
     Memory(MemorySubcommand),
     McpServer(McpServerSubcommand),
-    /// Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+    /// `nexo microapp admin audit tail [...]`.
     /// Read-only operator query over the SQLite admin audit log
     /// written by [`nexo_core::agent::admin_rpc::SqliteAdminAuditWriter`].
     /// Maps every flag 1:1 to `AuditTailFilter`; default `--db`
@@ -269,15 +269,15 @@ enum Mode {
         limit: usize,
         format: String,
         db: Option<PathBuf>,
-        /// Phase 83.8.12.7 — restrict to a single tenant scope.
+        /// Restrict to a single tenant scope.
         /// Leaves rows with `NULL tenant_id` (echo, pairing,
         /// credentials) out when set; `None` keeps the tail
         /// un-scoped.
         tenant_id: Option<String>,
     },
-    /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
+    /// `nexo agent dream {tail|status|kill}`.
     AgentDream(AgentDreamSubcommand),
-    /// Phase 80.10 — `nexo agent run [--bg] <prompt>`. Spawn a goal
+    /// `nexo agent run [--bg] <prompt>`. Spawn a goal
     /// against the local agent registry. With `--bg`, the row is
     /// inserted with `kind = Bg` and the command returns the goal_id
     /// immediately so the operator can detach. Without `--bg`, the
@@ -288,7 +288,7 @@ enum Mode {
         db: Option<PathBuf>,
         json: bool,
     },
-    /// Phase 80.10 — `nexo agent ps [--all] [--kind=...] [--json]`.
+    /// `nexo agent ps [--all] [--kind=...] [--json]`.
     /// Read the local `agent_handles` SQLite store and render running
     /// goals. RO pool — works without a daemon up.
     AgentPs {
@@ -297,15 +297,15 @@ enum Mode {
         db: Option<PathBuf>,
         json: bool,
     },
-    /// Phase 80.16 — `nexo agent attach <goal_id>`. Read-only viewer
+    /// `nexo agent attach <goal_id>`. Read-only viewer
     /// of a goal's latest persisted snapshot. Live event streaming
-    /// via NATS lands in 80.16.b.
+    /// via NATS is a follow-up.
     AgentAttach {
         goal_id: String,
         db: Option<PathBuf>,
         json: bool,
     },
-    /// Phase 80.16 — `nexo agent discover [--include-interactive]`.
+    /// `nexo agent discover [--include-interactive]`.
     /// List Running goals filtered to BG / Daemon / DaemonWorker
     /// kinds. With `--include-interactive`, include all kinds.
     AgentDiscover {
@@ -313,7 +313,7 @@ enum Mode {
         db: Option<PathBuf>,
         json: bool,
     },
-    /// Phase 80.9.e — `nexo channel list [--config=<path>] [--json]`.
+    /// `nexo channel list [--config=<path>] [--json]`.
     /// Static dump of every operator-approved channel + every binding's
     /// `allowed_channel_servers`. Pure read of the YAML — no daemon
     /// required.
@@ -321,7 +321,7 @@ enum Mode {
         config: Option<PathBuf>,
         json: bool,
     },
-    /// Phase 80.9.e — `nexo channel doctor [--config=<path>] [--binding=<id>]
+    /// `nexo channel doctor [--config=<path>] [--binding=<id>]
     /// [--json]`. For every approved server in `agents.channels.approved`
     /// and every binding's `allowed_channel_servers`, run the static
     /// half of the gate (1 = capability is *assumed* declared since the
@@ -336,7 +336,7 @@ enum Mode {
         binding: Option<String>,
         json: bool,
     },
-    /// Phase 80.9.e — `nexo channel test <server> [--binding=<id>]
+    /// `nexo channel test <server> [--binding=<id>]
     /// [--content=...] [--config=<path>] [--json]`. Synthesises a
     /// `notifications/nexo/channel` payload for `server`, runs it
     /// through the parser + the XML wrap helper, and prints the
@@ -376,7 +376,7 @@ enum Mode {
     SetupTelegramLink {
         agent: Option<String>,
     },
-    /// Phase 26 — pairing CLI subcommands. Each one opens the
+    /// Pairing CLI subcommands. Each one opens the
     /// pairing.db + secret file inline (no daemon connection needed)
     /// so the operator can manage senders before / after the daemon
     /// is up.
@@ -421,7 +421,7 @@ enum Mode {
     DoctorCapabilities {
         json: bool,
     },
-    /// Phase 81.9.b — `agent doctor plugins [--json]` — runs the
+    /// `agent doctor plugins [--json]` — runs the
     /// discover + merge_agents + merge_skills + init_loop pipeline
     /// in-process and renders an 8-section report. Exits 1 when
     /// error-level diagnostics, `LastPluginWins` conflicts, or
@@ -445,7 +445,7 @@ enum Mode {
     DryRun {
         json: bool,
     },
-    /// Phase 17 — run the credential gauntlet against the loaded config
+    /// Run the credential gauntlet against the loaded config
     /// and print a report (OK / warnings / errors). Exits 0 on clean,
     /// 1 on errors, 2 on warnings-only. Used by CI to gate PRs that
     /// edit `agents.d/*.yaml`, `whatsapp.yaml`, `telegram.yaml`, or
@@ -453,7 +453,7 @@ enum Mode {
     CheckConfig {
         strict: bool,
     },
-    /// Phase 18 — trigger a hot-reload on a running agent daemon.
+    /// Trigger a hot-reload on a running agent daemon.
     /// Publishes `control.reload` on the same broker the daemon is on
     /// and waits up to 5s for a `control.reload.ack` with the outcome
     /// (version, applied, rejected). Exit 0 if at least one agent
@@ -461,7 +461,7 @@ enum Mode {
     Reload {
         json: bool,
     },
-    /// Phase 19 — generic poller subsystem. CLI hits the loopback admin
+    /// Generic poller subsystem. CLI hits the loopback admin
     /// endpoint at `127.0.0.1:9091` (daemon must be running).
     PollersList {
         json: bool,
@@ -484,7 +484,7 @@ enum Mode {
         yes: bool,
     },
     PollersReload,
-    /// Operator-side cron admin (Phase 79.7 follow-up):
+    /// Operator-side cron admin:
     /// inspect persistent schedule rows and manage them out-of-band
     /// from an agent turn.
     CronList {
@@ -509,7 +509,7 @@ enum Mode {
     Admin {
         port: u16,
     },
-    /// Phase 27.1 — print version + (optionally) build provenance.
+    /// Print version + (optionally) build provenance.
     /// Short form (`nexo --version` / `-V`) prints `nexo <pkg-version>`.
     /// Verbose form (`nexo version` or `nexo --version --verbose`)
     /// prints the package version plus git-sha, target triple, build
@@ -520,7 +520,7 @@ enum Mode {
     Help,
 }
 
-/// Phase 36.2 — subcommands for `nexo memory`.
+/// Subcommands for `nexo memory`.
 ///
 /// All subcommands accept `--state-root <path>` (default: `./state`),
 /// optional `--memdir-root` / `--sqlite-root` overrides, and a final
@@ -584,7 +584,7 @@ enum MemorySubcommand {
     },
 }
 
-/// Phase 76.14 — subcommands for `nexo mcp-server`.
+/// Subcommands for `nexo mcp-server`.
 ///
 /// Without a subcommand, `nexo mcp-server` boots the MCP server
 /// (backward-compatible). With a subcommand, it runs a client-side
@@ -601,15 +601,13 @@ enum McpServerSubcommand {
     TailAudit { db: String },
 }
 
-/// Phase 80.1.d — `nexo agent dream {tail|status|kill}` operator CLI
+/// `nexo agent dream {tail|status|kill}` operator CLI
 /// for the autoDream audit log + manual control. Read paths open the
 /// SQLite DB read-only without a daemon. Kill writes the row to
 /// `Aborted`, finalises `ended_at = now()`, and rewinds the
 /// consolidation lock via `ConsolidationLock::rollback(prior_mtime)`
-/// when a `--memory-dir` is provided. Mirror leak
-/// `claude-code-leak/src/components/tasks/BackgroundTasksDialog.tsx:281,315-317`
-/// `DreamTask.kill(taskId, setAppState)` semantics, but as CLI rather
-/// than Ink UI keyboard since nexo has no Ink-equivalent yet.
+/// when a `--memory-dir` is provided. Exposes the same
+/// kill semantics a UI would, but as a CLI surface.
 #[derive(Debug, Clone)]
 enum AgentDreamSubcommand {
     /// `agent dream tail [--goal=<uuid>] [--n=20] [--db=<path>] [--json]`
@@ -636,7 +634,7 @@ enum AgentDreamSubcommand {
 
 struct CliArgs {
     config_dir: PathBuf,
-    /// Phase 94 — optional override-dir flag (`--override-from <path>`)
+    /// Optional override-dir flag (`--override-from <path>`)
     /// or `NEXO_OVERRIDE_FROM` env. Files in this dir with canonical
     /// YAML names (broker.yaml, llm.yaml, …) are deep-merged on top
     /// of the same-named file in `config_dir`. Per-file env vars
@@ -644,12 +642,12 @@ struct CliArgs {
     /// `nexo-config::load_with_override`.
     override_from: Option<PathBuf>,
     mode: Mode,
-    /// Phase 31.7 — set when `Mode::PluginRun` falls through to
+    /// Set when `Mode::PluginRun` falls through to
     /// `Mode::Run`. Tells the daemon boot path to mutate the
     /// loaded `AppConfig` (prepend the local plugin's path to
     /// discovery search_paths; optionally clear agents).
     plugin_run_override: Option<plugin_run::PluginRunOverride>,
-    /// Phase F6.b — set when `Mode::PersonaRun` falls through to
+    /// Set when `Mode::PersonaRun` falls through to
     /// daemon boot. The boot path applies the override to the
     /// loaded `AppConfig` (prepends the local persona pack's
     /// parent dir to `cfg.personas.discovery.search_paths`).
@@ -677,7 +675,7 @@ struct RuntimeHealth {
     ///   `/whatsapp/instances` — JSON list of available instances
     wa_pairing:
         std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
-    /// Phase 48 follow-up #7 — `/email/health` exposes the per-account
+    /// `/email/health` exposes the per-account
     /// `AccountHealth` map (state, IDLE alive ts, queue / DLQ depths,
     /// sent / failed totals). `None` when the email plugin isn't
     /// configured.
@@ -693,23 +691,17 @@ struct CronToolBindingContext {
     tools: Arc<nexo_core::agent::ToolRegistry>,
 }
 
-/// M5 — `Arc<ArcSwap<HashMap>>` enables lock-free hot-swap of the
+/// `Arc<ArcSwap<HashMap>>` enables lock-free hot-swap of the
 /// per-binding context map. The config-reload post-hook calls
 /// [`RuntimeCronToolExecutor::replace_bindings`] so cron firings
 /// observe the new `effective` policy on the next call. In-flight
 /// `resolve_binding` callers keep their loaded `Arc<HashMap>`
 /// snapshot until completion; subsequent calls see the new map.
 ///
-/// Pattern validated against:
-///   * `claude-code-leak/src/utils/cronScheduler.ts:441-448`
-///     (chokidar-on-file-change rebuild) + `:170,251,335-336,356`
-///     (`inFlight` Set with pitfall comment "idempotent even
-///     without the guard"). We use `ArcSwap` (lock-free swap) so
-///     the in-flight protection is structural rather than imperative.
-///   * `research/src/cron/service/timer.ts:709,697`
-///     (forceReload-per-tick + long-job pitfall). We rebuild on
-///     reload only, not on every tick — cheaper and avoids the
-///     long-job hide-tick race.
+/// `ArcSwap` (lock-free swap) makes the in-flight protection
+/// structural rather than imperative. The map is rebuilt on
+/// reload only, not on every tick — cheaper and avoids the
+/// long-job hide-tick race.
 #[derive(Clone)]
 struct RuntimeCronToolExecutor {
     by_binding: Arc<arc_swap::ArcSwap<std::collections::HashMap<String, CronToolBindingContext>>>,
@@ -722,7 +714,7 @@ impl RuntimeCronToolExecutor {
         }
     }
 
-    /// M5 — atomic hot-swap of the binding map. Called by the
+    /// Atomic hot-swap of the binding map. Called by the
     /// config-reload post-hook. Cheap (single `Arc` store).
     /// In-flight callers retain their pre-swap snapshot.
     fn replace_bindings(&self, new_map: std::collections::HashMap<String, CronToolBindingContext>) {
@@ -772,7 +764,7 @@ impl nexo_core::llm_cron_dispatcher::CronToolExecutor for RuntimeCronToolExecuto
     }
 }
 
-/// M5.b — bundles the Arcs and shared deps that
+/// Bundles the Arcs and shared deps that
 /// [`build_cron_bindings_from_snapshots`] needs to reconstruct the
 /// per-binding context map. Cheap clone (every field is `Arc<_>`,
 /// `Option<Arc<_>>`, or owned config). Captured by the
@@ -797,24 +789,18 @@ struct CronRebuildDeps {
     cron_tool_call_cfg: nexo_config::types::runtime::RuntimeCronToolCallsConfig,
 }
 
-/// M5.b — re-walks per-agent snapshot handles and builds the
+/// Re-walks per-agent snapshot handles and builds the
 /// `binding_id → CronToolBindingContext` map. Used by the boot
 /// path (initial population, called once after the agent loop
 /// ends) and the config-reload post-hook (rebuild on snapshot
 /// swap). Single source of truth — preserves bit-for-bit
 /// semantics with the inline closure it replaces.
 ///
-/// Pattern validated against:
-///   * `claude-code-leak/src/utils/cronScheduler.ts:441-448`
-///     (chokidar-on-file-change rebuild — we use snapshot
-///     handles instead of file mtime, but the rebuild shape is
-///     analogous).
-///   * `research/src/cron/service/timer.ts:709`
-///     (`forceReload: true` per-tick — we rebuild on reload
-///     only, since ArcSwap gives us cheap atomic swaps).
+/// Rebuilds use the snapshot handles rather than file mtimes,
+/// and only on reload — ArcSwap gives cheap atomic swaps.
 ///
-/// Limitation: agent add/remove during runtime is Phase 19 scope.
-/// Phase 81.17.c — translate `cfg.plugins.browser` YAML into the
+/// Limitation: agent add/remove during runtime is out of scope.
+/// Translate `cfg.plugins.browser` YAML into the
 /// `NEXO_PLUGIN_BROWSER_*` env vars the standalone
 /// `nexo-plugin-browser` subprocess reads from
 /// `nexo_plugin_browser::env_config::browser_config_from_env`.
@@ -830,7 +816,7 @@ struct CronRebuildDeps {
 /// in YAML — the subprocess (if discovered) falls back to the
 /// hardcoded defaults in `env_config.rs`.
 /// Best-effort `<owner>/<repo>` extraction from a GitHub URL.
-/// Used by Phase F5 persona discovery to reconstruct coords
+/// Used by boot-time persona discovery to reconstruct coords
 /// when the on-disk persona only carries the homepage URL
 /// (no tag info — bootloader uses `"unknown"` tag in the
 /// resulting `RepoCoords`). Returns `None` for non-GitHub
@@ -887,7 +873,7 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
     );
 }
 
-/// Phase 81.18.b.1 — per-instance env dict for the telegram
+/// Per-instance env dict for the telegram
 /// subprocess. Caller iterates `cfg.plugins.telegram` and builds
 /// one dict per entry; each dict is passed via
 /// `subprocess_plugin_factory_with_env` so N spawns don't collide
@@ -900,8 +886,8 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 /// secrets that have nothing to do with telegram) is dropped.
 /// Defense-in-depth — `Command::env_clear().envs(&map)` in
 /// `SubprocessNexoPlugin::spawn_and_handshake` enforces this.
-#[allow(dead_code)] // Wired in the telegram-loop flip step (81.18.b.1 step 5).
-/// Phase 92 — map the daemon's own broker config to the wire
+#[allow(dead_code)] // Wired in the telegram-loop flip path.
+/// Map the daemon's own broker config to the wire
 /// string a subprocess plugin should use when constructing its
 /// own broker:
 ///
@@ -937,7 +923,7 @@ fn seed_telegram_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    // Phase 92 — explicit broker transport selector. `nats` keeps
+    // Explicit broker transport selector. `nats` keeps
     // the historical NATS connect path; `local` is logically the
     // same on the subprocess side (treated as a fallback URL);
     // `stdio_bridge` tells the plugin to construct a
@@ -986,7 +972,7 @@ fn seed_telegram_subprocess_env_for(
     env
 }
 
-/// Phase 81.18.b.2 — daemon-side broker subscriber that watches
+/// Daemon-side broker subscriber that watches
 /// `plugin.inbound.whatsapp.<inst>` for connection state events
 /// (Connected / Disconnected / Reconnecting / Qr / CredentialsExpired)
 /// and mirrors them into the daemon's `wa_pairing` map. With the
@@ -1107,12 +1093,12 @@ fn spawn_whatsapp_pairing_state_subscriber(
     })
 }
 
-/// Phase 81.20.c — daemon-side broker subscriber that watches
+/// Daemon-side broker subscriber that watches
 /// `plugin.lifecycle.whatsapp.<inst>.peer_typing` events from
 /// the subprocess plugin and bridges them into the daemon's
 /// `AgentEventEmitter` so `AgentEventKind::PeerTyping` keeps
-/// surfacing on the SSE live transcript firehose. Pre-81.18.b.2
-/// the in-tree `WhatsappPlugin::with_emitter` wired the emitter
+/// surfacing on the SSE live transcript firehose. The in-tree
+/// `WhatsappPlugin::with_emitter` used to wire the emitter
 /// directly; after the subprocess flip the emitter Arc doesn't
 /// cross the process boundary, so the broker hop closes the loop.
 #[allow(dead_code)] // Wired in the whatsapp-loop block below.
@@ -1171,7 +1157,7 @@ fn spawn_whatsapp_typing_presence_subscriber(
     })
 }
 
-/// Phase 81.18.b.2 — per-instance env dict for the whatsapp
+/// Per-instance env dict for the whatsapp
 /// subprocess. Mirrors the telegram helper above; whitelists
 /// only PATH/HOME/RUST_LOG from the daemon's process env so
 /// secrets unrelated to the whatsapp plugin never leak into the
@@ -1188,7 +1174,7 @@ fn seed_whatsapp_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    // Phase 92 — explicit broker transport selector. See the
+    // Explicit broker transport selector. See the
     // matching comment block in `seed_telegram_subprocess_env_for`.
     env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
     if broker_kind != "stdio_bridge" {
@@ -1228,7 +1214,7 @@ fn seed_whatsapp_subprocess_env_for(
     env
 }
 
-/// Phase 81.19.b — daemon-side helper that seeds the env dict the
+/// Daemon-side helper that seeds the env dict the
 /// `nexo-plugin-email` subprocess reads on boot. Mirror of
 /// `seed_telegram_subprocess_env_for` but adapted to email's
 /// single-process / multi-account-internal model: one env dict
@@ -1239,7 +1225,7 @@ fn seed_whatsapp_subprocess_env_for(
 /// subprocess interprets that as "no Gmail OAuth accounts" and
 /// boots with `GoogleCredentialStore::empty()`.
 ///
-/// Phase 81.19.b cleanup: dead in production after the email
+/// Dead in production after the email
 /// plugin was extracted out-of-tree (the standalone plugin
 /// manages its own env). Kept under `#[cfg(test)]` so the
 /// existing happy-path / google-omitted regression tests still
@@ -1308,7 +1294,7 @@ fn build_cron_bindings_from_snapshots(
 
         // Iterate legacy/unbound first (binding_idx = None), then
         // each real binding (binding_idx = Some(i)). Mirrors the
-        // pre-M5.b boot ordering.
+        // original boot ordering.
         let binding_indexes: Vec<Option<usize>> = if agent_cfg.inbound_bindings.is_empty() {
             vec![None]
         } else {
@@ -1532,7 +1518,7 @@ async fn main() -> Result<()> {
     // their own provider before main() runs.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // Phase 11.1 follow-up — make the `agent` binary's version the one
+    // Make the `agent` binary's version the one
     // compared against `plugin.min_agent_version`, instead of the
     // `nexo-extensions` crate version. Ignore the result: if the
     // override was already set (double-init in tests), the existing
@@ -1980,13 +1966,13 @@ async fn main() -> Result<()> {
     let mut cfg = AppConfig::load_with_overrides(&config_dir, override_from.as_deref())
         .context("failed to load config")?;
 
-    // Phase 31.7 — `nexo plugin run <path>` falls through to the
+    // `nexo plugin run <path>` falls through to the
     // boot path with a side-channel override. Apply it here, AFTER
     // load and BEFORE any consumer reads `cfg.plugins.discovery` or
     // `cfg.agents.agents`.
-    // Phase F6.b — `nexo persona run <path>` mirror of plugin
+    // `nexo persona run <path>` mirror of plugin
     // run; prepends the persona pack's parent dir to
-    // cfg.personas.discovery.search_paths so the boot-time F5
+    // cfg.personas.discovery.search_paths so the boot-time
     // discovery picks it up without a real install.
     if let Some(ref override_) = args.persona_run_override {
         persona_cli::apply_persona_run_override(&mut cfg, override_);
@@ -2000,7 +1986,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Phase 82.4.b.b — auto-synth `InboundBinding { plugin: "event",
+    // Auto-synth `InboundBinding { plugin: "event",
     // instance: "<id>" }` for each declared `event_subscribers[*].id`
     // so the existing inbound resolver matches `plugin.inbound.event.<id>`
     // re-publishes from the EventSubscriber runtime. Idempotent — a
@@ -2015,7 +2001,7 @@ async fn main() -> Result<()> {
                 );
         }
     }
-    // Phase 81.9 — `cfg` stays mutable so `wire_plugin_registry`
+    // `cfg` stays mutable so `wire_plugin_registry`
     // can fold plugin-contributed agents into `cfg.agents` later
     // in this fn.
     let mut cfg = cfg;
@@ -2032,7 +2018,7 @@ async fn main() -> Result<()> {
     )
     .context("per-binding override validation failed")?;
 
-    // Phase 17 — credential gauntlet. Collects every invariant error
+    // Credential gauntlet. Collects every invariant error
     // across WhatsApp / Telegram / Google in one pass. Lenient level
     // on boot so legacy deployments keep working; CI should run
     // `agent --check-config --strict` to gate PRs.
@@ -2078,12 +2064,12 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Extension discovery (Phase 11.2) -------------------------------------
+    // Extension discovery -------------------------------------------------
     // Runs before anything that depends on extensions. Spawns stdio runtimes
-    // (Phase 11.3) for each discovered candidate and keeps them alive for
-    // the agent's lifetime. Tool-registry injection lands in 11.5.
+    // for each discovered candidate and keeps them alive for
+    // the agent's lifetime. Tool-registry injection happens later.
     //
-    // Phase 82.10.h.b.b — pre-discovery pass to learn plugin roots, then
+    // Pre-discovery pass to learn plugin roots, then
     // collect `[capabilities.admin]` + `[capabilities.http_server]` from
     // each `nexo-plugin.toml` (separate file from the runtime
     // `plugin.toml` discovery reads). Boot then constructs
@@ -2121,7 +2107,7 @@ async fn main() -> Result<()> {
         nexo_setup::admin_capability_collect::collect_admin_capabilities(&plugin_roots);
     let http_server_capabilities =
         nexo_setup::admin_capability_collect::collect_http_server_capabilities(&plugin_roots);
-    // Phase 82.13.c.thread — single in-memory ProcessingControlStore
+    // Single in-memory ProcessingControlStore
     // SHARED between the admin RPC dispatcher and every AgentRuntime
     // built below. Without sharing, the dispatcher and runtime hold
     // different stores and a `processing/pause` RPC never reaches
@@ -2133,7 +2119,7 @@ async fn main() -> Result<()> {
         dyn nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore,
     > = std::sync::Arc::new(nexo_setup::admin_adapters::InMemoryProcessingControlStore::new());
 
-    // Phase 82.13.b — initialise the broker BEFORE
+    // Initialise the broker BEFORE
     // `AdminBootstrap` so the `processing/intervention` admin RPC
     // gets a `BrokerOutboundDispatcher` adapter wired in. Boot was
     // previously deferring broker creation until after the admin
@@ -2149,7 +2135,7 @@ async fn main() -> Result<()> {
         "broker ready",
     );
 
-    // Phase 90.x.memory-snapshot.b — shared cell handed to the
+    // Snapshot.b — shared cell handed to the
     // admin RPC reader pre-bootstrap. main.rs writes the real
     // snapshotter into it later in boot once the late-stage
     // construction completes. Scoped at this outer level so
@@ -2157,7 +2143,7 @@ async fn main() -> Result<()> {
     // population can reach it.
     let snapshotter_cell = nexo_setup::admin_adapters::shared_snapshotter_cell();
 
-    // Phase 81.21.b.b spin-off — shared plugin-handles cell.
+    // Shared plugin-handles cell.
     // admin bootstrap consumes a clone of this empty cell when
     // constructing `LivePluginRestarter`; the post-`wire_plugin_registry`
     // population (below, after wire returns) writes the real map
@@ -2167,7 +2153,7 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
-    // Phase 90 audit follow-up — single Arc<LlmRegistry> shared
+    // Single Arc<LlmRegistry> shared
     // between the admin bootstrap (used by LivePluginRestarter
     // when respawning a child, by `RegistryLlmCompleter` for
     // admin/llm/complete, and by the boot-time provider catalogue
@@ -2191,14 +2177,14 @@ async fn main() -> Result<()> {
         let reload_noop: nexo_core::agent::admin_rpc::dispatcher::ReloadSignal =
             std::sync::Arc::new(|| {});
         let extensions_cfg_ref = cfg.extensions.as_ref().unwrap();
-        // Phase 82.10.h.b.b.audit-db — durable audit log at the
+        // Db — durable audit log at the
         // canonical state path (`$NEXO_HOME/admin_audit.db`),
         // matching the `nexo microapp admin audit tail` CLI
         // default. Operator queries the same file across daemon
         // restarts.
         let state_dir = nexo_project_tracker::state::nexo_state_dir();
         let audit_db_path = state_dir.join("admin_audit.db");
-        // Phase 82.11.log.thread — durable agent-event log at
+        // Durable agent-event log at
         // `$NEXO_HOME/agent_events.db`. When opened, boot
         // composes `Tee([Broadcast, Log])` so every emit (chat
         // transcripts + processing pause/resume + escalation
@@ -2219,7 +2205,7 @@ async fn main() -> Result<()> {
                 None
             }
         };
-        // Phase 83.8.12.3.thread — multi-tenant SaaS registry
+        // Multi-tenant SaaS registry
         // backed by `tenants.yaml`. Hands the patcher to the
         // bootstrap so `nexo/admin/tenants/*` works against the
         // real config. Single-tenant deployments without the file
@@ -2233,7 +2219,7 @@ async fn main() -> Result<()> {
                 config_dir.join("agents.yaml"),
             ),
         ));
-        // Phase 83.8.3.thread — filesystem-backed skills store at
+        // Filesystem-backed skills store at
         // `./skills` (matches the default `skills_dir` every agent
         // config uses). `nexo/admin/skills/*` admin writes land
         // where the runtime `SkillLoader` reads from.
@@ -2242,7 +2228,7 @@ async fn main() -> Result<()> {
         > = Some(std::sync::Arc::new(
             nexo_setup::admin_adapters::FsSkillsStore::new("./skills"),
         ));
-        // Phase 82.14.thread — in-memory escalation store. v0
+        // In-memory escalation store. v0
         // semantics: pause-resume cycle clears state, daemon
         // restart drops every escalation. SQLite-backed durable
         // variant exists (`SqliteEscalationStore`) and lands
@@ -2252,14 +2238,14 @@ async fn main() -> Result<()> {
         > = Some(std::sync::Arc::new(
             nexo_setup::admin_adapters::InMemoryEscalationStore::default(),
         ));
-        // Phase 90.x.mcp — wire the MCP servers domain against
+        // Wire the MCP servers domain against
         // `<config_dir>/mcp.yaml`. Without this, plugin admin's
         // `/m/mcp_servers` page surfaces `mcp domain not
         // configured` -32603 errors and stays as a placeholder.
         let mcp_store: Option<
             std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::mcp::McpServerStore>,
         > = Some(nexo_core::agent::admin_rpc::domains::mcp::McpYamlStore::new(config_dir.clone()));
-        // Phase 90.x.plugins — wire the plugin doctor reader so
+        // Wire the plugin doctor reader so
         // /m/plugins gets a live snapshot. Each call re-runs the
         // discovery + capability aggregation; cost is acceptable
         // for an operator-driven page.
@@ -2273,7 +2259,7 @@ async fn main() -> Result<()> {
             config_dir.clone(),
             doctor_version,
         ));
-        // Phase 90.x.memory — `/m/memory` recall reader. Lazy-
+        // `/m/memory` recall reader. Lazy-
         // opens `LongTermMemory` from `<config_dir>/memory.yaml`
         // on first query so the dispatcher wire doesn't depend
         // on the late-built per-agent memory instance.
@@ -2282,11 +2268,11 @@ async fn main() -> Result<()> {
         > = Some(nexo_setup::admin_adapters::LiveMemoryReader::new(
             config_dir.clone(),
         ));
-        // Phase 90.x.memory-snapshot.b — shared cell scoped above
+        // Snapshot.b — shared cell scoped above
         // (declared before this block so the post-snapshotter
         // population can also write into it). Cloned here so the
         // adapter outlives the bootstrap match.
-        // Phase 82.10.p — build the per-channel pairing trigger
+        // Build the per-channel pairing trigger
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
         // `channel not supported` instead of stalling Pending.
@@ -2312,7 +2298,7 @@ async fn main() -> Result<()> {
                 http_server_capabilities: &http_server_capabilities,
                 reload_signal: reload_noop,
                 transcript_reader: None,
-                // Phase 82.13.b — wire the broker so the
+                // Wire the broker so the
                 // `processing/intervention` admin RPC can reach
                 // `BrokerOutboundDispatcher` and publish operator
                 // replies on `plugin.outbound.<channel>.<instance>`.
@@ -2325,7 +2311,7 @@ async fn main() -> Result<()> {
                 tenant_store: tenant_store.clone(),
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
-                // Phase 81.21.b.b follow-up — manual restart
+                // Manual restart
                 // adapter, wired against `plugin_handles_cell`
                 // declared above. The cell is empty at this
                 // point in boot; main.rs writes the real
@@ -2336,7 +2322,7 @@ async fn main() -> Result<()> {
                 // "plugin handles not yet populated; daemon
                 // still booting" error.
                 //
-                // Phase 90 audit follow-up — share the daemon's
+                // Share the daemon's
                 // single `Arc<LlmRegistry>` rather than building
                 // a fresh one. See the construction site comment
                 // above main.rs:1947 for the rationale (avoids
@@ -2355,9 +2341,9 @@ async fn main() -> Result<()> {
                     // subprocess adapter spawns children
                     // with `kill_on_drop(true)`; daemon exit
                     // tears the children down regardless of
-                    // whether this token cancelled. Phase
-                    // 81.21 graceful supervisor work is the
-                    // proper fix; defer.
+                    // whether this token cancelled. A
+                    // graceful-supervisor rework is the
+                    // proper fix; deferred.
                     tokio_util::sync::CancellationToken::new(),
                     broker.clone(),
                     None,
@@ -2368,7 +2354,7 @@ async fn main() -> Result<()> {
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
                         snapshotter_cell.clone(),
-                        // Phase 90.x.memory-snapshot.create-restore —
+                        // Snapshot.create-restore —
                         // adapter resolves the encryption recipient
                         // for `create(encrypt=true)` from
                         // `recipients[0]` and the identity file for
@@ -2392,7 +2378,7 @@ async fn main() -> Result<()> {
                         },
                     ),
                 ),
-                // Phase 82.10.k — file-backed secrets store at
+                // File-backed secrets store at
                 // `<secrets_dir>/<NAME>.txt` + std::env
                 // injection so existing LLM clients see new
                 // values without a daemon restart.
@@ -2402,14 +2388,14 @@ async fn main() -> Result<()> {
                     as std::sync::Arc<
                         dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore,
                     >),
-                // Phase 82.10.l — None lets admin_bootstrap
+                // None lets admin_bootstrap
                 // default-construct `HttpLlmProviderProbe`
                 // against the local `LlmYamlPatcherFs`. Tests
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
-                // Phase 82.10.t.x — production LLM completer:
+                // Production LLM completer:
                 // shares the daemon's single `Arc<LlmRegistry>`
-                // (Phase 90 audit follow-up) so admin/llm/complete
+                // so admin/llm/complete
                 // resolves providers identically to the agent
                 // runtime. Same Arc as `plugin_restarter` above
                 // and the runtime registry at main.rs:2347.
@@ -2423,13 +2409,12 @@ async fn main() -> Result<()> {
                 // Snapshot the LLM provider catalogue from the
                 // shared registry so the admin RPC can serve
                 // `nexo/admin/llm_providers/catalog` from boot.
-                // Phase 90 audit follow-up — single source of
-                // truth across admin + runtime.
+                // Single source of truth across admin + runtime.
                 llm_provider_catalog: llm_registry
                     .catalog()
                     .into_iter()
                     .map(|e| {
-                        // Phase 82.10.u — internal LlmProviderCatalogEntry
+                        // Internal LlmProviderCatalogEntry
                         // (nexo-llm) and the wire LlmProviderCatalogEntry
                         // (nexo-tool-meta) share field names by design;
                         // copy each across so the SPA sees the schema +
@@ -2445,7 +2430,7 @@ async fn main() -> Result<()> {
                         }
                     })
                     .collect(),
-                // Phase 82.10.o — operator bearer rotation.
+                // Operator bearer rotation.
                 // `auth_rotator: None` lets admin_bootstrap
                 // default-construct `FsAuthRotator` if the
                 // production inputs (token_path + initial_hash)
@@ -2473,7 +2458,7 @@ async fn main() -> Result<()> {
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),
-                // Phase 82.10.n — always wire all three channel
+                // Always wire all three channel
                 // persisters. They translate
                 // `nexo/admin/credentials/register` into the
                 // per-plugin yaml + secret-file shape the
@@ -2522,13 +2507,13 @@ async fn main() -> Result<()> {
     let (extension_runtimes, ext_mcp_decls) =
         run_extension_discovery(cfg.extensions.as_ref(), admin_bootstrap.as_ref()).await;
 
-    // Phase 12.4+12.7 — MCP runtime manager. One per process; every agent
+    // MCP runtime manager. One per process; every agent
     // shares a sentinel session to avoid spawning duplicate MCP children.
     // `cfg.mcp.is_none()` or `enabled: false` → no manager, no tools.
     const MCP_SHARED_SESSION: uuid::Uuid = uuid::Uuid::nil();
     let watcher_shutdown = tokio_util::sync::CancellationToken::new();
 
-    // Phase 11.2 follow-up — opt-in plugin.toml watcher. Logs manifest
+    // Opt-in plugin.toml watcher. Logs manifest
     // changes; requires operator restart to apply.
     if let Some(ext_cfg) = cfg.extensions.as_ref() {
         if ext_cfg.watch.enabled {
@@ -2561,21 +2546,20 @@ async fn main() -> Result<()> {
             }
         }
     }
-    // Phase 81.20.b — wrap in Arc immediately so the
+    // Wrap in Arc immediately so the
     // wire_plugin_registry callsite below can clone it into
     // `SubprocessRuntime.llm_registry` for the daemon-mediated
-    // `llm.complete` RPC. Pre-81.20.b we wrapped at line ~5023
-    // (after the wire callsite); now the Arc lives from
+    // `llm.complete` RPC. The Arc lives from
     // construction onward. All intermediate `llm_registry.method()`
     // calls work via `Arc<T>: Deref<Target = T>`.
     //
-    // Phase 90 audit follow-up — re-bind to the Arc constructed
-    // BEFORE admin bootstrap (main.rs:1947 area) so the registry
+    // Re-bind to the Arc constructed
+    // before admin bootstrap so the registry
     // is single-source-of-truth across admin RPCs and the daemon
     // runtime. No re-construction here; just re-shadow into local
     // `llm_registry` for the remaining boot sites that consume it.
 
-    // Phase 82.10.s.4 — resolve every provider's API key from its
+    // Resolve every provider's API key from its
     // configured source (inline / secret_id / env). This populates
     // `LlmProviderConfig.api_key` so downstream LLM clients have a
     // ready-to-use bearer without each crate re-reading secrets.
@@ -2597,7 +2581,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 82.10.s.4 — validate every yaml provider instance
+    // Validate every yaml provider instance
     // (global + tenant-scoped) maps to a registered factory. Loud
     // boot fail beats a runtime LLM dispatch error mid-traffic.
     if let Err(errs) = llm_registry.validate_config(&cfg.llm) {
@@ -2684,7 +2668,7 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    // Phase 36.2 — memory snapshot subsystem (early init, before
+    // Memory snapshot subsystem (early init, before
     // `LongTermMemory::open_with_vector` so the mutation hook is
     // available when the writer attaches it). Retention worker
     // spawn happens later, once `dream_shutdown` exists.
@@ -2704,7 +2688,7 @@ async fn main() -> Result<()> {
     } else {
         std::path::PathBuf::from(&snapshot_yaml.sqlite_root)
     };
-    // MS-2.b — `ClosureResolver` that maps each agent's id to its
+    // `ClosureResolver` that maps each agent's id to its
     // real workspace memdir + a shared SQLite dir. Agents whose id
     // is not in the map fall back to the YAML defaults (so a fresh
     // agent created mid-run does not 404 the snapshotter).
@@ -2735,14 +2719,14 @@ async fn main() -> Result<()> {
             },
             // SQLite is global per-deployment today (every agent
             // shares `cfg.memory.long_term.sqlite.path`'s parent
-            // dir). MS-2.b stays consistent with that until the
-            // long-term store goes per-agent.
+            // dir). This resolver stays consistent with that until
+            // the long-term store goes per-agent.
             move |_agent_id: &str, _tenant: &str| -> std::path::PathBuf {
                 sqlite_dir_for_sqlite.clone()
             },
         ))
     };
-    // Phase 90 follow-up — multi-recipient encrypt boot
+    // Multi-recipient encrypt boot
     // validation. Parse every recipient string in
     // `memory.snapshot.encryption.recipients` upfront so an
     // operator typo is surfaced at daemon boot rather than at
@@ -2778,7 +2762,7 @@ async fn main() -> Result<()> {
             None
         };
 
-    // Phase 90.x.memory-snapshot.b — populate the admin cell with
+    // Snapshot.b — populate the admin cell with
     // the live snapshotter so /m/memory's snapshot panel reflects
     // the operator's real `path_resolver` map (per-agent memdir
     // overrides, custom sqlite roots). When snapshots are
@@ -2789,7 +2773,7 @@ async fn main() -> Result<()> {
         *guard = Some(s.clone());
     }
 
-    // Phase 36.2 — broker-backed event publisher used by the mutation
+    // Broker-backed event publisher used by the mutation
     // hook on every memory write. Best-effort: a publish error must
     // never poison the writer's transaction (the hook impl swallows
     // and logs internally).
@@ -2813,18 +2797,18 @@ async fn main() -> Result<()> {
             None
         };
 
-    // Phase 80.9 — channel boot context. Holds the shared
+    // Channel boot context. Holds the shared
     // `ChannelRegistry` + `SessionRegistry` + `BrokerChannelDispatcher`
     // so the per-(binding,server) inbound loops + the bridge spawn
     // below all see the same handles. Persistent SessionRegistry
-    // (Phase 80.9.d.b) is opted into when an operator sets
+    // is opted into when an operator sets
     // `agents.<id>.channels.session_store_path` — for now we ship
     // the in-memory default so threading is preserved within a
     // process. Hot-reload re-evaluation hooks against this single
     // registry instance.
     let channel_boot = nexo_mcp::channel_boot::ChannelBootContext::in_memory(broker.clone());
     let channel_shutdown = tokio_util::sync::CancellationToken::new();
-    // Phase 80.9.b.b — process-wide pending-permission map
+    // Process-wide pending-permission map
     // shared by the ChannelRelayDecider + every per-server
     // permission-response pump.
     let pending_permissions =
@@ -2851,8 +2835,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 77.7 — secret guard for scanning memory writes.
-    // C5 — wired via `memory.secret_guard` YAML key. Default secure
+    // Secret guard for scanning memory writes.
+    // Wired via `memory.secret_guard` YAML key. Default secure
     // config applies when the key is omitted; explicit override
     // failures fail boot loud so a YAML typo is never silent.
     let secret_guard: Option<nexo_memory::SecretGuard> = {
@@ -2872,7 +2856,7 @@ async fn main() -> Result<()> {
                 .map(|s| s.path.as_str())
                 .unwrap_or("./data/memory.db");
 
-            // Phase 5.4 — build optional embedding provider for vector recall.
+            // Build optional embedding provider for vector recall.
             let embedding_provider: Option<Arc<dyn nexo_memory::EmbeddingProvider>> = if cfg
                 .memory
                 .vector
@@ -2931,7 +2915,7 @@ async fn main() -> Result<()> {
             } else {
                 mem
             };
-            // Phase 36.2 — attach the mutation hook so every
+            // Attach the mutation hook so every
             // `remember_typed` / `forget` write streams onto the
             // `nexo.memory.mutated.<agent_id>` NATS subject.
             let mem = if let Some(ref hook) = memory_mutation_hook {
@@ -2988,12 +2972,12 @@ async fn main() -> Result<()> {
 
     // Plugins --------------------------------------------------------------
     let plugins = PluginRegistry::new();
-    // Phase 81.17.c — browser plugin extracted to standalone repo
+    // Browser plugin extracted to standalone repo
     // `nexo-rs-plugin-browser`. Daemon no longer constructs it
-    // in-process; discovery + auto-subprocess fallback (81.17.b)
+    // in-process; discovery + auto-subprocess fallback
     // loads the binary if its directory is on
     // `plugins.discovery.search_paths`. The 12 `browser_*` tools
-    // route through 81.29 RemoteToolHandler over JSON-RPC stdio.
+    // route through the RemoteToolHandler over JSON-RPC stdio.
     //
     // Operator yaml (`cfg.plugins.browser`) still exists; the
     // daemon translates the values into env vars
@@ -3004,8 +2988,8 @@ async fn main() -> Result<()> {
     }
     // (no `let browser_plugin = ...` — gone)
     // (no `register_browser_tools(...)` — gone; tools register
-    //  via the 81.29 RemoteToolHandler path inside the init loop.)
-    // Phase 81.18.b.2 — whatsapp subprocess flip mirrors the
+    //  via the RemoteToolHandler path inside the init loop.)
+    // Whatsapp subprocess flip mirrors the
     // telegram pattern: daemon owns one `PairingState` per cfg
     // entry (so the admin RPC `/whatsapp/<inst>/pair*` HTTP
     // endpoints render accurate state) and a broker subscriber
@@ -3017,11 +3001,10 @@ async fn main() -> Result<()> {
     // is gone; per-cfg factories register on the discovery snapshot
     // alongside telegram.
     //
-    // Typing-presence forwarding (Phase 82.10.r) doesn't yet have a
+    // Typing-presence forwarding doesn't yet have a
     // broker bridge, so subprocess instances don't surface
     // `AgentEventKind::PeerTyping` events on the firehose until
-    // follow-up `81.20.c` ships the RPC callback. Tracked in
-    // FOLLOWUPS.md.
+    // a follow-up ships the RPC callback.
     let mut wa_pairing: std::collections::BTreeMap<
         String,
         nexo_plugin_whatsapp::pairing::SharedPairingState,
@@ -3049,7 +3032,7 @@ async fn main() -> Result<()> {
             "registered whatsapp pairing slot (Phase 81.18.b.2 subprocess flip)",
         );
     }
-    // Phase 81.18.b.1 — telegram subprocess flip. The in-tree
+    // Telegram subprocess flip. The in-tree
     // `TelegramPlugin::new(cfg) + plugins.register(plugin)` block
     // is gone; daemon now seeds per-instance env dicts +
     // registers a `subprocess_plugin_factory_with_env` factory
@@ -3068,7 +3051,7 @@ async fn main() -> Result<()> {
     // existing whatsapp loop still flows correctly.
     // (Telegram in-tree construction removed; see
     //  `factory_registry` block at line ~2425.)
-    // Email plugin (Phase 48 → flipped in 81.19.b). Single Arc lives
+    // Email plugin. Single Arc lives
     // for two purposes:
     //   1. The factory_registry-driven init loop registers a
     //      singleton factory that hands this Arc to the discovery
@@ -3113,21 +3096,21 @@ async fn main() -> Result<()> {
         .await
         .context("failed to start plugins")?;
 
-    // Phase F5 of `cody-cli-install` — boot-time persona discovery.
+    // Boot-time persona discovery.
     // Walks `cfg.personas.discovery.search_paths`, parses + validates
     // every `<id>-<version>/persona.toml`, applies the disabled /
     // allowlist filters, and registers each survivor in an
     // `InMemoryPersonaAdmin` cell. `PersonaAdmin` brought into scope
     // here (not at module top) to keep the import close to its sole
-    // use site until F6 wires admin RPC routes.
-    // Admin RPC routes (Phase F6) read the cell to surface
+    // use site.
+    // Admin RPC routes read the cell to surface
     // `nexo persona list / get / remove` over the wire. Discovery
     // is best-effort: malformed packs log at WARN + are skipped
     // rather than aborting boot.
     #[allow(unused_imports)]
     use nexo_persona_installer::PersonaAdmin as _PersonaAdminInScope;
     let persona_admin = std::sync::Arc::new(nexo_persona_installer::InMemoryPersonaAdmin::new());
-    // Phase F7 — `NEXO_DISABLE_BUNDLED_PERSONAS` kill switch.
+    // `NEXO_DISABLE_BUNDLED_PERSONAS` kill switch.
     // Honored even when search_paths is configured; lets a
     // hardened deployment refuse persona discovery without
     // mutating the YAML.
@@ -3210,25 +3193,25 @@ async fn main() -> Result<()> {
         );
     }
     // _persona_admin will be wired into admin RPC + agents.d/ merge
-    // in Phase F6 (admin RPC routes) + a follow-up (agent_configs
-    // merge into AgentsDirectory). Bind here so the cell stays alive
+    // (admin RPC routes + agent_configs merge into AgentsDirectory)
+    // in a follow-up. Bind here so the cell stays alive
     // for the rest of boot; rebound to a `let _ = persona_admin;`
-    // below to silence the unused-binding warning until F6 lands.
+    // below to silence the unused-binding warning meanwhile.
     let _persona_admin = persona_admin;
 
-    // Phase 81.9 — atomic plugin registry boot wire. The helper
+    // Atomic plugin registry boot wire. The helper
     // runs the four-step pipeline (discover → merge agents → merge
     // skills → init loop) and folds every report so downstream
     // consumers (`LlmAgentBehavior::with_plugin_skill_roots`,
-    // future `nexo agent doctor plugins` CLI, admin-ui in 81.11)
+    // the `nexo agent doctor plugins` CLI, admin UI)
     // see a single source of truth. The init loop runs with an
     // empty handles map today — every plugin records `NoHandle`
     // until the manifest-driven `Arc<dyn NexoPlugin>` factory
-    // ships in 81.12.
+    // is wired.
     let core_envs = core_capability_env_vars();
     let available_caps = build_available_capabilities(&cfg);
     let discovery_cfg_clone = cfg.plugins.discovery.clone();
-    // Phase 81.17.b — empty in-tree factory registry plus a
+    // Empty in-tree factory registry plus a
     // `SubprocessRuntime` carrying the broker + shutdown token +
     // config/state roots activate the auto-subprocess fallback in
     // `run_plugin_init_loop_with_factory`. Any discovered manifest
@@ -3238,10 +3221,10 @@ async fn main() -> Result<()> {
     // `plugins.discovery.search_paths` directory. In-tree plugins
     // (browser/telegram/whatsapp/email) keep their dormant
     // manifests OUT of `search_paths` and continue via the legacy
-    // block above until 81.18-81.19 extract them out-of-tree.
+    // block above until they are extracted out-of-tree.
     let mut factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
 
-    // Phase 81.18.b.1 — telegram subprocess flip. For each cfg
+    // Telegram subprocess flip. For each cfg
     // entry we (1) build a per-spawn env dict whitelisting only
     // the daemon envs the plugin legitimately needs (PATH/HOME/
     // RUST_LOG/NEXO_BROKER_URL) plus the operator-provided
@@ -3280,7 +3263,7 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-                // Phase 92 — derive the subprocess-side broker
+                // Derive the subprocess-side broker
                 // transport from the daemon's own broker config.
                 // `Local` daemons stamp `stdio_bridge` because
                 // their in-process broker is unreachable from
@@ -3334,7 +3317,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 81.18.b.2 — whatsapp subprocess flip mirrors telegram.
+    // Whatsapp subprocess flip mirrors telegram.
     // Pre-discover the `whatsapp` manifest, register one factory
     // per cfg entry under `whatsapp` (legacy single-account) or
     // `whatsapp.<inst>` (multi-account), inject synthetic discovered
@@ -3357,7 +3340,7 @@ async fn main() -> Result<()> {
             Some(base) => {
                 let broker_url = std::env::var("NEXO_BROKER_URL")
                     .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-                // Phase 92 — see telegram mirror for the rationale
+                // See telegram mirror for the rationale
                 // behind mapping daemon broker kind → subprocess
                 // transport selector.
                 let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
@@ -3411,7 +3394,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 81.19.b — email factory wiring. Replaces the legacy
+    // Email factory wiring. Replaces the legacy
     // `plugins.register_arc` block dropped earlier. We register a
     // singleton factory that hands the existing in-process
     // `Arc<EmailPlugin>` to the init loop. Because the explicit
@@ -3435,7 +3418,7 @@ async fn main() -> Result<()> {
         };
         match factory_registry.register("email".to_string(), factory) {
             Ok(()) => {
-                // Phase 81.19.b — push a synthetic DiscoveredPlugin so
+                // Push a synthetic DiscoveredPlugin so
                 // the init_loop sees the email manifest WITHOUT
                 // requiring the operator to place it in
                 // `plugins.discovery.search_paths`. This preserves
@@ -3465,7 +3448,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 81.18.b.2 — spawn the whatsapp pairing state broker
+    // Spawn the whatsapp pairing state broker
     // subscriber. Lives for the duration of the daemon's broker
     // session; cancellation handle wired into the existing
     // subprocess shutdown token so a graceful shutdown stops the
@@ -3482,12 +3465,12 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Phase 81.20.c — typing presence broker bridge. Subprocess
+    // Typing presence broker bridge. Subprocess
     // whatsapp publishes `plugin.lifecycle.whatsapp.<inst>.peer_typing`
     // events; this subscriber translates them to
     // `AgentEventKind::PeerTyping` on the SSE firehose so live
     // transcript indicators light up the same way the in-tree
-    // `with_emitter` path did pre-81.18.b.2. Skipped when no
+    // `with_emitter` path used to. Skipped when no
     // whatsapp instances are configured OR the bootstrap
     // emitter isn't wired yet (test boots without the SSE
     // firehose).
@@ -3509,32 +3492,28 @@ async fn main() -> Result<()> {
     // Local cancellation token — daemon's main shutdown isn't yet
     // a single shared resource at this scope; the subprocess
     // adapter spawns each child with `kill_on_drop(true)` so the
-    // children die with the daemon process anyway. 81.21 wires
-    // graceful shutdown through a real supervisor.
+    // children die with the daemon process anyway. A real
+    // supervisor for graceful shutdown is a follow-up.
     let subprocess_shutdown = tokio_util::sync::CancellationToken::new();
     let subprocess_runtime = nexo_core::agent::nexo_plugin_registry::SubprocessRuntime {
         broker: broker.clone(),
         shutdown: subprocess_shutdown,
         config_dir: config_dir.clone(),
         state_root: plugin_state_root,
-        // Phase 81.20.a.b — `memory` is already constructed at
-        // main.rs:1731-1821 (Long-term memory section above), so
-        // it's in scope here without any reorder. Original 81.20.a
-        // assumption that `long_term_memory` lived only at the
-        // mcp-server path (line 10883) was wrong — that's a
-        // separate function. Subprocess plugins now get -32603
-        // "memory not configured" only when the OPERATOR has
-        // disabled long-term memory in `memory.yaml`, not because
-        // of a daemon-side plumbing gap.
+        // `memory` is already constructed in the long-term memory
+        // section above, so it's in scope here. Subprocess plugins
+        // get -32603 "memory not configured" only when the OPERATOR
+        // has disabled long-term memory in `memory.yaml`, not
+        // because of a daemon-side plumbing gap.
         long_term_memory: memory.clone(),
-        // Phase 81.20.b.b — thread the daemon's real
-        // `llm_registry` (Arc'd at construction since 81.20.b)
+        // Thread the daemon's real
+        // `llm_registry` (Arc'd at construction)
         // and `cfg.llm` so subprocess plugins issuing
         // `llm.complete` reach operator-configured providers
         // (Minimax, OpenAI, etc.).
         llm_registry: llm_registry.clone(),
         llm_config: Arc::new(cfg.llm.clone()),
-        // Phase 81.22 — sandbox runner: discover bwrap once at
+        // Sandbox runner: discover bwrap once at
         // boot + cache env-driven capability flags. Plugins
         // declaring `[plugin.sandbox] enabled = true` get their
         // command wrapped at spawn time.
@@ -3553,11 +3532,11 @@ async fn main() -> Result<()> {
     )
     .await;
     // `wire.registry` + `wire.skill_roots` +
-    // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
-    // reload registration + 81.12 per-agent threading without
+    // `wire.channel_adapter_registry` stay in scope for hot-reload
+    // registration + per-agent threading without
     // changing the boot wire shape.
 
-    // Phase 81.21.b.b spin-off — populate the shared plugin
+    // Populate the shared plugin
     // handles cell now that `wire_plugin_registry` has produced
     // the BTreeMap. `LivePluginRestarter` constructed at admin
     // bootstrap time (see line ~2080) reads this cell on each
@@ -3670,7 +3649,7 @@ async fn main() -> Result<()> {
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
 
-    // Phase 6.10 follow-up — auto-open a Cloudflare Tunnel to expose
+    // Auto-open a Cloudflare Tunnel to expose
     // `/whatsapp/pair` publicly. Tunnels the first account's pairing
     // page; multi-account operators should reach their own instance
     // via `/whatsapp/<instance>/pair` on the tunnelled URL.
@@ -3754,11 +3733,11 @@ async fn main() -> Result<()> {
     // interval and routes matching emails to channel plugins. No LLM
     // in the hot path; dedup via Gmail UNREAD label. Absent config
     // file = feature off.
-    // Phase 19 — `gmail-poller` legacy crate retired. Operators
+    // `gmail-poller` legacy crate retired. Operators
     // declare gmail jobs directly in `config/pollers.yaml` under
     // `kind: gmail`. The generic runner handles scheduling, cursor
-    // persistence, dispatch via Phase 17, and the `pollers_*` +
-    // `gmail_*` LLM tools.
+    // persistence, dispatch via the credential store, and the
+    // `pollers_*` + `gmail_*` LLM tools.
 
     // Optional sidecar policy for tool caching / parallel-safety /
     // relevance filtering. File absence = feature off (back-compat).
@@ -3837,7 +3816,7 @@ async fn main() -> Result<()> {
     // `-L 9091:127.0.0.1:9091` to reach it remotely.
     let credentials_for_admin = credentials.as_ref().map(Arc::clone);
 
-    // Phase 19 — generic poller subsystem. Boot order:
+    // Generic poller subsystem. Boot order:
     //   1) require credentials bundle (resolver lookup is mandatory)
     //   2) open SQLite state DB
     //   3) construct runner + register built-ins
@@ -3850,7 +3829,7 @@ async fn main() -> Result<()> {
                 let state_db = std::path::PathBuf::from(&pcfg.state_db);
                 match nexo_poller::PollState::open(&state_db).await {
                     Ok(state) => {
-                        // Phase 20 — feed the LLM registry + config into
+                        // Feed the LLM registry + config into
                         // the runner so the `agent_turn` built-in can build
                         // clients on demand. Other built-ins (gmail, rss,
                         // webhook) ignore the field — wiring it
@@ -3869,7 +3848,7 @@ async fn main() -> Result<()> {
                         );
                         nexo_poller::builtins::register_all(&runner);
 
-                        // Phase 19 follow-up — register extension-provided
+                        // Register extension-provided
                         // pollers. Walk every loaded stdio extension and
                         // bridge each declared `kind` into the runner via
                         // ExtensionPoller. Lets operators ship a poller in
@@ -3926,12 +3905,12 @@ async fn main() -> Result<()> {
         config_dir.clone(),
     ));
 
-    // Phase 82.2 — webhook receiver. Validate the snapshot, build
+    // Webhook receiver. Validate the snapshot, build
     // the dispatcher + axum router, spawn under a dedicated
     // CancellationToken. Validation failure is non-fatal: we log
     // the error and skip the server (daemon continues). Hot-reload
-    // re-evaluation lands as a Phase 18 post-hook in a follow-up
-    // commit (see FOLLOWUPS.md `82.2.b`).
+    // re-evaluation lands as a config-reload post-hook in a
+    // follow-up.
     let webhook_shutdown = tokio_util::sync::CancellationToken::new();
     let _webhook_handle: Option<tokio::task::JoinHandle<()>> = if let Some(wcfg) =
         cfg.webhook_receiver.as_ref().filter(|w| w.enabled)
@@ -3981,7 +3960,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Phase 82.4.b.b — spawn one EventSubscriber task per
+    // Spawn one EventSubscriber task per
     // (agent, binding) under a shared cancel token. Validation
     // failures are non-fatal (log + skip the offending binding
     // or whole-agent on duplicate-id); daemon stays up.
@@ -4032,14 +4011,14 @@ async fn main() -> Result<()> {
         tracing::info!(count = total_event_subs, "event subscribers online");
     }
 
-    // Phase 21 — single shared link extractor (HTTP client + LRU cache).
+    // Single shared link extractor (HTTP client + LRU cache).
     // Per-binding config gates whether each turn actually fetches; the
     // extractor itself is cheap to keep around always.
     let link_extractor = Arc::new(nexo_core::link_understanding::LinkExtractor::new(
         &nexo_core::link_understanding::LinkUnderstandingConfig::default(),
     ));
 
-    // Phase 25 — single shared web-search router. Builds at most one
+    // Single shared web-search router. Builds at most one
     // provider per backend from env credentials. `None` if no provider
     // is configured (no env keys + DDG feature off); the `web_search`
     // tool is then never registered.
@@ -4072,7 +4051,7 @@ async fn main() -> Result<()> {
         tracing::info!("web-search router disabled (no providers configured)");
     }
 
-    // Phase 26 — pairing protocol. Builds the SQLite store + the
+    // Pairing protocol. Builds the SQLite store + the
     // HMAC-signed setup-code issuer once per process. The store path
     // sits beside `memory.db` so backups follow the same operator
     // convention; the secret file lands in `~/.nexo/secret/pairing.key`
@@ -4161,7 +4140,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 67 — auto-boot the in-process driver subsystem when
+    // Auto-boot the in-process driver subsystem when
     // ANY configured agent has `dispatch_policy.mode: full`
     // (agent-level OR per-binding) AND a driver config file is
     // reachable. The operator never has to flip an env var —
@@ -4184,7 +4163,7 @@ async fn main() -> Result<()> {
         .await;
 
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
-    // Phase 18 — collect each agent's reload channel so the coordinator
+    // Collect each agent's reload channel so the coordinator
     // can dispatch `Apply(snapshot)` on hot-reload.
     let mut reload_senders: Vec<(
         String,
@@ -4197,7 +4176,7 @@ async fn main() -> Result<()> {
     let dream_shutdown = tokio_util::sync::CancellationToken::new();
     let mut dream_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-    // Phase 36.2 — `RetentionWorker` spawn. The snapshotter +
+    // `RetentionWorker` spawn. The snapshotter +
     // mutation hook were built earlier (right after `broker`) so
     // `LongTermMemory::open_with_vector` saw the hook. Only the
     // worker stays here because it needs `dream_shutdown` (defined
@@ -4303,7 +4282,7 @@ async fn main() -> Result<()> {
         tracing::info!("transcripts redaction active");
     }
 
-    // Phase context-optimization wiring — built once per process and
+    // Context-optimization wiring — built once per process and
     // shared across agent runtimes.
     //
     // - WorkspaceCache: pre-loads + watches every distinct workspace
@@ -4390,11 +4369,11 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Phase 79.7.B — snapshot a fallback model for legacy cron rows
+    // Snapshot a fallback model for legacy cron rows
     // that predate per-entry model metadata (`model_provider`,
     // `model_name`). New rows carry their own model and do not depend
     // on this fallback.
-    // Phase 79.10 — open the durable audit store for ConfigTool
+    // Open the durable audit store for ConfigTool
     // proposals. Always opened (gated tool may be off, but the
     // read-only `config_changes_tail` tool is always available).
     // Failure to open is non-fatal — the tail tool simply isn't
@@ -4427,7 +4406,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Phase 79.6 — open the team store (registry + audit). Always
+    // Open the team store (registry + audit). Always
     // tried; failure is non-fatal (the 5 Team* tools simply don't
     // register for this run).
     let team_store: Option<std::sync::Arc<nexo_team_store::SqliteTeamStore>> = {
@@ -4452,7 +4431,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Phase 79.6 — per-process team message router. Spawns the
+    // Per-process team message router. Spawns the
     // `team.>` broker subscriber under a fresh cancel token; the
     // SIGTERM handler below cancels it before plugin teardown.
     let team_router_cancel = tokio_util::sync::CancellationToken::new();
@@ -4472,12 +4451,10 @@ async fn main() -> Result<()> {
         .first()
         .map(|a| (a.id.clone(), a.model.clone()));
     let cron_tool_call_cfg = cfg.runtime.cron.tool_calls.clone();
-    // M5.b — `cron_tool_bindings` is now built post-loop via
+    // `cron_tool_bindings` is built post-loop via
     // `build_cron_bindings_from_snapshots` (single source of truth
-    // shared with the config-reload post-hook). The pre-M5.b
-    // `let mut cron_tool_bindings = HashMap::new()` declaration is
-    // removed; the map flows directly from the build call to the
-    // executor constructor.
+    // shared with the config-reload post-hook). The map flows
+    // directly from the build call to the executor constructor.
     let mut legacy_cron_binding_models: std::collections::HashMap<
         String,
         nexo_config::types::agents::ModelConfig,
@@ -4494,7 +4471,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Phase 79.10.b — bootstrap the approval correlator + reload
+    // Bootstrap the approval correlator + reload
     // bridge for the gated `Config` tool. Always built (cheap;
     // tasks idle when no agent has `self_edit: true`); the gated
     // per-agent registration below decides whether to consume
@@ -4628,7 +4605,7 @@ async fn main() -> Result<()> {
         &reload_cell,
     );
 
-    // Phase 79.1 — process-shared plan-mode approval registry.
+    // Process-shared plan-mode approval registry.
     // Created once per process so the broker subscriber below can
     // resolve pending ExitPlanMode approvals from inbound
     // `[plan-mode] approve|reject plan_id=…` chat messages.
@@ -4695,7 +4672,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Phase 79.5 — boot the LSP manager once per process. Probes
+    // Boot the LSP manager once per process. Probes
     // rust-analyzer / pylsp / typescript-language-server / gopls
     // on PATH; missing binaries get a single warn line with the
     // install hint. The manager survives across all agents and is
@@ -4736,7 +4713,7 @@ async fn main() -> Result<()> {
         "[lsp] manager booted"
     );
 
-    // M5.b — aggregated maps for cron post-hook reload.
+    // Aggregated maps for cron post-hook reload.
     // `tools_per_agent` captures each per-agent ToolRegistry Arc;
     // `agent_snapshot_handles` captures each runtime's snapshot
     // ArcSwap so the post-hook can re-read the current effective
@@ -4750,14 +4727,14 @@ async fn main() -> Result<()> {
         Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
     > = std::collections::HashMap::new();
 
-    // Phase M1.b.c — clone primary's id + config before the
+    // Clone primary's id + config before the
     // agent loop consumes `cfg.agents.agents` so the daemon-embed
     // MCP wire can construct an AgentContext for the primary
     // after the loop.
     let primary_for_mcp_embed: Option<(String, nexo_config::AgentConfig)> =
         cfg.agents.agents.first().map(|a| (a.id.clone(), a.clone()));
 
-    // Phase 80.1.b.b.b — accumulate per-agent `AutoDreamRunner`s
+    // Accumulate per-agent `AutoDreamRunner`s
     // built inside the per-agent loop. After the loop closes, the
     // primary (first non-None) registers with the
     // `DriverOrchestrator.builder().auto_dream(...)` so the
@@ -4769,13 +4746,13 @@ async fn main() -> Result<()> {
 
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
-        // Phase 80.1.b.b.b — capture every field auto_dream
+        // Capture every field auto_dream
         // construction needs BEFORE later code paths consume
         // `agent_cfg` (Agent::new takes ownership ~line 4265).
         let agent_cfg_for_dream = agent_cfg.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
         let workspace_for_dream = agent_cfg.workspace.clone();
-        // C2 — boot-time policy resolution. `from_agent_defaults` mirrors
+        // Boot-time policy resolution. `from_agent_defaults` mirrors
         // agent-level fields into the resolved struct; per-binding
         // override pickup happens at handler call time via
         // `ctx.effective_policy()` (which the runtime intake fills from
@@ -4786,12 +4763,12 @@ async fn main() -> Result<()> {
             .build(&cfg.llm, &agent_cfg.model)
             .with_context(|| format!("failed to build LLM client for agent {agent_id}"))?;
 
-        // Phase M4.a.b — construct per-agent ExtractMemories when
+        // Construct per-agent ExtractMemories when
         // the YAML opted in. Wire-shape `ExtractMemoriesYamlConfig`
         // mirrors `nexo_driver_types::ExtractMemoriesConfig` 1:1; we
         // convert here. The same `Arc<ExtractMemories>` will be
-        // shared with the driver-loop orchestrator if a future
-        // Phase 67 self-driving wire is added — single instance per
+        // shared with the driver-loop orchestrator if the
+        // self-driving wire is added — single instance per
         // agent keeps cadence + circuit breaker + in-progress mutex
         // coherent.
         let memory_extractor: Option<Arc<dyn nexo_driver_types::MemoryExtractor>> =
@@ -4824,8 +4801,8 @@ async fn main() -> Result<()> {
                 _ => None,
             };
 
-        // Validate heartbeat interval eagerly even though the runtime is
-        // pending Phase 7 — better to fail at startup than silently ignore.
+        // Validate heartbeat interval eagerly even though the runtime
+        // wiring is pending — better to fail at startup than silently ignore.
         if agent_cfg.heartbeat.enabled {
             let interval =
                 humantime::parse_duration(&agent_cfg.heartbeat.interval).with_context(|| {
@@ -4843,12 +4820,12 @@ async fn main() -> Result<()> {
 
         let tools = Arc::new(ToolRegistry::new());
         tools.register(DelegationTool::tool_def(), DelegationTool);
-        // Phase 80.9 — channel tools when ANY of this agent's
+        // Channel tools when ANY of this agent's
         // bindings has `allowed_channel_servers` non-empty AND
         // the operator's `agents.channels` block is configured.
         // Tools key against `agent_cfg.id` so the registry view
-        // is agent-scoped — multi-binding granularity is the
-        // 80.9.j follow-up. `channel_list` + `channel_status`
+        // is agent-scoped — multi-binding granularity is a
+        // follow-up. `channel_list` + `channel_status`
         // are read-only; `channel_send` is gated by the per-tool
         // approval flow + the channel registry's
         // `RegisteredChannel.outbound_tool_name` lookup.
@@ -4858,7 +4835,7 @@ async fn main() -> Result<()> {
                 .iter()
                 .any(|b| !b.allowed_channel_servers.is_empty());
         if channels_in_play {
-            // Phase 80.9.j — dynamic-binding tools. The tools
+            // Dynamic-binding tools. The tools
             // resolve the binding id from `ctx.effective` at
             // call time so the same registration serves every
             // binding for an agent. Per-binding registrations
@@ -4894,7 +4871,7 @@ async fn main() -> Result<()> {
                 "registered channel_* tools (channels surface in play, per-binding resolution)"
             );
         }
-        // Phase 67 — register the project-tracker / dispatch tool
+        // Register the project-tracker / dispatch tool
         // surface (program_phase, list_agents, agent_status, …).
         // The handlers return a friendly error when
         // `AgentContext.dispatch` is not set, so registering them
@@ -4903,7 +4880,7 @@ async fn main() -> Result<()> {
         // instead of pretending success. Operators that wire up
         // a DispatchToolContext at boot get the full surface.
         // Per-binding `dispatch_capability` in EffectiveBindingPolicy
-        // (Phase 67.D.1) prunes write tools at session-time so
+        // prunes write tools at session-time so
         // none of them are visible to bindings that opted out.
         nexo_core::agent::dispatch_handlers::register_dispatch_tools_into(&tools);
         if agent_cfg.plugins.iter().any(|p| p == "memory") {
@@ -4922,7 +4899,7 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        // Phase 81.17.c — browser_* tools register via 81.29
+        // Browser_* tools register via the
         // RemoteToolHandler in the plugin init loop, not here.
         // Agents with `plugins: [browser]` get the tools from the
         // ScopedToolRegistry seeded by the subprocess plugin's
@@ -4956,7 +4933,7 @@ async fn main() -> Result<()> {
         // send / reply / archive / move_to / label / search.
         if agent_cfg.plugins.iter().any(|p| p == "email") {
             if let Some(ctx) = email_tool_ctx.clone() {
-                // Phase 48 follow-up #9 — surface-level filter. If
+                // Surface-level filter. If
                 // `agent.allowed_tools` lists explicit names, only
                 // register the email handlers that actually appear.
                 // `*` / `email_*` / empty list = register all six.
@@ -4981,7 +4958,7 @@ async fn main() -> Result<()> {
         }
         // Google OAuth tools — gated on either `agents.<id>.google_auth`
         // (legacy inline) or an entry in `plugins/google-auth.yaml`
-        // resolved via the credential store (phase 17). The client
+        // resolved via the credential store. The client
         // holds the refresh_token on disk at
         // `<workspace>/<token_file>` so consent only runs once.
         let google_core_cfg = agent_cfg
@@ -5050,7 +5027,7 @@ async fn main() -> Result<()> {
                 "registered google_* tools for agent"
             );
         }
-        // Phase 19 — pollers_* control tools (list, show, run, pause,
+        // Pollers_* control tools (list, show, run, pause,
         // resume, reset). Registered per agent when the poller
         // subsystem booted; absent when pollers.yaml is missing /
         // disabled. Create / delete are intentionally not exposed
@@ -5098,7 +5075,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 79.1 — register EnterPlanMode + ExitPlanMode tools
+        // Register EnterPlanMode + ExitPlanMode tools
         // when the binding's plan-mode policy says `enabled: true`.
         // Default config (`enabled: true`) keeps these registered for
         // every agent; operators can opt out per-binding by setting
@@ -5125,7 +5102,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.4 — `TodoWrite` is always available. Cheap,
+        // `TodoWrite` is always available. Cheap,
         // in-memory scratch list per goal; classified `ReadOnly` so
         // it stays callable while plan mode is on.
         tools.register(
@@ -5133,28 +5110,28 @@ async fn main() -> Result<()> {
             nexo_core::agent::todo_write_tool::TodoWriteTool,
         );
 
-        // Phase 79.2 — `ToolSearch` discovery surface for deferred
+        // `ToolSearch` discovery surface for deferred
         // tools. Always registered; `ToolMeta::default` keeps it
         // non-deferred itself (the model needs it to load everything
         // else). When MCP-imported tools start opting into
         // `ToolMeta::deferred`, this surface becomes useful at LLM
-        // turn time. MVP caveat tracked in FOLLOWUPS.md::Phase 79.2.
+        // turn time.
         tools.register(
             nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
             nexo_core::agent::tool_search_tool::ToolSearchTool::new(),
         );
 
-        // Phase 79.3 — `SyntheticOutput` typed-output validator.
+        // `SyntheticOutput` typed-output validator.
         // Always registered (cheap, pure, classified `ReadOnly`).
         // The model invokes it to terminate a goal with a JSON
         // value that matches a caller-provided JSONSchema —
-        // direct input for Phase 19/20 pollers + Phase 51 eval.
+        // direct input for pollers + eval runs.
         tools.register(
             nexo_core::agent::synthetic_output_tool::SyntheticOutputTool::tool_def(),
             nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
         );
 
-        // Phase 77.20 — Sleep is visible only for agents/bindings that can
+        // Sleep is visible only for agents/bindings that can
         // enter proactive mode. It follows Claude Code's guidance: use Sleep
         // instead of Bash(sleep ...) so no shell process is held while idle.
         let proactive_enabled_somewhere = agent_cfg.proactive.enabled
@@ -5170,7 +5147,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.12 — `Repl` tool (stateful Python/Node/bash subprocesses
+        // `Repl` tool (stateful Python/Node/bash subprocesses
         // that persist across LLM turns). Feature-gated behind `repl-tool`.
         #[cfg(feature = "repl-tool")]
         {
@@ -5181,10 +5158,10 @@ async fn main() -> Result<()> {
                     .filter_map(|b| b.repl.as_ref())
                     .any(|r| r.enabled);
             if repl_enabled {
-                // C2 — `ReplRegistry` still captures the agent-level
+                // `ReplRegistry` still captures the agent-level
                 // ReplConfig (subsystem-actor-level: timeout_secs,
-                // max_sessions, max_output_bytes are boot-frozen per
-                // C2 scope). The per-call `allowed_runtimes` allowlist
+                // max_sessions, max_output_bytes are boot-frozen).
+                // The per-call `allowed_runtimes` allowlist
                 // override lives in `ReplTool::call` via
                 // `ctx.effective_policy().repl`.
                 let repl_workspace = if agent_cfg.workspace.trim().is_empty() {
@@ -5203,7 +5180,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 79.13 — `NotebookEdit` for `.ipynb` cell-level edits.
+        // `NotebookEdit` for `.ipynb` cell-level edits.
         // Pure-Rust round-trip via serde_json — no `jupyter` binary
         // required. Always registered (operators that don't touch
         // notebooks pay zero cost — the tool is filtered out by
@@ -5213,7 +5190,7 @@ async fn main() -> Result<()> {
             nexo_core::agent::notebook_edit_tool::NotebookEditTool,
         );
 
-        // Phase 79.8 — `RemoteTrigger` outbound publisher. Allowlist
+        // `RemoteTrigger` outbound publisher. Allowlist
         // comes from the session effective policy: agent-level
         // `remote_triggers` or a per-binding override when present.
         // Register the tool when either source exposes at least one
@@ -5236,10 +5213,10 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.11 — `ListMcpResources` + `ReadMcpResource`
+        // `ListMcpResources` + `ReadMcpResource`
         // router-shaped tools. Useful for agents talking to many MCP
         // servers — single discovery surface instead of N×2
-        // per-server tools (which still ship via the Phase 12.5
+        // per-server tools (which still ship via the per-server
         // catalog). Cheap, classified `ReadOnly`, always registered.
         tools.register(
             nexo_core::agent::mcp_router_tool::ListMcpResourcesTool::tool_def(),
@@ -5250,7 +5227,7 @@ async fn main() -> Result<()> {
             nexo_core::agent::mcp_router_tool::ReadMcpResourceTool,
         );
 
-        // Phase 79.7 — cron schedule store + 5 tools (cron_create,
+        // Cron schedule store + 5 tools (cron_create,
         // cron_list, cron_delete, cron_pause, cron_resume). Lives in
         // `$NEXO_HOME/state/nexo_cron.db` so entries persist across
         // restarts. On open failure the tools stay unregistered and
@@ -5296,7 +5273,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 25 — `web_search` tool. Registered when the agent's
+        // `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
         // (it reads `ctx.effective_policy().web_search` per call).
@@ -5320,13 +5297,13 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 79.5 — `Lsp` tool, per-agent. Registered only when
+        // `Lsp` tool, per-agent. Registered only when
         // the agent's `lsp.enabled` is `true`. Languages whitelist
         // empty means "all discovered". Workspace_root falls back
         // to the daemon's `lsp_workspace` (first agent's
         // workspace) when the agent itself doesn't declare one.
         if effective_boot.lsp.enabled {
-            // C2 — `policy` is no longer captured at boot. The handler
+            // `policy` is no longer captured at boot. The handler
             // reads `ctx.effective_policy().lsp` per call and converts
             // it to `ExecutePolicy` via the private adapter, so a
             // hot-reload that flips `lsp.languages` is observed on the
@@ -5349,11 +5326,11 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.6 — register the 5 Team* tools when the agent
+        // Register the 5 Team* tools when the agent
         // opts in (`team.enabled: true`) AND the team store opened
         // successfully. The lead's `current_goal_id` placeholder
-        // here is the agent_id — Phase 67 driver-loop overrides it
-        // per-goal when team-aware spawn lands in 79.6.b.
+        // here is the agent_id — the driver-loop overrides it
+        // per-goal once team-aware spawn lands.
         if effective_boot.team.enabled {
             if let Some(store) = team_store.as_ref() {
                 let team_tools_inner = nexo_core::agent::team_tools::TeamTools::new(
@@ -5405,7 +5382,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 79.10 — `config_changes_tail` (read-only audit log).
+        // `config_changes_tail` (read-only audit log).
         // Always available regardless of the `config-self-edit`
         // Cargo feature: even when ConfigTool itself is gated off,
         // operators want to read past audit entries (or empty
@@ -5421,7 +5398,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.10.b — gated `Config { op: ... }` tool. Compiled
+        // Gated `Config { op: ... }` tool. Compiled
         // and registered only with `--features config-self-edit`,
         // and only for agents whose YAML sets `config_tool.self_edit
         // = true`. The hard ship-control is the Cargo feature, the
@@ -5534,7 +5511,7 @@ async fn main() -> Result<()> {
         );
         tracing::info!(agent = %agent_id, "registered web_fetch tool");
 
-        // Phase 10.8 — self-report tools. `who_am_i` + `what_do_i_know` are
+        // Self-report tools. `who_am_i` + `what_do_i_know` are
         // pure workspace reads; `my_stats` additionally needs long-term memory.
         let workspace_path: Option<PathBuf> = if agent_cfg.workspace.trim().is_empty() {
             None
@@ -5589,7 +5566,7 @@ async fn main() -> Result<()> {
             tracing::info!(agent = %agent_id, "registered taskflow tool for agent");
         }
 
-        // Phase 10.9 — optional git-backed workspace. Registers
+        // Optional git-backed workspace. Registers
         // `forge_memory_checkpoint` + `memory_history` tools and feeds the
         // dreaming spawn closure below so sweeps auto-commit.
         let agent_git: Option<Arc<nexo_core::agent::MemoryGitRepo>> =
@@ -5606,7 +5583,7 @@ async fn main() -> Result<()> {
                             } else {
                                 repo
                             };
-                            // Phase 36.2 (MS-1.b) — attach the
+                            // Attach the
                             // mutation hook so each successful
                             // commit_all fires a Git/Update event
                             // onto `nexo.memory.mutated.<agent>`.
@@ -5652,7 +5629,7 @@ async fn main() -> Result<()> {
                 nexo_core::agent::MemoryHistoryTool::tool_def(),
                 nexo_core::agent::MemoryHistoryTool::new(Arc::clone(g)),
             );
-            // Phase 36.2 — `memory_snapshot` LLM tool. Per-binding
+            // `memory_snapshot` LLM tool. Per-binding
             // gating still flows through `EffectiveBindingPolicy::
             // allowed_tools` + plan-mode (the tool sits in
             // `MUTATING_TOOLS`); the shared snapshotter dispatches
@@ -5689,9 +5666,9 @@ async fn main() -> Result<()> {
             });
         }
 
-        // Phase 11.5 — extension tools. Each discovered-and-spawned extension
+        // Extension tools. Each discovered-and-spawned extension
         // contributes its declared tools to this agent's registry.
-        // Phase 11.6 — extension hooks built alongside, same iteration.
+        // Extension hooks built alongside, same iteration.
         let hooks = Arc::new(HookRegistry::new());
         let mut tools_registered = 0usize;
         let mut tools_skipped = 0usize;
@@ -5755,7 +5732,7 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 12 — register MCP tools for this agent. Shared sentinel
+        // Register MCP tools for this agent. Shared sentinel
         // session so every agent sees the same live clients; catalog built
         // lazily on first `register_session_tools` call.
         if let Some(mgr) = &mcp_manager {
@@ -5804,8 +5781,7 @@ async fn main() -> Result<()> {
                 "mcp tools registered"
             );
 
-            // Phase 80.9 main.rs hookup + Phase 80.9.j —
-            // spawn one ChannelInboundLoop per `(binding,
+            // Spawn one ChannelInboundLoop per `(binding,
             // server)` triple. The binding_id matches what the
             // dynamic-binding channel tools (channel_list /
             // channel_send / channel_status) resolve from
@@ -5855,7 +5831,7 @@ async fn main() -> Result<()> {
                             );
                             let handle = nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
                                 .spawn_against_client(client.as_ref(), channel_shutdown.clone());
-                            // Phase 80.9.b.b — spawn the
+                            // Spawn the
                             // permission-response pump alongside
                             // the channel inbound loop so any
                             // structured `notifications/nexo/channel/permission`
@@ -5898,7 +5874,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            // Phase 12.8 — hot-reload: when a server pushes
+            // Hot-reload: when a server pushes
             // `notifications/tools/list_changed`, drop its prefix from the
             // registry and rebuild the session catalog. Closures are fired
             // after a 200 ms debounce window by SessionMcpRuntime.
@@ -5968,7 +5944,7 @@ async fn main() -> Result<()> {
             tracing::debug!(agent = %agent_id, "mcp hot-reload wired");
         }
 
-        // Phase M8 — mark built-in tools deferred per leak's
+        // Mark built-in tools deferred per leak's
         // `shouldDefer: true` convention. Idempotent vs gated tools
         // (entries not registered in this boot are silently
         // skipped). Excludes the deferred subset from the LLM
@@ -6015,7 +5991,7 @@ async fn main() -> Result<()> {
             )?;
         }
 
-        // M5.b — cron binding contexts are now built in a single
+        // Cron binding contexts are now built in a single
         // `build_cron_bindings_from_snapshots` call AFTER the agent
         // loop ends, using the aggregated `tools_per_agent` +
         // `agent_snapshot_handles` maps. The same fn is called by
@@ -6025,7 +6001,7 @@ async fn main() -> Result<()> {
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
 
-        // Phase M4.a.b — wire post-turn memory extraction. Constructed
+        // Wire post-turn memory extraction. Constructed
         // earlier in the loop from the optional `extract_memories` YAML
         // block. `tick()` runs every regular turn; `extract(...)` only
         // fires when the gate cadence passes AND `reply_text` is
@@ -6047,13 +6023,13 @@ async fn main() -> Result<()> {
         }
 
         if let Some(rl_cfg) = agent_cfg.tool_rate_limits.clone() {
-            // Phase 82.7 — config ↔ runtime types unified. Direct
+            // Config ↔ runtime types unified. Direct
             // pass-through, no translation needed.
             let limiter = Arc::new(nexo_core::agent::ToolRateLimiter::new(rl_cfg));
             behavior = behavior.with_rate_limiter(limiter);
             tracing::info!(agent = %agent_id, "tool rate limiter enabled");
         }
-        // Phase 9.2 follow-up — JSON Schema args validation.
+        // JSON Schema args validation.
         {
             let enabled = agent_cfg
                 .tool_args_validation
@@ -6068,7 +6044,7 @@ async fn main() -> Result<()> {
                 "tool schema validator attached"
             );
         }
-        // Phase context-optimization — wire the four mechanisms onto
+        // Wire the four mechanisms onto
         // the behavior. Per-agent overrides ride on `agent_cfg.context_optimization`;
         // each enable inherits from `cfg.llm.context_optimization` when
         // None on the override.
@@ -6131,7 +6107,7 @@ async fn main() -> Result<()> {
                     },
                     lock_ttl_seconds: cfg_compaction.lock_ttl_seconds,
                     summarizer_model: cfg_compaction.summarizer_model.clone(),
-                    // Phase 77.2 autoCompact — from YAML auto section, or defaults.
+                    // autoCompact — from YAML auto section, or defaults.
                     auto_token_pct: cfg_compaction
                         .auto
                         .as_ref()
@@ -6199,7 +6175,7 @@ async fn main() -> Result<()> {
             runtime = runtime.with_web_search_router(Arc::clone(ws));
         }
         runtime = runtime.with_pairing_gate(Arc::clone(&pairing_gate));
-        // Phase 26.x — register per-channel adapters so challenge
+        // Register per-channel adapters so challenge
         // delivery uses the right outbound topic + format. Channels
         // without a registered adapter fall back to the legacy
         // hardcoded broker publish in `deliver_pairing_challenge`.
@@ -6215,18 +6191,18 @@ async fn main() -> Result<()> {
         if let Some(ref dc) = dispatch_ctx {
             runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
         }
-        // Phase 82.13.c.thread — share the same ProcessingControlStore
+        // Share the same ProcessingControlStore
         // the admin RPC dispatcher holds so a `processing/pause` RPC
         // reaches the inbound loop on the next message.
         runtime = runtime.with_processing_store(Arc::clone(&processing_store));
-        // Phase 82.13.c.thread (firehose) — share the bootstrap's
+        // Share the bootstrap's
         // event emitter so per-scope pending-queue eviction emits
         // `PendingInboundsDropped` on the same firehose subscribers
         // already listen to. Without an emitter, evictions log only.
         if let Some(ref bs) = admin_bootstrap {
             runtime = runtime.with_event_emitter(bs.event_emitter());
         }
-        // M5.b — capture maps before `runtime.start()` consumes self.
+        // Capture maps before `runtime.start()` consumes self.
         // `tools_per_agent` carries the per-agent registry the cron
         // post-hook needs to filter against the new effective policy.
         // `agent_snapshot_handles` carries the `Arc<ArcSwap<...>>` the
@@ -6254,7 +6230,7 @@ async fn main() -> Result<()> {
         ));
         runtimes.push(runtime);
 
-        // Dreaming (Phase 10.6) — when enabled and long-term memory + workspace
+        // Dreaming — when enabled and long-term memory + workspace
         // are both available, spawn a periodic sweep. Fires one immediate sweep
         // on boot so new installs get a useful DREAMS.md right away; subsequent
         // runs honor `interval_secs`.
@@ -6332,7 +6308,7 @@ async fn main() -> Result<()> {
                                     promoted = report.promoted.len(),
                                     "dream sweep completed"
                                 );
-                                // Phase 10.9 — auto-commit workspace changes.
+                                // Auto-commit workspace changes.
                                 if let Some(g) = git_for_dream.clone() {
                                     if !report.promoted.is_empty() {
                                         let subject = format!(
@@ -6386,11 +6362,11 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Phase 80.1.b.b.b consumer — build the agent's
+        // Build the agent's
         // `AutoDreamRunner` if `auto_dream` is configured + enabled.
         // Wires the `AgentToolDispatcher`, `parent_ctx_template`,
         // git checkpointer, and the pre-dream snapshot adapter
-        // (closes MS-3) so the runner is ready for the orchestrator
+        // so the runner is ready for the orchestrator
         // registration after the loop. Uses `agent_cfg_for_dream`
         // (cloned at loop top) since `agent_cfg` was already moved
         // by `Agent::new`.
@@ -6460,9 +6436,9 @@ async fn main() -> Result<()> {
                 _ => None,
             };
 
-        // Phase 80.1.c — `dream_now` LLM tool registration. Honors
+        // `dream_now` LLM tool registration. Honors
         // the `NEXO_DREAM_NOW_ENABLED` capability inventory entry
-        // (Phase 80.1.c.b) and skips when `transcripts_dir` is
+        // and skips when `transcripts_dir` is
         // empty (the tool needs it to construct DreamContext).
         let dream_now_registered = if let Some(runner) = &runner_opt {
             if is_truthy_env("NEXO_DREAM_NOW_ENABLED")
@@ -6500,7 +6476,7 @@ async fn main() -> Result<()> {
         auto_dream_runners.push((agent_id.clone(), runner_opt));
     }
 
-    // Phase 80.1.b.b.b.c — runtime-register every active
+    // Runtime-register every active
     // `AutoDreamRunner` on the dispatch orchestrator under its
     // owning `agent_id`. The orchestrator's per-turn dispatcher
     // looks up `goal.metadata["agent_id"]` against this map, so a
@@ -6537,7 +6513,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // M5.b — wrap aggregated cron-rebuild maps + build deps struct
+    // Wrap aggregated cron-rebuild maps + build deps struct
     // for the post-hook + initial boot-time cron binding build.
     let tools_per_agent = Arc::new(tools_per_agent);
     let agent_snapshot_handles = Arc::new(agent_snapshot_handles);
@@ -6553,17 +6529,17 @@ async fn main() -> Result<()> {
         tools_per_agent: Arc::clone(&tools_per_agent),
         cron_tool_call_cfg: cron_tool_call_cfg.clone(),
     };
-    // M5.b — late-bind cell holding the cron executor. Empty until
+    // Late-bind cell holding the cron executor. Empty until
     // the cron block (`if cron_tool_call_cfg.enabled`) constructs the
     // executor; the post-hook below early-returns if cell is empty.
     let cron_executor_cell: Arc<tokio::sync::OnceCell<Arc<RuntimeCronToolExecutor>>> =
         Arc::new(tokio::sync::OnceCell::new());
 
-    // Phase 18 — wire the hot-reload coordinator. It owns its own
+    // Wire the hot-reload coordinator. It owns its own
     // CancellationToken tied to `watcher_shutdown` so the watcher +
     // broker subscriber exit alongside the extensions watcher on
     // SIGTERM.
-    // Phase 81.20.b — `llm_registry` is already `Arc<LlmRegistry>`
+    // `llm_registry` is already `Arc<LlmRegistry>`
     // from the construction at line ~1506; the prior duplicate
     // `Arc::new(llm_registry)` here is removed.
     let reload_coord = Arc::new(nexo_core::ConfigReloadCoordinator::new(
@@ -6574,7 +6550,7 @@ async fn main() -> Result<()> {
     for (id, tx, known) in reload_senders.drain(..) {
         reload_coord.register(id, tx, known);
     }
-    // Phase 70.7 — flush in-process gate caches after every reload so
+    // Flush in-process gate caches after every reload so
     // operator changes (e.g. `nexo pair seed`) take effect without a
     // daemon restart. PairingGate keeps a 30s decision cache; without
     // this hook a freshly-allowlisted sender stays "challenge" until
@@ -6585,7 +6561,7 @@ async fn main() -> Result<()> {
             .register_post_hook(Box::new(move || gate.flush_cache()))
             .await;
     }
-    // M5.b — cron config-reload post-hook. Rebuilds the per-binding
+    // Cron config-reload post-hook. Rebuilds the per-binding
     // context map from the new snapshots and atomically swaps it
     // into the `RuntimeCronToolExecutor` so cron firings observe
     // the new effective policy on the very next call. Empty-cell
@@ -6611,13 +6587,13 @@ async fn main() -> Result<()> {
             }))
             .await;
     }
-    // Phase M1.b.c — daemon-embed MCP HTTP server. Opt-in via
+    // Daemon-embed MCP HTTP server. Opt-in via
     // `mcp_server.daemon_embed.enabled: true` + `mcp_server.http
     // .enabled: true`. Reuses the primary agent's tool registry
     // (mirrors `nexo mcp-server` standalone behavior) and
     // registers a reload-coord post-hook that swaps the
     // allowlist + emits `notifications/tools/list_changed` on
-    // every Phase 18 reload — automatic, no SIGHUP needed.
+    // every config reload — automatic, no SIGHUP needed.
     // Returned handle survives until the daemon's main shutdown
     // sequence drains it.
     let mcp_embed_handle: Option<nexo_mcp::HttpServerHandle> =
@@ -6673,7 +6649,7 @@ async fn main() -> Result<()> {
                     "[mcp-embed] daemon MCP server ready"
                 );
 
-                // Reload-coord post-hook: on every Phase 18 reload,
+                // Reload-coord post-hook: on every config reload,
                 // re-read `mcp_server.expose_tools` from disk + atomic
                 // swap_allowlist + notify so connected clients refresh
                 // tool list without reconnect.
@@ -6706,10 +6682,10 @@ async fn main() -> Result<()> {
             _ => None,
         };
 
-    // Phase 81.10 — register post-reload hook that re-discovers
+    // Register post-reload hook that re-discovers
     // plugin manifests and atomically swaps the registry snapshot.
     // Hook captures discovery_cfg + version immutable; new
-    // search_paths require daemon restart (Phase 81.10.b lifts this).
+    // search_paths require a daemon restart.
     nexo_core::agent::nexo_plugin_registry::register_plugin_registry_reload_hook(
         Arc::clone(&reload_coord),
         Arc::clone(&wire.registry),
@@ -6726,7 +6702,7 @@ async fn main() -> Result<()> {
         tracing::warn!(error = %e, "config reload coordinator failed to start — hot-reload disabled");
     }
 
-    // Phase 79.10.b — late-bind the reload coord into the
+    // Late-bind the reload coord into the
     // ConfigTool's reload trigger. The trigger was constructed
     // before the agent loop (so the per-agent registration could
     // hold an `Arc<dyn ReloadTrigger>` upfront); now that the
@@ -6737,7 +6713,7 @@ async fn main() -> Result<()> {
         let _ = cell.set(Arc::clone(&reload_coord));
     }
 
-    // Phase 79.7 runtime firing — spawn ONE cron runner per process.
+    // Spawn ONE cron runner per process.
     // Polls the SQLite cron store every 5s. Dispatches through a
     // model-routing `LlmCronDispatcher` that picks provider+model per
     // cron entry (`model_provider`/`model_name`) and caches clients by
@@ -6783,7 +6759,7 @@ async fn main() -> Result<()> {
                 )
                 .with_publisher(publisher);
                 if cron_tool_call_cfg.enabled {
-                    // M5.b — single source of truth: boot path uses
+                    // Single source of truth: boot path uses
                     // the same `build_cron_bindings_from_snapshots`
                     // fn the config-reload post-hook calls.
                     let cron_tool_bindings = build_cron_bindings_from_snapshots(
@@ -6798,7 +6774,7 @@ async fn main() -> Result<()> {
                         let bindings_count = cron_tool_bindings.len();
                         let executor =
                             std::sync::Arc::new(RuntimeCronToolExecutor::new(cron_tool_bindings));
-                        // M5.b — late-bind into the post-hook cell so
+                        // Late-bind into the post-hook cell so
                         // subsequent reloads can `replace_bindings`.
                         let _ = cron_executor_cell.set(Arc::clone(&executor));
                         d = d.with_tool_executor(executor, cron_tool_call_cfg.max_iterations);
@@ -6851,7 +6827,7 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
     cron_runner_cancel.cancel();
-    // Phase M1.b.c — graceful drain of the daemon-embed MCP HTTP
+    // Graceful drain of the daemon-embed MCP HTTP
     // server. `watcher_shutdown.cancel()` (below) signals the
     // server to drain; we await its `join` with a 5s budget so
     // SSE consumers see a clean disconnect. No-op when
@@ -6860,18 +6836,18 @@ async fn main() -> Result<()> {
         watcher_shutdown.cancel();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle.join).await;
     }
-    // Phase 79.6 — drop the team router subscriber. Active teams
+    // Drop the team router subscriber. Active teams
     // keep their soft-deleted state; force-kill of in-flight
     // teammate goals is delegated to the existing
-    // `drain_running_goals` pattern (Phase 71.3) that runs below.
+    // `drain_running_goals` pattern that runs below.
     team_router_cancel.cancel();
-    // Phase 79.5 — shut down the LSP manager BEFORE plugin
+    // Shut down the LSP manager BEFORE plugin
     // teardown so any in-flight `$/cancelRequest` notifications
     // make it out to the language servers and child processes
     // exit cleanly. `kill_on_drop(true)` is the safety net.
     lsp_manager.shutdown().await;
 
-    // Phase 71.3 — drain in-flight goals BEFORE bringing channel
+    // Drain in-flight goals BEFORE bringing channel
     // plugins down. Walk the registry that lives inside the
     // dispatch context, fire `notify_origin` / `notify_channel`
     // hooks with a clean "[shutdown]" summary, and flip Running
@@ -6880,7 +6856,7 @@ async fn main() -> Result<()> {
     // to land its last commit — 5–10 s is not enough — so the
     // contract here is "tell the operator the goal was abandoned
     // cleanly". SIGKILL still bypasses this; the boot-time sweep
-    // (Phase 71.2) is the safety net for that case.
+    // is the safety net for that case.
     if let Some(dc) = dispatch_ctx.as_ref() {
         if let Some(hd) = dc.hook_dispatcher.as_ref() {
             let report = nexo_dispatch_tools::drain_running_goals(
@@ -6930,7 +6906,7 @@ async fn main() -> Result<()> {
         tracing::error!(error = %e, "plugin shutdown error");
     }
 
-    // Phase 81.19.b — email plugin no longer lives in `plugins`
+    // Email plugin no longer lives in `plugins`
     // after the factory_registry flip; stop it explicitly so IMAP
     // IDLE workers + SMTP outbound queue drain before the runtime
     // terminates. Idempotent — `EmailPlugin::stop` returns Ok if
@@ -6950,7 +6926,7 @@ async fn main() -> Result<()> {
         mgr.shutdown_all_with_reason("sigterm").await;
     }
 
-    // Phase 11.3 — graceful extension shutdown. Send the `shutdown`
+    // Graceful extension shutdown. Send the `shutdown`
     // notification to every live extension and give them up to 5s to
     // close on their own. Anything still running after that is killed by
     // `StdioRuntime::Drop` via `kill_on_drop`. Sits after MCP shutdown
@@ -6983,7 +6959,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Phase 67 — boot the shared DispatchToolContext when the
+/// Boot the shared DispatchToolContext when the
 /// operator opts in via `NEXO_DRIVER_INTEGRATED=1`. Returns
 /// `None` (handlers stay in friendly-error mode) when the env
 /// var is unset OR when any of the required pieces fail to
@@ -7112,14 +7088,14 @@ async fn boot_dispatch_ctx_if_enabled(
             }
         };
 
-    // Permission decider — Phase 67.4 wired the LLM decider in the
+    // Permission decider — the LLM decider lives in the
     // standalone bin; here we keep the simpler AllowAll path so the
     // chat-side surface works without an extra LLM call. Operators
     // who want strict permission go via the standalone nexo-driver.
     let inner_decider: Arc<dyn nexo_driver_permission::PermissionDecider> =
         Arc::new(nexo_driver_permission::AllowAllDecider);
 
-    // Phase 80.9.b.b — wrap the decider in a ChannelRelayDecider when
+    // Wrap the decider in a ChannelRelayDecider when
     // any agent has channels enabled AND any approved server can be
     // reached as a permission-relay surface (the gate at registration
     // time decides whether the server actually opted into the
@@ -7255,7 +7231,7 @@ async fn boot_dispatch_ctx_if_enabled(
 
     // Registry + log buffer + hook registry shared by every agent.
     //
-    // Phase 71.1 — honour `agent_registry.store` from
+    // Honour `agent_registry.store` from
     // project_tracker.yaml. Empty / unresolved → memory store (dev
     // mode, state lost on restart). Path open failures fall back to
     // memory with a warn so a corrupt sqlite file never bricks the
@@ -7325,7 +7301,7 @@ async fn boot_dispatch_ctx_if_enabled(
         Arc::clone(&registry_store),
         registry_max_concurrent,
     ));
-    // Phase 72.2 — open the durable turn log on the same sqlite
+    // Open the durable turn log on the same sqlite
     // file as the registry. Same fallback discipline: open failure
     // logs a warn and the rest of the runtime keeps booting (the
     // tool just reports "turn log not enabled" until the operator
@@ -7353,7 +7329,7 @@ async fn boot_dispatch_ctx_if_enabled(
         .map(|c| c.agent_registry.log_buffer_lines)
         .unwrap_or(200);
     let log_buffer = Arc::new(nexo_agent_registry::LogBuffer::new(log_buffer_lines));
-    // B17 — hook registry mirrors writes to SQLite so attached
+    // Hook registry mirrors writes to SQLite so attached
     // hooks (auto-audit, notify_origin, dispatch_phase chains)
     // survive daemon restart. Path defaults under the workspace
     // root; falls back to ':memory:' if open fails.
@@ -7378,7 +7354,7 @@ async fn boot_dispatch_ctx_if_enabled(
     if let Err(e) = hook_registry.reload_from_store().await {
         tracing::warn!(error = %e, "hook reload failed — pre-restart hooks won't fire");
     }
-    // B23 — orphan sweep: the agent-registry doesn't get
+    // Orphan sweep: the agent-registry doesn't get
     // populated until the per-agent reattach below, so we sweep
     // hook orphans AFTER admit-driven reattach lands by scheduling
     // a tokio task that fires once the registry is warm. The
@@ -7410,7 +7386,7 @@ async fn boot_dispatch_ctx_if_enabled(
         });
     }
 
-    // Hook dispatcher with the channel adapters Phase 26 already
+    // Hook dispatcher with the channel adapters the pairing layer
     // owns. Adapters are registered into a SHARED registry here so
     // notify_origin reaches WhatsApp / Telegram out of the box.
     let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
@@ -7420,7 +7396,7 @@ async fn boot_dispatch_ctx_if_enabled(
     pairing_registry.register(Arc::new(nexo_plugin_telegram::TelegramPairingAdapter::new(
         _broker.clone(),
     )));
-    // PT-4 — hook idempotency store. Lives next to other state sidecars
+    // Hook idempotency store. Lives next to other state sidecars
     // in $NEXO_HOME/state/. On failure the dispatcher degrades to
     // idempotency-less mode (hooks can fire twice on NATS replay) but
     // nothing hard-fails — same contract as the turn-log store.
@@ -7455,7 +7431,7 @@ async fn boot_dispatch_ctx_if_enabled(
         Arc::new(d)
     };
 
-    // Phase 71.2 — reattach sweep. When the registry is sqlite-backed
+    // Reattach sweep. When the registry is sqlite-backed
     // and `reattach_on_boot: true`, walk every Running row from the
     // last run, mark it `LostOnRestart`, and fire any
     // `notify_origin` / `notify_channel` hooks the operator had
@@ -7465,7 +7441,7 @@ async fn boot_dispatch_ctx_if_enabled(
     //
     // Resume-as-Running is intentionally OFF: respawning a Claude
     // Code subprocess against a worktree the daemon no longer owns
-    // is Phase 67.C.1 territory, and unsafe to do silently. Marking
+    // is out of scope here, and unsafe to do silently. Marking
     // lost + notifying is the conservative, correct default.
     let reattach_on_boot = pt_cfg
         .as_ref()
@@ -7602,7 +7578,7 @@ async fn boot_dispatch_ctx_if_enabled(
         "dispatch tools wired end-to-end (NEXO_DRIVER_INTEGRATED=1)"
     );
 
-    // Phase 77.16 — after reattach restores paused rows from sqlite,
+    // After reattach restores paused rows from sqlite,
     // re-arm AskUserQuestion in-memory timeout tasks so pending
     // questions still expire/cancel after daemon restart.
     let rearmed = nexo_dispatch_tools::rearm_ask_user_timeouts(
@@ -7633,7 +7609,7 @@ async fn boot_dispatch_ctx_if_enabled(
             // Self-modify gate. Default `true` because the
             // canonical dev usecase IS Cody helping finish the
             // nexo-rs roadmap itself; per-goal worktree
-            // isolation (Phase 67.6) keeps the live source safe
+            // isolation keeps the live source safe
             // from in-flight changes. Production deploys
             // (separate nexo-driver host, frozen binary) opt
             // out with `NEXO_DISALLOW_SELF_MODIFY=1`.
@@ -7658,16 +7634,16 @@ async fn boot_dispatch_ctx_if_enabled(
                     queue_when_full: true,
                     ..Default::default()
                 },
-                // B22 — audit goals run inside the parent's
+                // Audit goals run inside the parent's
                 // worktree so Claude sees the commits.
                 workspace_root: driver_cfg.workspace.root.clone(),
-                // B24 — separate cap so audits can't be
+                // Separate cap so audits can't be
                 // starved by main dispatch traffic.
                 audit_cap: Some(2),
             })
                 as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
-            // Phase 90 audit fix (Cody A.3) — share the daemon's
-            // single Arc<LlmRegistry> (Phase 90 P1.4 follow-up)
+            // Share the daemon's
+            // single Arc<LlmRegistry>
             // so PreflightHandler reports llm_ready accurately
             // for any registered provider, not just the legacy
             // anthropic/minimax hardcode.
@@ -7677,7 +7653,7 @@ async fn boot_dispatch_ctx_if_enabled(
 }
 
 /// Resolve the secrets directory for credential loaders. Convention is
-/// C5 — adapter from the `nexo-config` wire-shape to the canonical
+/// Adapter from the `nexo-config` wire-shape to the canonical
 /// `nexo-memory` domain type. Lives here (not in either crate)
 /// because `main.rs` is the only module that holds both deps —
 /// `nexo-config` and `nexo-memory` cannot reference each other due
@@ -7840,12 +7816,12 @@ fn build_mcp_sampling_provider(
     ))
 }
 
-/// Phase 11.2/11.3 — discover extensions and spawn stdio runtimes.
+/// Discover extensions and spawn stdio runtimes.
 /// Never fatal: bad manifests or spawn failures produce diagnostics; the
 /// agent keeps starting. Returns runtimes that the caller must keep alive
 /// (drop → cascades SIGTERM to extension children).
 ///
-/// Phase 82.10.h.b.5 — when `admin_bootstrap` is `Some`, each
+/// When `admin_bootstrap` is `Some`, each
 /// extension that declares `[capabilities.admin]` in its plugin.toml
 /// is spawned with the per-microapp `AdminRouter` wired into its
 /// `StdioSpawnOptions`. Post-spawn the bootstrap binds the live
@@ -7916,12 +7892,12 @@ async fn run_extension_discovery(
         "extension discovery complete",
     );
 
-    // 12.7 — collect extension-declared MCP servers before we consume the
+    // Collect extension-declared MCP servers before we consume the
     // candidate list; main() later feeds these into `McpRuntimeManager`.
     let mcp_decls = nexo_extensions::collect_mcp_declarations(&report, &cfg.disabled);
 
-    // 11.3 — spawn stdio runtimes for each candidate whose transport is Stdio.
-    // 11.5 will iterate the returned runtimes to register tools per agent.
+    // Spawn stdio runtimes for each candidate whose transport is Stdio.
+    // The caller iterates the returned runtimes to register tools per agent.
     let mut runtimes: Vec<(
         Arc<nexo_extensions::StdioRuntime>,
         nexo_extensions::ExtensionCandidate,
@@ -7947,7 +7923,7 @@ async fn run_extension_discovery(
             );
             continue;
         }
-        // Phase 82.10.h.b.5 — when the operator wired
+        // When the operator wired
         // `[capabilities.admin]` for this id, route the spawn
         // through `spawn_with` so the per-microapp `AdminRouter`
         // lands in the reader task. Plain `spawn` for the rest
@@ -8125,7 +8101,7 @@ fn parse_log_format() -> LogFormat {
     }
 }
 
-// ── Phase 26 — pair CLI handlers ─────────────────────────────────────────
+// ── Pair CLI handlers ────────────────────────────────────────────────────
 //
 // All commands open the SQLite store + secret file directly so the
 // operator can manage senders without a running daemon. Output is a
@@ -8202,7 +8178,7 @@ fn run_pair_help() -> Result<()> {
     Ok(())
 }
 
-/// Phase 81.9.b — `nexo agent doctor plugins [--json]` handler.
+/// `nexo agent doctor plugins [--json]` handler.
 /// Loads the daemon config in-process, runs the
 /// `wire_plugin_registry` pipeline, and renders the resulting
 /// snapshot via `doctor_render`. Returns the desired exit code:
@@ -8210,7 +8186,7 @@ fn run_pair_help() -> Result<()> {
 /// disabled / allowlist rejects surfaced; `1` when any error
 /// diagnostic, `LastPluginWins` conflict, or `Failed` init
 /// outcome appears.
-/// Phase 81.11 — bridge `nexo_setup::capabilities::INVENTORY` to
+/// Bridge `nexo_setup::capabilities::INVENTORY` to
 /// the plugin capability aggregator's `&[(env_var, extension)]`
 /// slice shape. Lives in main.rs because `nexo-core` cannot depend
 /// on `nexo-setup` (cycle); main.rs is the boundary that knows
@@ -8228,7 +8204,7 @@ fn core_capability_env_vars() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// Phase 81.11 — describe which framework capabilities are
+/// Describe which framework capabilities are
 /// actually wired in the current daemon config. Aggregator uses
 /// this set to surface unmet `requires.nexo_capabilities` as
 /// Warn-level diagnostics. Conservative: only marks capabilities
@@ -8262,7 +8238,7 @@ async fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<
         &version,
         &core_envs,
         &available,
-        // Phase 81.12.0 — doctor handler runs the same offline
+        // Doctor handler runs the same offline
         // pipeline as boot wire; no factories registered yet.
         None,
     )
@@ -8311,7 +8287,7 @@ async fn run_pair_start(
     //   1. `--public-url` CLI flag (operator override at invoke time)
     //   2. `pairing.yaml::pairing.public_url` (deployment-pinned)
     //   3. `NEXO_TUNNEL_URL` env (tunnel-side bridge until the
-    //       `nexo-tunnel` crate exposes an in-process accessor — PR-3).
+    //       `nexo-tunnel` crate exposes an in-process accessor).
     //       The `nexo-tunnel` daemon writes its assigned
     //       `https://*.trycloudflare.com` URL here at startup so a
     //       separately-launched `nexo pair start` picks it up.
@@ -8319,8 +8295,7 @@ async fn run_pair_start(
     //
     // `ws_cleartext_allow` from the YAML extends the resolver's
     // built-in allow list (loopback / RFC1918 / link-local /
-    // `.local` / `10.0.2.2`). PR-6 wired the YAML loader; PR-3
-    // wires the runtime priority chain.
+    // `.local` / `10.0.2.2`).
     let yaml_overrides = load_pairing_yaml_overrides(config_dir);
     let yaml_public_url = yaml_overrides.as_ref().and_then(|p| p.public_url.clone());
     let yaml_cleartext = yaml_overrides
@@ -8961,7 +8936,7 @@ fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
 }
 
 fn parse_args() -> CliArgs {
-    // Phase 92.9 — config dir precedence:
+    // Config dir precedence:
     //   1. explicit `--config <dir>` flag (highest priority)
     //   2. `NEXO_CONFIG_DIR` env var (dev-daemon.sh exports it
     //      so `nexo set-broker local` works from any cwd
@@ -8982,7 +8957,7 @@ fn parse_args() -> CliArgs {
                 default_xdg_config_dir()
             }
         });
-    // Phase 94 — override dir layer. Sourced from
+    // Override dir layer. Sourced from
     // `NEXO_OVERRIDE_FROM` env; `--override-from <dir>` flag wins.
     let mut override_from: Option<PathBuf> = std::env::var("NEXO_OVERRIDE_FROM")
         .ok()
@@ -9016,7 +8991,7 @@ fn parse_args() -> CliArgs {
         }
     }
 
-    // Phase 27.1 — `--version` / `-V`. Pair with `--verbose` for the
+    // `--version` / `-V`. Pair with `--verbose` for the
     // build-provenance block. The `version` subcommand is handled below
     // alongside the other positional commands.
     if positional.iter().any(|a| a == "--version" || a == "-V") {
@@ -9066,7 +9041,7 @@ fn parse_args() -> CliArgs {
         };
     }
 
-    // Phase 26 — pair CLI handled first so flag values like
+    // Pair CLI handled first so flag values like
     // `--public-url wss://example.com` (which the value-only filter
     // does not strip) don't shift the structural arity of the main
     // match arms below.
@@ -9094,7 +9069,7 @@ fn parse_args() -> CliArgs {
         }
     }
 
-    // Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+    // `nexo microapp admin audit tail [...]`.
     // Route by pos_no_flags prefix (not slice-arity match) since
     // flag values like `/path/to.db` after `--db` survive the
     // `--`-strip and would shift the slice arity off-by-one.
@@ -9140,7 +9115,7 @@ fn parse_args() -> CliArgs {
 
     let mode = match pos_no_flags.as_slice() {
         [] => Mode::Run,
-        // Phase 27.1 — `nexo version` is the verbose form (always
+        // `nexo version` is the verbose form (always
         // includes the build-provenance block). `nexo --version` short
         // form is handled before the match.
         [cmd] if cmd == "version" => Mode::Version { verbose: true },
@@ -9151,7 +9126,7 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "dlq" && sub == "list" => Mode::DlqList,
         [cmd, sub] if cmd == "dlq" && sub == "purge" => Mode::DlqPurge,
         [cmd, sub, id] if cmd == "dlq" && sub == "replay" => Mode::DlqReplay(id.clone()),
-        // Phase 92.9 — `nexo set-broker <kind> [--url <url>] [--no-signal]`
+        // `nexo set-broker <kind> [--url <url>] [--no-signal]`
         // Switch the broker transport in `broker.yaml` and (by default)
         // kick the running daemon so its supervisor respawns with the
         // new config.
@@ -9166,7 +9141,7 @@ fn parse_args() -> CliArgs {
                 no_signal: positional.iter().any(|a| a == "--no-signal"),
             }
         }
-        // Phase 95 — `nexo init [...]` scaffolds sample YAMLs.
+        // `nexo init [...]` scaffolds sample YAMLs.
         // Match `init` plus any rest (flag values like the path
         // after `--output` survive in `pos_no_flags`; the actual
         // flags themselves are stripped). `parse_init_args`
@@ -9215,7 +9190,7 @@ fn parse_args() -> CliArgs {
             id: id.clone(),
             ensure: positional.iter().any(|a| a == "--ensure"),
         },
-        // Phase 31.1.c + 31.3 — `nexo plugin install <coords> [...]`.
+        // `nexo plugin install <coords> [...]`.
         [cmd, sub, coords] if cmd == "plugin" && sub == "install" => Mode::PluginInstall {
             coords: coords.clone(),
             dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
@@ -9225,7 +9200,7 @@ fn parse_args() -> CliArgs {
             skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
         },
         [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
-        // Phase 31.7 — `nexo plugin run <path-or-manifest> [...]`.
+        // `nexo plugin run <path-or-manifest> [...]`.
         [cmd, sub, path] if cmd == "plugin" && sub == "run" => Mode::PluginRun {
             path: PathBuf::from(path),
             no_daemon_config: positional.iter().any(|a| a == "--no-daemon-config"),
@@ -9233,7 +9208,7 @@ fn parse_args() -> CliArgs {
             verbose: positional.iter().any(|a| a == "--verbose"),
             json: has_json_flag,
         },
-        // Phase 31.6 — `nexo plugin new <id> --lang <lang> [...]`.
+        // `nexo plugin new <id> --lang <lang> [...]`.
         [cmd, sub, id] if cmd == "plugin" && sub == "new" => Mode::PluginNew {
             id: id.clone(),
             lang: parse_kv_flag(&positional, "--lang").unwrap_or_default(),
@@ -9244,12 +9219,12 @@ fn parse_args() -> CliArgs {
             force: positional.iter().any(|a| a == "--force"),
             json: has_json_flag,
         },
-        // Phase 31.8 — `nexo plugin list [--include-orphan] [--json]`.
+        // `nexo plugin list [--include-orphan] [--json]`.
         [cmd, sub] if cmd == "plugin" && sub == "list" => Mode::PluginList {
             include_orphan: positional.iter().any(|a| a == "--include-orphan"),
             json: has_json_flag,
         },
-        // Phase 31.8 — `nexo plugin upgrade <id> [...]`.
+        // `nexo plugin upgrade <id> [...]`.
         [cmd, sub, id] if cmd == "plugin" && sub == "upgrade" => Mode::PluginUpgrade {
             id: id.clone(),
             target: parse_kv_flag(&positional, "--target"),
@@ -9257,14 +9232,14 @@ fn parse_args() -> CliArgs {
             skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
             json: has_json_flag,
         },
-        // Phase 31.8 — `nexo plugin remove <id> [--purge-cache] [--yes] [--json]`.
+        // `nexo plugin remove <id> [--purge-cache] [--yes] [--json]`.
         [cmd, sub, id] if cmd == "plugin" && sub == "remove" => Mode::PluginRemove {
             id: id.clone(),
             purge_cache: positional.iter().any(|a| a == "--purge-cache"),
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
-        // Phase F6 of `cody-cli-install` — `nexo persona <sub>` family.
+        // `nexo persona <sub>` family.
         [cmd, sub, coords] if cmd == "persona" && sub == "install" => Mode::PersonaInstall {
             coords: coords.clone(),
             dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
@@ -9293,7 +9268,7 @@ fn parse_args() -> CliArgs {
         },
         [cmd, sub] if cmd == "persona" && sub == "help" => Mode::PersonaHelp,
         [cmd] if cmd == "persona" => Mode::PersonaHelp,
-        // Phase 76.14 — mcp-server with optional subcommands
+        // Mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => Mode::McpServer(McpServerSubcommand::Serve),
         [cmd, sub, url] if cmd == "mcp-server" && sub == "inspect" => {
             Mode::McpServer(McpServerSubcommand::Inspect { url: url.clone() })
@@ -9320,7 +9295,7 @@ fn parse_args() -> CliArgs {
         [cmd, sub, db] if cmd == "mcp-server" && sub == "tail-audit" => {
             Mode::McpServer(McpServerSubcommand::TailAudit { db: db.clone() })
         }
-        // Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
+        // `nexo agent dream {tail|status|kill}`.
         // Flag parsing inlined per project convention (no clap).
         [cmd, sub] if cmd == "agent" && sub == "dream" => {
             Mode::AgentDream(AgentDreamSubcommand::Tail {
@@ -9357,14 +9332,14 @@ fn parse_args() -> CliArgs {
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             })
         }
-        // Phase 80.10 — `nexo agent ps [--kind=...] [--all] [--json]`.
+        // `nexo agent ps [--kind=...] [--all] [--json]`.
         [cmd, sub] if cmd == "agent" && sub == "ps" => Mode::AgentPs {
             kind: parse_kv_flag(&positional, "--kind"),
             all: positional.iter().any(|a| a == "--all"),
             db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             json: has_json_flag,
         },
-        // Phase 80.10 — `nexo agent run [--bg] <prompt...>`. Concatenates
+        // `nexo agent run [--bg] <prompt...>`. Concatenates
         // remaining positional words (filtered of `--flag` tokens) into
         // the prompt so operators can pass spaces without quoting:
         //   `nexo agent run --bg ship the release`
@@ -9386,32 +9361,32 @@ fn parse_args() -> CliArgs {
                 json: has_json_flag,
             }
         }
-        // Phase 80.16 — `nexo agent attach <goal_id> [--db=...] [--json]`.
+        // `nexo agent attach <goal_id> [--db=...] [--json]`.
         [cmd, sub, goal_id] if cmd == "agent" && sub == "attach" => Mode::AgentAttach {
             goal_id: goal_id.clone(),
             db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             json: has_json_flag,
         },
-        // Phase 80.16 — `nexo agent discover [--include-interactive]
+        // `nexo agent discover [--include-interactive]
         // [--db=...] [--json]`.
         [cmd, sub] if cmd == "agent" && sub == "discover" => Mode::AgentDiscover {
             include_interactive: positional.iter().any(|a| a == "--include-interactive"),
             db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             json: has_json_flag,
         },
-        // Phase 80.9.e — `nexo channel list [--config=<path>] [--json]`.
+        // `nexo channel list [--config=<path>] [--json]`.
         [cmd, sub] if cmd == "channel" && sub == "list" => Mode::ChannelList {
             config: parse_kv_flag(&positional, "--config").map(PathBuf::from),
             json: has_json_flag,
         },
-        // Phase 80.9.e — `nexo channel doctor [--config=<path>]
+        // `nexo channel doctor [--config=<path>]
         // [--binding=<id>] [--json]`.
         [cmd, sub] if cmd == "channel" && sub == "doctor" => Mode::ChannelDoctor {
             config: parse_kv_flag(&positional, "--config").map(PathBuf::from),
             binding: parse_kv_flag(&positional, "--binding"),
             json: has_json_flag,
         },
-        // Phase 80.9.e — `nexo channel test <server> [--binding=<id>]
+        // `nexo channel test <server> [--binding=<id>]
         // [--content=...] [--config=<path>] [--json]`.
         [cmd, sub, server] if cmd == "channel" && sub == "test" => Mode::ChannelTest {
             server: server.clone(),
@@ -9527,7 +9502,7 @@ fn parse_args() -> CliArgs {
     }
 }
 
-/// Phase 27.1 — print version to stdout. `verbose=false` mirrors clap's
+/// Print version to stdout. `verbose=false` mirrors clap's
 /// auto `--version` (`nexo <pkg-version>`); `verbose=true` adds the four
 /// build stamps captured by `build.rs` so bug reports carry provenance.
 fn print_version(verbose: bool) {
@@ -9711,10 +9686,10 @@ fn run_ext_help() -> Result<()> {
     Ok(())
 }
 
-/// Phase 90.5 — `agent admin` thin wrapper.
+/// `agent admin` thin wrapper.
 ///
 /// Replaces the legacy in-process admin server (~800 LOC,
-/// `run_admin_web` below — dead code, archived in Phase 90.7)
+/// `run_admin_web` below — dead code, kept for reference)
 /// with a CLI shim that points operators at the out-of-tree
 /// `nexo-plugin-admin` plugin. The plugin is normally spawned
 /// by the daemon's discovery loop at boot; this command's job
@@ -9732,7 +9707,7 @@ async fn run_admin_via_plugin(port: u16) -> Result<()> {
     // Detect the plugin binary in PATH. Operators install it
     // with `cargo install nexo-plugin-admin`; the binary lands
     // in `~/.cargo/bin/`. If discovery fails the plugin loader
-    // (Phase 81.17 auto-subprocess fallback) also fails so the
+    // (auto-subprocess fallback) also fails so the
     // daemon's spawn would silently no-op — surface that here.
     let installed = which_in_path("nexo-plugin-admin");
 
@@ -9807,7 +9782,7 @@ fn mcp_server_has_auth(cfg: &nexo_config::types::mcp_server::McpServerConfig) ->
     }
 }
 
-/// Phase M1.b — re-read `mcp_server.expose_tools` from the YAML
+/// Re-read `mcp_server.expose_tools` from the YAML
 /// directory and compute the new allowlist set.
 ///
 /// Returns:
@@ -9820,17 +9795,11 @@ fn mcp_server_has_auth(cfg: &nexo_config::types::mcp_server::McpServerConfig) ->
 ///
 /// Provider-agnostic: protocol-MCP, no LLM-provider assumption.
 ///
-/// IRROMPIBLE refs:
-/// - claude-code-leak `services/mcp/useManageMCPConnections.ts:618-665`
-///   — consumer-side: clients only register the
-///   `tools/list_changed` notification listener when the server
-///   advertises `capabilities.tools.listChanged: true` (already
-///   wired in M1.a `with_list_changed_capability`).
-/// - claude-code-leak `:721-723` — multiple notifications safe;
-///   client-side debounce within the existing 200 ms session
-///   window.
-/// - `research/`: no relevant prior art (OpenClaw is channel-side,
-///   no MCP server hot-reload concept).
+/// Clients only register the `tools/list_changed` notification
+/// listener when the server advertises
+/// `capabilities.tools.listChanged: true` (wired via
+/// `with_list_changed_capability`). Multiple notifications are
+/// safe; clients debounce within the session window.
 fn reload_expose_tools(
     config_dir: &std::path::Path,
 ) -> Result<Option<std::collections::HashSet<String>>> {
@@ -9839,14 +9808,14 @@ fn reload_expose_tools(
     Ok(compute_allowlist_from_mcp_server_cfg(&server_cfg))
 }
 
-/// Phase M1.b.c — derive the `ToolRegistryBridge` allowlist from
+/// Derive the `ToolRegistryBridge` allowlist from
 /// an in-memory `McpServerConfig`. Empty `expose_tools` returns
 /// `None` (no filter, expose all non-proxy tools); non-empty
 /// returns `Some(HashSet)` (HashSet collapses duplicates by
 /// construction). Used by the daemon-embed boot wire (Mode::Run)
 /// where the config is already loaded, complementing the
 /// `reload_expose_tools` path that re-reads the YAML on
-/// SIGHUP / Phase 18 reload.
+/// SIGHUP / config reload.
 fn compute_allowlist_from_mcp_server_cfg(
     cfg: &nexo_config::types::mcp_server::McpServerConfig,
 ) -> Option<std::collections::HashSet<String>> {
@@ -9869,7 +9838,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
 
-    // Phase 12.6 — tolerant loader: skip llm.yaml / broker.yaml / memory.yaml.
+    // Tolerant loader: skip llm.yaml / broker.yaml / memory.yaml.
     // The operator exposing tools doesn't need a full runtime configured.
     let boot = nexo_config::AppConfig::load_for_mcp_server(config_dir)
         .context("failed to load mcp-server config")?;
@@ -9884,7 +9853,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     let primary = boot.agents.agents.first().ok_or_else(|| {
         anyhow::anyhow!("agents.yaml has no agents; cannot derive identity for mcp-server")
     })?;
-    // C2 — same boot-time policy resolver used by `nexo run`. Mirrors
+    // Same boot-time policy resolver used by `nexo run`. Mirrors
     // agent-level fields; per-binding overrides are picked up at handler
     // call time via `ctx.effective_policy()`.
     let effective_primary =
@@ -9991,7 +9960,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     // Best-effort memory bootstrap for mcp-server mode: this subcommand
     // must remain tolerant when memory.yaml is absent/misconfigured.
     //
-    // C5 — `memory.secret_guard` is read from the same load. When
+    // `memory.secret_guard` is read from the same load. When
     // memory.yaml is absent/invalid we fall back to the secure
     // default (enabled=true, on_secret=Block, all rules active).
     let mut memory_default_recall_mode = "keyword".to_string();
@@ -10009,7 +9978,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         ) {
             Ok(Some(mem_cfg)) => {
                 memory_default_recall_mode = mem_cfg.vector.default_recall_mode.clone();
-                // C5 — wire the operator-supplied secret_guard policy
+                // Wire the operator-supplied secret_guard policy
                 // when present. Boot fails loud on a YAML typo
                 // (invalid `on_secret`, malformed `rules`).
                 let guard_cfg = build_secret_guard_config_from_yaml(&mem_cfg.secret_guard)
@@ -10083,7 +10052,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         registry.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
     }
 
-    // Phase 79.M — boot dispatcher. The runtime tool registry is
+    // Boot dispatcher. The runtime tool registry is
     // populated by walking `EXPOSABLE_TOOLS`, filtering by the
     // operator's `mcp_server.expose_tools` allowlist, and calling
     // each per-tool boot helper with whatever handles this server
@@ -10102,7 +10071,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         let cron_store: Option<Arc<dyn nexo_core::cron_schedule::CronStore>> = {
             // mcp-server mode keeps cron storage in `<state_dir>/cron.db`
             // when the operator listed any `cron_*` entry in expose_tools.
-            // Phase 79.M.1 ships a tolerant boot — if we can't open the
+            // Tolerant boot — if we can't open the
             // file the cron tools just fall back to SkippedInfraMissing.
             let needs_cron = server_cfg
                 .expose_tools
@@ -10297,7 +10266,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         };
 
         // lsp_manager boot — only when `Lsp` is in expose_tools.
-        // Mirrors the `nexo run` startup wiring (Phase 79.5).
+        // Mirrors the `nexo run` startup wiring.
         let lsp_manager: Option<Arc<nexo_lsp::LspManager>> = {
             if server_cfg.expose_tools.iter().any(|n| n == "Lsp") {
                 Some(nexo_lsp::LspManager::new(nexo_lsp::SessionConfig::default()))
@@ -10343,7 +10312,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         boot_ctx_enriched.lsp_manager = lsp_manager;
         boot_ctx_enriched.team_store = team_store_handle;
 
-        // Phase 79.M.c.full — Config self-edit handles. Compiled
+        // Config self-edit handles. Compiled
         // out when `config-self-edit` is off so the default build
         // carries no overhead.
         #[cfg(feature = "config-self-edit")]
@@ -10357,7 +10326,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
 
             // Synthetic ReloadTrigger — mcp-server doesn't run a
             // ConfigReloadCoordinator; operator-side `nexo run`
-            // picks up YAML changes via Phase 18 file watcher.
+            // picks up YAML changes via its file watcher.
             // Returning Ok keeps the apply-path success contract
             // (the YAML write succeeded; reload is async on the
             // other process).
@@ -10397,7 +10366,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
             boot_ctx_enriched.config_proposals_dir = Some(proposals_dir);
         }
 
-        // Phase 79.M.c hardening — Config self-edit requires an
+        // Config self-edit requires an
         // auth_token to be configured. Refuse the boot otherwise.
         let config_self_edit_auth_ok = mcp_server_has_auth(&server_cfg);
         // Same auth hardening for operator-overridden policy-denied tools.
@@ -10703,7 +10672,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         None
     };
 
-    // Phase 76.1 — opt-in HTTP transport runs alongside stdio.
+    // Opt-in HTTP transport runs alongside stdio.
     let http_handle = if let Some(http_yaml) = server_cfg.http.clone() {
         if http_yaml.enabled {
             Some(start_http_transport(&bridge, &http_yaml, &shutdown).await?)
@@ -10714,22 +10683,22 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         None
     };
 
-    // Phase M1.b — SIGHUP reload trigger. Operator runs
+    // SIGHUP reload trigger. Operator runs
     // `kill -HUP $(pidof nexo)` after editing
     // `mcp_server.expose_tools` in YAML; the handler re-reads the
     // allowlist, atomically swaps it into the bridge (visible to
-    // both stdio + HTTP clones — they share the inner ArcSwap from
-    // M1.a) and emits `notifications/tools/list_changed` so
+    // both stdio + HTTP clones — they share the inner ArcSwap)
+    // and emits `notifications/tools/list_changed` so
     // connected HTTP/SSE clients refresh without reconnect. SIGHUP
-    // chosen over a file watcher to ship MVP without a new dep —
-    // file-watcher / `ConfigReloadCoordinator` integration deferred
-    // to M1.b.b.
+    // chosen over a file watcher to avoid a new dep;
+    // file-watcher / `ConfigReloadCoordinator` integration is a
+    // follow-up.
     //
-    // The bridge is `Clone` (M1.a `with_list_changed_capability` +
+    // The bridge is `Clone` (`with_list_changed_capability` +
     // ArcSwap-shared allowlist); we clone here BEFORE
     // `run_stdio_server_with_auth` consumes the original.
-    // `HttpNotifyHandle` is the lightweight `Clone` notifier from
-    // `nexo-mcp`'s M1.b addition — detached from the JoinHandle so
+    // `HttpNotifyHandle` is the lightweight `Clone` notifier,
+    // detached from the JoinHandle so
     // safe to move into the background task.
     #[cfg(unix)]
     {
@@ -10800,7 +10769,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 76.14 — `nexo mcp-server` CLI ops
+// `nexo mcp-server` CLI ops
 // ---------------------------------------------------------------------------
 
 /// Dispatch helper for `Mode::Memory(...)`. Each arm wires the
@@ -10889,7 +10858,7 @@ async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
     }
 }
 
-/// Phase 36.2 — broker bridge for the memory snapshot subsystem.
+/// Broker bridge for the memory snapshot subsystem.
 ///
 /// Implements `nexo_memory_snapshot::EventPublisher` against any
 /// `AnyBroker` so lifecycle events
@@ -10903,7 +10872,7 @@ async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
 /// transaction is never poisoned by broker degradation.
 struct BrokerEventPublisher {
     broker: AnyBroker,
-    // Phase 90 audit fix — honour the operator-configured
+    // Honour the operator-configured
     // `EventsSection.lifecycle_subject_prefix` /
     // `mutation_subject_prefix`. Captured at construction so a
     // hot-reload would require rebuilding the publisher (acceptable;
@@ -11505,7 +11474,7 @@ async fn run_mcp_bench(url: &str, tool: &str, rps: u32) -> Result<()> {
 
 /// `nexo mcp-server tail-audit <db>` — read recent entries from
 /// a local audit log SQLite database.
-/// Phase 82.6 — `nexo ext state-dir <id> [--ensure]`. Prints
+/// `nexo ext state-dir <id> [--ensure]`. Prints
 /// the canonical state directory for one extension. With
 /// `--ensure`, creates the dir on disk first (idempotent).
 fn run_ext_state_dir(id: &str, ensure: bool) -> Result<()> {
@@ -11570,13 +11539,13 @@ async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+/// `nexo microapp admin audit tail [...]`.
 ///
 /// Read-only operator query over the SQLite admin audit log
 /// (`microapp_admin_audit` table). Maps every flag 1:1 to
 /// `AuditTailFilter` and renders rows via the format helpers
-/// already shipped in 82.10.h.2 (`format_rows_as_table` /
-/// `format_rows_as_json`). Default db resolves to
+/// (`format_rows_as_table` / `format_rows_as_json`).
+/// Default db resolves to
 /// `nexo_state_dir().join("admin_audit.db")` so daemons that
 /// boot with the default audit-writer location work without
 /// `--db`.
@@ -11634,7 +11603,7 @@ async fn run_microapp_admin_audit_tail(
         since_ms: resolved_since_ms,
         limit: limit.max(1),
         tenant_id,
-        // Phase 83.12.audit-page — `tail` now returns
+        // Page — `tail` now returns
         // `AuditTailPage` for pagination. CLI consumes the
         // `entries` slice; offset stays 0 (CLI is one-shot,
         // not paginated; honours `--limit` only).
@@ -11655,25 +11624,24 @@ async fn run_microapp_admin_audit_tail(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.1.d — `nexo agent dream` operator CLI
+// `nexo agent dream` operator CLI
 //
-// Mirror leak `claude-code-leak/src/components/tasks/BackgroundTasksDialog
-// .tsx:281,315-317` `DreamTask.kill(taskId, setAppState)` semantics: row
-// status flip + lock rollback + (deferred) abort signal. Daemon is NOT
+// Kill semantics: row status flip + lock rollback + (deferred)
+// abort signal. Daemon is NOT
 // required for any sub-command — the read paths open the SQLite DB
 // read-only and the kill path opens it read-write while reading the lock
 // file directly. Provider-agnostic by construction (LLM provider never
 // touches this surface).
 // ─────────────────────────────────────────────────────────────────────
 
-/// Phase 80.1.d — 3-tier dream-runs DB path resolution. `--db` wins over
+/// 3-tier dream-runs DB path resolution. `--db` wins over
 /// `NEXO_STATE_ROOT` env wins over the XDG-default
 /// `~/.local/share/nexo/state/dream_runs.db`. The YAML tier is intentionally
 /// absent for now — `agents.state_root` does not exist as a config field
-/// (state_root flows into `BootDeps` directly per Phase 80.1.b.b.b), so
+/// (state_root flows into `BootDeps` directly), so
 /// the CLI uses the env-or-default fallback to stay aligned with the
-/// daemon's discovery path once main.rs hookup ships.
-/// Phase M4.a.b — resolve the per-agent destination for extracted
+/// daemon's discovery path.
+/// Resolve the per-agent destination for extracted
 /// memories. Prefers the agent's explicit workspace when set
 /// (`<workspace>/memory/`); falls back to
 /// `<state_root>/<agent_id>/memory/` so multi-agent deployments
@@ -11930,15 +11898,15 @@ async fn run_agent_dream_kill(
     Ok(())
 }
 
-/// Phase 80.1.d helper — render only the first 8 hex chars of a UUID
-/// for compact tabular output, mirroring leak's "shortId" UI helper.
+/// Render only the first 8 hex chars of a UUID
+/// for compact tabular output.
 fn short_uuid(id: &uuid::Uuid) -> String {
     let s = id.to_string();
     s.chars().take(8).collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.10 — `nexo agent run` / `nexo agent ps` operator CLI
+// `nexo agent run` / `nexo agent ps` operator CLI
 //
 // Slim MVP: `run --bg` inserts a goal-handle row with kind=Bg + status=Running
 // and prints the goal_id immediately so the operator can detach. Full
@@ -11949,7 +11917,7 @@ fn short_uuid(id: &uuid::Uuid) -> String {
 // ─────────────────────────────────────────────────────────────────────
 
 /// 3-tier path resolution for `agent_handles` SQLite store. Mirror of
-/// `resolve_dream_db_path` for the Phase 80.10 surface — operators
+/// `resolve_dream_db_path` for the `agent run` / `agent ps` surface — operators
 /// configure either explicitly via `--db`, or via `NEXO_STATE_ROOT`
 /// env, or accept the XDG default.
 fn resolve_agent_db_path(override_path: Option<&std::path::Path>) -> Result<PathBuf> {
@@ -12108,11 +12076,11 @@ async fn run_agent_ps(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase 80.16 — `nexo agent attach` / `nexo agent discover`
+// `nexo agent attach` / `nexo agent discover`
 //
-// Slim MVP: both subcommands are RO viewers over the local
-// `agent_handles` SQLite store. Live event streaming via NATS lands
-// in 80.16.b; user input piping needs Phase 80.11's
+// Both subcommands are RO viewers over the local
+// `agent_handles` SQLite store. Live event streaming via NATS is a
+// follow-up; user input piping needs the
 // `agent.inbox.<goal_id>` subject contract.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -12263,14 +12231,14 @@ async fn run_agent_discover(
 }
 
 // ----------------------------------------------------------------
-// Phase 80.9.e — `nexo channel list/doctor/test` operator CLI.
+// `nexo channel list/doctor/test` operator CLI.
 // Static helpers that read the YAML and exercise the gate +
 // XML wrap helper without needing a daemon up.
 // ----------------------------------------------------------------
 
 /// Load AppConfig from `--config=<path>` if provided, otherwise
 /// fall back to the global `config_dir` the CLI was invoked with.
-/// Phase 80.9.b.b — generic shim that lets `ChannelRelayDecider`
+/// Generic shim that lets `ChannelRelayDecider`
 /// wrap an `Arc<dyn PermissionDecider>`. The decorator's generic
 /// `D: PermissionDecider` doesn't accept `Arc<dyn ...>` directly
 /// because trait-object dispatch isn't a concrete type, so we
@@ -12290,7 +12258,7 @@ impl nexo_driver_permission::PermissionDecider for ArcDeciderShim {
     }
 }
 
-/// Phase 80.9 main.rs hookup — sink that forwards a
+/// Sink that forwards a
 /// [`nexo_mcp::channel_bridge::ChannelInboundEvent`] onto the
 /// existing intake lane. We publish on the broker subject
 /// `agent.channel.inbound` carrying a JSON envelope; the
@@ -12814,7 +12782,7 @@ async fn start_mcp_autonomous_worker(
     nexo_plugin_email::register_email_tools(&worker_tools, email_tool_ctx);
 
     let llm_registry = LlmRegistry::with_builtins();
-    // Phase 83.8.12.5.b — tenant-aware build; falls back to
+    // Tenant-aware build; falls back to
     // global providers when the worker agent has no `tenant_id`.
     let llm = match llm_registry.build_for_tenant(
         &full_cfg.llm,
@@ -12889,7 +12857,7 @@ async fn start_mcp_autonomous_worker(
     Ok(join)
 }
 
-/// Phase 76.1 — boot the HTTP transport from the YAML block, reusing
+/// Boot the HTTP transport from the YAML block, reusing
 /// the same `ToolRegistryBridge` the stdio path consumes (cloned, since
 /// the bridge is `Clone`).
 async fn start_http_transport(
@@ -12965,13 +12933,13 @@ async fn start_http_transport(
         session_event_store,
     };
 
-    // Phase M1 — HTTP transport can push
+    // HTTP transport can push
     // `notifications/tools/list_changed` via
     // `HttpServerHandle::notify_tools_list_changed()`, so this
     // bridge clone advertises the capability to clients. Stdio
     // bridge keeps the default `false` (no server→client push
     // channel today). Both clones share the same `Arc<ArcSwap>`
-    // allowlist, so a future `swap_allowlist(...)` call (M1.b)
+    // allowlist, so a `swap_allowlist(...)` call
     // is visible to both transports atomically.
     let bridge_for_http = bridge.clone().with_list_changed_capability(true);
     let handle = start_http_server(bridge_for_http, cfg, shutdown.clone()).await?;
@@ -12979,7 +12947,7 @@ async fn start_http_transport(
     Ok(handle)
 }
 
-/// Phase 76.3 — translate the YAML auth schema into the runtime
+/// Translate the YAML auth schema into the runtime
 /// `AuthConfig`. Env var resolution for `static_token` happens lazily
 /// inside the runtime's `AuthConfig::build`; mTLS and JWT need no env.
 fn yaml_auth_to_runtime(
@@ -13029,7 +12997,7 @@ fn yaml_auth_to_runtime(
     })
 }
 
-/// Phase 76.5 — translate the YAML per-principal block into the
+/// Translate the YAML per-principal block into the
 /// runtime config. Direct field-by-field copy; the runtime
 /// validates the values at `PerPrincipalRateLimiter::new()` time.
 fn yaml_pp_rate_limit_to_runtime(
@@ -13054,7 +13022,7 @@ fn yaml_pp_rate_limit_to_runtime(
     }
 }
 
-/// Phase 76.6 — translate the YAML per-principal concurrency block
+/// Translate the YAML per-principal concurrency block
 /// into the runtime config. Field-by-field copy; the runtime
 /// validates values at `PerPrincipalConcurrencyCap::new()` time.
 fn yaml_pp_concurrency_to_runtime(
@@ -13082,7 +13050,7 @@ fn yaml_pp_concurrency_to_runtime(
     }
 }
 
-/// Phase 76.11 — translate the YAML audit-log block into the runtime
+/// Translate the YAML audit-log block into the runtime
 /// config. Field-by-field copy; the runtime validates values at
 /// `AuditLogConfig::validate()` time and resolves env-relative paths
 /// against process CWD.
@@ -13102,7 +13070,7 @@ fn yaml_audit_log_to_runtime(
     }
 }
 
-/// Phase 76.8 — translate the YAML session-event-store block into
+/// Translate the YAML session-event-store block into
 /// the runtime config. Field-by-field copy; the runtime validates
 /// values at `SessionEventStoreConfig::validate()` time.
 fn yaml_session_event_store_to_runtime(
@@ -13246,7 +13214,7 @@ async fn open_disk_queue(config_dir: &std::path::Path) -> Result<DiskQueue> {
         .with_context(|| format!("failed to open disk queue at {path}"))
 }
 
-/// Phase 92.9 — handler for `nexo set-broker <kind> [--url <url>]
+/// Handler for `nexo set-broker <kind> [--url <url>]
 /// [--no-signal]`. Edits `broker.yaml` in `config_dir` so the
 /// operator switches between NATS and Local transports without
 /// learning sed syntax, then (by default) sends SIGTERM to the
@@ -13265,7 +13233,7 @@ async fn open_disk_queue(config_dir: &std::path::Path) -> Result<DiskQueue> {
 ///   from `Local` for subprocess plugins; setting it manually
 ///   would break the daemon's broker startup. Print a clear
 ///   error so operators don't try.
-/// Phase 92.9 — default XDG-spec config dir for `nexo` when no
+/// Default XDG-spec config dir for `nexo` when no
 /// `--config` flag and no `NEXO_CONFIG_DIR` env are set.
 /// Respects `XDG_CONFIG_HOME` if exported, else falls back to
 /// `$HOME/.config/nexo`. Returns `PathBuf::from("./config")` when
@@ -13291,7 +13259,7 @@ fn run_set_broker(
     no_signal: bool,
 ) -> Result<()> {
     let broker_yaml = config_dir.join("broker.yaml");
-    // Phase 92.9 — tolerate missing config dir + missing broker.yaml.
+    // Tolerate missing config dir + missing broker.yaml.
     // Create both with sane defaults so `nexo set-broker local` Just
     // Works from any cwd, no `--config` setup required. The default
     // YAML has `persistence.enabled: true` matching dev-daemon.sh's
@@ -13464,7 +13432,7 @@ async fn run_dlq_purge(config_dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Phase 18 — `agent reload` subcommand. Loads the broker config,
+/// `agent reload` subcommand. Loads the broker config,
 /// connects, subscribes to `control.reload.ack`, publishes on
 /// `control.reload`, and waits up to 5s for the daemon to respond.
 ///
@@ -13661,7 +13629,7 @@ async fn handle_admin_conn(
         Some(i) => (&full_path[..i], &full_path[i + 1..]),
         None => (full_path.as_str(), ""),
     };
-    // Phase 19 — `/admin/pollers/*` first; falls through to credentials,
+    // `/admin/pollers/*` first; falls through to credentials,
     // agents, then the tool-policy handler.
     if path.starts_with("/admin/pollers") {
         if let Some(runner) = pollers.as_ref() {
@@ -13677,7 +13645,7 @@ async fn handle_admin_conn(
             return Ok(());
         }
     }
-    // Route `/admin/credentials/*` first (Phase 17 hot-reload), then
+    // Route `/admin/credentials/*` first (credential hot-reload), then
     // `/admin/agents*`, then fall back to the tool-policy handler.
     let (status, body, content_type) = if path == "/admin/credentials/reload" && method == "POST" {
         match credentials.as_deref() {
@@ -13741,12 +13709,12 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     let mut body = render_prometheus(nats_open);
     body.push_str(&nexo_llm::telemetry::render_prometheus());
     body.push_str(&nexo_mcp::telemetry::render_prometheus());
-    // Phase 76.10 — server-side dispatch metrics
+    // Server-side dispatch metrics
     // (`mcp_requests_total`, `mcp_request_duration_seconds`,
     // `mcp_in_flight`, `mcp_rate_limit_hits_total`, etc.).
     body.push_str(&nexo_mcp::server::telemetry::render_prometheus());
     body.push_str(&nexo_poller::telemetry::render_prometheus());
-    // Phase 48 follow-up #8 — append email metrics. Counters live in
+    // Append email metrics. Counters live in
     // `nexo_plugin_email::metrics`; gauges (`imap_state`, queue
     // depths) sample the live `health_map()` so the values are
     // authoritative at scrape time.
@@ -13859,7 +13827,7 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
             .await?;
         }
         "/email/health" => {
-            // Phase 48 follow-up #7. Snapshot every account's
+            // Snapshot every account's
             // `AccountHealth` row. Returns `[]` when the plugin
             // isn't configured (vs 404), so monitoring scripts
             // can hit the route unconditionally.
@@ -13893,7 +13861,7 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
 }
 
 /// Render the per-account email health snapshot as a stable JSON
-/// array. Phase 48 follow-up #7. Sorted by instance for
+/// array. Sorted by instance for
 /// deterministic output that monitoring agents can diff.
 async fn render_email_health(plugin: &nexo_plugin_email::EmailPlugin) -> String {
     let Some(map) = plugin.health_map().await else {
@@ -14055,7 +14023,7 @@ async fn write_http_response(
     Ok(())
 }
 
-// ---- TaskFlow CLI (Phase 14.6) ---------------------------------------------
+// ---- TaskFlow CLI ----------------------------------------------------------
 
 fn flow_db_path() -> std::path::PathBuf {
     std::env::var("TASKFLOW_DB_PATH")
@@ -14587,7 +14555,7 @@ mod tests {
         }
     }
 
-    /// Phase 81.18.b.1 — happy path: every operator-facing field
+    /// Happy path: every operator-facing field
     /// of `TelegramPluginConfig` lands in the spawn env dict
     /// under the `NEXO_PLUGIN_TELEGRAM_*` namespace, plus the
     /// inherited daemon whitelist (PATH/HOME/RUST_LOG/broker URL).
@@ -14630,7 +14598,7 @@ mod tests {
         );
     }
 
-    /// Phase 81.18.b.1 — empty / `None` instance is omitted (not
+    /// Empty / `None` instance is omitted (not
     /// emitted as empty string) so the subprocess's
     /// `whatsapp_config_from_env` analog reads `instance = None`,
     /// not `instance = Some("")` — matches the YAML loader's
@@ -14647,7 +14615,7 @@ mod tests {
         assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
     }
 
-    /// Phase 81.18.b.1 — auto-transcribe disabled (default) drops
+    /// Auto-transcribe disabled (default) drops
     /// every whisper-related env var; enabled lights them up.
     #[test]
     fn seed_telegram_subprocess_env_for_transcribe_toggle() {
@@ -14689,7 +14657,7 @@ mod tests {
         );
     }
 
-    /// Phase 81.18.b.1 — daemon's full process env is NOT inherited
+    /// Daemon's full process env is NOT inherited
     /// by reference; the helper builds a fresh dict whitelisting
     /// only PATH/HOME/RUST_LOG (defense-in-depth against secrets
     /// leaking). Set a sentinel env in the test process and assert
@@ -14703,7 +14671,7 @@ mod tests {
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
     }
 
-    // Phase 92 — daemon broker = Local means the subprocess can't
+    // Daemon broker = Local means the subprocess can't
     // reach the in-process broker; the env seeder stamps
     // `NEXO_BROKER_KIND=stdio_bridge` and OMITS the URL because
     // the transport is the parent's stdin/stdout, not a network
@@ -14785,7 +14753,7 @@ mod tests {
         }
     }
 
-    /// Phase 81.18.b.2 — happy path: every operator-facing field
+    /// Happy path: every operator-facing field
     /// of `WhatsappPluginConfig` lands in the spawn env dict
     /// under the `NEXO_PLUGIN_WHATSAPP_*` namespace plus the
     /// inherited daemon whitelist.
@@ -14825,7 +14793,7 @@ mod tests {
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
     }
 
-    /// Phase 81.18.b.2 — empty / `None` instance is omitted (not
+    /// Empty / `None` instance is omitted (not
     /// emitted as empty string) so the subprocess's
     /// `whatsapp_config_from_env` reads `instance = None`.
     #[test]
@@ -14839,7 +14807,7 @@ mod tests {
         assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
     }
 
-    /// Phase 81.18.b.2 — transcriber disabled drops whisper env;
+    /// Transcriber disabled drops whisper env;
     /// enabled lights it up.
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
@@ -14867,7 +14835,7 @@ mod tests {
         );
     }
 
-    /// Phase 81.19.b — happy path: every env key the standalone
+    /// Happy path: every env key the standalone
     /// `nexo-plugin-email` subprocess reads on boot lands in the
     /// spawn dict.
     #[test]
@@ -14908,7 +14876,7 @@ mod tests {
         );
     }
 
-    /// Phase 81.19.b — Gmail OAuth optional: when google_auth_path
+    /// Gmail OAuth optional: when google_auth_path
     /// is None the env var is OMITTED (subprocess interprets as
     /// "no Gmail OAuth accounts" and boots with
     /// `GoogleCredentialStore::empty()`).
@@ -14927,7 +14895,7 @@ mod tests {
         );
     }
 
-    /// Phase 81.18.b.2 — sentinel daemon env var does NOT leak
+    /// Sentinel daemon env var does NOT leak
     /// into the spawn dict (defense-in-depth).
     #[test]
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
@@ -14987,7 +14955,7 @@ mod tests {
         assert!(result.is_err(), "malformed yaml must surface as Err");
     }
 
-    // ── Phase M1.b.c — compute_allowlist_from_mcp_server_cfg ──
+    // compute_allowlist_from_mcp_server_cfg
 
     #[test]
     fn compute_allowlist_returns_set_from_expose_tools() {
@@ -15023,7 +14991,7 @@ mod tests {
         assert_eq!(allow.len(), 2, "duplicates collapsed by HashSet");
     }
 
-    /// Phase 27.1 — verify the four `NEXO_BUILD_*` env stamps are
+    /// Verify the four `NEXO_BUILD_*` env stamps are
     /// non-empty at compile time. The actual stdout-capture form
     /// of `print_version` would need `#[no_main]` redirection; this
     /// test guards the inputs the function reads, which is the part
@@ -15157,7 +15125,7 @@ mcp_server:
         assert!(mcp_server_has_auth(&parsed.mcp_server));
     }
 
-    // ---- M5: cron_tool_bindings ArcSwap mechanics ----
+    // ---- cron_tool_bindings ArcSwap mechanics ----
 
     use super::{CronToolBindingContext, RuntimeCronToolExecutor};
 
@@ -15238,7 +15206,7 @@ mcp_server:
         }
     }
 
-    /// M5 — `replace_bindings` performs an atomic swap visible on the
+    /// `replace_bindings` performs an atomic swap visible on the
     /// next `resolve_binding` call.
     #[tokio::test]
     async fn cron_executor_replace_bindings_atomically_swaps_map() {
@@ -15261,8 +15229,8 @@ mcp_server:
         assert_eq!(post.ctx.agent_id, "v2");
     }
 
-    /// M5 — empty-map swap clears all bindings; resolve returns `None`.
-    /// Documents the agent-removal semantics (Phase 19 scope concern):
+    /// Empty-map swap clears all bindings; resolve returns `None`.
+    /// Documents the agent-removal semantics:
     /// a future operator removing an agent from config would reach
     /// this path post-rebuild.
     #[tokio::test]
@@ -15275,7 +15243,7 @@ mcp_server:
         assert!(executor.resolve_binding("k").is_none());
     }
 
-    /// M5.b — the post-hook closure must early-return cleanly when
+    /// The post-hook closure must early-return cleanly when
     /// it fires before the cron executor was built (e.g. a config
     /// reload triggered immediately at boot before the cron block
     /// runs). Replicates the closure's `cell.get()` check inline so
@@ -15308,7 +15276,7 @@ mcp_server:
         );
     }
 
-    // ── Phase 80.1.d — `nexo agent dream` CLI tests ──
+    // `nexo agent dream` CLI tests
 
     use super::{
         resolve_dream_db_path, run_agent_dream_kill, run_agent_dream_status, run_agent_dream_tail,
@@ -15472,7 +15440,7 @@ mcp_server:
         assert!(after.ended_at.is_some());
     }
 
-    // ── Phase 80.10 — `nexo agent run` / `agent ps` CLI tests ──
+    // `nexo agent run` / `agent ps` CLI tests
 
     use super::{resolve_agent_db_path, run_agent_ps, run_agent_run};
     use nexo_agent_registry::SessionKind;
@@ -15589,7 +15557,7 @@ mcp_server:
         assert!(err.to_string().contains("nope"));
     }
 
-    // ── Phase 80.16 — `agent attach` / `agent discover` CLI tests ──
+    // `agent attach` / `agent discover` CLI tests
 
     use super::{run_agent_attach, run_agent_discover};
 

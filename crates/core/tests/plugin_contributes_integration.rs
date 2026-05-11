@@ -1,4 +1,4 @@
-//! Phase 81.6 — end-to-end pipeline:
+//! End-to-end pipeline:
 //! discover() → merge_plugin_contributed_agents() → run_plugin_init_loop()
 //! Builds a real on-disk plugin tree, verifies the agent shows up
 //! in the merged config, the report sections populate, and

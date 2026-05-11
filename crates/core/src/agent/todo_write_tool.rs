@@ -1,15 +1,14 @@
-//! Phase 79.4 — `TodoWrite` intra-turn scratch list tool.
+//! `TodoWrite` intra-turn scratch list tool.
 //!
-//! Lift from `claude-code-leak/src/tools/TodoWriteTool/TodoWriteTool.ts:31-115`
-//! (full-replace semantics, wipe-on-all-completed, return both old
-//! and new lists for the diff).
+//! Full-replace semantics, wipe-on-all-completed, returns both the
+//! old and new lists for the diff.
 //!
 //! This tool does NOT persist across goal lifetime — by design:
 //!
-//! * Long Phase 67 driver-loop turns coordinate sub-steps via
-//!   TodoWrite without paying the cost of spawning sub-goals.
+//! * Long driver-loop turns coordinate sub-steps via TodoWrite
+//!   without paying the cost of spawning sub-goals.
 //! * Operators who want persistent multi-day work programs use
-//!   Phase 14 TaskFlow — distinct shape, distinct lifecycle.
+//!   TaskFlow — distinct shape, distinct lifecycle.
 //!
 //! Permission model: zero checks, classified `ReadOnly` by
 //! `nexo_core::plan_mode::READ_ONLY_TOOLS` so the model can update
@@ -22,9 +21,7 @@ use async_trait::async_trait;
 use nexo_llm::ToolDef;
 use serde_json::{json, Value};
 
-/// Description shown to the model in the tool catalogue. Lift the
-/// canonical wording from
-/// `claude-code-leak/src/tools/TodoWriteTool/prompt.ts:184`.
+/// Description shown to the model in the tool catalogue.
 pub const TODO_WRITE_DESCRIPTION: &str = "Update the todo list for the current session. To be used proactively and often to track progress and pending tasks. Make sure that at least one task is in_progress at all times. Always provide both content (imperative) and activeForm (present continuous) for each task. Full-replace semantics: every call replaces the entire list.";
 
 pub struct TodoWriteTool;
@@ -66,8 +63,8 @@ impl TodoWriteTool {
     }
 }
 
-/// Parse one item out of the JSON Value, accepting both the leak's
-/// `activeForm` (camelCase) and our snake_case `active_form` so the
+/// Parse one item out of the JSON Value, accepting both
+/// `activeForm` (camelCase) and snake_case `active_form` so the
 /// tool is friendly regardless of which dialect the model emits.
 fn parse_item(v: &Value, idx: usize) -> anyhow::Result<TodoItem> {
     let content = v
@@ -89,8 +86,8 @@ fn parse_item(v: &Value, idx: usize) -> anyhow::Result<TodoItem> {
             ));
         }
     };
-    // Accept either spelling — the leak uses camelCase, the rest of
-    // nexo-rs leans snake_case. Either survives the round-trip.
+    // Accept either spelling — nexo-rs leans snake_case but the
+    // model may emit camelCase. Either survives the round-trip.
     let active_form = v
         .get("activeForm")
         .or_else(|| v.get("active_form"))
@@ -123,8 +120,8 @@ impl ToolHandler for TodoWriteTool {
         // clobber the existing list.
         validate_todos(&new_items)?;
 
-        // Lift from `TodoWriteTool.ts:69-70`: when every item is
-        // completed, persist `[]` so the next planning cycle starts
+        // When every item is completed, persist `[]` so the next
+        // planning cycle starts
         // fresh. The `oldTodos` echo still carries the just-completed
         // list so the model can write a summary.
         let wipe = all_completed(&new_items);

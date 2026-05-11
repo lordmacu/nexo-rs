@@ -1,4 +1,4 @@
-//! Phase 81.29 — end-to-end smoke for the host→subprocess
+//! End-to-end smoke for the host→subprocess
 //! `tool.invoke` wrapper.
 //!
 //! Drops a manifest declaring `[plugin.extends].tools =

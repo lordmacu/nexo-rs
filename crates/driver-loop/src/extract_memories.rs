@@ -1,6 +1,4 @@
-//! Phase 77.5 — post-turn LLM memory extraction.
-//!
-//! Ported from `claude-code-leak/src/services/extractMemories/`.
+//! Post-turn LLM memory extraction.
 //!
 //! After every N eligible turns, a small LLM call reads the recent
 //! transcript and writes durable memories to the memory directory
@@ -98,8 +96,8 @@ pub struct ExtractMemories {
     llm: Arc<dyn ExtractMemoriesLlm>,
     /// How many recent messages to feed into the extraction prompt.
     new_message_count: u32,
-    /// Phase 77.7 — secret guard for scanning extracted memory content
-    /// before writing to disk. None = no scanning (backward compat).
+    /// Secret guard for scanning extracted memory content before
+    /// writing to disk. None = no scanning (backward compat).
     guard: Option<nexo_memory::SecretGuard>,
 }
 
@@ -120,8 +118,8 @@ impl ExtractMemories {
         self
     }
 
-    /// Phase 77.7 — attach a secret guard for scanning extracted memory
-    /// content before writing to disk.
+    /// Attach a secret guard for scanning extracted memory content
+    /// before writing to disk.
     pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
         self.guard = Some(guard);
         self
@@ -749,7 +747,7 @@ impl ExtractMemoriesLlm for NoopExtractMemoriesLlm {
     }
 }
 
-// ── Phase M4.a.b — LlmClient adapter ─────────────────────────────
+// ── LlmClient adapter ─────────────────────────────
 
 /// Adapt a generic `Arc<dyn LlmClient>` into the narrow
 /// [`ExtractMemoriesLlm`] surface so the boot loop can construct
@@ -768,15 +766,9 @@ impl ExtractMemoriesLlm for NoopExtractMemoriesLlm {
 /// the underlying `LlmClient` impl at agent boot and the same
 /// extract behaviour runs unchanged.
 ///
-/// IRROMPIBLE refs:
-/// - claude-code-leak `services/extractMemories/extractMemories.ts`
-///   — the leak's per-turn extractor calls the model directly
-///   inside `runExtraction`. Splitting via `LlmClientAdapter`
-///   keeps the trait surface narrow and lets the driver-loop
-///   crate stay decoupled from the binary's `LlmAgentBehavior`
-///   call sites.
-/// - `research/` — no relevant prior art (channel-side scope,
-///   no extract-memories concept).
+/// Splitting via `LlmClientAdapter` keeps the trait surface narrow
+/// and lets the driver-loop crate stay decoupled from the binary's
+/// `LlmAgentBehavior` call sites.
 pub struct LlmClientAdapter {
     llm: Arc<dyn nexo_llm::LlmClient>,
     model: String,
@@ -819,7 +811,7 @@ impl ExtractMemoriesLlm for LlmClientAdapter {
     }
 }
 
-// ── Phase M4 — MemoryExtractor trait impl ────────────────────────
+// ── MemoryExtractor trait impl ────────────────────────
 
 /// `nexo-core::agent::LlmAgentBehavior` holds an
 /// `Arc<dyn MemoryExtractor>` to fire post-turn extraction for
@@ -829,8 +821,7 @@ impl ExtractMemoriesLlm for LlmClientAdapter {
 /// in both engines, so cadence + in-progress mutex + circuit
 /// breaker stay coherent across paths.
 ///
-/// See `crates/driver-types/src/memory_extractor.rs` for the
-/// trait + IRROMPIBLE refs.
+/// See `crates/driver-types/src/memory_extractor.rs` for the trait.
 impl MemoryExtractor for ExtractMemories {
     fn tick(&self) {
         ExtractMemories::tick(self);
@@ -1180,7 +1171,7 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
         assert!(index.contains("new_one.md"), "new file should be appended");
     }
 
-    // ── Path sandbox hardening tests (Phase 77.7) ──
+    // ── Path sandbox hardening tests ──
 
     #[test]
     fn resolve_memory_path_rejects_null_byte() {
@@ -1210,7 +1201,7 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
         assert_eq!(result, Path::new("/mem/notes.md"));
     }
 
-    // ── Phase M4.a.b — LlmClientAdapter ──
+    // ── LlmClientAdapter ──
 
     #[tokio::test]
     async fn llm_client_adapter_chat_round_trips() {

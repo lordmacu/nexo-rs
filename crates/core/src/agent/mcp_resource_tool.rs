@@ -1,4 +1,4 @@
-//! Phase 12.5 — 2 meta-tools per MCP server that exposes `resources/*`:
+//! 2 meta-tools per MCP server that exposes `resources/*`:
 //! `mcp_{server}_list_resources` and `mcp_{server}_read_resource`. The LLM
 //! uses them to browse and pull data surfaces on demand.
 use super::context::AgentContext;
@@ -27,7 +27,7 @@ pub struct McpResourceReadTool {
     client: Arc<dyn McpClient>,
     context_passthrough: bool,
     cache: Option<Arc<ResourceCache>>,
-    /// Phase 12.5 follow-up — if non-empty, URIs whose scheme is absent
+    /// If non-empty, URIs whose scheme is absent
     /// from the list are rejected before dispatch, logged at `warn`,
     /// and counted via `mcp_resource_uri_allowlist_violations_total`.
     uri_allowlist: Arc<Vec<String>>,
@@ -44,7 +44,7 @@ impl McpResourceListTool {
             context_passthrough: false,
         }
     }
-    /// Phase 12.8 — enable `_meta` propagation on `resources/list`.
+    /// Enable `_meta` propagation on `resources/list`.
     pub fn with_context_passthrough(mut self, enabled: bool) -> Self {
         self.context_passthrough = enabled;
         self
@@ -88,12 +88,12 @@ impl McpResourceReadTool {
         self.uri_allowlist = allowlist;
         self
     }
-    /// Phase 12.8 — enable `_meta` propagation on `resources/read`.
+    /// Enable `_meta` propagation on `resources/read`.
     pub fn with_context_passthrough(mut self, enabled: bool) -> Self {
         self.context_passthrough = enabled;
         self
     }
-    /// Phase 12.5 follow-up — opt-in LRU+TTL cache shared with the owning
+    /// Opt-in LRU+TTL cache shared with the owning
     /// session runtime. Cache is skipped for blob-only responses to keep
     /// memory usage bounded.
     pub fn with_cache(mut self, cache: Arc<ResourceCache>) -> Self {

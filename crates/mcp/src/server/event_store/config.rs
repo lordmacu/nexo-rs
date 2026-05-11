@@ -1,4 +1,4 @@
-//! Phase 76.8 — runtime config for the session event store.
+//! Runtime config for the session event store.
 //! YAML mirror lives in `crates/config/src/types/mcp_server.rs`.
 
 use std::path::PathBuf;
@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SessionEventStoreConfig {
-    /// Default `true` so an operator who reaches Phase 76.8 gets
-    /// resumability by default. Opt out with `enabled: false`.
+    /// Default `true` so resumability is on by default. Opt out
+    /// with `enabled: false`.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     /// SQLite file path. Resolved relative to process CWD when

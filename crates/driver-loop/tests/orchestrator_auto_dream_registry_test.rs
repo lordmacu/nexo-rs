@@ -1,4 +1,4 @@
-//! Phase 80.1.b.b.b.c — multi-runner auto_dream registry surface
+//! Multi-runner auto_dream registry surface
 //! tests. Verifies `register_auto_dream` / `unregister_auto_dream` /
 //! `auto_dream_agents` / `has_auto_dream` keep the per-agent map
 //! coherent and that the deprecated `set_auto_dream` shim still

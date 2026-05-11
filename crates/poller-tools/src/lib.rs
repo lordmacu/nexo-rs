@@ -1,4 +1,4 @@
-//! LLM-callable tools for the Phase 19 poller subsystem.
+//! LLM-callable tools for the poller subsystem.
 //!
 //! Lives outside `nexo-core` so the dependency graph stays acyclic
 //! (core → poller → plugin-google → core would loop). `main.rs`

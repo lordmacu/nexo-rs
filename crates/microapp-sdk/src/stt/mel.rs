@@ -1,4 +1,4 @@
-//! Phase 91.3 — mel-spectrogram helpers for the Candle STT backend.
+//! Mel-spectrogram helpers for the Candle STT backend.
 //!
 //! Thin wrapper over
 //! [`candle_transformers::models::whisper::audio::pcm_to_mel`] —
@@ -34,7 +34,7 @@ use super::SttError;
 /// clips at 16 kHz — feeding more than that produces a truncated
 /// transcript silently (the encoder only sees the first 30 s).
 /// We reject longer clips up front; long-form support is a
-/// Phase 92.x follow-up.
+/// future follow-up.
 pub(crate) const MAX_SAMPLES: usize = m::N_SAMPLES;
 
 /// Bundled 80-bin mel filterbank — 80 × 201 little-endian f32
@@ -45,8 +45,7 @@ const MEL_FILTERS_80_BYTES: &[u8] = include_bytes!("melfilters.bytes");
 /// `candle-examples/examples/whisper/melfilters128.bytes`; only
 /// `large-v3` uses 128 bins, and v1 of the migration ships with
 /// the 80-bin `tiny`/`base`/`small` family. The asset can be
-/// vendored later when 91.10 / a follow-up enables larger model
-/// sizes.
+/// vendored later when a follow-up enables larger model sizes.
 const NUM_MEL_BINS_DEFAULT: usize = 80;
 
 /// Lazy-parsed `Vec<f32>` view over the bundled bytes. Built once

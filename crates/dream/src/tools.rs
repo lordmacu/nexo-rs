@@ -1,18 +1,15 @@
 //! `dream_now` LLM tool — manual force-bypass for autoDream gates.
-//! Phase 80.1.c.
 //!
-//! Verbatim semantics from leak `autoDream.ts:102-179` (`isForced()`
-//! gate-bypass + `priorMtime = lastAt` rollback no-op). Nexo
-//! extension over leak — leak's `isForced()` is build-time test
-//! override (always `false`); nexo exposes via LLM tool for
-//! self-driven consolidation.
+//! Carries the `isForced()` gate-bypass + `priorMtime = lastAt`
+//! rollback no-op, exposed via an LLM tool so the agent can drive its
+//! own consolidation.
 //!
 //! # Lifecycle
 //!
 //! 1. Operator at boot calls
 //!    [`register_dream_now_tool`]`(&registry, runner, transcript_dir)`
-//!    if `auto_dream.enabled` AND binding policy permits (Phase 16
-//!    capability gate — operator's responsibility to gate).
+//!    if `auto_dream.enabled` AND binding policy permits (the
+//!    capability gate is the operator's responsibility).
 //! 2. LLM invokes `dream_now { reason?: "..." }` mid-turn.
 //! 3. Tool calls `runner.run_forced(&dream_ctx)` — bypasses
 //!    time/scan/session gates; respects lock + memory-dir precondition.
@@ -21,10 +18,10 @@
 //!
 //! # Capability gate
 //!
-//! Default off — operators opt-in per binding via Phase 16 binding
-//! policy. The boot wiring caller (e.g.
-//! `nexo_dream::boot::build_runner`'s sibling) checks the policy
-//! before invoking [`register_dream_now_tool`].
+//! Default off — operators opt-in per binding via the binding policy.
+//! The boot wiring caller (e.g. `nexo_dream::boot::build_runner`'s
+//! sibling) checks the policy before invoking
+//! [`register_dream_now_tool`].
 //!
 //! # Provider-agnostic
 //!
@@ -66,7 +63,7 @@ impl DreamNowTool {
         }
     }
 
-    /// Static tool definition. Mirrors Phase 77.20 Sleep tool shape.
+    /// Static tool definition. Mirrors the Sleep tool shape.
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: DREAM_NOW_TOOL_NAME.into(),
@@ -180,12 +177,11 @@ fn outcome_to_json(outcome: &RunOutcome, reason: &str) -> Value {
     }
 }
 
-/// Phase 80.1.c.b — host-level capability gate env var for the
-/// `dream_now` tool. Mirror of `nexo-setup::capabilities::INVENTORY`
-/// entry `extension: "dream"`. When the env var resolves to a truthy
-/// value the tool is registered; otherwise [`register_dream_now_tool`]
-/// is a no-op. Per-binding granularity (Phase 16 `allowed_tools`) layers
-/// on top.
+/// Host-level capability gate env var for the `dream_now` tool. Mirror
+/// of `nexo-setup::capabilities::INVENTORY` entry `extension: "dream"`.
+/// When the env var resolves to a truthy value the tool is registered;
+/// otherwise [`register_dream_now_tool`] is a no-op. Per-binding
+/// granularity (`allowed_tools`) layers on top.
 pub const DREAM_NOW_ENV_VAR: &str = "NEXO_DREAM_NOW_ENABLED";
 
 /// Boolean coercion for `NEXO_DREAM_NOW_ENABLED`. Keep in sync with
@@ -204,16 +200,15 @@ fn is_dream_now_env_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Register `dream_now` on the operator's [`ToolRegistry`]. Mirror
-/// Phase 77.5 / 77.20 tool registration pattern.
+/// Register `dream_now` on the operator's [`ToolRegistry`].
 ///
 /// Caller wires this AT BOOT after constructing the runner via
 /// `nexo_dream::boot::build_runner`. Two-layer gate:
 /// 1. **Host-level** — `NEXO_DREAM_NOW_ENABLED` env var (this fn).
 ///    When unset / falsy, the tool is NOT registered and the function
 ///    is a tracing-logged no-op.
-/// 2. **Per-binding** — Phase 16 `allowed_tools` decides whether the
-///    registered tool reaches a given binding's surface.
+/// 2. **Per-binding** — `allowed_tools` decides whether the registered
+///    tool reaches a given binding's surface.
 pub fn register_dream_now_tool(
     registry: &ToolRegistry,
     runner: Arc<AutoDreamRunner>,
@@ -257,7 +252,7 @@ mod tests {
     use crate::auto_dream::SkipReason;
     use crate::consolidation_lock::ConsolidationLock;
 
-    /// Phase 80.1.c.b — env-var tests touch process-wide state; serialize them.
+    /// Env-var tests touch process-wide state; serialize them.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Set the env var inside an `ENV_LOCK` guard, return the guard so the
@@ -553,7 +548,7 @@ mod tests {
         assert_eq!(def.name, DREAM_NOW_TOOL_NAME);
     }
 
-    // ── Phase 80.1.c.b — host-level env gate ──
+    // ── host-level env gate ──
 
     #[tokio::test]
     async fn register_dream_now_skips_when_env_disabled() {

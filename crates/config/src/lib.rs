@@ -18,25 +18,25 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub memory: MemoryConfig,
     pub plugins: PluginsConfig,
-    /// Phase F5 of `cody-cli-install` — operator-configured
+    /// Operator-configured
     /// persona discovery walk knobs. Loaded from
     /// `personas/discovery.yaml`. Always populated; absent
     /// file → empty default (no scan, no installed personas
     /// surface in admin RPC).
     pub personas: PersonasConfig,
-    /// Phase 11 — optional extension system config. `None` when the file is
+    /// Optional extension system config. `None` when the file is
     /// absent; consumers should fall back to `ExtensionsConfig::default()`.
     pub extensions: Option<ExtensionsConfig>,
-    /// Phase 12.4 — optional MCP runtime config. `None` when `mcp.yaml` is
+    /// Optional MCP runtime config. `None` when `mcp.yaml` is
     /// absent; in that case the MCP subsystem is simply not started.
     pub mcp: Option<McpConfig>,
-    /// Phase 12.6 — optional server-side config (expose this agent as an
+    /// Optional server-side config (expose this agent as an
     /// MCP server). `None` when `mcp_server.yaml` is absent.
     pub mcp_server: Option<McpServerConfig>,
-    /// Phase 18 — runtime-level knobs (hot-reload). Always populated;
+    /// Runtime-level knobs (hot-reload). Always populated;
     /// an absent `runtime.yaml` yields [`RuntimeConfig::default`].
     pub runtime: RuntimeConfig,
-    /// Phase 19 — generic poller subsystem. `None` when
+    /// Generic poller subsystem. `None` when
     /// `pollers.yaml` is absent (subsystem off).
     pub pollers: Option<PollersConfig>,
     /// TaskFlow runtime knobs. Always populated; absent file → defaults.
@@ -44,13 +44,13 @@ pub struct AppConfig {
     /// Transcripts subsystem (FTS index + redaction). Always populated;
     /// absent file → defaults (FTS on, redaction off).
     pub transcripts: TranscriptsConfig,
-    /// FOLLOWUPS PR-6 — optional pairing config overrides
+    /// Optional pairing config overrides
     /// (`config/pairing.yaml`). `None` keeps the legacy hardcoded
     /// paths (`<memory_dir>/pairing.db`,
     /// `~/.nexo/secret/pairing.key`); each field overrides
     /// selectively when the file is present.
     pub pairing: Option<PairingInner>,
-    /// Phase 82.2 — optional inbound webhook receiver. `None`
+    /// Optional inbound webhook receiver. `None`
     /// when absent; even when present, the listener only spawns
     /// if `webhook_receiver.enabled == true`.
     pub webhook_receiver: Option<WebhookServerConfig>,
@@ -58,7 +58,7 @@ pub struct AppConfig {
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
 ///
-/// Phase 12.6 bootstrap only needs identity (pick the first agent) and the
+/// The mcp-server bootstrap only needs identity (pick the first agent) and the
 /// server config itself. Skipping `llm.yaml` / `broker.yaml` /
 /// `memory.yaml` lets the subcommand run on hosts that aren't configured
 /// as a full agent runtime — the operator just wants to expose tools.
@@ -70,13 +70,13 @@ pub struct McpServerBootConfig {
 
 impl AppConfig {
     /// Backwards-compat entrypoint — `load(dir)` ≡ `load_with_overrides(dir, None)`.
-    /// Pre-Phase-94 callers (CLI entrypoint without `--override-from`)
+    /// Callers without an override dir (CLI entrypoint without `--override-from`)
     /// route through here unchanged.
     pub fn load(dir: &Path) -> Result<Self> {
         Self::load_with_overrides(dir, None)
     }
 
-    /// Phase 94 — load with an optional override-dir layer. Each
+    /// Load with an optional override-dir layer. Each
     /// YAML respects the precedence chain in [`load_with_override`]:
     /// env var > override_dir > base dir > Default. The four
     /// historically-required configs (agents / broker / llm /
@@ -85,7 +85,7 @@ impl AppConfig {
     /// `mcp.yaml` or `transcripts.yaml` from a Kubernetes
     /// ConfigMap without touching the canonical config dir.
     pub fn load_with_overrides(dir: &Path, override_dir: Option<&Path>) -> Result<Self> {
-        // Phase 93 — zero-config daemon mode. When the config dir
+        // Zero-config daemon mode. When the config dir
         // doesn't exist or is missing any of the historically
         // "required" YAMLs, fall through with `Default::default()`
         // for that file and emit a `tracing::warn!` so operators
@@ -158,7 +158,7 @@ impl AppConfig {
         })
     }
 
-    /// Phase 93 — zero-config baked-in defaults. Returned by
+    /// Zero-config baked-in defaults. Returned by
     /// [`AppConfig::load`] when the config dir doesn't exist.
     /// Mirrors what `Default::default()` for the top-level
     /// configs produces; every optional + extension subsystem is
@@ -186,7 +186,7 @@ impl AppConfig {
         }
     }
 
-    /// Phase 12.6 — load only what `agent mcp-server` needs. Tolerant of
+    /// Load only what `agent mcp-server` needs. Tolerant of
     /// missing `llm.yaml` / `broker.yaml` / `memory.yaml` env vars so the
     /// subcommand runs on hosts that don't have a full runtime configured.
     pub fn load_for_mcp_server(dir: &Path) -> Result<McpServerBootConfig> {
@@ -313,7 +313,7 @@ fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
     Ok(())
 }
 
-/// Phase 93 — load an optional YAML file that historically was
+/// Load an optional YAML file that historically was
 /// required, falling back to `Default::default()` with a WARN log
 /// when the file is absent. Same `${ENV_VAR}` placeholder
 /// resolution + same `schema_version` stripping as
@@ -329,14 +329,14 @@ where
     if !path.exists() {
         tracing::warn!(
             path = %path.display(),
-            "config file missing — using Default::default() (Phase 93 zero-config mode)"
+            "config file missing — using Default::default() (zero-config mode)"
         );
         return Ok(T::default());
     }
     load_required::<T>(dir, filename)
 }
 
-/// Phase 94 — resolver for the "where does this YAML come from"
+/// Resolver for the "where does this YAML come from"
 /// question. Three sources in priority order:
 ///
 ///   1. `NEXO_<NAME>_YAML` env var pointing at an absolute file
@@ -348,8 +348,7 @@ where
 ///      style). Each mapping key wins from the override; nested
 ///      mappings recurse; scalars / sequences replace wholesale.
 ///   3. `<base_dir>/<filename>` — the canonical config dir
-///      supplied via `--config` (or the XDG default Phase 92.9
-///      installed).
+///      supplied via `--config` (or the XDG default location).
 ///
 /// Returns the resolved value or `T::default()` when none of the
 /// three sources turn up a file. Emits ONE tracing line per
@@ -393,7 +392,7 @@ where
         (false, false) => {
             tracing::warn!(
                 path = %base_path.display(),
-                "config file missing — using Default::default() (Phase 93 zero-config mode)"
+                "config file missing — using Default::default() (zero-config mode)"
             );
             Ok(T::default())
         }
@@ -449,7 +448,7 @@ where
     }
 }
 
-/// Phase 94 — recursively merge `over` on top of `base`. Mappings
+/// Recursively merge `over` on top of `base`. Mappings
 /// merge per-key (override wins ties; nested mappings recurse).
 /// Scalars + sequences replace wholesale.
 fn yaml_deep_merge(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
@@ -470,7 +469,7 @@ fn yaml_deep_merge(base: &mut serde_yaml::Value, over: serde_yaml::Value) {
     }
 }
 
-/// Phase 94 — shared "read file + resolve env placeholders" path
+/// Shared "read file + resolve env placeholders" path
 /// for both base and override loads. Mirrors what `load_required`
 /// does inline, factored out so [`load_with_override`] can call
 /// it twice (once per layer) without re-implementing.
@@ -480,7 +479,7 @@ fn read_yaml_resolved(path: &Path, label: &str) -> Result<String> {
     env::resolve_placeholders(&raw, label)
 }
 
-/// Phase 94 — deserialize a single YAML file with the same
+/// Deserialize a single YAML file with the same
 /// schema-version stripping + placeholder resolution as
 /// [`load_required`]. Used by [`load_with_override`] when no
 /// merge applies (single-source paths).
@@ -526,7 +525,7 @@ fn deserialize_yaml_with_schema_version<T: serde::de::DeserializeOwned>(raw: &st
     Ok(serde_yaml::from_value(v)?)
 }
 
-/// Load personas/discovery.yaml. Phase F5 of cody-cli-install.
+/// Load personas/discovery.yaml.
 /// Missing dir / file → empty defaults (no scan happens).
 fn load_personas(dir: &Path) -> Result<PersonasConfig> {
     let personas_dir = dir.join("personas");
@@ -548,7 +547,7 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
         load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?.map(|f| f.email);
     let browser =
         load_optional::<BrowserConfigFile>(&plugins_dir, "browser.yaml")?.map(|f| f.browser);
-    // Phase 81.5 — optional discovery knobs at plugins/discovery.yaml.
+    // Optional discovery knobs at plugins/discovery.yaml.
     // Missing file => default (empty search_paths => nothing scanned).
     let discovery = load_optional::<PluginDiscoveryConfigFile>(&plugins_dir, "discovery.yaml")?
         .map(|f| f.discovery)

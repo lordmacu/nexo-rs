@@ -17,11 +17,11 @@ pub struct McpServerInfo {
 }
 
 /// Server-declared capabilities flattened to booleans. The upstream spec has
-/// nested objects with `listChanged` / `subscribe` flags; 12.1 only cares
-/// whether a feature is present at all.
+/// nested objects with `listChanged` / `subscribe` flags; the client only
+/// cares whether a feature is present at all.
 ///
-/// Phase 80.9.c — `experimental` is now retained verbatim (instead of
-/// being dropped on parse) so callers can run
+/// `experimental` is retained verbatim (instead of being dropped on
+/// parse) so callers can run
 /// [`crate::channel::has_channel_capability`] against the raw
 /// JSON. Older servers that don't emit `experimental` parse cleanly:
 /// the field defaults to `Value::Null` and the helper short-circuits
@@ -66,13 +66,12 @@ pub struct McpTool {
     pub description: Option<String>,
     #[serde(default, rename = "inputSchema")]
     pub input_schema: serde_json::Value,
-    /// Phase 74.2 — MCP 2025-11-25 SEP-986. Optional JSON Schema
-    /// describing the **success** payload of `tools/call`. When
-    /// present, the tool's `McpToolResult.structured_content`
-    /// (Phase 74.3) MUST validate against this schema. Claude
-    /// Code 2.1 uses this to type-check responses before forwarding
-    /// to the model — declaring it explicitly closes the class of
-    /// "schema drift" bugs that hit Phase 73's `updatedInput` flap.
+    /// MCP 2025-11-25 SEP-986. Optional JSON Schema describing the
+    /// **success** payload of `tools/call`. When present, the tool's
+    /// `McpToolResult.structured_content` MUST validate against this
+    /// schema. Clients use this to type-check responses before
+    /// forwarding to the model — declaring it explicitly closes the
+    /// class of "schema drift" bugs around `updatedInput`.
     /// Servers that don't have a stable response shape can leave
     /// it as `None` (default); the field is omitted from the wire
     /// then, matching pre-2025-11-25 behaviour.
@@ -123,16 +122,14 @@ pub struct McpToolResult {
     pub content: Vec<McpContent>,
     #[serde(default, rename = "isError")]
     pub is_error: bool,
-    /// Phase 74.3 — MCP 2025-11-25 typed result. When `Some`,
-    /// Claude Code 2.1 prefers this over re-parsing
-    /// `content[0].text` as JSON, which is the round-trip that
-    /// surfaced the Phase 73 `updatedInput` validation flap (the
-    /// text was re-serialised through Claude's Zod schema and the
-    /// drift between our shape and theirs blew up). Servers that
-    /// declare an `outputSchema` on the tool SHOULD populate this
-    /// so the validator runs against the typed object directly.
-    /// Omitted from the wire when `None` to stay compatible with
-    /// pre-2025-11-25 clients.
+    /// MCP 2025-11-25 typed result. When `Some`, clients prefer this
+    /// over re-parsing `content[0].text` as JSON — the round-trip
+    /// that surfaced `updatedInput` validation drift, where the text
+    /// was re-serialised through the client's schema and the shape
+    /// mismatch blew up. Servers that declare an `outputSchema` on
+    /// the tool SHOULD populate this so the validator runs against
+    /// the typed object directly. Omitted from the wire when `None`
+    /// to stay compatible with pre-2025-11-25 clients.
     #[serde(
         default,
         rename = "structuredContent",
@@ -161,7 +158,7 @@ pub(crate) struct ToolsListPage {
     pub next_cursor: Option<String>,
 }
 
-/// Phase 12.5 — MCP data resource declaration as returned by `resources/list`.
+/// MCP data resource declaration as returned by `resources/list`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct McpResource {
     pub uri: String,
@@ -171,16 +168,16 @@ pub struct McpResource {
     pub description: Option<String>,
     #[serde(default, rename = "mimeType")]
     pub mime_type: Option<String>,
-    /// Phase 12.5 follow-up — optional metadata the server uses to hint
-    /// the intended audience (`"user"`/`"assistant"`) and relative
+    /// Optional metadata the server uses to hint the intended
+    /// audience (`"user"`/`"assistant"`) and relative
     /// priority (0.0–1.0). LLM-facing tools surface this so the model can
     /// triage which resources to pull first.
     #[serde(default)]
     pub annotations: Option<McpAnnotations>,
 }
 
-/// Phase 12.5 follow-up — MCP resource annotations. Free-form object in
-/// the spec; we decode the two known fields and ignore the rest.
+/// MCP resource annotations. Free-form object in the spec; we decode
+/// the two known fields and ignore the rest.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct McpAnnotations {
     /// Non-empty when the server scopes this resource to specific
@@ -214,7 +211,7 @@ pub(crate) struct ResourcesListPage {
     pub next_cursor: Option<String>,
 }
 
-/// Phase 12.8 — RFC-6570 URI template exposed by an MCP server.
+/// RFC-6570 URI template exposed by an MCP server.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct McpResourceTemplate {
     #[serde(default, rename = "uriTemplate")]

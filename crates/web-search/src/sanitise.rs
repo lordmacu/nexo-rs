@@ -1,6 +1,6 @@
 //! Defense-in-depth scrubber for SERP text before it lands in the
-//! prompt. Identical philosophy to Phase 19 (`language` directive) and
-//! Phase 21 (`# LINK CONTEXT`): SERPs are attacker-controlled input.
+//! prompt. Same philosophy as the `language` directive and the
+//! `# LINK CONTEXT` block: SERPs are attacker-controlled input.
 
 /// Strips control characters, normalises CR/LF to spaces, collapses
 /// runs of whitespace, and hard-caps the byte length. Returns an empty

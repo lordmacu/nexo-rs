@@ -1,6 +1,5 @@
-//! Phase 77.8 — bash destructive-command warning.
+//! Bash destructive-command warning.
 //!
-//! Ported from `claude-code-leak/src/tools/BashTool/destructiveCommandWarning.ts`.
 //! 16 compiled regex patterns detect known destructive git / rm / SQL / infra
 //! commands. First match wins. Pure function, no alloc, no async.
 
@@ -93,8 +92,6 @@ static GIT_CLEAN_DRY_RUN: LazyLock<Regex> =
 /// Checks a bash command string against known destructive patterns.
 /// Returns a human-readable warning, or `None` if no pattern matches.
 /// The first match wins; subsequent patterns are not checked.
-///
-/// Ported from `claude-code-leak/src/tools/BashTool/destructiveCommandWarning.ts:95-102`.
 pub fn check_destructive_command(command: &str) -> Option<&'static str> {
     for (pattern, warning) in DESTRUCTIVE_PATTERNS.iter() {
         if !pattern.is_match(command) {
@@ -112,20 +109,20 @@ pub fn check_destructive_command(command: &str) -> Option<&'static str> {
     None
 }
 
-// ── Phase 80.20 — read-only command classifier ──
+// ── Read-only command classifier ──
 //
-// Composes Phase 77.8 (`check_destructive_command`) + Phase 77.9
-// (`check_sed_in_place`) with an explicit positive whitelist so the
+// Composes `check_destructive_command` + `check_sed_in_place`
+// with an explicit positive whitelist so the
 // classifier stays *conservative*: when in doubt it returns `false`.
 //
-// Used by `nexo_fork::AutoMemFilter` (Phase 80.20) to gate the
-// `Bash` tool inside forked memory-consolidation runs (autoDream
-// Phase 80.1, AWAY_SUMMARY Phase 80.14, eval harness Phase 51).
+// Used by `nexo_fork::AutoMemFilter` to gate the
+// `Bash` tool inside forked memory-consolidation runs (autoDream,
+// AWAY_SUMMARY, eval harness).
 //
 // NOT a security boundary by itself — pair with
-// `should_use_sandbox` (Phase 77.10) for defense-in-depth. Trust
+// `should_use_sandbox` for defense-in-depth. Trust
 // the whitelist only when the call site has its own audit (e.g.
-// post-fork `files_touched` check in 80.1).
+// the post-fork `files_touched` check).
 
 /// Static set of commands considered read-only — they do not mutate
 /// the filesystem, do not perform network egress that affects external
@@ -205,9 +202,8 @@ const MUTATING_MARKERS: &[&str] = &[
 ///    word must appear in [`READ_ONLY_COMMANDS`]. Unknown command →
 ///    `false`.
 ///
-/// Reference port: `claude-code-leak/src/tools/BashTool/bashSecurity.ts`
-/// `isReadOnly` heuristic, generalised to compose existing nexo
-/// classifiers from Phase 77.8 / 77.9.
+/// Generalises an `isReadOnly` heuristic to compose the existing
+/// destructive-command and sed-in-place classifiers.
 ///
 /// ## Examples
 ///
@@ -336,7 +332,7 @@ fn split_command_clauses(command: &str) -> Vec<&str> {
     out
 }
 
-// ── Phase 77.9 — sed in-place warning ──
+// ── sed in-place warning ──
 
 /// Regex for detecting `sed -i` / `sed --in-place` / `sed -i.bak`.
 /// Matches the sed command followed by the in-place edit flag anywhere
@@ -346,9 +342,6 @@ static SED_IN_PLACE: LazyLock<Regex> =
 
 /// Detects `sed -i` (or `--in-place`, or `-i.bak`) in a bash command
 /// and returns a warning that the file will be modified in place.
-///
-/// Ported from `claude-code-leak/src/tools/BashTool/sedValidation.ts`
-/// and `sedEditParser.ts`.
 pub fn check_sed_in_place(command: &str) -> Option<&'static str> {
     if SED_IN_PLACE.is_match(command) {
         Some("Note: sed -i modifies files in place")
@@ -614,7 +607,7 @@ mod tests {
         assert!(w.unwrap().contains("discard uncommitted"));
     }
 
-    // ── Phase 77.9 — sed in-place warning ──
+    // ── sed in-place warning ──
     #[test]
     fn sed_in_place_detected() {
         assert!(check_sed_in_place("sed -i 's/foo/bar/' file.txt").is_some());
@@ -635,7 +628,7 @@ mod tests {
         assert!(check_sed_in_place("sed -i 's/foo/bar/' file.txt | cat").is_some());
     }
 
-    // ── Phase 80.20 — is_read_only classifier ──
+    // ── is_read_only classifier ──
     //
     // Provider-agnostic: this classifier is consumed by
     // `nexo_fork::AutoMemFilter` which works under any LlmClient

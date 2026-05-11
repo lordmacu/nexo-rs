@@ -14,7 +14,7 @@
 //!
 //! Persistence is the microapp's responsibility — this struct
 //! lives in memory; a real deployment serialises the records to
-//! the per-extension state dir (Phase 82.6) on every change.
+//! the per-extension state dir on every change.
 
 use std::collections::BTreeMap;
 

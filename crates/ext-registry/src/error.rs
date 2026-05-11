@@ -1,4 +1,4 @@
-//! Phase 31.0 — error variants returned by index parse +
+//! Error variants returned by index parse +
 //! validation. Each variant names the entry id (when known) +
 //! the field at fault so operator-facing errors point at the
 //! exact line in the offending registry submission.

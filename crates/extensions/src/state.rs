@@ -1,4 +1,4 @@
-//! Phase 82.6 — per-extension state directory convention.
+//! Per-extension state directory convention.
 //!
 //! Extensions need a stable place to put SQLite databases,
 //! vault files, and per-tenant artifacts. The convention

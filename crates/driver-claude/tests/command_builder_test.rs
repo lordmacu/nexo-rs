@@ -7,7 +7,7 @@ fn base(prompt: &str) -> ClaudeCommand {
 #[test]
 fn default_only() {
     let args = base("hi").debug_args();
-    // Phase 73 — `--verbose` is mandatory whenever
+    // `--verbose` is mandatory whenever
     // `--print` + `--output-format=stream-json` combine; without
     // it the Claude CLI bails with "stream-json requires
     // --verbose" and the driver loop spins on phantom turns.
@@ -56,7 +56,7 @@ fn with_mcp_config() {
     assert!(args
         .windows(2)
         .any(|w| w == ["--mcp-config", "/etc/mcp.json"]));
-    // Phase 73 — strict flag follows so Claude does not merge
+    // Strict flag follows so Claude does not merge
     // with the user's ~/.claude.json (which silently drops the
     // driver's nexo-driver server).
     assert!(args.iter().any(|a| a == "--strict-mcp-config"));

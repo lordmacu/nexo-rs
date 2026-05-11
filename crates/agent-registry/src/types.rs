@@ -86,13 +86,13 @@ pub struct AgentSnapshot {
     pub last_event_at: DateTime<Utc>,
     pub last_diff_stat: Option<String>,
     pub last_progress_text: Option<String>,
-    /// Phase 77.20.3 — persisted proactive Sleep state. Stored in
-    /// the JSON snapshot and mirrored to dedicated SQLite columns so
-    /// boot-time restore can list/scan sleeping goals efficiently.
+    /// Persisted proactive Sleep state. Stored in the JSON snapshot
+    /// and mirrored to dedicated SQLite columns so boot-time restore
+    /// can list/scan sleeping goals efficiently.
     #[serde(default)]
     pub sleep: Option<AgentSleepState>,
-    /// Phase 77.16 — pending AskUserQuestion checkpoint. Persisted so
-    /// reply routing + timeout logic survive daemon restart.
+    /// Pending AskUserQuestion checkpoint. Persisted so reply routing
+    /// + timeout logic survive daemon restart.
     #[serde(default)]
     pub ask_pending: Option<AskPendingState>,
 }
@@ -114,14 +114,14 @@ impl Default for AgentSnapshot {
     }
 }
 
-/// Phase 80.10 — provenance + lifecycle posture for a goal handle.
+/// Provenance + lifecycle posture for a goal handle.
 ///
 /// Distinguishes how a goal was spawned and how it should survive
-/// a daemon restart. Phase 71's reattach hook is kind-aware in
-/// 80.10: `Bg` / `Daemon` / `DaemonWorker` rows that were `Running`
-/// before the daemon died keep `Running` on boot (because the
-/// operator expects them to survive); `Interactive` rows flip to
-/// `LostOnRestart` (because the user is gone).
+/// a daemon restart. The reattach hook is kind-aware: `Bg` / `Daemon`
+/// / `DaemonWorker` rows that were `Running` before the daemon died
+/// keep `Running` on boot (because the operator expects them to
+/// survive); `Interactive` rows flip to `LostOnRestart` (because the
+/// user is gone).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
@@ -187,18 +187,18 @@ pub struct AgentHandle {
     /// `Some` once the goal reached a terminal state.
     pub finished_at: Option<DateTime<Utc>>,
     pub snapshot: AgentSnapshot,
-    /// Phase 79.1 — JSON-encoded `nexo_core::plan_mode::PlanModeState`
-    /// for this goal. `None` is the implicit "Off" — the field is
-    /// kept opaque (a string) so this crate stays free of a `nexo_core`
+    /// JSON-encoded `nexo_core::plan_mode::PlanModeState` for this
+    /// goal. `None` is the implicit "Off" — the field is kept opaque
+    /// (a string) so this crate stays free of a `nexo_core`
     /// dependency. Mirrored to a dedicated `plan_mode` column at the
     /// SQLite store so reattach can hydrate without touching
     /// `handle_json`.
     #[serde(default)]
     pub plan_mode: Option<String>,
-    /// Phase 80.10 — how this goal was spawned. Default
-    /// `Interactive` for backward compatibility with rows persisted
-    /// before 80.10. Drives reattach behaviour and operator listing
-    /// filters (`nexo agent ps --kind=...`).
+    /// How this goal was spawned. Default `Interactive` for backward
+    /// compatibility with rows persisted before the column existed.
+    /// Drives reattach behaviour and operator listing filters
+    /// (`nexo agent ps --kind=...`).
     #[serde(default)]
     pub kind: SessionKind,
 }

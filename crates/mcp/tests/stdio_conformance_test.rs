@@ -1,8 +1,7 @@
-//! Phase 76.12 — replay of the 11 spec MCP 2025-11-25 conformance
-//! cases through the stdio transport.
+//! Replay of the spec MCP conformance cases through the stdio
+//! transport.
 //!
-//! Pattern from OpenClaw `research/src/mcp/channel-server.test.ts:25-35`
-//! (in-memory linked pair). Rust equivalent: `tokio::io::duplex` +
+//! Uses an in-memory linked pair: `tokio::io::duplex` +
 //! `run_with_io(handler, server_read, server_write, shutdown)`.
 //!
 //! Same observable contracts as `http_conformance_test` must hold,
