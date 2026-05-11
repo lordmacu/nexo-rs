@@ -1980,7 +1980,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Mode::Admin { port, open, tunnel } => {
-            return run_admin_via_plugin(port, open, tunnel).await
+            return run_admin_via_plugin(port, open, tunnel, &args.config_dir).await
         }
         Mode::Start => return run_daemon_start(&args.config_dir).await,
         Mode::Stop => return run_daemon_stop().await,
@@ -9797,7 +9797,12 @@ fn run_ext_help() -> Result<()> {
 /// `port` is forwarded as `NEXO_ADMIN_HTTP_BIND` so the operator
 /// can override the default `127.0.0.1:18000` from the legacy
 /// `--port` flag without re-learning new flags.
-async fn run_admin_via_plugin(port: u16, open: bool, tunnel: bool) -> Result<()> {
+async fn run_admin_via_plugin(
+    port: u16,
+    open: bool,
+    tunnel: bool,
+    config_dir: &Path,
+) -> Result<()> {
     println!();
     println!("┌─ nexo admin ─────────────────────────────────────────────────");
     println!("│");
@@ -9849,18 +9854,24 @@ async fn run_admin_via_plugin(port: u16, open: bool, tunnel: bool) -> Result<()>
     println!("│");
     println!("│  URL:  {url}");
 
-    // Probe the port. The plugin only listens once the daemon has
-    // spawned it; a closed port means the daemon isn't running yet.
-    let reachable = format!("127.0.0.1:{port}")
-        .parse::<std::net::SocketAddr>()
-        .ok()
-        .map(|addr| {
-            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400))
-                .is_ok()
-        })
-        .unwrap_or(false);
+    // Probe the port. nexo-plugin-admin only listens once the daemon
+    // has spawned it; a closed port means the daemon isn't running.
+    let probe = || {
+        format!("127.0.0.1:{port}")
+            .parse::<std::net::SocketAddr>()
+            .ok()
+            .map(|addr| {
+                std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400))
+                    .is_ok()
+            })
+            .unwrap_or(false)
+    };
+    let mut reachable = probe();
+    let will_autostart = !reachable && (open || tunnel);
     if reachable {
         println!("│  Status: ✓ reachable");
+    } else if will_autostart {
+        println!("│  Status: ✗ daemon not running — starting it (background) …");
     } else {
         println!("│  Status: ✗ not reachable — start the daemon first:");
         println!("│      nexo            # foreground");
@@ -9875,6 +9886,28 @@ async fn run_admin_via_plugin(port: u16, open: bool, tunnel: bool) -> Result<()>
     println!("│");
     println!("└──────────────────────────────────────────────────────────────");
     println!();
+
+    if will_autostart {
+        run_daemon_start(config_dir).await?;
+        use std::io::Write as _;
+        print!("waiting for the admin server on :{port} …");
+        let _ = std::io::stdout().flush();
+        for _ in 0..100 {
+            if probe() {
+                reachable = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        println!(" {}", if reachable { "✓ up" } else { "still not up" });
+        if !reachable {
+            eprintln!(
+                "note: the daemon is running but hasn't bound :{port} yet — give it a moment \
+                 and retry, or check the daemon log (`nexo` foreground / ~/.local/state/nexo/nexo.log)."
+            );
+        }
+        println!();
+    }
 
     if open && !tunnel {
         open_in_browser(&url);
