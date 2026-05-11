@@ -639,6 +639,7 @@ pub fn clear_last_quota() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn build_headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut map = HeaderMap::new();
@@ -855,6 +856,7 @@ mod tests {
     // ── last-known quota cache ──
 
     #[test]
+    #[serial]
     fn record_quota_event_is_visible_via_last_quota_event_for() {
         clear_last_quota();
         let event = QuotaEvent {
@@ -877,6 +879,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn last_quota_events_all_returns_one_per_provider() {
         clear_last_quota();
         let now = Utc::now();
@@ -897,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn extract_openai_compat_headers_promotes_to_quota_exceeded() {
         // OpenAI-compat: zero remaining requests + reset → Rejected.
         let h = build_headers(&[

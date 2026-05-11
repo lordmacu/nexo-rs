@@ -9826,7 +9826,7 @@ async fn run_admin_via_plugin(
     // which the daemon discovers + spawns automatically (the standard
     // auto-subprocess plugin path). Operators never run it directly —
     // they install it (cargo) and run the daemon.
-    let mut installed = which_in_path("nexo-plugin-admin");
+    let mut installed = admin_binary_installed();
 
     if !installed {
         if which_in_path("cargo") {
@@ -9838,7 +9838,7 @@ async fn run_admin_via_plugin(
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
-            installed = ok && which_in_path("nexo-plugin-admin");
+            installed = ok && admin_binary_installed();
             println!("│");
             if installed {
                 println!("│  ✓ nexo-plugin-admin installed");
@@ -10464,6 +10464,29 @@ fn which_in_path(bin: &str) -> bool {
     };
     for dir in std::env::split_paths(&path) {
         if dir.join(bin).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Checks PATH and the plugin state dir for the admin binary.
+/// `nexo install` downloads plugins to `$NEXO_HOME/state/plugins/<id>-<ver>/`,
+/// which is not in PATH. The daemon discovers plugins there via search_paths;
+/// this function mirrors that so the CLI doesn't lie about the binary being missing.
+fn admin_binary_installed() -> bool {
+    if which_in_path("nexo-plugin-admin") {
+        return true;
+    }
+    let state_dir = nexo_project_tracker::state::nexo_state_dir();
+    let plugins_root = state_dir.join("plugins");
+    let Ok(entries) = std::fs::read_dir(&plugins_root) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().map_or(false, |t| t.is_dir())
+            && entry.path().join("nexo-plugin-admin").is_file()
+        {
             return true;
         }
     }
