@@ -80,6 +80,10 @@ VOICE.md
 /OPENCLAW-*.md
 /PHASES-curated.md
 /PHASES-microapps.md
+# `demos/calculator/` — a markdown-only sample workspace (PHASES.md /
+# FOLLOWUPS.md / README) used to exercise the Phase 67 driver
+# subsystem's tracker parser. No code; not a runnable demo.
+/demos/
 
 # mdBook build output — published via GitHub Actions, not committed
 docs/book/
