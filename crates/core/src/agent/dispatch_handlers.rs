@@ -23,10 +23,12 @@ use nexo_agent_registry::{AgentRegistry, LogBuffer};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
 use nexo_dispatch_tools::{
     agent_hooks_list, agent_logs_tail, agent_status, ask_user_question, cancel_agent, list_agents,
-    pause_agent, program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput,
-    AgentLogsTailInput, AgentStatusInput, AskUserQuestionInput, CancelAgentInput,
-    DispatchDeniedPayload, DispatchSpawnedPayload, HookRegistry, ListAgentsInput, PauseAgentInput,
-    ProgramPhaseInput, ProgramPhaseOutput, UpdateBudgetInput,
+    pause_agent, program_phase_chain, program_phase_dispatch, program_phase_parallel,
+    resume_agent, update_budget, AgentHooksListInput, AgentLogsTailInput, AgentStatusInput,
+    AskUserQuestionInput, CancelAgentInput, DispatchDeniedPayload, DispatchSpawnedPayload,
+    HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseChainInput,
+    ProgramPhaseChainOutput, ProgramPhaseInput, ProgramPhaseOutput, ProgramPhaseParallelInput,
+    ProgramPhaseParallelOutput, UpdateBudgetInput,
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -76,9 +78,11 @@ pub struct DispatchToolContext {
     /// Self-modify gate. When `false`, dispatch tools that would
     /// target the daemon's own source workspace (i.e. the daemon
     /// is running under the same git root the goal is about to
-    /// modify) are refused with a clean error. Default `false` to
-    /// fail-safe in production; dev sets
-    /// `NEXO_ALLOW_SELF_MODIFY=1` to flip it on.
+    /// modify) are refused with a clean error. Default `true` —
+    /// the canonical dev usecase is the daemon helping finish its
+    /// own roadmap (per-goal worktree isolation keeps the live
+    /// source safe). Production / frozen-binary deploys flip OFF
+    /// with `NEXO_DISALLOW_SELF_MODIFY=1`.
     pub allow_self_modify: bool,
     /// Path the daemon process is running from. Compared against
     /// the active tracker root to decide whether a dispatch is a
@@ -96,6 +100,13 @@ pub struct DispatchToolContext {
     /// DispatchAudit goals. `None` keeps hook chaining disabled
     /// (useful for read-only configurations).
     pub chainer: Option<Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>>,
+    /// Phase 90 audit fix (Cody A.3) — daemon's shared
+    /// `Arc<LlmRegistry>` so `PreflightHandler` reports
+    /// `llm_ready` accurately for any registered provider, not
+    /// just the historical anthropic/minimax hardcode. `None`
+    /// in tests where the registry isn't wired (preflight then
+    /// degrades to the legacy hardcoded substring check).
+    pub llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
 }
 
 impl DispatchToolContext {
@@ -175,7 +186,7 @@ impl ToolHandler for ProgramPhaseHandler {
             return Ok(serde_json::to_value(
                 nexo_dispatch_tools::ProgramPhaseOutput::Forbidden {
                     phase_id: input.phase_id.clone(),
-                    reason: "self-modify is disabled (set NEXO_ALLOW_SELF_MODIFY=1 in dev to enable, or switch to a different workspace via init_project / set_active_workspace)".into(),
+                    reason: "self-modify is disabled by NEXO_DISALLOW_SELF_MODIFY=1 (production / frozen-binary deploy). Either unset that env var to re-enable, or switch to a different workspace via init_project / set_active_workspace.".into(),
                 },
             )?);
         }
@@ -273,6 +284,196 @@ impl ToolHandler for ProgramPhaseHandler {
         }
         Ok(serde_json::to_value(out)?)
     }
+}
+
+/// Phase 90 audit fix (Cody A.2) — `program_phase_chain` was
+/// declared in `WRITE_TOOL_NAMES` and referenced by Cody's system
+/// prompt but never registered, so chain calls fell through as
+/// "unknown tool". The underlying function in
+/// `nexo-dispatch-tools::chain.rs::program_phase_chain` already
+/// existed; this handler bridges it to the agent runtime + binds
+/// the synthesised `chain_hooks` to the freshly-dispatched goal
+/// (the comment at chain.rs:140-146 says the runtime is the right
+/// place for that binding because chains can outlive a single
+/// tool call).
+pub struct ProgramPhaseChainHandler;
+
+#[async_trait]
+impl ToolHandler for ProgramPhaseChainHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: ProgramPhaseChainInput = serde_json::from_value(args)?;
+        let policy = dispatch.dispatch_policy(ctx);
+        // Self-modify gate. Same rationale as ProgramPhaseHandler
+        // — chain dispatch is just N program_phase calls, the
+        // first of which would breach the gate.
+        if dispatch.is_self_modify_target() && !dispatch.allow_self_modify {
+            return Ok(serde_json::json!({
+                "first": ProgramPhaseOutput::Forbidden {
+                    phase_id: input.phases.first().cloned().unwrap_or_default(),
+                    reason: "self-modify is disabled by NEXO_DISALLOW_SELF_MODIFY=1 (production / frozen-binary deploy). Either unset that env var to re-enable, or switch to a different workspace via init_project / set_active_workspace.".into(),
+                },
+                "chain_hooks": Vec::<serde_json::Value>::new(),
+                "stop_on_fail": input.stop_on_fail,
+            }));
+        }
+        let out: ProgramPhaseChainOutput = program_phase_chain(
+            input,
+            dispatch.tracker.as_ref(),
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+            &policy,
+            dispatch.require_trusted,
+            ctx.sender_trusted,
+            dispatch.dispatcher_for(ctx),
+            dispatch.origin_for(ctx),
+            dispatch.caps_snapshot(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("program_phase_chain: {e}"))?;
+        // Bind the synthesised chain hooks to the freshly-spawned
+        // goal so each subsequent phase fires when the previous
+        // one completes. Ignored when the first phase didn't
+        // admit (NotFound / Rejected / Forbidden).
+        if let ProgramPhaseOutput::Dispatched { goal_id, .. } = &out.first {
+            for hook in &out.chain_hooks {
+                dispatch.hooks.add_unique(*goal_id, hook.clone());
+            }
+        }
+        Ok(serde_json::to_value(out)?)
+    }
+}
+
+/// Phase 90 audit fix (Cody A.2) — `program_phase_parallel`
+/// counterpart. Same shape as the chain handler: the function in
+/// `nexo-dispatch-tools::chain.rs::program_phase_parallel` already
+/// existed; this is the missing registration.
+pub struct ProgramPhaseParallelHandler;
+
+#[async_trait]
+impl ToolHandler for ProgramPhaseParallelHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: ProgramPhaseParallelInput = serde_json::from_value(args)?;
+        let policy = dispatch.dispatch_policy(ctx);
+        if dispatch.is_self_modify_target() && !dispatch.allow_self_modify {
+            // Mirror the per-phase Forbidden shape so the caller
+            // can iterate `results[]` uniformly.
+            let results: Vec<ProgramPhaseOutput> = input
+                .phases
+                .iter()
+                .map(|p| ProgramPhaseOutput::Forbidden {
+                    phase_id: p.clone(),
+                    reason: "self-modify is disabled by NEXO_DISALLOW_SELF_MODIFY=1 (production / frozen-binary deploy). Either unset that env var to re-enable, or switch to a different workspace via init_project / set_active_workspace.".into(),
+                })
+                .collect();
+            return Ok(serde_json::to_value(ProgramPhaseParallelOutput { results })?);
+        }
+        let out: ProgramPhaseParallelOutput = program_phase_parallel(
+            input,
+            dispatch.tracker.as_ref(),
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+            &policy,
+            dispatch.require_trusted,
+            ctx.sender_trusted,
+            dispatch.dispatcher_for(ctx),
+            dispatch.origin_for(ctx),
+            dispatch.caps_snapshot(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("program_phase_parallel: {e}"))?;
+        Ok(serde_json::to_value(out)?)
+    }
+}
+
+/// Phase 90 audit fix (Cody A.1) — `add_hook` was declared in
+/// `WRITE_TOOL_NAMES` and referenced by Cody's system prompt
+/// but never registered. Operator calls fell through as
+/// "unknown tool". Bridges directly to `HookRegistry::add_unique`
+/// (idempotent — duplicate ids are rejected with a clear
+/// reason field) so a replay of the same attach is a no-op.
+pub struct AddHookHandler;
+
+#[async_trait]
+impl ToolHandler for AddHookHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        #[derive(serde::Deserialize)]
+        struct Input {
+            goal_id: String,
+            hook: nexo_dispatch_tools::CompletionHook,
+        }
+        let input: Input = serde_json::from_value(args)
+            .map_err(|e| anyhow::anyhow!("add_hook: invalid params: {e}"))?;
+        let goal_id = parse_goal_id(&input.goal_id)?;
+        // Validate hook id non-empty so we can identify it later
+        // for `remove_hook`. Empty ids would also collide with
+        // every other empty-id attach via `add_unique`.
+        if input.hook.id.trim().is_empty() {
+            return Ok(serde_json::json!({
+                "added": false,
+                "reason": "hook.id must be a non-empty string",
+            }));
+        }
+        match dispatch.hooks.add_unique(goal_id, input.hook.clone()) {
+            Some(position) => Ok(serde_json::json!({
+                "added": true,
+                "position": position,
+                "goal_id": input.goal_id,
+                "hook_id": input.hook.id,
+            })),
+            None => Ok(serde_json::json!({
+                "added": false,
+                "reason": format!(
+                    "hook id `{}` already attached to goal {} (idempotent no-op)",
+                    input.hook.id, input.goal_id,
+                ),
+                "goal_id": input.goal_id,
+                "hook_id": input.hook.id,
+            })),
+        }
+    }
+}
+
+/// Phase 90 audit fix (Cody A.1) — `remove_hook` counterpart.
+/// Returns `removed: false` when the (goal_id, hook_id) pair is
+/// not in the registry — operators can probe-then-remove
+/// without polluting logs with errors.
+pub struct RemoveHookHandler;
+
+#[async_trait]
+impl ToolHandler for RemoveHookHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        #[derive(serde::Deserialize)]
+        struct Input {
+            goal_id: String,
+            hook_id: String,
+        }
+        let input: Input = serde_json::from_value(args)
+            .map_err(|e| anyhow::anyhow!("remove_hook: invalid params: {e}"))?;
+        let goal_id = parse_goal_id(&input.goal_id)?;
+        if input.hook_id.trim().is_empty() {
+            return Ok(serde_json::json!({
+                "removed": false,
+                "reason": "hook_id must be a non-empty string",
+            }));
+        }
+        let removed = dispatch.hooks.remove(goal_id, &input.hook_id);
+        Ok(serde_json::json!({
+            "removed": removed,
+            "goal_id": input.goal_id,
+            "hook_id": input.hook_id,
+        }))
+    }
+}
+
+/// Shared GoalId parser used by add/remove hook handlers.
+fn parse_goal_id(s: &str) -> anyhow::Result<GoalId> {
+    let uuid = uuid::Uuid::parse_str(s.trim())
+        .map_err(|e| anyhow::anyhow!("invalid goal_id `{s}`: {e}"))?;
+    Ok(GoalId(uuid))
 }
 
 pub struct ListAgentsHandler;
@@ -842,10 +1043,18 @@ impl ToolHandler for PreflightHandler {
                         d.daemon_source_root.display().to_string(),
                     )
                 });
+        // Phase 90 audit fix (Cody A.3) — consult the shared
+        // LlmRegistry instead of hardcoding anthropic/minimax.
+        // Falls back to the legacy substring check when the
+        // registry isn't wired (test contexts).
+        let llm_ready = match ctx.dispatch.as_ref().and_then(|d| d.llm_registry.as_ref()) {
+            Some(reg) => reg.names().iter().any(|n| n == llm_provider),
+            None => llm_provider == "anthropic" || llm_provider == "minimax",
+        };
         let report = serde_json::json!({
             "llm_provider": llm_provider,
             "llm_model": llm_model,
-            "llm_ready": llm_provider == "anthropic" || llm_provider == "minimax",
+            "llm_ready": llm_ready,
             "dispatch_ready": dispatch_ready,
             "dispatch_capability": dispatch_capability,
             "tracker_workspace": workspace,
@@ -1187,6 +1396,79 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
             ),
         ),
         ProgramPhaseHandler,
+    );
+    // Phase 90 audit fix (Cody A.2) — `program_phase_chain` and
+    // `program_phase_parallel` declared in WRITE_TOOL_NAMES +
+    // referenced by Cody's system prompt but never registered.
+    // Functions live in `nexo-dispatch-tools::chain.rs`; the
+    // missing wire-up made every chain/parallel call return
+    // "unknown tool" at runtime.
+    registry.register(
+        def(
+            "program_phase_chain",
+            "Dispatch a sequence of phases A → B → C. The first phase fires immediately; each subsequent phase is attached as a `dispatch_phase` hook on the previous so it fires only when the previous one's Done transition lands. Returns the first dispatch outcome plus the synthesised chain hooks (already attached server-side).",
+            obj_schema(
+                &["phases"],
+                json!({
+                    "phases": { "type": "array", "items": { "type": "string" } },
+                    "stop_on_fail": { "type": ["boolean", "null"] }
+                }),
+            ),
+        ),
+        ProgramPhaseChainHandler,
+    );
+    registry.register(
+        def(
+            "program_phase_parallel",
+            "Dispatch every phase in `phases` independently, respecting the registry's global cap (over-cap entries land as `Queued`). Optional `max_concurrent` caps how many to dispatch in this single call. Returns one outcome per requested phase.",
+            obj_schema(
+                &["phases"],
+                json!({
+                    "phases": { "type": "array", "items": { "type": "string" } },
+                    "max_concurrent": { "type": ["integer", "null"], "minimum": 1 }
+                }),
+            ),
+        ),
+        ProgramPhaseParallelHandler,
+    );
+    // Phase 90 audit fix (Cody A.1) — `add_hook` / `remove_hook`
+    // declared in WRITE_TOOL_NAMES but never registered. Bridges
+    // straight to HookRegistry::add_unique / remove (idempotent).
+    registry.register(
+        def(
+            "add_hook",
+            "Attach a completion hook to a running goal. The hook fires on the matching transition (Done/Failed/Cancelled/Progress) and runs the action (NotifyOrigin/NotifyChannel/DispatchPhase/DispatchAudit/NatsPublish/Shell). Idempotent: a duplicate hook id returns `added: false` with a `reason` field instead of erroring.",
+            obj_schema(
+                &["goal_id", "hook"],
+                json!({
+                    "goal_id": { "type": "string" },
+                    "hook": {
+                        "type": "object",
+                        "required": ["id", "on", "action"],
+                        "properties": {
+                            "id": { "type": "string" },
+                            "on": {},
+                            "action": {}
+                        }
+                    }
+                }),
+            ),
+        ),
+        AddHookHandler,
+    );
+    registry.register(
+        def(
+            "remove_hook",
+            "Detach a completion hook from a running goal by `(goal_id, hook_id)`. Returns `removed: false` when the hook isn't attached so operators can probe-then-remove without polluting logs.",
+            obj_schema(
+                &["goal_id", "hook_id"],
+                json!({
+                    "goal_id": { "type": "string" },
+                    "hook_id": { "type": "string" }
+                }),
+            ),
+        ),
+        RemoveHookHandler,
     );
     registry.register(
         def(

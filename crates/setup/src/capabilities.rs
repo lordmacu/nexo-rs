@@ -256,6 +256,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     },
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Phase 90 audit fix (Cody A.5) — when `1`, the Anthropic LLM client SKIPS the Claude-Code identity system block normally prepended to Bearer-auth (OAuth + setup-token) requests. Default OFF (spoof active) keeps existing subscription tokens working out-of-the-box. Flip ON for microapps that want honest `<microapp> via Anthropic` identification — but audit your acceptable use first; bypassing the identity check on a non-Claude-Code workload may violate your subscription's terms. Has zero effect for plain API-key auth.",
+        hint: "export NEXO_ANTHROPIC_NO_CLAUDE_CODE_SPOOF=1  # disable spoof",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_PROCESSING_PENDING_QUEUE_CAP",
         // Numeric cap rendered as a Boolean toggle entry: the
         // inventory cares whether the operator is overriding
@@ -1061,6 +1069,13 @@ mod drift_tests {
         "MOCK_CANCELLED_LOG",
         "MOCK_SAMPLING_LOG",
         "MOCK_SETLEVEL_LOG",
+        // Phase 27.2 — `crates/test-fixtures/mock-subprocess-plugin/`
+        // is a synthetic subprocess plugin used by the daemon-side
+        // spawn-shape e2e test (`subprocess_flip_e2e.rs`). When this
+        // env var is set to "1" the binary echoes its env to stdout
+        // for the test to assert. Pure test fixture, no production
+        // code path reads it.
+        "MOCK_SUBPROCESS_PLUGIN_ECHO_ENV",
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
