@@ -404,18 +404,24 @@ fn extract_persona_tarball(
 /// directory (common with CI-generated archives) so that
 /// `persona.toml` lands directly at the expected install path.
 async fn strip_single_top_dir(dir: &Path) -> Result<(), PersonaInstallError> {
-    let mut read = tokio::fs::read_dir(dir).await.map_err(|e| PersonaInstallError::Io {
-        op: "read_dir",
-        path: dir.display().to_string(),
-        reason: e.to_string(),
-    })?;
+    let mut read = tokio::fs::read_dir(dir)
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "read_dir",
+            path: dir.display().to_string(),
+            reason: e.to_string(),
+        })?;
 
     let mut entries: Vec<tokio::fs::DirEntry> = Vec::new();
-    while let Some(entry) = read.next_entry().await.map_err(|e| PersonaInstallError::Io {
-        op: "read_dir",
-        path: dir.display().to_string(),
-        reason: e.to_string(),
-    })? {
+    while let Some(entry) = read
+        .next_entry()
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "read_dir",
+            path: dir.display().to_string(),
+            reason: e.to_string(),
+        })?
+    {
         entries.push(entry);
     }
 
@@ -424,27 +430,36 @@ async fn strip_single_top_dir(dir: &Path) -> Result<(), PersonaInstallError> {
         return Ok(());
     }
     let sole = &entries[0];
-    let ft = sole.file_type().await.map_err(|e| PersonaInstallError::Io {
-        op: "read",
-        path: sole.path().display().to_string(),
-        reason: e.to_string(),
-    })?;
+    let ft = sole
+        .file_type()
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "read",
+            path: sole.path().display().to_string(),
+            reason: e.to_string(),
+        })?;
     if !ft.is_dir() {
         return Ok(());
     }
 
     let wrapper = sole.path();
-    let mut inner = tokio::fs::read_dir(&wrapper).await.map_err(|e| PersonaInstallError::Io {
-        op: "read_dir",
-        path: wrapper.display().to_string(),
-        reason: e.to_string(),
-    })?;
+    let mut inner = tokio::fs::read_dir(&wrapper)
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "read_dir",
+            path: wrapper.display().to_string(),
+            reason: e.to_string(),
+        })?;
 
-    while let Some(child) = inner.next_entry().await.map_err(|e| PersonaInstallError::Io {
-        op: "read_dir",
-        path: wrapper.display().to_string(),
-        reason: e.to_string(),
-    })? {
+    while let Some(child) = inner
+        .next_entry()
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "read_dir",
+            path: wrapper.display().to_string(),
+            reason: e.to_string(),
+        })?
+    {
         let child_name = child.file_name();
         let dest = dir.join(&child_name);
         tokio::fs::rename(&child.path(), &dest)
@@ -457,11 +472,13 @@ async fn strip_single_top_dir(dir: &Path) -> Result<(), PersonaInstallError> {
     }
 
     // Remove the now-empty wrapper dir.
-    tokio::fs::remove_dir(&wrapper).await.map_err(|e| PersonaInstallError::Io {
-        op: "remove",
-        path: wrapper.display().to_string(),
-        reason: e.to_string(),
-    })?;
+    tokio::fs::remove_dir(&wrapper)
+        .await
+        .map_err(|e| PersonaInstallError::Io {
+            op: "remove",
+            path: wrapper.display().to_string(),
+            reason: e.to_string(),
+        })?;
 
     Ok(())
 }
