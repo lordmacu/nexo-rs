@@ -415,17 +415,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn reload_with_no_config_dir_rejects_cleanly() {
+    async fn reload_with_no_config_dir_falls_back_to_defaults() {
+        // Phase 93 — `AppConfig::load` tolerates a missing config dir
+        // by returning `Default::default()` (same as the daemon's
+        // zero-config boot path). A hot-reload pointed at a
+        // nonexistent dir is therefore a clean no-op: defaults
+        // validate, there are 0 agents to hot-swap, nothing rejected.
         let coord = Arc::new(ConfigReloadCoordinator::new(
             PathBuf::from("/nonexistent-config-dir-xyz"),
             Arc::new(LlmRegistry::with_builtins()),
             CancellationToken::new(),
         ));
         let outcome = coord.reload().await;
-        assert!(outcome.applied.is_empty());
-        assert_eq!(outcome.rejected.len(), 1);
-        assert!(outcome.rejected[0].agent_id.is_none());
-        assert!(outcome.rejected[0].reason.contains("AppConfig::load"));
+        assert!(
+            outcome.rejected.is_empty(),
+            "a missing config dir is tolerated, not rejected: {:?}",
+            outcome.rejected
+        );
+        assert!(
+            outcome.applied.is_empty(),
+            "default config has no agents to apply: {:?}",
+            outcome.applied
+        );
     }
 
     #[tokio::test]

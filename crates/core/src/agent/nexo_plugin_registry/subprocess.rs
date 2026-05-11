@@ -4550,10 +4550,13 @@ fi
             .expect("subscribe gave_up");
         boot_with_supervisor(plugin.clone(), cancel.clone(), broker.clone()).await;
 
-        // First crash + handshake-fail respawns + gave_up: under 5s.
-        let event = tokio::time::timeout(Duration::from_secs(8), gave_up_sub.next())
+        // First crash + handshake-fail respawns + gave_up: ~1-2s of
+        // real work (backoff 200ms × 2 attempts + 300ms init timeout),
+        // but `cargo test --workspace` fans ~1.4k tests across the
+        // pool — give the respawn loop slack under that contention.
+        let event = tokio::time::timeout(Duration::from_secs(30), gave_up_sub.next())
             .await
-            .expect("gave_up arrives within 8s")
+            .expect("gave_up arrives within 30s")
             .expect("subscription delivers Some");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
