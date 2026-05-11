@@ -249,7 +249,23 @@ fn validate_min_nexo_version(
     current: &Version,
     errors: &mut Vec<ManifestError>,
 ) {
-    if !req.matches(current) {
+    // Strip any pre-release tag from `current` before matching.
+    // The `semver` crate (v1.x) follows Cargo's pre-release rules:
+    // a `VersionReq` only matches a pre-release version when at
+    // least one comparator explicitly mentions the same
+    // (major, minor, patch) tuple. So a daemon built as
+    // `0.1.6-rc3` would fail every `min_nexo_version` whose
+    // comparator doesn't pin that exact triple — including the
+    // catch-all `>=0.0.0`. For `min_nexo_version` the operator
+    // intent is purely "daemon is at least X.Y.Z"; release-cycle
+    // semantics (rc/alpha/beta) are irrelevant. Strip the tag and
+    // match against the bare release version.
+    let comparable = if current.pre.is_empty() {
+        current.clone()
+    } else {
+        Version::new(current.major, current.minor, current.patch)
+    };
+    if !req.matches(&comparable) {
         errors.push(ManifestError::MinNexoVersionMismatch {
             required: req.to_string(),
             current: current.to_string(),
