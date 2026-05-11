@@ -16,13 +16,15 @@ use nexo_driver_types::GoalId;
 use uuid::Uuid;
 
 fn tmp_db_path() -> PathBuf {
+    // process id + a fresh UUID: `cargo test` runs the tests in this
+    // binary as threads in one process, and a coarse-resolution clock
+    // made the old `SystemTime::now().as_nanos()` suffix non-unique
+    // under load — two tests then shared a SQLite file and one saw the
+    // other's row (`expected exactly one row, left: 2`).
     let p = std::env::temp_dir().join(format!(
         "nexo-plan-mode-reattach-{}-{}.db",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        Uuid::new_v4()
     ));
     let _ = std::fs::remove_file(&p);
     p
