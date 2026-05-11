@@ -43,7 +43,8 @@ dependencies; this is what changes per OS.
 |---|---|---|---|---|---|
 | `stt-candle` | **Default-track** — inbound voice-note transcription via HuggingFace Candle (pure Rust) | ✅ | ✅ | ✅ | ✅ |
 | `stt` | **Legacy** — same surface via whisper.cpp C++ binding (`whisper-rs`) | ✅ | ✅ | ⚠️ needs VS Build Tools 2022 + CMake | ⚠️ needs `cmake` + `clang` packages |
-| `stt-cloud` | Cloud STT — `SttProvider` trait + OpenAI Whisper-1 + Groq Whisper-large-v3 (REST). `CompositeProvider` fallback chain | ✅ | ✅ | ✅ | ✅ |
+| `stt-cloud` | Cloud STT (**native** variant) — `SttProvider` trait + OpenAI Whisper-1 + Groq Whisper-large-v3 (REST). `CompositeProvider` fallback chain. Pulls reqwest with `rustls-tls` | ✅ | ✅ | ✅ | ✅ |
+| `stt-cloud-wasm` | Cloud STT (**wasm32** variant) — same trait + REST providers as `stt-cloud`, but reqwest pulled without `rustls-tls` (browser fetch API handles TLS). Use this for `wasm32-unknown-unknown` microapps | — (use `stt-cloud`) | — (use `stt-cloud`) | — (use `stt-cloud`) | — (use `stt-cloud`) |
 | `stt-cloud-anthropic` | Adds Anthropic `voice_stream` WebSocket leg on top of `stt-cloud` (Claude.ai OAuth-gated; conversation engine + Deepgram Nova 3) | ✅ | ✅ | ✅ | ✅ |
 | `stt-cloud-local-candle` | Bridge — `LocalCandleProvider` so the Candle backend joins a `CompositeProvider` chain as the offline fallback leg + `*_then_candle` convenience constructors | ✅ | ✅ | ✅ | ✅ |
 | `voice` | Outbound voice replies via Microsoft Edge TTS + pure-Rust opus encoder | ✅ | ✅ | ✅ | ✅ |
@@ -213,17 +214,39 @@ push-to-talk streaming is a deferred follow-up — see
 [`FOLLOWUPS.md`](https://github.com/lordmacu/nexo-rs/blob/main/FOLLOWUPS.md)
 `91.x.wasm.phase-4b.streaming`.
 
-#### WASM (`wasm32-unknown-unknown`) — cloud only
+#### WASM (`wasm32-unknown-unknown`) — REST cloud works, voice_stream deferred
 
 The pure-Rust local backends (`stt-candle` Candle + `stt`
 whisper-rs) don't compile for `wasm32-unknown-unknown` today
 — the inference stack depends on crates that need kernel
 networking (`mio`) or aren't WASM-clean (`opus-wave`,
-`tokenizers` with `onig`, Candle's GEMM kernels). `stt-cloud`
-**does** compile on WASM (reqwest swaps to the browser fetch
-API automatically) — that's the supported STT path for
-browser microapps. `stt-cloud-anthropic` is native-only
-(tokio-tungstenite needs kernel sockets); browser microapps
+`tokenizers` with `onig`, Candle's GEMM kernels).
+
+**REST cloud STT works on wasm32.** Enable `stt-cloud-wasm`
+(the wasm-clean sibling of `stt-cloud` — reqwest pulled
+without `rustls-tls`, browser fetch API handles TLS). OpenAI
+Whisper-1 + Groq Whisper-large-v3 + the `CompositeProvider`
+fallback chain are fully supported in browser microapps.
+`SttProvider` trait drops `Send + Sync` bounds + uses
+`async_trait(?Send)` on wasm32 because the wasm-bindgen
+fetch backend returns futures holding js-sys types that
+aren't Send (single-threaded execution model — the bounds
+were a native-only thing anyway).
+
+Cross-target microapps select the right feature per-target
+in their own Cargo.toml:
+
+```toml
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+nexo-microapp-sdk = { workspace = true, features = ["stt-cloud-wasm"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nexo-microapp-sdk = { workspace = true, features = ["stt-cloud", "stt-cloud-anthropic", "stt-cloud-local-candle"] }
+```
+
+`stt-cloud-anthropic` (voice_stream WebSocket) is still
+native-only — tokio-tungstenite drags TCP types absent on
+wasm32. Browser microapps
 wanting voice_stream would need a `web-sys::WebSocket`-based
 swap-in (filed as `91.x.wasm.phase-4c`).
 

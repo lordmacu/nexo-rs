@@ -208,7 +208,7 @@ for the detailed close-out.
   `91.x.wasm.phase-4c` / `phase-4e` below.
 
 - 🔄 **91.x.wasm.phase-4c — WASM transport for the cloud STT
-  legs** — phase-4c.2 shipped 2026-05-10; phase-4c.3 deferred.
+  legs** — phase-4c.2 + phase-4c.3 shipped; phase-4c.4 deferred.
   - ✅ ~~**phase-4c.2 — hand-assembled multipart body**~~
     shipped — REST legs (OpenAI + Groq) no longer use
     `reqwest::multipart::Form` (native-only). Replaced with
@@ -216,82 +216,57 @@ for the detailed close-out.
     `Vec<u8>`, submitted via cross-platform `.body(Vec<u8>)`).
     6 new unit tests verify byte-exact framing including
     binary-audio passthrough + BCP-47 region subtag strip +
-    language auto-detect omission. The `anthropic` module
-    carries its own `cfg(not(wasm32))` gate so wasm builds
-    enabling `stt-cloud-anthropic` get a no-op feature
-    instead of a compile error (defense in depth — the parent
-    `cloud` gate still blocks wasm but the module is
-    independently safe).
-  - ⬜ **phase-4c.3 — workspace-level reqwest split (real cost
-    far higher than original estimate)** — second spike during
-    2026-05-11 session confirmed the wasm32 blocker is
-    structural, not feature-flag-shaped. The attempt split
-    `stt-cloud` into `stt-cloud-wasm` (no TLS feature) +
-    `stt-cloud` (adds `reqwest?/rustls-tls` for native). Source
-    code + Cargo feature definitions compiled fine on native.
-    But on wasm32, `cargo tree --invert reqwest --target
-    wasm32-unknown-unknown` reports "nothing to print" even
-    with `--features stt-cloud-wasm` explicitly enabled —
-    reqwest never enters the wasm32 dep tree.
+    language auto-detect omission.
+  - ✅ ~~**phase-4c.3 — workspace-level reqwest split**~~
+    shipped 2026-05-11 (commit `c4149c3`). REST cloud STT
+    now compiles cleanly for wasm32. Three structural changes:
+    (1) workspace.dependencies.reqwest trimmed to wasm-clean
+        baseline `["json", "charset"]`; native-only features
+        moved to consumer crates via additive declarations
+        (9 crates updated: cdp, ext-installer, core,
+        extensions, llm-auth, llm, memory, setup + daemon
+        binary which re-adds `macos-system-configuration` for
+        proxy detection);
+    (2) SDK reqwest moved from shared `[dependencies]` into
+        per-target blocks — `["json"]` on wasm32, `["json",
+        "rustls-tls"]` on native. Cargo's duplicate-key rule
+        only fires when the same dep is in both the shared
+        table and a per-target block; with shared decl
+        removed, per-target blocks are independent
+        declarations Cargo accepts cleanly;
+    (3) SttProvider trait split per target — wasm32 variant
+        drops `Send + Sync` + uses `async_trait(?Send)`
+        because reqwest's wasm-bindgen fetch backend returns
+        futures holding `Rc<RefCell<js_sys::futures::Inner>>`
+        which can't be Send. Single-threaded execution on
+        wasm32 means the bounds were a native-only thing.
 
-    Root cause: **resolver-2 cross-workspace feature
-    unification.** The workspace daemon binary
-    (`src/main.rs`) carries `reqwest = { workspace = true }`
-    and the workspace pin requests features that can't
-    activate on wasm32: `["rustls-tls", "json", "stream",
-    "cookies", "charset", "http2",
-    "macos-system-configuration"]`. Resolver-2 unifies
-    features for the same crate across ALL workspace members
-    per-target. On wasm32 it tries to unify with the daemon's
-    request, fails to satisfy `macos-system-configuration` +
-    `rustls-tls`, and silently drops reqwest from the wasm32
-    graph — even for SDK consumers that requested only
-    `["json"]`. The drop is silent because the daemon binary
-    itself never builds for wasm32; only the SDK does, but
-    the resolver still pessimistically excludes the dep.
+    Verified via `cargo tree -p nexo-microapp-sdk --target
+    wasm32-unknown-unknown --features stt-cloud-wasm
+    --invert reqwest`:
 
-    Real unblock paths (cost dramatically higher than the
-    original 1-2 h estimate):
-    (a) **workspace daemon reqwest split** — give the daemon
-        its own reqwest declaration that doesn't go through
-        `workspace = true`, restricting feature pollution to
-        the daemon binary. Touches every workspace crate that
-        currently pulls reqwest transitively (~8 crates) —
-        each must declare an isolated reqwest pin. High blast
-        radius.
-    (b) **rename reqwest in SDK** —
-        `reqwest-sdk = { package = "reqwest", ... }`. Requires
-        source-level rename of every `reqwest::Client::new()`
-        etc. Cargo treats the two as separate crates; SDK
-        gets its own wasm-clean feature set. Source touch
-        points: ~6 files in `stt/cloud/`. Medium effort.
-    (c) **extract SDK out of workspace entirely** — already
-        published to crates.io; could move to a separate repo
-        with its own workspace. Cleanest but biggest move.
-        Loses the in-repo iteration loop.
+      reqwest v0.12.28
+      └── nexo-microapp-sdk
 
-    Recommendation: defer until a real browser microapp drives
-    the demand. The decision tree changes once we have a
-    concrete user — for nexo-rs itself, the SDK's WASM
-    consumers will likely be served better by routing STT
-    through the SaaS backend (which IS native and has cloud
-    STT working) rather than uploading directly from the
-    browser. Phase-4c.3 only makes sense when a microapp
-    explicitly demands browser-side cloud STT.
+    Before phase-4c.3: "nothing to print" — reqwest never
+    entered the wasm32 graph. After: linked correctly.
+
+    Native suite unchanged: 39/39 cloud tests pass.
   - ⬜ **phase-4c.4 — Anthropic voice_stream WASM transport** —
-    after phase-4c.3 unblocks the parent gate, the
-    `AnthropicVoiceStream` impl still needs a `gloo-net::
-    websocket::futures::WebSocket` swap-in (tokio-tungstenite
-    is native-only). Design path: split
-    `AnthropicVoiceStream::transcribe` into a generic
-    `transcribe_protocol<Sink, Stream>` method + two cfg-gated
-    thin opener fns (`open_ws_native` / `open_ws_wasm`); the
-    protocol state machine (KeepAlive heartbeat, 4-trigger
-    finalize, event parser) stays identical across both
-    targets. Wrap the KeepAlive heartbeat in
+    still deferred. The voice_stream WebSocket leg
+    (`AnthropicVoiceStream`) carries its own `cfg(not(wasm32))`
+    gate because tokio-tungstenite drags TCP types absent on
+    wasm32. Browser microapps demanding voice_stream need a
+    `gloo-net::websocket::futures::WebSocket` swap-in. Design
+    path: split `transcribe` into a generic
+    `transcribe_protocol<Sink, Stream>` method + two
+    cfg-gated thin opener fns (`open_ws_native` /
+    `open_ws_wasm`). KeepAlive heartbeat wrapped in
     `wasm_bindgen_futures::spawn_local` on wasm
-    (`tokio::spawn` requires multi-threaded runtime that wasm
-    doesn't have). Estimated cost: ~4-6 h.
+    (`tokio::spawn` needs the multi-threaded runtime which
+    wasm doesn't have). Estimated cost: ~4-6 h. The protocol
+    state machine (KeepAlive heartbeat, 4-trigger finalize,
+    event parser) is target-agnostic and stays identical.
 
 - ⬜ **91.x.wasm.phase-4b.streaming — full push-to-talk live
   transcription** — phase-4b ships the one-shot path (buffer →
