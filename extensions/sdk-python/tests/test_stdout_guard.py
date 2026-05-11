@@ -6,11 +6,17 @@ console-print fixture plugin).
 """
 
 import io
+import json
+import os
+import subprocess
 import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from nexo_plugin_sdk import stdout_guard
+
+SDK_ROOT = Path(__file__).resolve().parent.parent
 
 
 class StdoutGuardModuleTests(unittest.TestCase):
@@ -96,6 +102,78 @@ class GuardWriterTests(unittest.TestCase):
         self.assertTrue(callable(writer.getvalue))
         self.assertTrue(writer.writable())
         self.assertFalse(writer.readable())
+
+
+DRIVER_PRINTING_HANDLER = """
+import asyncio
+import sys
+from nexo_plugin_sdk import PluginAdapter, Event
+
+MANIFEST = '''
+[plugin]
+id = "printer_plugin"
+version = "0.1.0"
+name = "Printer"
+description = "fixture"
+min_nexo_version = ">=0.1.0"
+'''
+
+async def on_event(topic, event, broker):
+    print("noisy debug from handler")            # would corrupt the JSON-RPC stream without the guard
+    sys.stdout.write("more noise via stdout.write\\n")
+    out = Event.new("plugin.inbound.echo", "printer_plugin", {"echoed": event.payload})
+    await broker.publish("plugin.inbound.echo", out)
+
+async def main():
+    adapter = PluginAdapter(manifest_toml=MANIFEST, on_event=on_event)
+    await adapter.run()
+
+asyncio.run(main())
+"""
+
+
+class StdoutGuardSubprocessTests(unittest.TestCase):
+    def _spawn(self):
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(SDK_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        return subprocess.Popen(
+            [sys.executable, "-c", DRIVER_PRINTING_HANDLER],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+
+    def test_handler_print_diverted_blessed_frame_clean(self):
+        proc = self._spawn()
+        try:
+            ev = (
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "broker.event",
+                        "params": {
+                            "topic": "plugin.outbound.x",
+                            "event": {"topic": "plugin.outbound.x", "source": "host", "payload": {"a": 1}},
+                        },
+                    }
+                )
+                + "\n"
+            ).encode("utf-8")
+            shutdown = (json.dumps({"jsonrpc": "2.0", "id": 9, "method": "shutdown"}) + "\n").encode("utf-8")
+            stdout, stderr = proc.communicate(input=ev + shutdown, timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        self.assertEqual(proc.returncode, 0, f"non-zero exit; stderr={stderr!r}")
+        lines = [l for l in stdout.decode("utf-8").splitlines() if l.strip()]
+        for line in lines:
+            json.loads(line)  # every stdout line must be valid JSON — guard kept the noise out
+        methods = [json.loads(l).get("method") for l in lines]
+        self.assertIn("broker.publish", methods, f"blessed publish frame missing; stdout={lines}")
+        err = stderr.decode("utf-8")
+        self.assertIn("[stdout-guard] noisy debug from handler", err, f"stderr={err!r}")
+        self.assertIn("[stdout-guard] more noise via stdout.write", err, f"stderr={err!r}")
 
 
 if __name__ == "__main__":

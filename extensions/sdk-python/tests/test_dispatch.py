@@ -65,6 +65,26 @@ async def main():
 asyncio.run(main())
 """
 
+DRIVER_SMALL_CAP = """
+import asyncio
+from nexo_plugin_sdk import PluginAdapter
+
+MANIFEST = '''
+[plugin]
+id = "smallcap_plugin"
+version = "0.1.0"
+name = "SmallCap"
+description = "fixture"
+min_nexo_version = ">=0.1.0"
+'''
+
+async def main():
+    adapter = PluginAdapter(manifest_toml=MANIFEST, max_frame_bytes=512)
+    await adapter.run()
+
+asyncio.run(main())
+"""
+
 
 def spawn_driver(driver_src: str) -> subprocess.Popen[bytes]:
     env = dict(os.environ)
@@ -151,6 +171,33 @@ class DispatchTests(unittest.TestCase):
         ]
         self.assertIn("shutdown_reply", kinds, f"shutdown reply missing: {lines}")
         self.assertIn("publish", kinds, f"slow handler publish missing: {lines}")
+
+    def test_oversized_frame_rejected_dispatch_continues(self):
+        proc = spawn_driver(DRIVER_SMALL_CAP)
+        try:
+            big = (
+                b'{"jsonrpc":"2.0","method":"broker.event","params":{"x":"'
+                + b"A" * 2000
+                + b'"}}\n'
+            )
+            init = jsonrpc_request(1, "initialize")
+            shutdown = jsonrpc_request(2, "shutdown")
+            stdout, stderr = proc.communicate(input=big + init + shutdown, timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        self.assertEqual(proc.returncode, 0, f"non-zero exit; stderr={stderr!r}")
+        self.assertIn(
+            b"exceeds max_frame_bytes",
+            stderr,
+            f"oversized frame should be logged + rejected; stderr={stderr!r}",
+        )
+        lines = [l for l in stdout.decode("utf-8").splitlines() if l.strip()]
+        ids = [json.loads(l).get("id") for l in lines]
+        self.assertIn(
+            1, ids, f"initialize reply missing — dispatch did not continue past oversized frame; stdout={lines}"
+        )
+        self.assertIn(2, ids, f"shutdown reply missing; stdout={lines}")
 
 
 if __name__ == "__main__":
