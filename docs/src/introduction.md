@@ -87,10 +87,8 @@ nexo-rs is opinionated toward that shape.
 ## Three minutes to a running agent
 
 ```bash
-# 1. Install nexo-rs — pick one channel from the docs:
-#    https://lordmacu.github.io/nexo-rs/getting-started/installation.html
-#    Quick path on Linux/macOS with Rust toolchain installed:
-cargo install --git https://github.com/lordmacu/nexo-rs nexo-rs
+# 1. Install nexo-rs (one-liner; needs Rust toolchain):
+curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 
 # 2. Install the Cody programmer-pair persona (or any other v2 pack):
 nexo persona install lordmacu/nexo-persona-cody
