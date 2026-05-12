@@ -50,7 +50,7 @@ jobs:
     steps:
       - id: tag
         env:
-          RAW_TAG: ${{ github.ref_name || github.event.inputs.tag }}
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           if [[ ! "$RAW_TAG" =~ ^nexo-rs-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
