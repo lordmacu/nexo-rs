@@ -1,13 +1,27 @@
-# Brainstorm — Plugin Opaque Config + Generic Credential Store (Phase 81.33.f+g)
+# Phase 93 — Plugin Opaque Config + Generic Credential Store
 
 **Date:** 2026-05-14
-**Status:** brainstorm (pre-spec)
-**Trigger:** Phase 81.33.a step 5 + 81.33.b.real both blocked
-on the same architectural debt: daemon imports
+**Status:** brainstorm (pre-spec) — phase reserved, sub-phases below
+**Tracker:**
+- Active table row in [`CLAUDE.md`](CLAUDE.md) — status `📋 backlog`
+- Full sub-phase breakdown in [`PHASES-backlog.md`](PHASES-backlog.md) §Phase 93
+- Resume prompt for `/forge spec` in [`FOLLOWUPS.md`](FOLLOWUPS.md) §Phase 93
+
+**Sequencing trigger:** invoke `/forge spec phase-93.1` only when
+ONE of these surfaces:
+(a) imminent batch of 3+ new plugins (slack, discord, sms, …),
+(b) blocked community-tier plugin request,
+(c) microapp roadmap dependency on plugin discovery.
+
+**Why this phase exists:** Phase 81.33.a step 5 (drop daemon-side
+`register_telegram_tools` library call) + Phase 81.33.b.real
+(manifest-driven pairing adapter) + Phase 81.33.c (drop
+`nexo-plugin-*` Cargo deps) are all blocked on the same
+architectural debt: daemon imports
 `nexo-plugin-{whatsapp,telegram,email}` because `cfg.plugins.X`
 is a typed Rust field per plugin AND `bundle.stores.X` /
 `nexo_auth::handle::X` are typed credential accessors keyed by
-plugin name as a const string. Until both are opaque
+plugin name as a const string. Until both surfaces are opaque
 (plugin-id-keyed maps), the daemon can't be plugin-agnostic.
 
 ## What the user asked for
@@ -229,15 +243,15 @@ stay; only the constants disappear.
 
 | Sub | Scope | Effort | Blocks |
 |-----|-------|--------|--------|
-| 81.33.f.1 | `[plugin.config_schema]` manifest section + parser | 1 session | f.2 |
-| 81.33.f.2 | `NexoPlugin::configure(value)` trait + RPC method | 1 session | f.3 |
-| 81.33.f.3 | `PluginsConfig.entries: BTreeMap` parallel field | 1 session | f.4 |
-| 81.33.f.4 | Plugins migrate their typed config readers to opaque | 2-3 sessions/plugin (× 5 plugins) | f.5 |
-| 81.33.f.5 | Drop typed `cfg.plugins.X` fields | 1 session | g.1 |
-| 81.33.g.1 | `GenericCredentialStore` trait | 1 session | g.2 |
-| 81.33.g.2 | `bundle.stores: DashMap<id, …>` parallel field | 1 session | g.3 |
-| 81.33.g.3 | Plugins migrate their typed stores | 1-2 sessions/plugin (× 4 plugins) | g.4 |
-| 81.33.g.4 | Drop typed store fields + `nexo_auth::handle::*` constants | 1 session | A finalize |
+| **93.1** | `[plugin.config_schema]` manifest section + parser | 1 session | 93.2 |
+| **93.2** | `NexoPlugin::configure(value)` trait + RPC method | 1 session | 93.3 |
+| **93.3** | `PluginsConfig.entries: BTreeMap` parallel field (backward-compat with typed) | 1 session | 93.4 |
+| **93.4** | Plugins migrate their typed config readers to opaque | 2-3 sessions/plugin (× 5 plugins) | 93.5 |
+| **93.5** | Drop typed `cfg.plugins.X` fields + deprecation cycle | 1 session | 93.6 |
+| **93.6** | `GenericCredentialStore` trait | 1 session | 93.7 |
+| **93.7** | `bundle.stores: DashMap<id, …>` parallel field (backward-compat) | 1 session | 93.8 |
+| **93.8** | Plugins migrate their typed stores to GenericCredentialStore | 1-2 sessions/plugin (× 4 plugins) | 93.9 |
+| **93.9** | Drop typed store fields + `nexo_auth::handle::*` constants | 1 session | Phase 81.33.a step 5 unblock |
 
 **Total realistic estimate:** 15-25 sessions across 3-5 weeks
 calendar time, plus 4-5 plugin patch publishes.
@@ -294,9 +308,27 @@ If none of those hold, the right move is:
 - Defer the full refactor to a future quarter where the
   trade-off justifies the investment.
 
-## Next: /forge spec only when triggered
+## Next: /forge spec when triggered
 
-Spec + plan land when a concrete need surfaces (a new plugin
-that doesn't fit the typed shape, an external request, a
-performance issue, etc.). Until then this brainstorm sits
-on disk as the authoritative design doc.
+Resume prompt for the next session (when trigger surfaces):
+
+> Phase 93.1 — define the `[plugin.config_schema]` manifest
+> section. Sub-phase scope: schema field on
+> `crates/plugin-manifest::PluginSection`, parser test covering
+> a multi-instance plugin (Telegram example with two `instance`
+> entries), validator that the schema string is a valid JSON
+> object with `"type":"object"` at root (mirror of
+> Phase 81.33.a's `OutboundToolSpec::input_schema` validator),
+> migration note on coexistence with typed
+> `cfg.plugins.X` fields during the deprecation window. /forge
+> spec phase-93.1 to formalise.
+
+Per sub-phase: each row in the migration table is its own
+brainstorm → spec → plan → ejecutar cycle. The 25-session
+estimate distributes across them; no single session attempts
+more than one sub-phase to keep blast radius bounded.
+
+Plugin authors (out-of-tree maintainers of
+nexo-rs-plugin-{whatsapp,telegram,email,browser,google}) get
+a heads-up issue 1 release cycle before 93.4 starts so they
+can spec their plugin-side migration in parallel.
