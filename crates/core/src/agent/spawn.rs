@@ -37,7 +37,9 @@
 //! Until those land, the function panics if called — boot path
 //! continues to use the inline loop in `src/main.rs`.
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -296,6 +298,41 @@ pub fn validate_agent_config(
     let catalog = crate::agent::KnownTools::new(known_tool_names.to_vec());
     crate::agent::validate_agent(cfg, telegram_cfgs, &catalog)
         .map_err(|e| SpawnError::Validation(format!("agent `{}`: {e}", cfg.id)))
+}
+
+/// Phase 81.32 c6 — sized newtype wrapping the type-erased
+/// spawner closure stored by
+/// [`crate::config_reload::ConfigReloadCoordinator`].
+///
+/// `ArcSwapOption<T>` requires `T: Sized` so we wrap the unsized
+/// `dyn Fn(…)` in a `Box` and the newtype around the `Box`. The
+/// coordinator stores `ArcSwapOption<AgentSpawnerFn>` and invokes
+/// via `spawner.0(cfg)`.
+///
+/// Boxed-future return because `async fn` in a trait/closure
+/// produces an opaque future type the coordinator can't name
+/// without GATs.
+///
+/// Lives in `spawn` (vs `config_reload`) so the field type on
+/// `ConfigReloadCoordinator` doesn't pull every per-agent dep
+/// the closure captures into the coordinator's API surface.
+pub struct AgentSpawnerFn(
+    pub  Box<
+        dyn Fn(AgentConfig) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
+            + Send
+            + Sync,
+    >,
+);
+
+impl AgentSpawnerFn {
+    /// Convenience: invoke the wrapped closure directly without
+    /// touching the `.0` field at every call site.
+    pub fn call(
+        &self,
+        cfg: AgentConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>> {
+        (self.0)(cfg)
+    }
 }
 
 /// Phase 81.32 c4 — per-agent runtime deps consumed by

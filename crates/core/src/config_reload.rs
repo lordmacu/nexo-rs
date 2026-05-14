@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::runtime::ReloadCommand;
-use crate::agent::spawn::SharedRuntimeContext;
+use crate::agent::spawn::{AgentSpawnerFn, SharedRuntimeContext};
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::telemetry;
 
@@ -78,6 +78,13 @@ pub struct ConfigReloadCoordinator {
     /// supported" rejection so tests that haven't wired the
     /// context stay on the old behaviour.
     shared_ctx: ArcSwapOption<SharedRuntimeContext>,
+    /// Phase 81.32 c6 — spawner closure the coordinator invokes
+    /// when an unknown agent id appears in `agents.yaml`. `None`
+    /// keeps the legacy rejection ("adding a new agent at
+    /// runtime is not supported"). Installed at boot via
+    /// [`Self::set_spawner`] once `src/main.rs` has finished
+    /// constructing all per-agent dependencies.
+    spawner: ArcSwapOption<AgentSpawnerFn>,
     shutdown: CancellationToken,
 }
 
@@ -111,6 +118,7 @@ impl ConfigReloadCoordinator {
             broker: ArcSwapOption::from(None),
             post_hooks: Mutex::new(Vec::new()),
             shared_ctx: ArcSwapOption::from(None),
+            spawner: ArcSwapOption::from(None),
             shutdown,
         }
     }
@@ -135,6 +143,23 @@ impl ConfigReloadCoordinator {
     /// not been called yet (legacy / test path).
     pub fn shared_context(&self) -> Option<Arc<SharedRuntimeContext>> {
         self.shared_ctx.load_full()
+    }
+
+    /// Phase 81.32 c6 — install the spawner closure invoked when
+    /// an unknown agent id appears in `agents.yaml`. Late-bindable
+    /// (same shape as [`Self::with_shared_context`]) so the
+    /// coordinator can exist before the boot loop captures every
+    /// per-agent dependency.
+    pub fn set_spawner(&self, spawner: Arc<AgentSpawnerFn>) {
+        self.spawner.store(Some(spawner));
+    }
+
+    /// Phase 81.32 c6 — read-only handle to the configured
+    /// spawner. `None` when [`Self::set_spawner`] has not yet
+    /// fired; callers fall back to the legacy "not supported"
+    /// rejection.
+    pub fn spawner(&self) -> Option<Arc<AgentSpawnerFn>> {
+        self.spawner.load_full()
     }
 
     /// Phase 81.32 — uninstall the per-agent reload handle when
