@@ -2215,14 +2215,28 @@ async fn main() -> Result<()> {
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
             .unwrap_or(false)
     {
+        tracing::info!(
+            paths = cfg.personas.discovery.search_paths.len(),
+            "persona admin-side pre-discovery skipped (empty search_paths or kill switch)"
+        );
         Vec::new()
     } else {
-        nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths)
-            .await
-            .into_iter()
-            .filter(|d| cfg.personas.discovery.id_passes_filters(&d.manifest.persona.id))
-            .map(|d| d.install_root)
-            .collect()
+        let roots: Vec<std::path::PathBuf> =
+            nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths)
+                .await
+                .into_iter()
+                .filter(|d| cfg.personas.discovery.id_passes_filters(&d.manifest.persona.id))
+                .map(|d| d.install_root)
+                .collect();
+        tracing::info!(
+            roots = roots.len(),
+            paths = cfg.personas.discovery.search_paths.len(),
+            "persona admin-side pre-discovery complete (AgentsYamlPatcher will scan these)"
+        );
+        for r in &roots {
+            tracing::info!(root = %r.display(), "persona root for admin RPC");
+        }
+        roots
     };
 
     // Single Arc<LlmRegistry> shared
@@ -4839,7 +4853,16 @@ async fn main() -> Result<()> {
         // `RuntimeSnapshot::policy_for(binding_idx)` per inbound event).
         let effective_boot =
             nexo_core::agent::effective::EffectiveBindingPolicy::from_agent_defaults(&agent_cfg);
-        let llm = match llm_registry.build(&cfg.llm, &agent_cfg.model) {
+        // Phase 81.32 c2 — LLM bind delegated to the shared
+        // helper. Behavior identical (skip agent with WARN on
+        // failure) but the error path now produces a typed
+        // `SpawnError::LlmBind` so hot-spawn surfaces an
+        // operator-actionable message at the wizard.
+        let llm = match nexo_core::agent::spawn::resolve_llm_client(
+            &agent_cfg,
+            &llm_registry,
+            &cfg.llm,
+        ) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(
@@ -6071,13 +6094,22 @@ async fn main() -> Result<()> {
         // actually exists. Typos like `allowed_tools: [whatapp_send]`
         // would otherwise boot silently and deliver an agent that
         // appears to have tools but cannot call any of them.
+        // Phase 81.32 c2 — validation delegated to
+        // `spawn::validate_agent_config`. Hot-spawn surfaces the
+        // typed `SpawnError::Validation` to the wizard; boot
+        // path keeps the existing `?` flow but with the same
+        // canonical message format.
         {
             let defs = tools.to_tool_defs();
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-            let catalog = nexo_core::agent::KnownTools::new(names);
-            nexo_core::agent::validate_agent(&agent_cfg, &cfg.plugins.telegram, &catalog).map_err(
-                |e| anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e),
-            )?;
+            nexo_core::agent::spawn::validate_agent_config(
+                &agent_cfg,
+                &cfg.plugins.telegram,
+                &names,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e)
+            })?;
         }
 
         // Cron binding contexts are now built in a single
@@ -6241,33 +6273,13 @@ async fn main() -> Result<()> {
         }
         let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
-        let mut runtime =
-            AgentRuntime::new(Arc::clone(&agent), broker.clone(), Arc::clone(&sessions));
-        // Hand the runtime the base registry so each session picks up a
-        // per-binding filtered clone from the ToolRegistryCache instead
-        // of paying a per-turn filter inside llm_behavior.
-        runtime = runtime.with_tool_base(Arc::clone(&tools));
-        if let Some(mem) = memory.clone() {
-            runtime = runtime.with_memory(mem);
-        }
-        runtime = runtime.with_peers(Arc::clone(&peer_directory));
-        runtime = runtime.with_redactor(Arc::clone(&transcripts_redactor));
-        if let Some(idx) = transcripts_index.as_ref() {
-            runtime = runtime.with_transcripts_index(Arc::clone(idx));
-        }
-        if let Some(ref bundle) = credentials {
-            runtime = runtime.with_credentials(Arc::clone(&bundle.resolver));
-            runtime = runtime.with_breakers(Arc::clone(&bundle.breakers));
-        }
-        runtime = runtime.with_link_extractor(Arc::clone(&link_extractor));
-        if let Some(ref ws) = web_search_router {
-            runtime = runtime.with_web_search_router(Arc::clone(ws));
-        }
-        runtime = runtime.with_pairing_gate(Arc::clone(&pairing_gate));
-        // Register per-channel adapters so challenge
-        // delivery uses the right outbound topic + format. Channels
-        // without a registered adapter fall back to the legacy
-        // hardcoded broker publish in `deliver_pairing_challenge`.
+        // Phase 81.32 c4 — runtime builder chain extracted to
+        // `nexo_core::agent::spawn::assemble_agent_runtime`. The
+        // pairing-adapter registry is still built here because the
+        // adapter types (`WhatsappPairingAdapter`,
+        // `TelegramPairingAdapter`) live in plugin crates that
+        // depend on nexo-core; constructing them inside core would
+        // create a cycle.
         let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
         pairing_registry.register(std::sync::Arc::new(
             nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
@@ -6275,22 +6287,29 @@ async fn main() -> Result<()> {
         pairing_registry.register(std::sync::Arc::new(
             nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
         ));
-        runtime = runtime.with_pairing_adapters(pairing_registry);
-        runtime = runtime.with_plan_approval_registry(plan_approval_registry.clone());
-        if let Some(ref dc) = dispatch_ctx {
-            runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
-        }
-        // Share the same ProcessingControlStore
-        // the admin RPC dispatcher holds so a `processing/pause` RPC
-        // reaches the inbound loop on the next message.
-        runtime = runtime.with_processing_store(Arc::clone(&processing_store));
-        // Share the bootstrap's
-        // event emitter so per-scope pending-queue eviction emits
-        // `PendingInboundsDropped` on the same firehose subscribers
-        // already listen to. Without an emitter, evictions log only.
-        if let Some(ref bs) = admin_bootstrap {
-            runtime = runtime.with_event_emitter(bs.event_emitter());
-        }
+        let assembly_deps = nexo_core::agent::spawn::RuntimeAssemblyDeps {
+            tools: Arc::clone(&tools),
+            memory: memory.clone(),
+            peers: Arc::clone(&peer_directory),
+            redactor: Arc::clone(&transcripts_redactor),
+            transcripts_index: transcripts_index.as_ref().map(Arc::clone),
+            credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
+            breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
+            link_extractor: Arc::clone(&link_extractor),
+            web_search_router: web_search_router.as_ref().map(Arc::clone),
+            pairing_gate: Arc::clone(&pairing_gate),
+            pairing_adapters: pairing_registry,
+            plan_approval_registry: plan_approval_registry.clone(),
+            dispatch_ctx: dispatch_ctx.as_ref().map(Arc::clone),
+            processing_store: Arc::clone(&processing_store),
+            event_emitter: admin_bootstrap.as_ref().map(|bs| bs.event_emitter()),
+        };
+        let runtime = nexo_core::agent::spawn::assemble_agent_runtime(
+            Arc::clone(&agent),
+            broker.clone(),
+            Arc::clone(&sessions),
+            assembly_deps,
+        );
         // Capture maps before `runtime.start()` consumes self.
         // `tools_per_agent` carries the per-agent registry the cron
         // post-hook needs to filter against the new effective policy.

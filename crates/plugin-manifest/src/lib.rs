@@ -16,6 +16,7 @@ pub mod discover;
 pub mod error;
 pub mod id_regex;
 pub mod manifest;
+pub mod pairing;
 pub mod sandbox;
 pub mod validate;
 
@@ -25,6 +26,7 @@ pub use config_schema::{
     is_validation_bypassed, validate_config, ConfigSchemaError, SKIP_SCHEMA_ENV,
 };
 pub use error::ManifestError;
+pub use pairing::{PairingFieldDescriptor, PairingKind, PairingSection};
 pub use manifest::{
     AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
     CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection,

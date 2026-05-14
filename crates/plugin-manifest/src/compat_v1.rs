@@ -351,6 +351,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         requires: Default::default(),
         capability_gates: Default::default(),
         ui: Default::default(),
+        pairing: Default::default(),
         contracts: Default::default(),
         meta: MetaSection {
             author: legacy.meta.author,
