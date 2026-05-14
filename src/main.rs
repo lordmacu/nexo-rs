@@ -6752,6 +6752,20 @@ async fn main() -> Result<()> {
         // spawner closure can iterate the live plugin map and
         // call register_outbound_tools on each handle.
         let plugin_handles_cell_c = plugin_handles_cell.clone();
+        // Phase 81.32 c7.c.2 — captures for the expanded tool
+        // surface (email outbound, pollers, channel tools, MCP
+        // tools, extension tools). google_* stays deferred to
+        // c7.c.3 (requires async load_from_disk + workspace
+        // handling).
+        let email_tool_ctx_c = email_tool_ctx.clone();
+        let pollers_runner_c = pollers_runner.clone();
+        let channel_boot_c = channel_boot.clone();
+        let mcp_manager_c = mcp_manager.clone();
+        let extension_runtimes_c: Vec<_> = extension_runtimes
+            .iter()
+            .map(|(rt, cand)| (Arc::clone(rt), cand.clone()))
+            .collect();
+        let mcp_cfg_c = cfg.mcp.clone();
         let tools_per_agent_c = Arc::clone(&tools_per_agent);
         let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
 
@@ -6775,6 +6789,15 @@ async fn main() -> Result<()> {
             let event_emitter = event_emitter_c.clone();
             let default_recall_mode = default_recall_mode_c.clone();
             let plugin_handles_cell = plugin_handles_cell_c.clone();
+            let email_tool_ctx = email_tool_ctx_c.clone();
+            let pollers_runner = pollers_runner_c.clone();
+            let channel_boot = channel_boot_c.clone();
+            let mcp_manager = mcp_manager_c.clone();
+            let extension_runtimes: Vec<_> = extension_runtimes_c
+                .iter()
+                .map(|(rt, cand)| (Arc::clone(rt), cand.clone()))
+                .collect();
+            let mcp_cfg = mcp_cfg_c.clone();
             let tools_per_agent = Arc::clone(&tools_per_agent_c);
             let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
 
@@ -6931,6 +6954,121 @@ async fn main() -> Result<()> {
                         nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
                         nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
                     );
+                }
+                // Phase 81.32 c7.c.2 — email outbound tools.
+                // Same gate as boot: plugins:[email] + email
+                // plugin armed (email_tool_ctx populated post
+                // start_all).
+                if cfg.plugins.iter().any(|p| p == "email") {
+                    if let Some(ctx) = email_tool_ctx.clone() {
+                        let filter =
+                            nexo_plugin_email::filter_from_allowed_patterns(&cfg.allowed_tools);
+                        nexo_plugin_email::register_email_tools_filtered(
+                            &tools,
+                            ctx,
+                            filter.as_deref(),
+                        );
+                    }
+                }
+                // Phase 81.32 c7.c.2 — pollers control tools.
+                if let Some(runner) = pollers_runner.as_ref() {
+                    nexo_poller_tools::register_all(&tools, Arc::clone(runner));
+                }
+                // Phase 81.32 c7.c.2 — channel_list/send/status
+                // when this agent's bindings declare
+                // `allowed_channel_servers`. Mirrors boot loop's
+                // `channels_in_play` gate.
+                let channels_in_play = cfg.channels.is_some()
+                    && cfg
+                        .inbound_bindings
+                        .iter()
+                        .any(|b| !b.allowed_channel_servers.is_empty());
+                if channels_in_play {
+                    use nexo_core::agent::channel_list_tool::ChannelListTool;
+                    use nexo_core::agent::channel_send_tool::ChannelSendTool;
+                    use nexo_core::agent::channel_status_tool::ChannelStatusTool;
+                    let list_def = ChannelListTool::tool_def();
+                    let list_handler = std::sync::Arc::new(ChannelListTool::new_dynamic(
+                        channel_boot.registry.clone(),
+                    ));
+                    tools.register_arc(list_def, list_handler);
+                    let send_def = ChannelSendTool::tool_def();
+                    let send_handler = std::sync::Arc::new(ChannelSendTool::new_dynamic(
+                        channel_boot.registry.clone(),
+                    ));
+                    tools.register_arc(send_def, send_handler);
+                    let status_def = ChannelStatusTool::tool_def();
+                    let status_handler = std::sync::Arc::new(ChannelStatusTool::new_dynamic(
+                        channel_boot.registry.clone(),
+                    ));
+                    tools.register_arc(status_def, status_handler);
+                }
+                // Phase 81.32 c7.c.2 — extension tools registered
+                // post-handshake (same iteration as boot). Hooks
+                // are not wired in hot-spawn because behavior
+                // already constructed above; extension hooks
+                // wire at behavior-build time (deferred to
+                // c7.c.3).
+                for (rt, cand) in &extension_runtimes {
+                    let pid = cand.manifest.id();
+                    for desc in &rt.handshake().tools {
+                        let def = nexo_core::agent::ExtensionTool::tool_def(desc, pid);
+                        let handler = nexo_core::agent::ExtensionTool::new(
+                            pid,
+                            desc.name.clone(),
+                            Arc::clone(rt),
+                        )
+                        .with_descriptor_metadata(
+                            desc.description.clone(),
+                            desc.input_schema.clone(),
+                        )
+                        .with_context_passthrough(cand.manifest.context.passthrough);
+                        tools.register_if_absent(def, handler);
+                    }
+                }
+                // Phase 81.32 c7.c.2 — MCP tools per-agent.
+                // Reuses the shared sentinel session for the
+                // process. Channel inbound loops + hot-reload
+                // callbacks (boot lines 5915+, 6010+) are
+                // deferred to c7.c.3 because they spawn
+                // long-lived tasks; the registration alone is
+                // safe to repeat across spawn calls.
+                if let Some(mgr) = &mcp_manager {
+                    let rt = mgr.get_or_create(uuid::Uuid::nil()).await;
+                    let mcp_ctx_pt = mcp_cfg
+                        .as_ref()
+                        .map(|m| m.context.passthrough)
+                        .unwrap_or(false);
+                    let mcp_overrides: std::collections::HashMap<String, bool> = mcp_cfg
+                        .as_ref()
+                        .map(|m| {
+                            m.servers
+                                .iter()
+                                .filter_map(|(name, yaml)| match yaml {
+                                    nexo_config::McpServerYaml::Stdio {
+                                        context_passthrough: Some(v),
+                                        ..
+                                    }
+                                    | nexo_config::McpServerYaml::StreamableHttp {
+                                        context_passthrough: Some(v),
+                                        ..
+                                    }
+                                    | nexo_config::McpServerYaml::Sse {
+                                        context_passthrough: Some(v),
+                                        ..
+                                    } => Some((name.clone(), *v)),
+                                    _ => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    nexo_core::agent::register_session_tools_with_overrides(
+                        &rt,
+                        &tools,
+                        mcp_ctx_pt,
+                        mcp_overrides,
+                    )
+                    .await;
                 }
                 // Built-in defer marks. Idempotent: tools that
                 // didn't get registered above are silently skipped.
