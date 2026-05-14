@@ -7156,10 +7156,9 @@ async fn main() -> Result<()> {
                 tracing::info!(
                     agent = %agent_id,
                     tool_count = tools.to_tool_defs().len(),
-                    "hot-spawned with expanded tool surface (Phase 81.32 c7.c.1). \
-                     Still deferred: email outbound / pollers / mcp tools / \
-                     extension tools / channel_* / google_* — require restart \
-                     (Phase 81.32 c7.c.2 follow-up)."
+                    "hot-spawned with full tool parity (Phase 81.32 c7.c.2). \
+                     Still deferred: google_* OAuth + extension hooks + \
+                     MCP hot-reload callbacks — Phase 81.32 c7.c.3 follow-up."
                 );
 
                 Ok(SpawnedAgent {
