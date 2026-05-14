@@ -2654,6 +2654,79 @@ impl NexoPlugin for SubprocessNexoPlugin {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    /// Phase 81.33.a — override the default no-op trait impl
+    /// with the manifest-driven outbound tool registration.
+    ///
+    /// Iterates `self.cached_manifest.plugin.tools.outbound` and
+    /// installs one [`GenericRpcToolHandler`] per entry against
+    /// `registry`. Schema parse failures + missing-weak-self
+    /// degrade gracefully (warn + skip the entry) rather than
+    /// panicking, so a buggy outbound entry doesn't take the
+    /// whole agent's tool surface offline.
+    fn register_outbound_tools(&self, registry: &crate::agent::tool_registry::ToolRegistry) {
+        let outbound = &self.cached_manifest.plugin.tools.outbound;
+        if outbound.is_empty() {
+            return;
+        }
+        let Some(weak) = self.weak_self_ref() else {
+            tracing::warn!(
+                plugin = %self.cached_manifest.plugin.id,
+                "register_outbound_tools: weak_self not populated — \
+                 plugin built outside the factory; skipping {} outbound tools",
+                outbound.len(),
+            );
+            return;
+        };
+        // Daemon-wide default. Per-spec timeouts override.
+        let daemon_default = std::env::var("NEXO_PLUGIN_TOOL_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(crate::agent::generic_rpc_tool::DEFAULT_OUTBOUND_TOOL_TIMEOUT);
+        let mut registered = 0usize;
+        let mut skipped = 0usize;
+        for spec in outbound {
+            let parameters: serde_json::Value =
+                match serde_json::from_str(&spec.input_schema) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %self.cached_manifest.plugin.id,
+                            tool = %spec.name,
+                            error = %e,
+                            "outbound tool input_schema failed to parse; skipping",
+                        );
+                        skipped += 1;
+                        continue;
+                    }
+                };
+            let def = nexo_llm::types::ToolDef {
+                name: spec.name.clone(),
+                description: spec.description.clone(),
+                parameters,
+            };
+            let timeout = spec
+                .timeout_ms
+                .map(std::time::Duration::from_millis)
+                .unwrap_or(daemon_default);
+            let handler = crate::agent::generic_rpc_tool::GenericRpcToolHandler::new(
+                self.cached_manifest.plugin.id.clone(),
+                weak.clone(),
+                spec.rpc_method.clone(),
+                spec.name.clone(),
+                timeout,
+            );
+            registry.register_arc(def, std::sync::Arc::new(handler));
+            registered += 1;
+        }
+        tracing::info!(
+            plugin = %self.cached_manifest.plugin.id,
+            registered,
+            skipped,
+            "outbound tools registered from manifest",
+        );
+    }
 }
 
 impl SubprocessNexoPlugin {
