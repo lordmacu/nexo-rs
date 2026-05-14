@@ -6728,6 +6728,9 @@ async fn main() -> Result<()> {
         let dispatch_ctx_c = dispatch_ctx.clone();
         let processing_store_c = Arc::clone(&processing_store);
         let event_emitter_c = admin_bootstrap.as_ref().map(|b| b.event_emitter());
+        // Phase 81.32 c7.c.1 — extra captures for the
+        // expanded minimal-mode tools registry.
+        let default_recall_mode_c = cfg.memory.vector.default_recall_mode.clone();
         let tools_per_agent_c = Arc::clone(&tools_per_agent);
         let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
 
@@ -6749,6 +6752,7 @@ async fn main() -> Result<()> {
             let dispatch_ctx = dispatch_ctx_c.clone();
             let processing_store = Arc::clone(&processing_store_c);
             let event_emitter = event_emitter_c.clone();
+            let default_recall_mode = default_recall_mode_c.clone();
             let tools_per_agent = Arc::clone(&tools_per_agent_c);
             let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
 
@@ -6758,14 +6762,140 @@ async fn main() -> Result<()> {
                 // 1. Resolve LLM via shared helper.
                 let llm = resolve_llm_client(&cfg, &llm_registry, &llm_cfg)?;
 
-                // 2. Minimal ToolRegistry. Subprocess-registered
-                //    tools (channel_send, whatsapp_*, …) are
-                //    seeded per-binding via the
-                //    `ScopedToolRegistry` after the runtime's
-                //    plugin handshake, so they do reach the LLM
-                //    even though they're absent here at spawn.
+                // 2. Tools registry — Phase 81.32 c7.c.1 expanded
+                //    surface. Registers every tool whose
+                //    construction needs ONLY the captures already
+                //    threaded into this closure (broker, memory,
+                //    cfg). Tools requiring boot-only state
+                //    (email_tool_ctx, pollers_runner, mcp_manager,
+                //    extension_runtimes, channel_boot, google
+                //    credentials/workspace) stay deferred as
+                //    Phase 81.32 c7.c.2.
                 let tools = Arc::new(ToolRegistry::new());
                 tools.register(DelegationTool::tool_def(), DelegationTool);
+                nexo_core::agent::dispatch_handlers::register_dispatch_tools_into(&tools);
+                if cfg.plugins.iter().any(|p| p == "memory") {
+                    if let Some(mem) = memory.clone() {
+                        tools.register(
+                            nexo_core::agent::MemoryTool::tool_def(),
+                            nexo_core::agent::MemoryTool::new_with_default_mode(
+                                mem,
+                                default_recall_mode.clone(),
+                            ),
+                        );
+                    }
+                }
+                if cfg.plugins.iter().any(|p| p == "whatsapp") {
+                    nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
+                }
+                if cfg.plugins.iter().any(|p| p == "telegram") {
+                    nexo_plugin_telegram::register_telegram_tools(&tools);
+                }
+                if cfg.heartbeat.enabled {
+                    if let Some(mem) = memory.clone() {
+                        tools.register(
+                            nexo_core::agent::HeartbeatTool::tool_def(),
+                            nexo_core::agent::HeartbeatTool::new(mem),
+                        );
+                    }
+                }
+                // Email follow-up control plane — same gate as boot:
+                // email plugin + memory backend present.
+                if cfg.plugins.iter().any(|p| p == "email") {
+                    if let Some(mem) = memory.clone() {
+                        tools.register(
+                            nexo_core::agent::StartFollowupTool::tool_def(),
+                            nexo_core::agent::StartFollowupTool::new(mem.clone()),
+                        );
+                        tools.register(
+                            nexo_core::agent::CheckFollowupTool::tool_def(),
+                            nexo_core::agent::CheckFollowupTool::new(mem.clone()),
+                        );
+                        tools.register(
+                            nexo_core::agent::CancelFollowupTool::tool_def(),
+                            nexo_core::agent::CancelFollowupTool::new(mem),
+                        );
+                    }
+                }
+                if cfg.plan_mode.enabled {
+                    tools.register(
+                        nexo_core::agent::plan_mode_tool::EnterPlanModeTool::tool_def(),
+                        nexo_core::agent::plan_mode_tool::EnterPlanModeTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::plan_mode_tool::ExitPlanModeTool::tool_def(),
+                        nexo_core::agent::plan_mode_tool::ExitPlanModeTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::plan_mode_tool::PlanModeResolveTool::tool_def(),
+                        nexo_core::agent::plan_mode_tool::PlanModeResolveTool,
+                    );
+                }
+                // Always-on tools (cheap, pure, no captures).
+                tools.register(
+                    nexo_core::agent::todo_write_tool::TodoWriteTool::tool_def(),
+                    nexo_core::agent::todo_write_tool::TodoWriteTool,
+                );
+                tools.register(
+                    nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
+                    nexo_core::agent::tool_search_tool::ToolSearchTool::new(),
+                );
+                tools.register(
+                    nexo_core::agent::synthetic_output_tool::SyntheticOutputTool::tool_def(),
+                    nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
+                );
+                tools.register(
+                    nexo_core::agent::notebook_edit_tool::NotebookEditTool::tool_def(),
+                    nexo_core::agent::notebook_edit_tool::NotebookEditTool,
+                );
+                tools.register(
+                    nexo_core::agent::mcp_router_tool::ListMcpResourcesTool::tool_def(),
+                    nexo_core::agent::mcp_router_tool::ListMcpResourcesTool,
+                );
+                tools.register(
+                    nexo_core::agent::mcp_router_tool::ReadMcpResourceTool::tool_def(),
+                    nexo_core::agent::mcp_router_tool::ReadMcpResourceTool,
+                );
+                // Proactive Sleep — gate matches boot.
+                let proactive_enabled_somewhere = cfg.proactive.enabled
+                    || cfg
+                        .inbound_bindings
+                        .iter()
+                        .filter_map(|b| b.proactive.as_ref())
+                        .any(|p| p.enabled);
+                if proactive_enabled_somewhere {
+                    tools.register(
+                        nexo_core::agent::SleepTool::tool_def(),
+                        nexo_core::agent::SleepTool,
+                    );
+                }
+                // RemoteTrigger — gate matches boot.
+                let remote_triggers_enabled_somewhere = !cfg.remote_triggers.is_empty()
+                    || cfg
+                        .inbound_bindings
+                        .iter()
+                        .filter_map(|b| b.remote_triggers.as_ref())
+                        .any(|list| !list.is_empty());
+                if remote_triggers_enabled_somewhere {
+                    let sink: std::sync::Arc<
+                        dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink,
+                    > = std::sync::Arc::new(
+                        nexo_core::agent::remote_trigger_tool::ReqwestSink::new(broker.clone()),
+                    );
+                    tools.register(
+                        nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
+                        nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
+                    );
+                }
+                // Built-in defer marks. Idempotent: tools that
+                // didn't get registered above are silently skipped.
+                nexo_core::agent::mark_built_in_deferred(&tools);
+                // Apply legacy (no-bindings) agent-level
+                // allowlist; per-binding allowlists are enforced
+                // at session time as in boot.
+                if cfg.inbound_bindings.is_empty() && !cfg.allowed_tools.is_empty() {
+                    tools.retain_matching(&cfg.allowed_tools);
+                }
 
                 // 3. Validate (catches typo'd `allowed_tools` +
                 //    telegram-binding consistency).
@@ -6840,11 +6970,13 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|e| SpawnError::Internal(format!("runtime.start: {e}")))?;
 
-                tracing::warn!(
+                tracing::info!(
                     agent = %agent_id,
-                    "hot-spawned in minimal mode — DelegationTool only. \
-                     Outbound channel/plugin tools require daemon restart \
-                     (Phase 81.32 c7.c follow-up will close this gap)."
+                    tool_count = tools.to_tool_defs().len(),
+                    "hot-spawned with expanded tool surface (Phase 81.32 c7.c.1). \
+                     Still deferred: email outbound / pollers / mcp tools / \
+                     extension tools / channel_* / google_* — require restart \
+                     (Phase 81.32 c7.c.2 follow-up)."
                 );
 
                 Ok(SpawnedAgent {
