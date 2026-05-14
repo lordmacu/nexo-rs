@@ -150,6 +150,31 @@ pub trait NexoPlugin: Send + Sync + 'static {
     fn register_outbound_tools(&self, _registry: &super::tool_registry::ToolRegistry) {
         // Default: plugin exposes no outbound tools.
     }
+
+    /// Phase 93.2 — opt-in declarative config hook.
+    ///
+    /// Called by the host with the operator-supplied YAML slice
+    /// for this plugin *after* `[plugin.config_schema]` validation
+    /// passes (Phase 93.1) and *before* [`init`](Self::init).
+    /// Plugins owning typed config deserialise here via
+    /// `serde_yaml::from_value::<MyConfig>(value.clone())`.
+    ///
+    /// Default no-op keeps plugins that haven't migrated building
+    /// unchanged through the Phase 93.5 deprecation window.
+    /// In-tree legacy plugins (browser, google) currently read
+    /// their typed config from `PluginInitContext.config_dir`;
+    /// `configure` will become the canonical entrypoint once
+    /// Phase 93.4 migrates each one.
+    ///
+    /// `&self` (not `&mut`) — interior mutability is the
+    /// workspace-wide idiom; hot-reload re-calls land here
+    /// repeatedly without borrow conflicts.
+    async fn configure(
+        &self,
+        _value: &serde_yaml::Value,
+    ) -> Result<(), PluginConfigureError> {
+        Ok(())
+    }
 }
 
 /// Bundle of handles a plugin's `init` receives. Lifetimes tied
@@ -327,6 +352,43 @@ pub enum PluginShutdownError {
     },
 }
 
+/// Errors a plugin's `configure` hook (Phase 93.2) can surface.
+///
+/// Three categories so a future cleanup pass (Phase 93.5, dropping
+/// typed `cfg.plugins.X` field readers) can `grep` the call sites
+/// mechanically:
+/// - [`Self::SchemaValidation`] — operator YAML failed the
+///   manifest's `[plugin.config_schema]` walker BEFORE the plugin
+///   was called. Host-emitted.
+/// - [`Self::PluginRejected`] — plugin's own runtime check
+///   returned `Err` (typed deserialise failed, secret env missing,
+///   external probe failed). Plugin-emitted.
+/// - [`Self::SubprocessRpc`] — subprocess plugin failed to ack
+///   the `plugin.configure` JSON-RPC (transport, timeout, error
+///   reply).
+#[derive(Debug, thiserror::Error)]
+pub enum PluginConfigureError {
+    #[error(
+        "plugin `{plugin_id}` operator YAML failed [plugin.config_schema] validation ({n} issue(s); first: {first})",
+        n = errors.len(),
+        first = errors.first().map(|e| e.message.as_str()).unwrap_or("<none>")
+    )]
+    SchemaValidation {
+        plugin_id: String,
+        errors: Vec<nexo_plugin_manifest::ConfigSchemaError>,
+    },
+
+    #[error("plugin `{plugin_id}` rejected its config")]
+    PluginRejected {
+        plugin_id: String,
+        #[source]
+        source: anyhow::Error,
+    },
+
+    #[error("plugin `{plugin_id}` subprocess `plugin.configure` RPC failed: {reason}")]
+    SubprocessRpc { plugin_id: String, reason: String },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,22 +417,33 @@ min_nexo_version = ">=0.1.0"
         PluginManifest::from_str(minimal_manifest_toml()).expect("valid TOML")
     }
 
-    struct MockPlugin {
+    pub(crate) struct MockPlugin {
         manifest: PluginManifest,
-        init_called: AtomicBool,
+        pub(crate) init_called: AtomicBool,
         init_outcome: Result<(), PluginInitError>,
+        /// Phase 93.2 — records the last `configure` value the host
+        /// delivered. Tests assert ordering (configure-before-init)
+        /// by checking this is `Some(_)` while `init_called` is still
+        /// `false` mid-flight.
+        pub(crate) last_configure_value:
+            tokio::sync::Mutex<Option<serde_yaml::Value>>,
+        /// Phase 93.2 — outcome the override returns. `None` ≡ Ok(()).
+        /// `Some(Err(msg))` returns `PluginRejected` wrapping `msg`.
+        pub(crate) configure_outcome: Option<Result<(), String>>,
     }
 
     impl MockPlugin {
-        fn ok() -> Self {
+        pub(crate) fn ok() -> Self {
             Self {
                 manifest: parse_manifest(),
                 init_called: AtomicBool::new(false),
                 init_outcome: Ok(()),
+                last_configure_value: tokio::sync::Mutex::new(None),
+                configure_outcome: None,
             }
         }
 
-        fn err() -> Self {
+        pub(crate) fn err() -> Self {
             Self {
                 manifest: parse_manifest(),
                 init_called: AtomicBool::new(false),
@@ -378,8 +451,11 @@ min_nexo_version = ">=0.1.0"
                     plugin_id: "test_plugin".into(),
                     source: anyhow::anyhow!("simulated config failure"),
                 }),
+                last_configure_value: tokio::sync::Mutex::new(None),
+                configure_outcome: None,
             }
         }
+
     }
 
     #[async_trait]
@@ -402,6 +478,20 @@ min_nexo_version = ">=0.1.0"
                 Err(_) => Err(PluginInitError::Other {
                     plugin_id: "test_plugin".into(),
                     source: anyhow::anyhow!("unexpected variant"),
+                }),
+            }
+        }
+        async fn configure(
+            &self,
+            value: &serde_yaml::Value,
+        ) -> Result<(), PluginConfigureError> {
+            *self.last_configure_value.lock().await = Some(value.clone());
+            match &self.configure_outcome {
+                None => Ok(()),
+                Some(Ok(())) => Ok(()),
+                Some(Err(msg)) => Err(PluginConfigureError::PluginRejected {
+                    plugin_id: self.manifest.plugin.id.clone(),
+                    source: anyhow::anyhow!(msg.clone()),
                 }),
             }
         }
@@ -571,5 +661,35 @@ min_nexo_version = ">=0.1.0"
     #[test]
     fn default_plugin_shutdown_timeout_is_5_seconds() {
         assert_eq!(DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT, Duration::from_secs(5));
+    }
+
+    /// Phase 93.2 — configure must be re-callable on the same
+    /// handle under `&self` semantics so hot-reload can deliver
+    /// successive config updates without `Arc::get_mut` shenanigans.
+    /// Each call overwrites `last_configure_value`.
+    #[tokio::test]
+    async fn configure_recallable_for_hot_reload() {
+        let plugin = Arc::new(MockPlugin::ok());
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        let v1 = serde_yaml::Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                serde_yaml::Value::String("k".into()),
+                serde_yaml::Value::String("v1".into()),
+            );
+            m
+        });
+        let v2 = serde_yaml::Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                serde_yaml::Value::String("k".into()),
+                serde_yaml::Value::String("v2".into()),
+            );
+            m
+        });
+        handle.configure(&v1).await.expect("first configure");
+        handle.configure(&v2).await.expect("second configure");
+        let captured = plugin.last_configure_value.lock().await.clone();
+        assert_eq!(captured, Some(v2));
     }
 }

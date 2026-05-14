@@ -16,7 +16,7 @@ use nexo_plugin_manifest::PluginManifest;
 use serde_yaml::Value;
 
 use crate::agent::plugin_config_loader::{config_error_kind, load_plugin_config};
-use crate::agent::plugin_host::{NexoPlugin, PluginInitContext};
+use crate::agent::plugin_host::{NexoPlugin, PluginConfigureError, PluginInitContext};
 use crate::agent::scoped_tool_registry::{NamespaceEnforcement, NamespaceViolation};
 
 use super::factory::{FactoryInstantiateError, PluginFactoryRegistry};
@@ -61,6 +61,20 @@ where
             continue;
         };
         let empty_cfg: Arc<Value> = Arc::new(Value::Mapping(serde_yaml::Mapping::new()));
+        // Phase 93.2 — configure(value) before init. Schema-fail or
+        // plugin-reject routes through InitOutcome::Failed; init is
+        // never called when configure errors.
+        if let Err(e) = configure_plugin_with_value(&handle, &plugin.manifest, &empty_cfg).await {
+            let error = e.to_string();
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %id,
+                error = %error,
+                "plugin configure failed; continuing"
+            );
+            outcomes.insert(id, InitOutcome::Failed { error });
+            continue;
+        }
         let mut ctx = ctx_factory(&plugin.manifest, &empty_cfg);
         let start = Instant::now();
         match handle.init(&mut ctx).await {
@@ -98,6 +112,78 @@ where
 pub struct FactoryInitResult {
     pub outcomes: BTreeMap<String, InitOutcome>,
     pub handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
+}
+
+/// Phase 93.2 — host pre-validation gate for
+/// [`NexoPlugin::configure`].
+///
+/// Returns `Ok(())` when the operator YAML matches the manifest's
+/// `[plugin.config_schema]` (Phase 93.1) or when the manifest
+/// declares no schema (legacy plugins through the Phase 93.5
+/// deprecation window). On failure returns the
+/// [`PluginConfigureError`] variant the init-loop wraps into
+/// [`InitOutcome::Failed`].
+async fn validate_operator_value(
+    plugin_id: &str,
+    value: &Value,
+    manifest: &PluginManifest,
+) -> Result<(), PluginConfigureError> {
+    let Some(spec) = manifest.plugin.config_schema.as_ref() else {
+        return Ok(());
+    };
+    let schema_json: serde_json::Value =
+        serde_json::from_str(&spec.schema).map_err(|e| {
+            PluginConfigureError::PluginRejected {
+                plugin_id: plugin_id.to_string(),
+                source: anyhow::anyhow!(
+                    "[plugin.config_schema] schema string is not valid JSON: {e}"
+                ),
+            }
+        })?;
+    let value_json: serde_json::Value = serde_json::to_value(value).map_err(|e| {
+        PluginConfigureError::PluginRejected {
+            plugin_id: plugin_id.to_string(),
+            source: anyhow::anyhow!("operator YAML failed YAML→JSON conversion: {e}"),
+        }
+    })?;
+    let errors = nexo_plugin_manifest::validate_config(&value_json, &schema_json);
+    if !errors.is_empty() {
+        return Err(PluginConfigureError::SchemaValidation {
+            plugin_id: plugin_id.to_string(),
+            errors,
+        });
+    }
+    Ok(())
+}
+
+/// Phase 93.2 — validate the operator slice + call `configure`
+/// before `init`. Returns the error from whichever stage failed
+/// (the host pre-validator or the plugin's own runtime check).
+///
+/// Empty operator YAML against a declared schema emits a
+/// `tracing::warn!` on the `plugins.init.empty_config` target
+/// before delegating to `configure(&Value::Null)`; the plugin
+/// decides whether empty is acceptable.
+async fn configure_plugin_with_value(
+    handle: &Arc<dyn NexoPlugin>,
+    manifest: &PluginManifest,
+    plugin_cfg: &Value,
+) -> Result<(), PluginConfigureError> {
+    let plugin_id = manifest.plugin.id.as_str();
+    validate_operator_value(plugin_id, plugin_cfg, manifest).await?;
+    if manifest.plugin.config_schema.is_some()
+        && matches!(plugin_cfg, Value::Null)
+            || matches!(plugin_cfg, Value::Mapping(m) if m.is_empty())
+    {
+        tracing::warn!(
+            target: "plugins.init.empty_config",
+            plugin_id = %plugin_id,
+            "plugin declares [plugin.config_schema] but no config supplied; calling configure with empty value"
+        );
+        handle.configure(&Value::Null).await
+    } else {
+        handle.configure(plugin_cfg).await
+    }
 }
 
 /// Convert collected violations into a human-readable
@@ -479,6 +565,21 @@ where
                 let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
                 match auto_factory(&plugin.manifest) {
                     Ok(handle) => {
+                        // Phase 93.2 — configure(value) before init.
+                        if let Err(e) =
+                            configure_plugin_with_value(&handle, &plugin.manifest, &plugin_cfg)
+                                .await
+                        {
+                            let error = e.to_string();
+                            tracing::warn!(
+                                target: "plugins.init",
+                                plugin_id = %id,
+                                error = %error,
+                                "plugin configure failed; continuing"
+                            );
+                            outcomes.insert(id, InitOutcome::Failed { error });
+                            continue;
+                        }
                         let mut ctx = ctx_factory(&plugin.manifest, &plugin_cfg);
                         let start = std::time::Instant::now();
                         match handle.init(&mut ctx).await {
@@ -593,6 +694,20 @@ where
                 outcomes.insert(id, InitOutcome::Failed { error });
             }
             Ok(handle) => {
+                // Phase 93.2 — configure(value) before init.
+                if let Err(e) =
+                    configure_plugin_with_value(&handle, &plugin.manifest, &plugin_cfg).await
+                {
+                    let error = e.to_string();
+                    tracing::warn!(
+                        target: "plugins.init",
+                        plugin_id = %id,
+                        error = %error,
+                        "plugin configure failed; continuing"
+                    );
+                    outcomes.insert(id, InitOutcome::Failed { error });
+                    continue;
+                }
                 let mut ctx = ctx_factory(&plugin.manifest, &plugin_cfg);
                 let start = std::time::Instant::now();
                 match handle.init(&mut ctx).await {
@@ -974,5 +1089,182 @@ mod tests {
             other => panic!("expected Failed, got {other:?}"),
         }
         assert!(result.handles.is_empty());
+    }
+
+    // ── Phase 93.2: configure-before-init helper ─────────────────
+
+    use crate::agent::plugin_host::PluginShutdownError;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Phase 93.2 — minimal NexoPlugin impl that records configure
+    /// vs init ordering, holds a programmable configure outcome,
+    /// and exposes the captured value via `.last_value()`. Lives
+    /// here (not in plugin_host::tests) to keep the test surface
+    /// local to the init-loop helper under test.
+    struct TestPlugin {
+        manifest: PluginManifest,
+        init_called: AtomicBool,
+        configure_called: AtomicBool,
+        last_value: tokio::sync::Mutex<Option<Value>>,
+        configure_outcome: Option<Result<(), String>>,
+    }
+
+    impl TestPlugin {
+        fn new(manifest: PluginManifest) -> Self {
+            Self {
+                manifest,
+                init_called: AtomicBool::new(false),
+                configure_called: AtomicBool::new(false),
+                last_value: tokio::sync::Mutex::new(None),
+                configure_outcome: None,
+            }
+        }
+
+        fn with_reject(mut self, msg: &str) -> Self {
+            self.configure_outcome = Some(Err(msg.to_string()));
+            self
+        }
+    }
+
+    #[async_trait]
+    impl NexoPlugin for TestPlugin {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn init(
+            &self,
+            _ctx: &mut PluginInitContext<'_>,
+        ) -> Result<(), crate::agent::plugin_host::PluginInitError> {
+            self.init_called.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+            Ok(())
+        }
+        async fn configure(
+            &self,
+            value: &Value,
+        ) -> Result<(), PluginConfigureError> {
+            self.configure_called.store(true, Ordering::SeqCst);
+            *self.last_value.lock().await = Some(value.clone());
+            match &self.configure_outcome {
+                None | Some(Ok(())) => Ok(()),
+                Some(Err(msg)) => Err(PluginConfigureError::PluginRejected {
+                    plugin_id: self.manifest.plugin.id.clone(),
+                    source: anyhow::anyhow!(msg.clone()),
+                }),
+            }
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn manifest_with_schema(id: &str, schema_required_field: Option<&str>) -> PluginManifest {
+        let schema = match schema_required_field {
+            None => r#"{"type":"object"}"#.to_string(),
+            Some(field) => format!(
+                r#"{{"type":"object","properties":{{"{field}":{{"type":"string"}}}},"required":["{field}"]}}"#
+            ),
+        };
+        let raw = format!(
+            "[plugin]\n\
+             id = \"{id}\"\n\
+             version = \"0.1.0\"\n\
+             name = \"{id}\"\n\
+             description = \"fixture\"\n\
+             min_nexo_version = \">=0.0.1\"\n\
+             \n\
+             [plugin.config_schema]\n\
+             shape = \"object\"\n\
+             schema = '''{schema}'''\n",
+        );
+        toml::from_str(&raw).expect("manifest TOML parses")
+    }
+
+    #[tokio::test]
+    async fn configure_helper_calls_plugin_when_schema_valid() {
+        let manifest = manifest_with_schema("alpha", None);
+        let plugin = Arc::new(TestPlugin::new(manifest.clone()));
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        let value = Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(Value::String("k".into()), Value::String("v".into()));
+            m
+        });
+        configure_plugin_with_value(&handle, &manifest, &value)
+            .await
+            .expect("configure ok");
+        assert!(plugin.configure_called.load(Ordering::SeqCst));
+        let captured = plugin.last_value.lock().await.clone();
+        assert_eq!(captured, Some(value));
+        // init must NOT have been touched — the helper only handles
+        // configure; init is the caller's responsibility.
+        assert!(!plugin.init_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn configure_helper_schema_validation_skips_plugin() {
+        let manifest = manifest_with_schema("beta", Some("host"));
+        let plugin = Arc::new(TestPlugin::new(manifest.clone()));
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        // Required field "host" missing → schema validation fails.
+        let value = Value::Mapping(serde_yaml::Mapping::new());
+        let err = configure_plugin_with_value(&handle, &manifest, &value)
+            .await
+            .expect_err("schema must fail");
+        match err {
+            PluginConfigureError::SchemaValidation { plugin_id, errors } => {
+                assert_eq!(plugin_id, "beta");
+                assert!(!errors.is_empty(), "validator should report at least one error");
+            }
+            other => panic!("expected SchemaValidation, got {other:?}"),
+        }
+        // Plugin's configure must NEVER run when schema fails.
+        assert!(!plugin.configure_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn configure_helper_propagates_plugin_reject() {
+        let manifest = manifest_with_schema("gamma", None);
+        let plugin = Arc::new(TestPlugin::new(manifest.clone()).with_reject("nope"));
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        let value = Value::Mapping(serde_yaml::Mapping::new());
+        let err = configure_plugin_with_value(&handle, &manifest, &value)
+            .await
+            .expect_err("plugin rejected");
+        match err {
+            PluginConfigureError::PluginRejected { plugin_id, .. } => {
+                assert_eq!(plugin_id, "gamma");
+            }
+            other => panic!("expected PluginRejected, got {other:?}"),
+        }
+        assert!(plugin.configure_called.load(Ordering::SeqCst));
+        assert!(!plugin.init_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn configure_helper_skips_validation_when_no_schema() {
+        // Backward-compat path: legacy plugin manifest without
+        // [plugin.config_schema] — validate_operator_value short
+        // -circuits, configure still runs with whatever value the
+        // caller supplied.
+        let manifest: PluginManifest = toml::from_str(
+            "[plugin]\n\
+             id = \"legacy\"\n\
+             version = \"0.1.0\"\n\
+             name = \"legacy\"\n\
+             description = \"no schema\"\n\
+             min_nexo_version = \">=0.0.1\"\n",
+        )
+        .unwrap();
+        let plugin = Arc::new(TestPlugin::new(manifest.clone()));
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        let value = Value::Mapping(serde_yaml::Mapping::new());
+        configure_plugin_with_value(&handle, &manifest, &value)
+            .await
+            .expect("no-schema path ok");
+        assert!(plugin.configure_called.load(Ordering::SeqCst));
     }
 }

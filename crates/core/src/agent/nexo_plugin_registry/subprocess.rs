@@ -60,7 +60,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::nexo_plugin_registry::factory::PluginFactory;
 use crate::agent::plugin_host::{
-    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+    NexoPlugin, PluginConfigureError, PluginInitContext, PluginInitError, PluginShutdownError,
 };
 
 /// Default time budget for the child's `initialize` reply. A child
@@ -164,6 +164,15 @@ pub struct SubprocessNexoPlugin {
     /// Threaded from `PluginInitContext::plugin_state_dir(...)`
     /// at init time.
     plugin_state_dir: Mutex<Option<std::path::PathBuf>>,
+
+    /// Phase 93.2 — `configure(value)` is called by the host
+    /// BEFORE `init` spawns the child process, but the
+    /// `plugin.configure` JSON-RPC can only fire once the stdio
+    /// channel is up. The host-facing trait method buffers the
+    /// value here; `init` flushes via RPC after the child's
+    /// `initialize` ack succeeds. Hot-reload re-calls overwrite
+    /// the buffer + redeliver via RPC if `inner` is already up.
+    pending_configure: Mutex<Option<serde_yaml::Value>>,
 
     /// Daemon-supplied per-spawn env dict. When
     /// `Some`, `spawn_one_attempt` calls
@@ -327,6 +336,7 @@ impl SubprocessNexoPlugin {
             inner: Mutex::new(None),
             sandbox: Mutex::new(None),
             plugin_state_dir: Mutex::new(None),
+            pending_configure: Mutex::new(None),
             spawn_env: None,
             instance_label: None,
             // Auto-respawn shutdown coordination.
@@ -396,6 +406,58 @@ impl SubprocessNexoPlugin {
     /// after install, callers could send into the new `stdin_tx`
     /// holding stale request ids that the new child would reply
     /// `MethodNotFound` to.
+    /// Phase 93.2 — send `plugin.configure` JSON-RPC against a
+    /// live [`Inner`] and await the ack with a 5s timeout. Used
+    /// by both `init` (flushing buffered value) and the trait
+    /// `configure` hot-reload path.
+    async fn send_configure_rpc(
+        &self,
+        value: &serde_yaml::Value,
+        inner: &Inner,
+    ) -> Result<(), PluginConfigureError> {
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let value_json: Value = serde_json::to_value(value).map_err(|e| {
+            PluginConfigureError::SubprocessRpc {
+                plugin_id: plugin_id.clone(),
+                reason: format!("YAML→JSON conversion failed: {e}"),
+            }
+        })?;
+        let configure_id: u64 = 3;
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": configure_id,
+            "method": "plugin.configure",
+            "params": { "value": value_json },
+        });
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        inner.pending.insert(configure_id, tx);
+        if inner.stdin_tx.send(req).await.is_err() {
+            inner.pending.remove(&configure_id);
+            return Err(PluginConfigureError::SubprocessRpc {
+                plugin_id,
+                reason: "stdin channel closed".to_string(),
+            });
+        }
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Err(_) => {
+                inner.pending.remove(&configure_id);
+                Err(PluginConfigureError::SubprocessRpc {
+                    plugin_id,
+                    reason: "configure ack timed out after 5s".to_string(),
+                })
+            }
+            Ok(Err(_)) => Err(PluginConfigureError::SubprocessRpc {
+                plugin_id,
+                reason: "oneshot dropped before reply".to_string(),
+            }),
+            Ok(Ok(Ok(_))) => Ok(()),
+            Ok(Ok(Err(err_msg))) => Err(PluginConfigureError::SubprocessRpc {
+                plugin_id,
+                reason: err_msg,
+            }),
+        }
+    }
+
     async fn drain_pending_with_error(&self, reason: &str) {
         let inner_guard = self.inner.lock().await;
         let Some(inner) = inner_guard.as_ref() else {
@@ -2604,6 +2666,23 @@ impl NexoPlugin for SubprocessNexoPlugin {
                 source,
             })?;
         *self.inner.lock().await = Some(inner);
+        // Phase 93.2 — flush any buffered configure value via
+        // `plugin.configure` JSON-RPC now that the child is alive.
+        // The host may have called configure(value) before init;
+        // we couldn't deliver it then because the stdio channel
+        // didn't exist yet.
+        let buffered = self.pending_configure.lock().await.take();
+        if let Some(value) = buffered {
+            let inner_guard = self.inner.lock().await;
+            if let Some(inner_ref) = inner_guard.as_ref() {
+                if let Err(e) = self.send_configure_rpc(&value, inner_ref).await {
+                    return Err(PluginInitError::Other {
+                        plugin_id: self.cached_manifest.plugin.id.clone(),
+                        source: anyhow::anyhow!(e.to_string()),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2653,6 +2732,39 @@ impl NexoPlugin for SubprocessNexoPlugin {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    /// Phase 93.2 — deliver the operator-supplied config slice to
+    /// the subprocess plugin via `plugin.configure` JSON-RPC.
+    ///
+    /// Called by the host BEFORE `init` (per
+    /// [`NexoPlugin::configure`] semantics). For subprocess plugins
+    /// the stdio channel only exists after `init` spawns the child,
+    /// so this method *buffers* the value into `pending_configure`
+    /// and `init` flushes via RPC after the child's `initialize`
+    /// ack succeeds. Hot-reload re-calls overwrite the buffer; if
+    /// `inner` is already up the new value is delivered eagerly
+    /// instead of buffered.
+    async fn configure(
+        &self,
+        value: &serde_yaml::Value,
+    ) -> Result<(), PluginConfigureError> {
+        // Legacy-compat: plugins without [plugin.config_schema]
+        // don't participate in 93.2 RPC delivery — they keep
+        // reading their config from disk via the existing loader.
+        // Phase 93.5 removes this branch.
+        if self.cached_manifest.plugin.config_schema.is_none() {
+            return Ok(());
+        }
+        let inner_guard = self.inner.lock().await;
+        if inner_guard.is_some() {
+            let inner = inner_guard.as_ref().unwrap();
+            // Hot-reload path — channel is up; deliver eagerly.
+            return self.send_configure_rpc(value, inner).await;
+        }
+        drop(inner_guard);
+        *self.pending_configure.lock().await = Some(value.clone());
+        Ok(())
     }
 
     /// Phase 81.33.a — override the default no-op trait impl
@@ -3073,6 +3185,55 @@ sleep 30
             .shutdown()
             .await
             .expect("second shutdown also idempotent");
+    }
+
+    /// Phase 93.2 — `configure(value)` called before `init`
+    /// buffers the value silently (returns `Ok`) so the host can
+    /// honour configure-before-init semantics even though the
+    /// stdio channel only comes up during `init`. `init` then
+    /// flushes the buffer via `plugin.configure` JSON-RPC.
+    #[tokio::test]
+    async fn configure_buffers_when_subprocess_never_spawned() {
+        // Manifest WITH [plugin.config_schema] — otherwise the
+        // legacy-compat shortcut skips buffering. Phase 93.5 will
+        // remove the shortcut.
+        let mut m = manifest_with_entrypoint(Some("/bin/true"));
+        m.plugin.config_schema = Some(nexo_plugin_manifest::ConfigSchemaSection {
+            schema: r#"{"type":"object"}"#.to_string(),
+            shape: nexo_plugin_manifest::ConfigShape::Object,
+            hot_reload: true,
+        });
+        let plugin = SubprocessNexoPlugin::new(m);
+        let value = serde_yaml::Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(
+                serde_yaml::Value::String("k".into()),
+                serde_yaml::Value::String("v".into()),
+            );
+            m
+        });
+        plugin
+            .configure(&value)
+            .await
+            .expect("configure must buffer + return Ok before init");
+        let pending = plugin.pending_configure.lock().await.clone();
+        assert_eq!(pending, Some(value));
+    }
+
+    /// Phase 93.2 — legacy-compat: when the manifest lacks
+    /// `[plugin.config_schema]`, `configure` is a pure no-op
+    /// (returns Ok, does NOT buffer). Phase 93.5 removes this
+    /// branch once every shipped plugin declares a schema.
+    #[tokio::test]
+    async fn configure_noop_when_manifest_has_no_schema() {
+        let m = manifest_with_entrypoint(Some("/bin/true"));
+        let plugin = SubprocessNexoPlugin::new(m);
+        let value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        plugin
+            .configure(&value)
+            .await
+            .expect("no-schema configure must be a no-op");
+        assert!(plugin.pending_configure.lock().await.is_none());
     }
 
     // ─── Broker bridge tests ───
