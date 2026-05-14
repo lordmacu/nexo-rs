@@ -547,6 +547,50 @@ pub struct ToolsSection {
     /// surface via `ToolSearch`.
     #[serde(default)]
     pub deferred: Vec<String>,
+
+    /// Phase 81.33.a — full specs for outbound tools the plugin
+    /// invokes via JSON-RPC against its subprocess. Each entry's
+    /// `name` MUST also appear in `expose` (validated). When
+    /// non-empty, the daemon's `register_outbound_tools` call
+    /// installs one `GenericRpcToolHandler` per entry — no
+    /// daemon-side `nexo_plugin_<id>::register_*_tools(...)`
+    /// crate dep needed.
+    #[serde(default)]
+    pub outbound: Vec<OutboundToolSpec>,
+}
+
+/// Phase 81.33.a — per-tool spec for outbound tools registered
+/// via manifest + JSON-RPC dispatch. See
+/// `spec-runtime-plugin-self-discovery-81.33.a.md` for the
+/// full design.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundToolSpec {
+    /// Tool name. Must match an entry in
+    /// `ToolsSection::expose` and start with `<plugin.id>_`.
+    pub name: String,
+    /// Description shown to the LLM in the tool catalog.
+    pub description: String,
+    /// JSON schema for the tool's input parameters. Stored as
+    /// a string in the TOML to keep the manifest parser
+    /// one-pass; parsed lazily at registration time. The
+    /// validator (parse-time) only checks that the string is
+    /// non-empty + parses as a JSON value with `"type":"object"`.
+    pub input_schema: String,
+    /// JSON-RPC method on the subprocess. Defaults to
+    /// `"outbound_tool.invoke"` so plugins don't have to
+    /// declare it explicitly. Overrideable per entry for
+    /// plugins that prefer per-tool methods.
+    #[serde(default = "default_outbound_rpc_method")]
+    pub rpc_method: String,
+    /// Per-call timeout. `None` → daemon-wide default
+    /// (`NEXO_PLUGIN_TOOL_TIMEOUT_MS` env, fallback 60_000).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+fn default_outbound_rpc_method() -> String {
+    "outbound_tool.invoke".to_string()
 }
 
 // ── Advisors section ────────────────────────────────────────────

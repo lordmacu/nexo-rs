@@ -69,6 +69,27 @@ pub enum ManifestError {
     )]
     DeferredNotInExpose { tool_name: String },
 
+    #[error(
+        "outbound tool `{tool_name}` in `[[plugin.tools.outbound]]` is not listed in \
+         `tools.expose`. Every outbound entry's `name` must also appear in `expose` so the \
+         namespace + deferred passes see it. Plugin: `{plugin_id}`."
+    )]
+    OutboundNotExposed {
+        plugin_id: String,
+        tool_name: String,
+    },
+
+    #[error(
+        "outbound tool `{tool_name}` has invalid `input_schema`: {reason}. \
+         Plugin: `{plugin_id}`. The schema must be a non-empty JSON object with \
+         `\"type\":\"object\"` at the root."
+    )]
+    OutboundInvalidSchema {
+        plugin_id: String,
+        tool_name: String,
+        reason: String,
+    },
+
     #[error("duplicate capability gate env_var `{env_var}` (each gate must be unique)")]
     DuplicateGateEnvVar { env_var: String },
 

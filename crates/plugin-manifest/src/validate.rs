@@ -87,6 +87,15 @@ pub fn run_all_with_sandbox_env(
         &manifest.plugin.tools.deferred,
         errors,
     );
+    // Phase 81.33.a — every outbound spec's `name` must appear in
+    // expose so the namespace pass + deferred pass observe it.
+    // Also checks that the JSON schema string parses as an object.
+    validate_outbound_tools(
+        &manifest.plugin.id,
+        &manifest.plugin.tools.expose,
+        &manifest.plugin.tools.outbound,
+        errors,
+    );
     validate_path_security(
         "agents.contributes_dir",
         manifest.plugin.agents.contributes_dir.as_deref(),
@@ -399,6 +408,68 @@ fn validate_deferred_subset(
     }
 }
 
+/// Phase 81.33.a — outbound spec validator.
+///
+/// Two checks: (1) every `outbound[].name` is in `expose` so the
+/// namespace + deferred passes already saw it; (2) `input_schema`
+/// is a non-empty JSON value whose top-level type is `"object"`
+/// (we don't validate the full schema — only the shape the LLM
+/// tool catalog expects).
+fn validate_outbound_tools(
+    plugin_id: &str,
+    expose: &[String],
+    outbound: &[crate::manifest::OutboundToolSpec],
+    errors: &mut Vec<ManifestError>,
+) {
+    let expose_set: HashSet<&str> = expose.iter().map(String::as_str).collect();
+    for spec in outbound {
+        if !expose_set.contains(spec.name.as_str()) {
+            errors.push(ManifestError::OutboundNotExposed {
+                plugin_id: plugin_id.to_string(),
+                tool_name: spec.name.clone(),
+            });
+        }
+        if spec.input_schema.trim().is_empty() {
+            errors.push(ManifestError::OutboundInvalidSchema {
+                plugin_id: plugin_id.to_string(),
+                tool_name: spec.name.clone(),
+                reason: "input_schema is empty".to_string(),
+            });
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(&spec.input_schema) {
+            Ok(serde_json::Value::Object(map)) => {
+                // Root must declare `"type":"object"`.
+                let ty = map.get("type").and_then(|v| v.as_str());
+                if ty != Some("object") {
+                    errors.push(ManifestError::OutboundInvalidSchema {
+                        plugin_id: plugin_id.to_string(),
+                        tool_name: spec.name.clone(),
+                        reason: format!(
+                            "root `type` must be \"object\", got {:?}",
+                            ty.unwrap_or("missing")
+                        ),
+                    });
+                }
+            }
+            Ok(_) => {
+                errors.push(ManifestError::OutboundInvalidSchema {
+                    plugin_id: plugin_id.to_string(),
+                    tool_name: spec.name.clone(),
+                    reason: "input_schema must be a JSON object".to_string(),
+                });
+            }
+            Err(e) => {
+                errors.push(ManifestError::OutboundInvalidSchema {
+                    plugin_id: plugin_id.to_string(),
+                    tool_name: spec.name.clone(),
+                    reason: format!("invalid JSON: {e}"),
+                });
+            }
+        }
+    }
+}
+
 fn validate_path_security(
     field: &'static str,
     path: Option<&Path>,
@@ -629,6 +700,128 @@ deferred = ["marketing_ghost"]
             e,
             ManifestError::DeferredNotInExpose { tool_name } if tool_name == "marketing_ghost"
         )));
+    }
+
+    /// Phase 81.33.a — outbound spec round-trip parses every
+    /// field with default + override values.
+    #[test]
+    fn manifest_outbound_tools_round_trip() {
+        let toml = r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "Telegram"
+description = "Telegram bot"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_send_message", "telegram_pin_message"]
+
+[[plugin.tools.outbound]]
+name = "telegram_send_message"
+description = "Send a Telegram text message."
+input_schema = """{"type":"object","properties":{"chat_id":{"type":"string"},"text":{"type":"string"}},"required":["chat_id","text"]}"""
+
+[[plugin.tools.outbound]]
+name = "telegram_pin_message"
+description = "Pin a message in a chat."
+input_schema = """{"type":"object","properties":{"chat_id":{"type":"string"}}}"""
+rpc_method = "telegram.pin"
+timeout_ms = 5000
+"#
+        .to_string();
+        let m = parse(&toml);
+        // Validate is clean — every name is in expose; both
+        // schemas parse as valid JSON objects.
+        m.validate(&current()).expect("manifest validates");
+        let outbound = &m.plugin.tools.outbound;
+        assert_eq!(outbound.len(), 2);
+        assert_eq!(outbound[0].name, "telegram_send_message");
+        assert_eq!(outbound[0].rpc_method, "outbound_tool.invoke");
+        assert_eq!(outbound[0].timeout_ms, None);
+        assert_eq!(outbound[1].name, "telegram_pin_message");
+        assert_eq!(outbound[1].rpc_method, "telegram.pin");
+        assert_eq!(outbound[1].timeout_ms, Some(5000));
+    }
+
+    /// Phase 81.33.a — outbound entries whose `name` is not in
+    /// `expose` must surface a typed error so the operator
+    /// fixes the manifest before runtime.
+    #[test]
+    fn manifest_rejects_outbound_entry_missing_from_expose() {
+        let toml = r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "T"
+description = "x"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_send_message"]
+
+[[plugin.tools.outbound]]
+name = "telegram_ghost"
+description = "Not in expose"
+input_schema = """{"type":"object"}"""
+"#
+        .to_string();
+        let m = parse(&toml);
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::OutboundNotExposed { plugin_id, tool_name }
+                    if plugin_id == "telegram" && tool_name == "telegram_ghost"
+            )),
+            "expected OutboundNotExposed for telegram_ghost; got {errs:?}"
+        );
+    }
+
+    /// Phase 81.33.a — invalid `input_schema` strings surface as
+    /// `OutboundInvalidSchema` so operators see a clear reason
+    /// (empty / non-JSON / wrong shape).
+    #[test]
+    fn manifest_rejects_outbound_invalid_schema_shapes() {
+        let cases: &[(&str, &str)] = &[
+            // empty schema
+            ("", "empty"),
+            // not an object
+            (r#""just a string""#, "not an object"),
+            // missing type:object
+            (r#"{"properties":{}}"#, "missing type"),
+            // invalid JSON
+            (r#"{not json}"#, "invalid JSON"),
+        ];
+        for (schema, label) in cases {
+            let toml = format!(
+                r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "T"
+description = "x"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_x"]
+
+[[plugin.tools.outbound]]
+name = "telegram_x"
+description = "x"
+input_schema = '''{schema}'''
+"#
+            );
+            let m = parse(&toml);
+            let errs = m
+                .validate(&current())
+                .expect_err(&format!("schema `{label}` must fail"));
+            assert!(
+                errs.iter().any(|e| matches!(
+                    e,
+                    ManifestError::OutboundInvalidSchema { tool_name, .. }
+                        if tool_name == "telegram_x"
+                )),
+                "case `{label}`: expected OutboundInvalidSchema; got {errs:?}"
+            );
+        }
     }
 
     #[test]
