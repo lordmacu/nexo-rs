@@ -1,9 +1,23 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use serde_yaml::Value;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PluginsConfig {
+    /// Phase 93.3 — opaque per-plugin config slice keyed by
+    /// plugin id (matches `manifest.plugin.id`). Populated by
+    /// `load_plugins` from `<config_dir>/plugins/<id>.yaml` (flat
+    /// file layout). Empty map = no plugin configs supplied.
+    ///
+    /// Each entry is the operator's YAML AST with the outer
+    /// wrapper key stripped when it matches the filename stem.
+    /// Plugins consume via `NexoPlugin::configure(value)`
+    /// (Phase 93.2); typed fields below stay populated through
+    /// the Phase 93.5 deprecation window.
+    pub entries: BTreeMap<String, Value>,
+
     /// Zero, one, or many WhatsApp accounts. Each account needs a
     /// distinct `session_dir` and (optionally) an `instance` label
     /// driving the `plugin.inbound.whatsapp.<instance>` topic.
