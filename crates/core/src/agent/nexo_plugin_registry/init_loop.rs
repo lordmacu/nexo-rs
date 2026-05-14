@@ -203,6 +203,39 @@ fn format_violation_sample(violations: &[NamespaceViolation]) -> String {
     }
 }
 
+/// Phase 93.3 — resolve the operator-supplied plugin config slice,
+/// preferring `cfg.plugins.entries.<plugin_id>` (built from
+/// `<config_dir>/plugins/<plugin_id>.yaml`) over the legacy
+/// `<config_dir>/plugins/<plugin_id>/*.yaml` subdir reader.
+///
+/// Emits a `tracing::info!` on the `plugins.config` target when
+/// both pathways would have yielded data (dual-state during the
+/// Phase 93.5 deprecation window); the flat-file entries wins.
+fn resolve_plugin_cfg(
+    plugin_id: &str,
+    plugin_root: &Path,
+    config_dir: &Path,
+    manifest: &PluginManifest,
+) -> Result<Arc<Value>, InitOutcome> {
+    let plugins_dir = config_dir.join("plugins");
+    let entries = nexo_config::load_plugin_entries(&plugins_dir);
+    if let Some(value) = entries.get(plugin_id) {
+        // Dual-state probe: does the legacy subdir layout also
+        // exist? Cheap stat. Emits an info log so operators see
+        // the migration state during boot.
+        let legacy_subdir = plugins_dir.join(plugin_id);
+        if legacy_subdir.is_dir() {
+            tracing::info!(
+                target: "plugins.config",
+                plugin_id = %plugin_id,
+                "both cfg.plugins.entries.<id> and legacy plugins/<id>/*.yaml populated; entries wins",
+            );
+        }
+        return Ok(Arc::new(value.clone()));
+    }
+    try_load_plugin_config(plugin_id, plugin_root, config_dir, manifest)
+}
+
 /// Load + validate per-plugin config dir BEFORE `init()` runs. On
 /// failure, returns `InitOutcome::Failed` so the caller skips
 /// `init()` and records the outcome. `tracing::warn!` is the
@@ -545,14 +578,18 @@ where
         // We pre-compute eagerly so both the auto-subprocess
         // fallback and the registered-factory path see a
         // pre-validated config.
-        let plugin_cfg =
-            match try_load_plugin_config(&id, &plugin.root_dir, config_dir, &plugin.manifest) {
-                Ok(cfg) => cfg,
-                Err(failed) => {
-                    outcomes.insert(id, failed);
-                    continue;
-                }
-            };
+        // Phase 93.3 — prefer cfg.plugins.entries.<id> when
+        // populated; fall back to the legacy per-plugin subdir
+        // reader otherwise. The entries map is rebuilt from the
+        // same `<config_dir>/plugins/*.yaml` files so a single
+        // operator-supplied flat file feeds both pathways.
+        let plugin_cfg = match resolve_plugin_cfg(&id, &plugin.root_dir, config_dir, &plugin.manifest) {
+            Ok(cfg) => cfg,
+            Err(failed) => {
+                outcomes.insert(id, failed);
+                continue;
+            }
+        };
         // Auto-subprocess fallback. If no in-tree factory was
         // registered for this id BUT the manifest declares an
         // `[plugin.entrypoint]` with a non-empty `command`, build a

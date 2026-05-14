@@ -242,3 +242,33 @@ Three error categories from `PluginConfigureError`:
 Configure-then-init is the boot order: `init`'s registrations
 may inspect what `configure` accepted, so the plugin sees a
 consistent world from the first `init` call onward.
+
+### Operator config delivery (Phase 93.3)
+
+The daemon walks `<config_dir>/plugins/*.yaml` at boot and feeds
+each file into `cfg.plugins.entries.<plugin_id>` keyed by the
+filename stem. A new community plugin lands by dropping
+`<config_dir>/plugins/slack.yaml`; the daemon discovers it,
+matches the file's stem to `manifest.plugin.id == "slack"`, and
+routes the parsed value into `NexoPlugin::configure(value)`.
+Zero daemon-side edits.
+
+Outer-wrapper-key strip is conservative — only when the YAML's
+single top-level key matches the filename stem:
+
+```yaml
+# config/plugins/slack.yaml
+slack:                            # ← stripped
+  token_env: SLACK_BOT_TOKEN
+```
+
+becomes `entries["slack"] == { token_env: SLACK_BOT_TOKEN }`. If
+the operator's top-level key doesn't match the stem, the whole
+mapping is preserved verbatim — plugins decide how to interpret.
+
+`discovery.yaml` is filtered (framework-internal). Parse failures
+log `tracing::warn!` on the `plugins.config` target and skip the
+file; other plugins still boot. Init-loop emits a
+`tracing::info!` when both `entries.<id>` AND the legacy
+`plugins/<id>/*.yaml` subdir populate — operator-visible
+deprecation-window state; entries always wins.

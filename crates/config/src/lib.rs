@@ -9,6 +9,7 @@ pub use types::*;
 
 use anyhow::{Context, Result};
 use serde_yaml::Value;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -565,13 +566,95 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let discovery = load_optional::<PluginDiscoveryConfigFile>(&plugins_dir, "discovery.yaml")?
         .map(|f| f.discovery)
         .unwrap_or_default();
+    // Phase 93.3 — opaque per-plugin entries map. Same files;
+    // additive view keyed by plugin id.
+    let entries = load_plugin_entries(&plugins_dir);
     Ok(PluginsConfig {
+        entries,
         whatsapp,
         telegram,
         email,
         browser,
         discovery,
     })
+}
+
+/// Phase 93.3 — walk `<plugins_dir>/*.yaml` and produce an opaque
+/// `plugin_id → serde_yaml::Value` map. Outer wrapper key is
+/// stripped when the single top-level key matches the filename
+/// stem (so `whatsapp.yaml` containing `{whatsapp: [...]}` yields
+/// `entries["whatsapp"] = [...]`). `discovery.yaml` is filtered
+/// (framework-internal — typed loader handles it). Per-file parse
+/// failures emit `tracing::warn!` on the `plugins.config` target
+/// and are skipped; a single bad file doesn't abort the whole
+/// config load.
+///
+/// `.yml` extension is ignored (parity with the typed loaders).
+/// Returns the empty map when `plugins_dir` doesn't exist.
+pub fn load_plugin_entries(plugins_dir: &Path) -> BTreeMap<String, serde_yaml::Value> {
+    let mut out: BTreeMap<String, serde_yaml::Value> = BTreeMap::new();
+    let read = match std::fs::read_dir(plugins_dir) {
+        Ok(r) => r,
+        Err(_) => return out,
+    };
+    for entry in read.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let ext_yaml = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case("yaml"))
+            .unwrap_or(false);
+        if !ext_yaml {
+            continue;
+        }
+        if stem == "discovery" {
+            continue;
+        }
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    target: "plugins.config",
+                    file = %path.display(),
+                    error = %e,
+                    "skipping unreadable plugins/*.yaml",
+                );
+                continue;
+            }
+        };
+        let parsed: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    target: "plugins.config",
+                    file = %path.display(),
+                    error = %e,
+                    "skipping unparseable plugins/*.yaml",
+                );
+                continue;
+            }
+        };
+        // Strip outer wrapper key only when (a) value is a Mapping,
+        // (b) Mapping has exactly one entry, (c) key matches stem.
+        let value = match parsed {
+            serde_yaml::Value::Mapping(ref m) if m.len() == 1 => {
+                let key = serde_yaml::Value::String(stem.to_string());
+                match m.get(&key) {
+                    Some(inner) => inner.clone(),
+                    None => parsed.clone(),
+                }
+            }
+            other => other,
+        };
+        out.insert(stem.to_string(), value);
+    }
+    out
 }
 
 #[cfg(test)]
