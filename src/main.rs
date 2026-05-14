@@ -6671,6 +6671,31 @@ async fn main() -> Result<()> {
     for (id, tx, known) in reload_senders.drain(..) {
         reload_coord.register(id, tx, known);
     }
+    // Phase 81.32 c7 — install the spawner closure invoked by
+    // `ConfigReloadCoordinator` when an unknown agent id appears
+    // in `agents.yaml`. Scaffold returns
+    // `SpawnError::Internal("spawner not yet wired …")` so the
+    // wizard surface upgrades from the cryptic "Phase 18 not
+    // supported" message to an actionable "feature in progress —
+    // restart the daemon for now" while c7.b… fills the body.
+    //
+    // Coord side (c8) reads `spawner()` then `call(cfg).await`;
+    // the structured `SpawnError` propagates back to the admin
+    // RPC handler unchanged.
+    {
+        use nexo_core::agent::spawn::{AgentSpawnerFn, SpawnError};
+        let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg| {
+            let id = cfg.id.clone();
+            Box::pin(async move {
+                Err(SpawnError::Internal(format!(
+                    "spawner not yet wired (Phase 81.32 c7 in progress); \
+                     agent `{id}` was written to agents.yaml but a daemon \
+                     restart is required to activate it"
+                )))
+            })
+        }));
+        reload_coord.set_spawner(Arc::new(spawner));
+    }
     // Flush in-process gate caches after every reload so
     // operator changes (e.g. `nexo pair seed`) take effect without a
     // daemon restart. PairingGate keeps a 30s decision cache; without
