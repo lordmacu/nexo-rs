@@ -6671,6 +6671,14 @@ async fn main() -> Result<()> {
     for (id, tx, known) in reload_senders.drain(..) {
         reload_coord.register(id, tx, known);
     }
+    // Phase 81.32 c7.b — build the spawner closure here (captures
+    // every per-agent dep from this scope) but DEFER the actual
+    // `reload_coord.set_spawner` install until after
+    // `coord.start()` has stashed the broker handle. Otherwise
+    // the very first hot-spawn between this point and start()
+    // would publish `events.runtime.agent.spawned` to a `None`
+    // broker (silently dropped).
+    let pending_spawner = {
     // Phase 81.32 c7.b — install the spawner closure invoked by
     // `ConfigReloadCoordinator` when an unknown agent id appears
     // in `agents.yaml` (typical: wizard creates a new agent).
@@ -6695,7 +6703,6 @@ async fn main() -> Result<()> {
     let llm_cfg_for_spawn = Arc::new(cfg.llm.clone());
     let telegram_cfgs_for_spawn: Vec<nexo_config::TelegramPluginConfig> =
         cfg.plugins.telegram.clone();
-    {
         use nexo_core::agent::spawn::{
             assemble_agent_runtime, resolve_llm_client, validate_agent_config, AgentSpawnerFn,
             RuntimeAssemblyDeps, SpawnError, SpawnedAgent,
@@ -6849,8 +6856,12 @@ async fn main() -> Result<()> {
                 })
             })
         }));
-        reload_coord.set_spawner(Arc::new(spawner));
-    }
+        // Phase 81.32 c7.b.followup — closure returns out of the
+        // outer `let pending_spawner = { ... }` block; the actual
+        // install happens after `coord.start()` stashes the
+        // broker handle below.
+        Arc::new(spawner)
+    };
     // Flush in-process gate caches after every reload so
     // operator changes (e.g. `nexo pair seed`) take effect without a
     // daemon restart. PairingGate keeps a 30s decision cache; without
@@ -7005,6 +7016,10 @@ async fn main() -> Result<()> {
     {
         tracing::warn!(error = %e, "config reload coordinator failed to start — hot-reload disabled");
     }
+    // Phase 81.32 c7.b.followup — broker handle is now stashed
+    // by `start()`; safe to wire the spawner so hot-spawn
+    // firehose events reach subscribers from the first call.
+    reload_coord.set_spawner(pending_spawner);
 
     // Late-bind the reload coord into the
     // ConfigTool's reload trigger. The trigger was constructed
