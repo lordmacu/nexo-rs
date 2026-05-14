@@ -124,6 +124,38 @@ where
     }
 }
 
+/// Phase 93.4.a — handler the SDK invokes when the host sends
+/// `plugin.configure` (Phase 93.2). Receives the operator-supplied
+/// YAML slice for this plugin. Returning `Err(msg)` maps to a
+/// JSON-RPC `-32603` reply, which the host surfaces as
+/// `PluginConfigureError::SubprocessRpc`.
+///
+/// Re-callable — hot-reload triggers a fresh `plugin.configure`
+/// when the operator's YAML changes; handlers should overwrite
+/// any cached state rather than panicking on second invocation.
+pub trait ConfigureHandler: Send + Sync + 'static {
+    /// Hook called with the operator-supplied YAML slice. Return
+    /// `Ok(())` to accept; `Err(msg)` maps to a JSON-RPC `-32603`
+    /// error reply.
+    fn handle(
+        &self,
+        value: serde_yaml::Value,
+    ) -> BoxFuture<'static, Result<(), String>>;
+}
+
+impl<F, Fut> ConfigureHandler for F
+where
+    F: Fn(serde_yaml::Value) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    fn handle(
+        &self,
+        value: serde_yaml::Value,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        Box::pin((self)(value))
+    }
+}
+
 /// Child-side request-response correlation map.
 /// Each outbound request (memory.recall, llm.complete, ...) is
 /// keyed by an integer id; the dispatch loop's reader looks up
@@ -762,6 +794,11 @@ pub struct PluginAdapter {
     server_version: String,
     on_broker_event: Option<Arc<dyn BrokerEventHandler>>,
     on_shutdown: Option<Arc<dyn ShutdownHandler>>,
+    /// Phase 93.4.a — invoked when the host sends
+    /// `plugin.configure` (Phase 93.2). `None` ⇒ the dispatch loop
+    /// silently accepts the value with `{"result":{}}` so plugins
+    /// that haven't migrated keep booting unchanged.
+    on_configure: Option<Arc<dyn ConfigureHandler>>,
     /// Tool defs advertised in the `initialize`
     /// reply's `tools: [...]` field. The host's decoder
     /// (`nexo_core::agent::tool_remote::RemoteToolDef`) consumes
@@ -887,6 +924,7 @@ impl PluginAdapter {
             server_version,
             on_broker_event: None,
             on_shutdown: None,
+            on_configure: None,
             declared_tools: Vec::new(),
             tool_handler: None,
             tool_handler_with_context: None,
@@ -1008,6 +1046,15 @@ impl PluginAdapter {
     /// host surfaces `PluginShutdownError::Other`.
     pub fn on_shutdown<H: ShutdownHandler>(mut self, handler: H) -> Self {
         self.on_shutdown = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 93.4.a — register the handler invoked when the host
+    /// sends `plugin.configure` (Phase 93.2). Receives the
+    /// operator-supplied YAML slice for this plugin. Returning
+    /// `Err(msg)` maps to a JSON-RPC `-32603` reply.
+    pub fn on_configure<H: ConfigureHandler>(mut self, handler: H) -> Self {
+        self.on_configure = Some(Arc::new(handler));
         self
     }
 
@@ -1286,6 +1333,25 @@ where
                     write_result(&writer, id, json!({"ok": true})).await?;
                 }
                 break;
+            }
+            "plugin.configure" => {
+                // Phase 93.4.a — host delivers operator YAML slice.
+                // No handler registered ⇒ silent accept so plugins
+                // that haven't migrated to the configure API keep
+                // booting unchanged (env-var fallback paths).
+                let yaml_value: serde_yaml::Value = params
+                    .get("value")
+                    .cloned()
+                    .map(|v| serde_yaml::to_value(&v).unwrap_or(serde_yaml::Value::Null))
+                    .unwrap_or(serde_yaml::Value::Null);
+                if let Some(handler) = &adapter.on_configure {
+                    match handler.handle(yaml_value).await {
+                        Ok(()) => write_result(&writer, id, json!({})).await?,
+                        Err(e) => write_error(&writer, id, -32603, &e).await?,
+                    }
+                } else {
+                    write_result(&writer, id, json!({})).await?;
+                }
             }
             "tool.invoke" => {
                 // Host-initiated tool dispatch. No
@@ -2277,6 +2343,47 @@ min_nexo_version = ">=0.1.0"
         assert!(
             observed.load(Ordering::SeqCst),
             "handler must reassemble chunks + observe final result"
+        );
+    }
+
+    /// Phase 93.4.a — `plugin.configure` dispatch invokes the
+    /// registered handler with the YAML value + replies `{"result":{}}`.
+    #[tokio::test]
+    async fn configure_handler_dispatch_returns_ok() {
+        use std::sync::Mutex;
+        let observed: Arc<Mutex<Option<serde_yaml::Value>>> = Arc::new(Mutex::new(None));
+        let observed_h = observed.clone();
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_configure(move |value: serde_yaml::Value| {
+                let slot = observed_h.clone();
+                async move {
+                    *slot.lock().unwrap() = Some(value);
+                    Ok(())
+                }
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"plugin.configure\",\
+                 \"params\":{\"value\":{\"token\":\"abc\"}}}\n",
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 3);
+        assert_eq!(
+            reply["result"],
+            serde_json::json!({}),
+            "configure ack must be empty result object",
+        );
+        let captured = observed.lock().unwrap().clone();
+        let m = captured.expect("handler observed value");
+        let m = m.as_mapping().expect("value is mapping");
+        assert_eq!(
+            m.get(serde_yaml::Value::String("token".into()))
+                .and_then(|v| v.as_str()),
+            Some("abc"),
         );
     }
 }
