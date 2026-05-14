@@ -5039,19 +5039,36 @@ async fn main() -> Result<()> {
                 "agent declares `browser` plugin; tools auto-register via subprocess RemoteToolHandler"
             );
         }
-        // WhatsApp outbound tools — gated on `plugins: [whatsapp]`.
-        // Tools publish to `plugin.outbound.whatsapp`; the plugin's
-        // dispatcher handles transport. Each tool honors the agent's
-        // `outbound_allowlist.whatsapp` at call time.
+        // Phase 81.33.a — generic outbound tool registration via
+        // plugin manifest. Iterates the agent's declared plugin
+        // ids, looks up the corresponding plugin handle, and
+        // calls the trait method `register_outbound_tools`. For
+        // subprocess plugins this triggers
+        // `SubprocessNexoPlugin::register_outbound_tools` which
+        // installs one `GenericRpcToolHandler` per manifest
+        // `[[plugin.tools.outbound]]` entry. Plugins whose
+        // manifest doesn't declare outbound tools (legacy /
+        // in-tree) register zero — keeping the hardcoded fallback
+        // calls below valid during the migration window.
+        for plugin_id in &agent_cfg.plugins {
+            if let Some(handle) = wire.plugin_handles.get(plugin_id) {
+                handle.register_outbound_tools(&tools);
+            }
+        }
+        // WhatsApp outbound tools — Phase 81.33.a fallback while
+        // the out-of-tree plugin hasn't shipped a manifest
+        // declaring `[[plugin.tools.outbound]]`. The generic loop
+        // above already runs; this block stays additive (no
+        // collision because old plugins declare zero outbound in
+        // manifest). Removed in Phase 81.33.a step 6 after the
+        // matching plugin patch publishes.
         if agent_cfg.plugins.iter().any(|p| p == "whatsapp") {
             nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
-            tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent");
+            tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent (fallback)");
         }
-        // Telegram outbound tools — same shape as WhatsApp; gated on
-        // `plugins: [telegram]` + per-agent allowlist.
         if agent_cfg.plugins.iter().any(|p| p == "telegram") {
             nexo_plugin_telegram::register_telegram_tools(&tools);
-            tracing::info!(agent = %agent_id, "registered telegram_* tools for agent");
+            tracing::info!(agent = %agent_id, "registered telegram_* tools for agent (fallback)");
         }
         // Email tools — gated on `plugins: [email]` + dispatcher
         // primed (the post-`start_all` ctx above). Six handlers:
@@ -6731,6 +6748,10 @@ async fn main() -> Result<()> {
         // Phase 81.32 c7.c.1 — extra captures for the
         // expanded minimal-mode tools registry.
         let default_recall_mode_c = cfg.memory.vector.default_recall_mode.clone();
+        // Phase 81.33.a — capture plugin_handles_cell so the
+        // spawner closure can iterate the live plugin map and
+        // call register_outbound_tools on each handle.
+        let plugin_handles_cell_c = plugin_handles_cell.clone();
         let tools_per_agent_c = Arc::clone(&tools_per_agent);
         let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
 
@@ -6753,6 +6774,7 @@ async fn main() -> Result<()> {
             let processing_store = Arc::clone(&processing_store_c);
             let event_emitter = event_emitter_c.clone();
             let default_recall_mode = default_recall_mode_c.clone();
+            let plugin_handles_cell = plugin_handles_cell_c.clone();
             let tools_per_agent = Arc::clone(&tools_per_agent_c);
             let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
 
@@ -6785,6 +6807,29 @@ async fn main() -> Result<()> {
                         );
                     }
                 }
+                // Phase 81.33.a — generic outbound tool
+                // registration from manifest. Hot-spawn path
+                // mirrors the boot loop's generic loop. Reads
+                // plugin_handles from the shared cell at call
+                // time so respawned plugins (Phase 81.21.b) get
+                // their fresh handles registered.
+                {
+                    let guard = plugin_handles_cell.read().await;
+                    if let Some(handles) = guard.as_ref() {
+                        for plugin_id in &cfg.plugins {
+                            if let Some(handle) = handles.get(plugin_id) {
+                                handle.register_outbound_tools(&tools);
+                            }
+                        }
+                    }
+                }
+                // Fallback to legacy hardcoded calls during the
+                // migration window (Phase 81.33.a step 4 →
+                // step 6). The generic loop above already runs;
+                // these stay because plugins haven't yet shipped
+                // `[[plugin.tools.outbound]]` in their manifests.
+                // Removed in step 6 once the plugin patches
+                // publish.
                 if cfg.plugins.iter().any(|p| p == "whatsapp") {
                     nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
                 }
