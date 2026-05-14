@@ -1541,6 +1541,91 @@ where
     }
 }
 
+/// Phase 81.33.e — generic helper that consolidates the
+/// per-cfg-entry subprocess factory registration loop used by
+/// the telegram + whatsapp wire-up blocks. The two blocks were
+/// 95% duplicates (90 LOC each) differing only in:
+///   - which `cfg.plugins.X: Vec<XConfig>` to iterate
+///   - which `seed_X_subprocess_env_for` to call
+///   - the optional `enabled` filter (whatsapp has it; telegram doesn't)
+///   - the `tracing` Phase reference in the success log
+///
+/// Caller passes the plugin id + the discovered manifest snapshot
+/// + accessor closures + the seeder fn. We:
+///   1. find the base manifest by id (returns `None` if missing
+///      → caller's warning fires)
+///   2. iterate each cfg entry (skipping disabled ones)
+///   3. derive plugin_id from instance label (`telegram` /
+///      `telegram.<label>`)
+///   4. seed env, synthesise manifest, build factory, register.
+///   5. push synthesised plugin to `extra_subprocess_plugins`.
+///
+/// Returns `Some(())` when at least the base manifest was found
+/// (caller stays quiet); `None` when no base manifest exists so
+/// the caller can emit a guidance warning.
+#[allow(clippy::too_many_arguments)]
+fn register_instance_subprocess_factories<C>(
+    plugin_id: &str,
+    cfgs: Vec<C>,
+    pre_snap: &nexo_core::agent::nexo_plugin_registry::NexoPluginRegistrySnapshot,
+    broker_kind: &str,
+    broker_url: &str,
+    factory_registry: &mut nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry,
+    extra_subprocess_plugins: &mut Vec<
+        nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
+    >,
+    extract_label: impl Fn(&C) -> Option<String>,
+    is_enabled: impl Fn(&C) -> bool,
+    seed_env: impl Fn(&C, &str, &str) -> std::collections::HashMap<String, String>,
+    phase_ref: &'static str,
+) -> Option<()> {
+    if cfgs.is_empty() {
+        return Some(());
+    }
+    let base = pre_snap
+        .plugins
+        .iter()
+        .find(|p| p.manifest.plugin.id == plugin_id)
+        .cloned()?;
+    for cfg in cfgs {
+        if !is_enabled(&cfg) {
+            continue;
+        }
+        let instance_label = extract_label(&cfg).unwrap_or_default();
+        let trimmed = instance_label.trim();
+        let derived_id = if trimmed.is_empty() {
+            plugin_id.to_string()
+        } else {
+            format!("{plugin_id}.{trimmed}")
+        };
+        let env = seed_env(&cfg, broker_kind, broker_url);
+        let synthetic = nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
+            &base, trimmed,
+        );
+        let factory = nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
+            synthetic.manifest.clone(),
+            env,
+            trimmed.to_string(),
+        );
+        if let Err(e) = factory_registry.register(derived_id.clone(), factory) {
+            tracing::warn!(
+                plugin_id = %derived_id,
+                error = %e,
+                phase = phase_ref,
+                "subprocess factory registration failed; instance skipped",
+            );
+        } else {
+            tracing::info!(
+                plugin_id = %derived_id,
+                phase = phase_ref,
+                "registered subprocess factory",
+            );
+            extra_subprocess_plugins.push(synthetic);
+        }
+    }
+    Some(())
+}
+
 /// Phase 81.33.b — single source of truth for the in-tree
 /// `PairingChannelAdapter` registrations the daemon ships with.
 ///
@@ -3371,75 +3456,38 @@ async fn main() -> Result<()> {
     let mut extra_subprocess_plugins: Vec<
         nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
     > = Vec::new();
+    // Phase 81.33.e — telegram subprocess flip via shared helper.
     if !cfg.plugins.telegram.is_empty() {
-        // Pre-discovery scan to fetch the telegram manifest from
-        // the operator's configured search paths.
         let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
             &discovery_cfg_clone,
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
                 .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         );
-        let base_telegram = pre_snap
-            .plugins
-            .iter()
-            .find(|p| p.manifest.plugin.id == "telegram")
-            .cloned();
-
-        match base_telegram {
-            Some(base) => {
-                let broker_url = std::env::var("NEXO_BROKER_URL")
-                    .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-                // Derive the subprocess-side broker
-                // transport from the daemon's own broker config.
-                // `Local` daemons stamp `stdio_bridge` because
-                // their in-process broker is unreachable from
-                // another OS process; the bridge is what gets
-                // the subprocess back to the host broker.
-                let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
-                for tg_cfg in cfg.plugins.telegram.clone() {
-                    let instance_label = tg_cfg.instance.clone().unwrap_or_default();
-                    let trimmed = instance_label.trim();
-                    let plugin_id = if trimmed.is_empty() {
-                        "telegram".to_string()
-                    } else {
-                        format!("telegram.{trimmed}")
-                    };
-                    let env = seed_telegram_subprocess_env_for(&tg_cfg, broker_kind, &broker_url);
-                    let synthetic =
-                        nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
-                            &base, trimmed,
-                        );
-                    let factory =
-                        nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
-                            synthetic.manifest.clone(),
-                            env,
-                            trimmed.to_string(),
-                        );
-                    if let Err(e) = factory_registry.register(plugin_id.clone(), factory) {
-                        tracing::warn!(
-                            plugin_id = %plugin_id,
-                            error = %e,
-                            "telegram subprocess factory registration failed; instance skipped",
-                        );
-                    } else {
-                        tracing::info!(
-                            plugin_id = %plugin_id,
-                            "registered telegram subprocess factory (Phase 81.18.b.1)",
-                        );
-                        extra_subprocess_plugins.push(synthetic);
-                    }
-                }
-            }
-            None => {
-                tracing::warn!(
-                    "telegram is configured in cfg.plugins.telegram but no \
-                     `telegram` manifest was found in `plugins.discovery.search_paths` \
-                     — install the binary via `cargo install nexo-plugin-telegram` \
-                     (or download the v0.1.1+ release tarball) and add its directory \
-                     to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
-                     will not run until the manifest is reachable.",
-                );
-            }
+        let broker_url = std::env::var("NEXO_BROKER_URL")
+            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
+        let outcome = register_instance_subprocess_factories(
+            "telegram",
+            cfg.plugins.telegram.clone(),
+            &pre_snap,
+            broker_kind,
+            &broker_url,
+            &mut factory_registry,
+            &mut extra_subprocess_plugins,
+            |c| c.instance.clone(),
+            |_| true, // telegram has no `enabled` flag
+            seed_telegram_subprocess_env_for,
+            "81.18.b.1",
+        );
+        if outcome.is_none() {
+            tracing::warn!(
+                "telegram is configured in cfg.plugins.telegram but no \
+                 `telegram` manifest was found in `plugins.discovery.search_paths` \
+                 — install the binary via `cargo install nexo-plugin-telegram` \
+                 (or download the v0.1.1+ release tarball) and add its directory \
+                 to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
+                 will not run until the manifest is reachable.",
+            );
         }
     }
 
@@ -3450,73 +3498,38 @@ async fn main() -> Result<()> {
     // plugins. The pairing state subscriber is spawned right after
     // so events arriving on `plugin.inbound.whatsapp.<inst>` find
     // the daemon-owned `wa_pairing` slots already populated above.
+    // Phase 81.33.e — whatsapp subprocess flip via shared helper.
     if !cfg.plugins.whatsapp.is_empty() {
         let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
             &discovery_cfg_clone,
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
                 .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         );
-        let base_whatsapp = pre_snap
-            .plugins
-            .iter()
-            .find(|p| p.manifest.plugin.id == "whatsapp")
-            .cloned();
-
-        match base_whatsapp {
-            Some(base) => {
-                let broker_url = std::env::var("NEXO_BROKER_URL")
-                    .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-                // See telegram mirror for the rationale
-                // behind mapping daemon broker kind → subprocess
-                // transport selector.
-                let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
-                for wa_cfg in cfg.plugins.whatsapp.clone() {
-                    if !wa_cfg.enabled {
-                        continue;
-                    }
-                    let instance_label = wa_cfg.instance.clone().unwrap_or_default();
-                    let trimmed = instance_label.trim();
-                    let plugin_id = if trimmed.is_empty() {
-                        "whatsapp".to_string()
-                    } else {
-                        format!("whatsapp.{trimmed}")
-                    };
-                    let env = seed_whatsapp_subprocess_env_for(&wa_cfg, broker_kind, &broker_url);
-                    let synthetic =
-                        nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
-                            &base, trimmed,
-                        );
-                    let factory =
-                        nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
-                            synthetic.manifest.clone(),
-                            env,
-                            trimmed.to_string(),
-                        );
-                    if let Err(e) = factory_registry.register(plugin_id.clone(), factory) {
-                        tracing::warn!(
-                            plugin_id = %plugin_id,
-                            error = %e,
-                            "whatsapp subprocess factory registration failed; instance skipped",
-                        );
-                    } else {
-                        tracing::info!(
-                            plugin_id = %plugin_id,
-                            "registered whatsapp subprocess factory (Phase 81.18.b.2)",
-                        );
-                        extra_subprocess_plugins.push(synthetic);
-                    }
-                }
-            }
-            None => {
-                tracing::warn!(
-                    "whatsapp is configured in cfg.plugins.whatsapp but no \
-                     `whatsapp` manifest was found in `plugins.discovery.search_paths` \
-                     — install the binary via `cargo install nexo-plugin-whatsapp` \
-                     (or download the v0.1.2+ release tarball) and add its directory \
-                     to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
-                     will not run until the manifest is reachable.",
-                );
-            }
+        let broker_url = std::env::var("NEXO_BROKER_URL")
+            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
+        let outcome = register_instance_subprocess_factories(
+            "whatsapp",
+            cfg.plugins.whatsapp.clone(),
+            &pre_snap,
+            broker_kind,
+            &broker_url,
+            &mut factory_registry,
+            &mut extra_subprocess_plugins,
+            |c| c.instance.clone(),
+            |c| c.enabled,
+            seed_whatsapp_subprocess_env_for,
+            "81.18.b.2",
+        );
+        if outcome.is_none() {
+            tracing::warn!(
+                "whatsapp is configured in cfg.plugins.whatsapp but no \
+                 `whatsapp` manifest was found in `plugins.discovery.search_paths` \
+                 — install the binary via `cargo install nexo-plugin-whatsapp` \
+                 (or download the v0.1.2+ release tarball) and add its directory \
+                 to `plugins.discovery.search_paths` in `agents.yaml`. The plugin \
+                 will not run until the manifest is reachable.",
+            );
         }
     }
 
