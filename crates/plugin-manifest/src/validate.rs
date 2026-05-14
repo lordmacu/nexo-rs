@@ -96,6 +96,12 @@ pub fn run_all_with_sandbox_env(
         &manifest.plugin.tools.outbound,
         errors,
     );
+    // Phase 93.1 — declarative plugin config contract. Only the
+    // schema *string itself* is validated here; the operator YAML
+    // is checked against it at boot (Phase 93.2).
+    if let Some(section) = &manifest.plugin.config_schema {
+        validate_plugin_config_schema(&manifest.plugin.id, section, errors);
+    }
     validate_path_security(
         "agents.contributes_dir",
         manifest.plugin.agents.contributes_dir.as_deref(),
@@ -466,6 +472,60 @@ fn validate_outbound_tools(
                     reason: format!("invalid JSON: {e}"),
                 });
             }
+        }
+    }
+}
+
+/// Phase 93.1 — declarative `[plugin.config_schema]` validator.
+///
+/// Same shape as [`validate_outbound_tools`]: collect every
+/// failure into `errors` (no short-circuit), emit one
+/// [`ManifestError::PluginConfigInvalidSchema`] per problem.
+///
+/// Checks performed on the schema *string itself* (the operator
+/// YAML is validated against it at boot in Phase 93.2):
+/// - non-empty after trim,
+/// - parses as JSON,
+/// - parsed value is a JSON object,
+/// - root object declares `"type": "object"` (regardless of
+///   `shape` — for `shape = "array"` the schema describes one
+///   element, not the wrapper).
+fn validate_plugin_config_schema(
+    plugin_id: &str,
+    section: &crate::manifest::ConfigSchemaSection,
+    errors: &mut Vec<ManifestError>,
+) {
+    if section.schema.trim().is_empty() {
+        errors.push(ManifestError::PluginConfigInvalidSchema {
+            plugin_id: plugin_id.to_string(),
+            reason: "config_schema is empty".to_string(),
+        });
+        return;
+    }
+    match serde_json::from_str::<serde_json::Value>(&section.schema) {
+        Ok(serde_json::Value::Object(map)) => {
+            let ty = map.get("type").and_then(|v| v.as_str());
+            if ty != Some("object") {
+                errors.push(ManifestError::PluginConfigInvalidSchema {
+                    plugin_id: plugin_id.to_string(),
+                    reason: format!(
+                        "root `type` must be \"object\", got {:?}",
+                        ty.unwrap_or("missing")
+                    ),
+                });
+            }
+        }
+        Ok(_) => {
+            errors.push(ManifestError::PluginConfigInvalidSchema {
+                plugin_id: plugin_id.to_string(),
+                reason: "schema must be a JSON object".to_string(),
+            });
+        }
+        Err(e) => {
+            errors.push(ManifestError::PluginConfigInvalidSchema {
+                plugin_id: plugin_id.to_string(),
+                reason: format!("invalid JSON: {e}"),
+            });
         }
     }
 }
@@ -1395,5 +1455,88 @@ expose = ["wrong_prefix"]
         // a pair-able channel).
         let m = parse(&base_manifest_toml());
         m.validate(&current()).unwrap();
+    }
+
+    // ── Phase 93.1: [plugin.config_schema] ───────────────────────
+
+    fn manifest_with_config_schema(shape: &str, schema: &str) -> String {
+        let mut s = base_manifest_toml();
+        s.push_str("\n[plugin.config_schema]\n");
+        s.push_str(&format!("shape = \"{shape}\"\n"));
+        s.push_str(&format!("schema = '''{schema}'''\n"));
+        s
+    }
+
+    #[test]
+    fn config_schema_array_shape_valid() {
+        // Telegram-style multi-instance plugin.
+        let schema = r#"{"type":"object","properties":{"instance":{"type":"string"},"bot_token_env":{"type":"string"}},"required":["instance","bot_token_env"]}"#;
+        let m = parse(&manifest_with_config_schema("array", schema));
+        assert_eq!(
+            serde_json::to_string(&m.plugin.config_schema.as_ref().unwrap().shape).unwrap(),
+            "\"array\"",
+            "ConfigShape::Array must serialize as lowercase \"array\"",
+        );
+        m.validate(&current()).expect("array shape valid");
+    }
+
+    #[test]
+    fn config_schema_object_shape_valid() {
+        // Email-style single-instance plugin.
+        let schema = r#"{"type":"object","properties":{"imap_host":{"type":"string"}},"required":["imap_host"]}"#;
+        let m = parse(&manifest_with_config_schema("object", schema));
+        m.validate(&current()).expect("object shape valid");
+    }
+
+    #[test]
+    fn config_schema_absent_is_ok() {
+        // Manifest without [plugin.config_schema] — backward compat
+        // through the Phase 93.5 deprecation window.
+        let m = parse(&base_manifest_toml());
+        assert!(m.plugin.config_schema.is_none());
+        m.validate(&current()).expect("absent section is OK");
+    }
+
+    #[test]
+    fn config_schema_empty_string_errors() {
+        let m = parse(&manifest_with_config_schema("object", ""));
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PluginConfigInvalidSchema { reason, .. }
+                    if reason == "config_schema is empty"
+            )),
+            "expected empty-schema error, got {errs:?}",
+        );
+    }
+
+    #[test]
+    fn config_schema_root_non_object_errors() {
+        let schema = r#"{"type":"string"}"#;
+        let m = parse(&manifest_with_config_schema("object", schema));
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PluginConfigInvalidSchema { reason, .. }
+                    if reason.starts_with("root `type` must be \"object\"")
+            )),
+            "expected root-type error, got {errs:?}",
+        );
+    }
+
+    #[test]
+    fn config_schema_invalid_json_errors() {
+        let m = parse(&manifest_with_config_schema("object", "not json"));
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PluginConfigInvalidSchema { reason, .. }
+                    if reason.starts_with("invalid JSON:")
+            )),
+            "expected invalid-JSON error, got {errs:?}",
+        );
     }
 }

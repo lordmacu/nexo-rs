@@ -143,3 +143,63 @@ once at boot. Operator can migrate at their own pace.
   = 1` mode (target: 0.2.0).
 - JSON-Schema export for editor autocomplete (mirrors OpenClaw's
   `openclaw.plugin.json`).
+
+## `[plugin.config_schema]` (Phase 93.1)
+
+Plugins ship their config contract inside their own manifest so
+the daemon never hardcodes a per-plugin field. Optional — plugins
+without a config block (or those still on typed `cfg.plugins.X`
+through the Phase 93.5 deprecation window) omit the section.
+
+```toml
+# Multi-instance plugin (telegram, whatsapp, …).
+[plugin.config_schema]
+shape = "array"
+schema = """{
+  "type": "object",
+  "properties": {
+    "instance":      { "type": "string" },
+    "bot_token_env": { "type": "string" },
+    "enabled":       { "type": "boolean" }
+  },
+  "required": ["instance", "bot_token_env"]
+}"""
+```
+
+```toml
+# Single-instance plugin (email, browser, google).
+[plugin.config_schema]
+shape = "object"
+schema = """{
+  "type": "object",
+  "properties": {
+    "imap_host":    { "type": "string" },
+    "smtp_host":    { "type": "string" },
+    "username_env": { "type": "string" }
+  },
+  "required": ["imap_host", "smtp_host", "username_env"]
+}"""
+```
+
+### Fields
+
+| Field         | Type                  | Default | Meaning                                                                                       |
+|---------------|-----------------------|---------|-----------------------------------------------------------------------------------------------|
+| `schema`      | JSON-Schema string    | —       | Draft-07 subset (see [`config_schema`](https://docs.rs/nexo-plugin-manifest)). Root MUST be `"type":"object"` even when `shape = "array"` — the schema describes ONE element. |
+| `shape`       | `"object"` \| `"array"` | —     | YAML wire shape at `cfg.plugins.<plugin_id>`. `object` = single map; `array` = `Vec<map>` for multi-instance plugins. |
+| `hot_reload`  | boolean               | `true`  | Mirrors [`ConfigSection::hot_reload`]; plugins set `false` only if config touches state that requires a restart. |
+
+### Static validation
+
+`cargo run --bin nexo manifest validate` rejects malformed
+schemas with `ManifestError::PluginConfigInvalidSchema { plugin_id,
+reason }`:
+
+- Empty `schema` string.
+- `schema` is not valid JSON.
+- `schema` parses to a JSON value that is not an object.
+- Root object's `"type"` is not `"object"`.
+
+Operator YAML against `schema` runs at boot (Phase 93.2) using
+the same lightweight validator already shipping for install-time
+microapp config (Phase 83.17).

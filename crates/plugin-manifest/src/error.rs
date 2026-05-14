@@ -90,6 +90,16 @@ pub enum ManifestError {
         reason: String,
     },
 
+    #[error(
+        "plugin `{plugin_id}` has invalid `[plugin.config_schema]`: {reason}. \
+         The `schema` field must be a non-empty JSON object with \
+         `\"type\":\"object\"` at the root."
+    )]
+    PluginConfigInvalidSchema {
+        plugin_id: String,
+        reason: String,
+    },
+
     #[error("duplicate capability gate env_var `{env_var}` (each gate must be unique)")]
     DuplicateGateEnvVar { env_var: String },
 

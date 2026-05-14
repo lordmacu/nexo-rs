@@ -104,6 +104,16 @@ pub struct PluginSection {
     #[serde(default)]
     pub config: ConfigSection,
 
+    /// Phase 93.1 — declarative config contract.
+    ///
+    /// When set, the plugin ships a JSON Schema (`schema`) plus
+    /// the YAML wire `shape` the daemon should expect at
+    /// `cfg.plugins.<plugin_id>`. Absent in manifests written
+    /// before 93.1; daemon falls back to typed `cfg.plugins.X`
+    /// fields during the deprecation window (closed in Phase 93.5).
+    #[serde(default)]
+    pub config_schema: Option<ConfigSchemaSection>,
+
     /// Per-registry capability declarations.
     /// Subprocess plugins use this to declare which channel
     /// kinds / LLM provider IDs / memory backend IDs / hook IDs
@@ -799,6 +809,50 @@ impl Default for ConfigSection {
 
 fn default_true() -> bool {
     true
+}
+
+// ── Config schema section (Phase 93.1) ──────────────────────────
+
+/// Declarative config contract a plugin ships in its manifest.
+///
+/// The plugin author embeds a JSON Schema string plus a YAML
+/// wire `shape` (`Object` = single map at `cfg.plugins.<id>`,
+/// `Array` = `Vec<map>` for multi-instance plugins). The daemon
+/// validates the schema string statically (Phase 93.1) and the
+/// operator YAML at boot (Phase 93.2). Plugin owns runtime
+/// interpretation via `NexoPlugin::configure`.
+///
+/// The `schema` root MUST declare `"type": "object"` even when
+/// `shape = "array"` — the schema describes ONE element, not
+/// the wrapper. Phase 93.2 walks the operator YAML and applies
+/// the same schema to each element.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigSchemaSection {
+    /// JSON Schema (draft-07 subset, see
+    /// [`crate::config_schema::validate_config`]). Triple-quoted
+    /// TOML string. Root must be a non-empty JSON object with
+    /// `"type": "object"`.
+    pub schema: String,
+
+    /// YAML wire shape at `cfg.plugins.<plugin_id>`.
+    pub shape: ConfigShape,
+
+    /// Hot-reload opt-in (mirror [`ConfigSection::hot_reload`]).
+    /// Default `true`; plugins set `false` only if config touches
+    /// state that requires a restart.
+    #[serde(default = "default_true")]
+    pub hot_reload: bool,
+}
+
+/// YAML wire shape declared by [`ConfigSchemaSection::shape`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfigShape {
+    /// Single map at `cfg.plugins.<plugin_id>`.
+    Object,
+    /// Array of maps at `cfg.plugins.<plugin_id>` — multi-instance plugins.
+    Array,
 }
 
 // ── contributed-skills validation ────────────────────────────────

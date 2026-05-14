@@ -347,6 +347,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         channels: Default::default(),
         skills: Default::default(),
         config: Default::default(),
+        config_schema: None,
         extends: Default::default(),
         requires: Default::default(),
         capability_gates: Default::default(),
