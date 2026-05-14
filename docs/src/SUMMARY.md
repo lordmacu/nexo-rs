@@ -129,6 +129,7 @@ part of day-to-day usage. Skim only when you need it.
 - [MCP server exposable catalog](./architecture/mcp-server-exposable.md)
 - [Fork subagent infra](./architecture/fork-subagent.md)
 - [Agent event firehose](./architecture/agent-event-firehose.md)
+- [Pure-Rust quick tunnel](./architecture/tunnel.md)
 
 # Advanced configuration
 

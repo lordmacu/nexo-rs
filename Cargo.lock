@@ -5604,6 +5604,7 @@ dependencies = [
  "nexo-team-store",
  "nexo-tool-meta",
  "nexo-tunnel",
+ "nexo-tunnel-quick",
  "nexo-web-search",
  "nexo-webhook-receiver",
  "nexo-webhook-server",
@@ -5734,10 +5735,18 @@ dependencies = [
 
 [[package]]
 name = "nexo-tunnel"
-version = "0.2.0"
+version = "0.3.0"
+dependencies = [
+ "nexo-tunnel-quick",
+]
+
+[[package]]
+name = "nexo-tunnel-quick"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "cloudflare-quick-tunnel",
+ "dashmap 6.1.0",
  "tempfile",
  "tokio",
  "tracing",

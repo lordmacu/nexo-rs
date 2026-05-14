@@ -1,7 +1,7 @@
 [package]
 name = "nexo-tunnel"
-description   = "Pure-Rust quick-tunnel client for Nexo agents — wraps cloudflare-quick-tunnel to expose a local TCP port over https://*.trycloudflare.com with no cloudflared subprocess."
-version       = "0.2.0"
+description   = "Legacy alias for `nexo-tunnel-quick` — re-exports every public item verbatim so existing callers keep building. Phase 92.11 retires this crate; prefer `nexo-tunnel-quick` in new code."
+version       = "0.3.0"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -14,13 +14,7 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 
 [dependencies]
-tokio                   = { workspace = true, features = ["io-util", "macros", "rt", "sync"] }
-anyhow                  = { workspace = true }
-tracing                 = { workspace = true }
-cloudflare-quick-tunnel = "0.2"
-
-[dev-dependencies]
-tempfile = "3"
+nexo-tunnel-quick = { workspace = true }
 
 [lints]
 workspace = true

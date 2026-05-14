@@ -1,0 +1,26 @@
+[package]
+name = "nexo-tunnel-quick"
+description = "Pure-Rust Cloudflare quick-tunnel client for Nexo agents — first-party successor to `nexo-tunnel`, wraps `cloudflare-quick-tunnel` with telemetry, supervisor, and capnp-RPC niveles agnostic of cloudflared subprocess."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+tokio                   = { workspace = true, features = ["io-util", "macros", "rt", "sync"] }
+anyhow                  = { workspace = true }
+tracing                 = { workspace = true }
+dashmap                 = { workspace = true }
+cloudflare-quick-tunnel = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
