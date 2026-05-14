@@ -6671,27 +6671,182 @@ async fn main() -> Result<()> {
     for (id, tx, known) in reload_senders.drain(..) {
         reload_coord.register(id, tx, known);
     }
-    // Phase 81.32 c7 — install the spawner closure invoked by
+    // Phase 81.32 c7.b — install the spawner closure invoked by
     // `ConfigReloadCoordinator` when an unknown agent id appears
-    // in `agents.yaml`. Scaffold returns
-    // `SpawnError::Internal("spawner not yet wired …")` so the
-    // wizard surface upgrades from the cryptic "Phase 18 not
-    // supported" message to an actionable "feature in progress —
-    // restart the daemon for now" while c7.b… fills the body.
+    // in `agents.yaml` (typical: wizard creates a new agent).
     //
-    // Coord side (c8) reads `spawner()` then `call(cfg).await`;
-    // the structured `SpawnError` propagates back to the admin
-    // RPC handler unchanged.
+    // MINIMAL-MODE body: registers only `DelegationTool` in the
+    // per-agent ToolRegistry. The agent receives inbound messages
+    // via the runtime's broker subscribers (full functionality) but
+    // outbound channel/plugin tools (channel_send, whatsapp_*,
+    // telegram_*, email_*, browser_*, mcp.*) require a daemon
+    // restart for full parity. Operators see a WARN line with this
+    // limitation on every hot-spawn. Closing the parity gap is
+    // tracked as Phase 81.32 c7.c follow-up (will lift the
+    // ~865-LOC tools registry build from the boot loop body into
+    // a `build_per_agent_tools` helper).
+    //
+    // Captures: every per-agent runtime dependency the boot loop
+    // body uses. Cloned ONCE into outer-scope locals before the
+    // closure construction so the move-into-closure cost is paid
+    // upfront and the per-spawn `.clone()` chain inside the
+    // closure body keeps each invocation cheap (every field is
+    // Arc-cloned, not deep-copied).
+    let llm_cfg_for_spawn = Arc::new(cfg.llm.clone());
+    let telegram_cfgs_for_spawn: Vec<nexo_config::TelegramPluginConfig> =
+        cfg.plugins.telegram.clone();
     {
-        use nexo_core::agent::spawn::{AgentSpawnerFn, SpawnError};
+        use nexo_core::agent::spawn::{
+            assemble_agent_runtime, resolve_llm_client, validate_agent_config, AgentSpawnerFn,
+            RuntimeAssemblyDeps, SpawnError, SpawnedAgent,
+        };
+        use nexo_core::agent::{
+            Agent, DelegationTool, LlmAgentBehavior, ToolRegistry,
+        };
+
+        let broker_c = broker.clone();
+        let sessions_c = Arc::clone(&sessions);
+        let memory_c = memory.clone();
+        let llm_registry_c = Arc::clone(&llm_registry);
+        let llm_cfg_c = Arc::clone(&llm_cfg_for_spawn);
+        let telegram_cfgs_c = telegram_cfgs_for_spawn.clone();
+        let peer_directory_c = Arc::clone(&peer_directory);
+        let transcripts_redactor_c = Arc::clone(&transcripts_redactor);
+        let transcripts_index_c = transcripts_index.clone();
+        let credentials_c = credentials.clone();
+        let link_extractor_c = Arc::clone(&link_extractor);
+        let web_search_router_c = web_search_router.clone();
+        let pairing_gate_c = Arc::clone(&pairing_gate);
+        let plan_approval_registry_c = plan_approval_registry.clone();
+        let dispatch_ctx_c = dispatch_ctx.clone();
+        let processing_store_c = Arc::clone(&processing_store);
+        let event_emitter_c = admin_bootstrap.as_ref().map(|b| b.event_emitter());
+        let tools_per_agent_c = Arc::clone(&tools_per_agent);
+        let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
+
         let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg| {
-            let id = cfg.id.clone();
+            let broker = broker_c.clone();
+            let sessions = Arc::clone(&sessions_c);
+            let memory = memory_c.clone();
+            let llm_registry = Arc::clone(&llm_registry_c);
+            let llm_cfg = Arc::clone(&llm_cfg_c);
+            let telegram_cfgs = telegram_cfgs_c.clone();
+            let peer_directory = Arc::clone(&peer_directory_c);
+            let transcripts_redactor = Arc::clone(&transcripts_redactor_c);
+            let transcripts_index = transcripts_index_c.clone();
+            let credentials = credentials_c.clone();
+            let link_extractor = Arc::clone(&link_extractor_c);
+            let web_search_router = web_search_router_c.clone();
+            let pairing_gate = Arc::clone(&pairing_gate_c);
+            let plan_approval_registry = plan_approval_registry_c.clone();
+            let dispatch_ctx = dispatch_ctx_c.clone();
+            let processing_store = Arc::clone(&processing_store_c);
+            let event_emitter = event_emitter_c.clone();
+            let tools_per_agent = Arc::clone(&tools_per_agent_c);
+            let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
+
             Box::pin(async move {
-                Err(SpawnError::Internal(format!(
-                    "spawner not yet wired (Phase 81.32 c7 in progress); \
-                     agent `{id}` was written to agents.yaml but a daemon \
-                     restart is required to activate it"
-                )))
+                let agent_id = cfg.id.clone();
+
+                // 1. Resolve LLM via shared helper.
+                let llm = resolve_llm_client(&cfg, &llm_registry, &llm_cfg)?;
+
+                // 2. Minimal ToolRegistry. Subprocess-registered
+                //    tools (channel_send, whatsapp_*, …) are
+                //    seeded per-binding via the
+                //    `ScopedToolRegistry` after the runtime's
+                //    plugin handshake, so they do reach the LLM
+                //    even though they're absent here at spawn.
+                let tools = Arc::new(ToolRegistry::new());
+                tools.register(DelegationTool::tool_def(), DelegationTool);
+
+                // 3. Validate (catches typo'd `allowed_tools` +
+                //    telegram-binding consistency).
+                let tool_defs = tools.to_tool_defs();
+                let known_tool_names: Vec<&str> =
+                    tool_defs.iter().map(|d| d.name.as_str()).collect();
+                validate_agent_config(&cfg, &telegram_cfgs, &known_tool_names)?;
+
+                // 4. Behavior + Agent.
+                let behavior =
+                    LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools));
+                let agent_cfg = cfg.clone();
+                let agent = Arc::new(Agent::new(agent_cfg, behavior));
+
+                // 5. Pairing adapter registry — rebuilt per spawn
+                //    because the adapter types live in plugin
+                //    crates outside nexo-core.
+                let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
+                pairing_registry.register(std::sync::Arc::new(
+                    nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
+                ));
+                pairing_registry.register(std::sync::Arc::new(
+                    nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
+                ));
+
+                // 6. Assemble runtime via shared helper.
+                let assembly_deps = RuntimeAssemblyDeps {
+                    tools: Arc::clone(&tools),
+                    memory: memory.clone(),
+                    peers: Arc::clone(&peer_directory),
+                    redactor: Arc::clone(&transcripts_redactor),
+                    transcripts_index: transcripts_index.as_ref().map(Arc::clone),
+                    credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
+                    breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
+                    link_extractor: Arc::clone(&link_extractor),
+                    web_search_router: web_search_router.as_ref().map(Arc::clone),
+                    pairing_gate: Arc::clone(&pairing_gate),
+                    pairing_adapters: pairing_registry,
+                    plan_approval_registry: plan_approval_registry.clone(),
+                    dispatch_ctx: dispatch_ctx.as_ref().map(Arc::clone),
+                    processing_store: Arc::clone(&processing_store),
+                    event_emitter,
+                };
+                let runtime = assemble_agent_runtime(
+                    Arc::clone(&agent),
+                    broker.clone(),
+                    Arc::clone(&sessions),
+                    assembly_deps,
+                );
+
+                // 7. Capture handles before start. `start()` takes
+                //    `&self` so we can still move `runtime` into
+                //    the SpawnedAgent afterwards.
+                let reload_tx = runtime.reload_sender();
+                let snapshot_handle = runtime.snapshot_handle();
+                let known_tools: Arc<Vec<String>> = Arc::new(
+                    tools.to_tool_defs().iter().map(|d| d.name.clone()).collect(),
+                );
+
+                // 8. Insert into shared DashMaps so the cron
+                //    post-hook + reload coordinator see the new
+                //    agent on the next reload.
+                tools_per_agent.insert(agent_id.clone(), Arc::clone(&tools));
+                agent_snapshot_handles.insert(agent_id.clone(), snapshot_handle);
+
+                // 9. Start. Spawns broker subs + heartbeat tasks
+                //    via `tokio::spawn` internally — the
+                //    AgentRuntime can drop after this and the
+                //    tasks keep running via cloned Arc state.
+                runtime
+                    .start()
+                    .await
+                    .map_err(|e| SpawnError::Internal(format!("runtime.start: {e}")))?;
+
+                tracing::warn!(
+                    agent = %agent_id,
+                    "hot-spawned in minimal mode — DelegationTool only. \
+                     Outbound channel/plugin tools require daemon restart \
+                     (Phase 81.32 c7.c follow-up will close this gap)."
+                );
+
+                Ok(SpawnedAgent {
+                    agent_id,
+                    reload_tx,
+                    known_tools,
+                    shutdown_token: tokio_util::sync::CancellationToken::new(),
+                    runtime,
+                })
             })
         }));
         reload_coord.set_spawner(Arc::new(spawner));
