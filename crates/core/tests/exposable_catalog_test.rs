@@ -63,6 +63,7 @@ fn fixture_agent_ctx() -> Arc<AgentContext> {
         web_search: serde_json::Value::Null,
         pairing_policy: serde_json::Value::Null,
         language: None,
+        locale_prompts: Default::default(),
         outbound_allowlist: OutboundAllowlistConfig::default(),
         context_optimization: None,
         dispatch_policy: Default::default(),

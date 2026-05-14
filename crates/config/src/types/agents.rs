@@ -30,6 +30,30 @@ where
     Ok(opt)
 }
 
+/// Phase 81.31 — strict BCP-47 validation on every key of the
+/// `locale_prompts` map. Mirrors `deserialize_locale_string` so a
+/// typo in any key aborts boot with a typed error citing the bad
+/// entry, instead of silently shipping an unreachable prompt.
+fn deserialize_locale_prompts<'de, D>(d: D) -> Result<BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use std::str::FromStr;
+
+    let raw: BTreeMap<String, String> = BTreeMap::deserialize(d)?;
+    for (k, _) in raw.iter() {
+        nexo_tool_meta::locale::Locale::from_str(k).map_err(|e| {
+            D::Error::custom(format!(
+                "invalid locale_prompts key {k:?}: {e}. Supported \
+                 codes: see nexo_tool_meta::locale::Locale or run \
+                 `cargo run -p nexo-microapp-sdk --bin locale_dump`"
+            ))
+        })?;
+    }
+    Ok(raw)
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
@@ -106,6 +130,16 @@ pub struct AgentConfig {
     /// instead of silently dropping to `None`.
     #[serde(default, deserialize_with = "deserialize_locale_string")]
     pub language: Option<String>,
+    /// Phase 81.31 — per-locale `system_prompt` variants. Map of
+    /// BCP-47 locale tag → prompt text. When set and the agent's
+    /// `language` matches one of the keys, the resolver uses the
+    /// localised variant; otherwise the top-level `system_prompt`
+    /// is used. Keys are strict-validated against
+    /// `nexo_tool_meta::locale::Locale::from_str` at deserialise
+    /// time — `locale_prompts: { "klingon": "..." }` aborts boot.
+    /// Empty map (default) = legacy single-locale behavior.
+    #[serde(default, deserialize_with = "deserialize_locale_prompts")]
+    pub locale_prompts: BTreeMap<String, String>,
     /// Link understanding. When enabled, the runtime
     /// detects URLs in inbound messages, fetches each one once per
     /// turn, and renders a `# LINK CONTEXT` system block with the
@@ -443,6 +477,100 @@ impl Default for ExtractMemoriesYamlConfig {
             max_turns: 5,
             max_consecutive_failures: 3,
         }
+    }
+}
+
+impl AgentConfig {
+    /// Phase 81.31 — resolve the system prompt to use for a given
+    /// locale. When `locale_prompts` is populated and contains the
+    /// requested locale, that variant wins; otherwise the top-level
+    /// `system_prompt` is returned. The caller may pass `None` (or
+    /// `Some(&self.language)`) — both fall back to `system_prompt`
+    /// when no exact match is found. Empty-string entries in the
+    /// map are returned verbatim — callers decide how to treat
+    /// "empty intentionally" vs "missing".
+    pub fn effective_system_prompt(&self, locale: Option<&str>) -> &str {
+        if let Some(lang) = locale {
+            if let Some(s) = self.locale_prompts.get(lang) {
+                return s;
+            }
+        }
+        &self.system_prompt
+    }
+}
+
+#[cfg(test)]
+mod locale_prompts_tests {
+    use super::*;
+
+    fn agent_with_prompts(top: &str, prompts: &[(&str, &str)]) -> AgentConfig {
+        let mut cfg: AgentConfig = serde_yaml::from_str(
+            r#"id: x
+model:
+  provider: anthropic
+  model: claude-opus-4-7
+"#,
+        )
+        .unwrap();
+        cfg.system_prompt = top.into();
+        cfg.locale_prompts = prompts.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        cfg
+    }
+
+    #[test]
+    fn effective_returns_locale_match_when_present() {
+        let cfg = agent_with_prompts("top", &[("en", "english"), ("es", "spanish")]);
+        assert_eq!(cfg.effective_system_prompt(Some("es")), "spanish");
+        assert_eq!(cfg.effective_system_prompt(Some("en")), "english");
+    }
+
+    #[test]
+    fn effective_falls_back_when_locale_missing() {
+        let cfg = agent_with_prompts("top", &[("en", "english")]);
+        assert_eq!(cfg.effective_system_prompt(Some("es")), "top");
+    }
+
+    #[test]
+    fn effective_falls_back_when_locale_prompts_empty() {
+        let cfg = agent_with_prompts("top", &[]);
+        assert_eq!(cfg.effective_system_prompt(Some("en")), "top");
+        assert_eq!(cfg.effective_system_prompt(None), "top");
+    }
+
+    #[test]
+    fn yaml_parse_accepts_locale_prompts_block() {
+        let yaml = r#"
+id: ana
+model:
+  provider: anthropic
+  model: claude-opus-4-7
+system_prompt: top
+language: en
+locale_prompts:
+  en: english variant
+  es: spanish variant
+"#;
+        let cfg: AgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.locale_prompts.len(), 2);
+        assert_eq!(cfg.locale_prompts.get("es").map(String::as_str), Some("spanish variant"));
+    }
+
+    #[test]
+    fn yaml_parse_rejects_invalid_locale_key() {
+        let yaml = r#"
+id: ana
+model:
+  provider: anthropic
+  model: claude-opus-4-7
+system_prompt: top
+locale_prompts:
+  klingon: nope
+"#;
+        let err = serde_yaml::from_str::<AgentConfig>(yaml).unwrap_err().to_string();
+        assert!(
+            err.contains("locale_prompts key") || err.contains("klingon"),
+            "expected locale-key validation error, got: {err}"
+        );
     }
 }
 

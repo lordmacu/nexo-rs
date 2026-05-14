@@ -526,12 +526,25 @@ fn deserialize_yaml_with_schema_version<T: serde::de::DeserializeOwned>(raw: &st
 }
 
 /// Load personas/discovery.yaml.
-/// Missing dir / file → empty defaults (no scan happens).
+/// Missing file → defaults to a single search path at
+/// `$HOME/.nexo/state/personas` so `nexo persona install`
+/// results are picked up without manual YAML editing. Restored
+/// 2026-05-14 — a prior simplification dropped this fallback,
+/// silently breaking persona-installed agents in zero-config
+/// dev setups.
 fn load_personas(dir: &Path) -> Result<PersonasConfig> {
     let personas_dir = dir.join("personas");
-    let discovery = load_optional::<PersonaDiscoveryConfigFile>(&personas_dir, "discovery.yaml")?
-        .map(|f| f.discovery)
-        .unwrap_or_default();
+    let mut discovery =
+        load_optional::<PersonaDiscoveryConfigFile>(&personas_dir, "discovery.yaml")?
+            .map(|f| f.discovery)
+            .unwrap_or_default();
+    if discovery.search_paths.is_empty() {
+        if let Ok(home) = std::env::var("HOME") {
+            discovery
+                .search_paths
+                .push(PathBuf::from(home).join(".nexo/state/personas"));
+        }
+    }
     Ok(PersonasConfig { discovery })
 }
 

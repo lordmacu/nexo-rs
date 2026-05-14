@@ -23,6 +23,8 @@ pub mod mcp;
 pub mod memory;
 pub mod microapp_audit;
 pub mod pairing;
+pub mod pairing_channels;
+pub mod persona;
 pub mod plugin_doctor;
 pub mod plugin_restart;
 pub mod processing;

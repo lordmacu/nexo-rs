@@ -34,6 +34,7 @@ pub mod llm_completer;
 pub mod llm_provider_probe;
 pub mod pairing_check;
 pub mod persisters;
+pub mod persona_files;
 pub mod prompt;
 pub mod registry;
 pub mod secrets_store;

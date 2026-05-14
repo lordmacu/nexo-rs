@@ -546,6 +546,7 @@ mod tests {
             outbound_allowlist: OutboundAllowlistConfig::default(),
             credentials: creds,
             language: None,
+            locale_prompts: Default::default(),
             skill_overrides: Default::default(),
             link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,

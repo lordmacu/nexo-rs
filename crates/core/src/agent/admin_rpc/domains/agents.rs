@@ -92,6 +92,43 @@ pub fn get(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     }
 }
 
+/// Phase 81.31 — `nexo/admin/agents/get` with persona-locale
+/// enrichment. When `snapshot` is `Some`, the response includes
+/// `persona_locales` populated from
+/// [`crate::agent::admin_rpc::domains::persona::PersonaSnapshotReader`].
+/// `None` keeps legacy single-locale behavior identical to
+/// [`get`].
+pub async fn get_with_persona(
+    patcher: &dyn YamlPatcher,
+    snapshot: Option<&dyn super::persona::PersonaSnapshotReader>,
+    params: Value,
+) -> AdminRpcResult {
+    let p: AgentsGetParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string()));
+        }
+    };
+    let mut detail = match read_detail(patcher, &p.agent_id) {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "not_found: agent `{}` not in yaml",
+                p.agent_id
+            )))
+        }
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml read failed: {e}"
+            )))
+        }
+    };
+    if let Some(reader) = snapshot {
+        detail.persona_locales = reader.read_locales(&p.agent_id).await;
+    }
+    AdminRpcResult::ok(serde_json::to_value(detail).unwrap_or(Value::Null))
+}
+
 /// `nexo/admin/agents/upsert` — create or update an agent block.
 pub fn upsert(
     patcher: &dyn YamlPatcher,
@@ -294,6 +331,11 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
         workspace,
         extra_docs,
         heartbeat,
+        // Phase 81.31 — populated in c4 (PersonaSnapshotReader
+        // injection). Until that wires through, legacy callers see
+        // `None` and the admin renders the wizard's single-locale
+        // fallback path.
+        persona_locales: None,
     }))
 }
 
@@ -380,6 +422,18 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
             })
             .collect();
         patcher.upsert_agent_field(&input.id, "inbound_bindings", Value::Array(arr))?;
+    }
+    // Phase 81.31 follow-up — `locale_prompts` map. `Some({})`
+    // clears the block (writes an empty object); `Some(map)`
+    // replaces it whole; `None` leaves the existing yaml
+    // unchanged. Locale keys validated upstream by the wire-shape
+    // parser via `deserialize_locale_prompts`.
+    if let Some(prompts) = &input.locale_prompts {
+        let mut obj = serde_json::Map::new();
+        for (k, v) in prompts {
+            obj.insert(k.clone(), Value::String(v.clone()));
+        }
+        patcher.upsert_agent_field(&input.id, "locale_prompts", Value::Object(obj))?;
     }
     Ok(())
 }
@@ -561,6 +615,7 @@ mod tests {
             workspace: None,
             extra_docs: None,
             heartbeat: None,
+            locale_prompts: None,
         };
         let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
@@ -632,6 +687,7 @@ mod tests {
                 enabled: true,
                 interval: "30m".into(),
             }),
+            locale_prompts: None,
         };
         let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
@@ -667,11 +723,50 @@ mod tests {
                 enabled: false,
                 interval: String::new(),
             }),
+            locale_prompts: None,
         };
         let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
         let hb = detail.heartbeat.expect("heartbeat persisted");
         assert!(!hb.enabled);
         assert_eq!(hb.interval, "1h");
+    }
+
+    /// Phase 81.31 follow-up — `agents/upsert` accepts the
+    /// `locale_prompts` block and writes the full map verbatim.
+    /// `Some(empty)` clears the block; `None` leaves yaml untouched.
+    #[test]
+    fn agents_upsert_writes_locale_prompts_block() {
+        let yaml = MockYaml::with_fixture();
+        let (_count, reload) = reload_counter();
+        let mut prompts = std::collections::BTreeMap::new();
+        prompts.insert("en".to_string(), "english prompt".to_string());
+        prompts.insert("es".to_string(), "prompt en espanol".to_string());
+        let input = AgentUpsertInput {
+            id: "ana".into(),
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            active: None,
+            allowed_tools: None,
+            inbound_bindings: None,
+            system_prompt: None,
+            language: None,
+            transcripts_dir: None,
+            workspace: None,
+            extra_docs: None,
+            heartbeat: None,
+            locale_prompts: Some(prompts),
+        };
+        let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        let raw = yaml
+            .read_agent_field("ana", "locale_prompts")
+            .unwrap()
+            .expect("locale_prompts persisted");
+        let obj = raw.as_object().expect("object");
+        assert_eq!(obj.len(), 2);
+        assert_eq!(obj.get("en").and_then(Value::as_str), Some("english prompt"));
+        assert_eq!(obj.get("es").and_then(Value::as_str), Some("prompt en espanol"));
     }
 }

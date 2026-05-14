@@ -1,0 +1,39 @@
+extensions:
+  enabled: true
+  search_paths:
+    - "/home/familia/chat/proyecto/.dev-state/extensions"
+  disabled: []
+  allowlist: []
+  ignore_dirs: [target, .git, node_modules, dist, .build]
+  max_depth: 3
+  transport_defaults:
+    nats:
+      subject_prefix: ext
+      call_timeout: 30s
+      handshake_timeout: 10s
+      heartbeat_interval: 15s
+      heartbeat_grace_factor: 3
+      shutdown_grace: 2s
+  entries:
+    nexo-plugin-admin:
+      capabilities_grant:
+        - agents_crud
+        - skills_crud
+        - llm_keys_crud
+        - channels_crud
+        - pairing_initiate
+        - transcripts_read
+        - operator_intervention
+        - escalations_read
+        - escalations_resolve
+        - audit_read
+        - memory_query
+        - plugin_doctor
+        - tenants_crud
+        - mcp_crud
+        - auth_rotate
+        - secrets_write
+        - agent_events_subscribe_all
+        - credentials_crud
+        - plugin_restart
+schema_version: 11

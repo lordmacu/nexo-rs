@@ -719,6 +719,7 @@ mod tests {
             web_search: serde_json::Value::Null,
             pairing_policy: serde_json::Value::Null,
             language: None,
+            locale_prompts: Default::default(),
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],
                 telegram: Vec::new(),

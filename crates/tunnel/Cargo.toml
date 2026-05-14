@@ -1,7 +1,7 @@
 [package]
 name = "nexo-tunnel"
-description   = "Tunneling helpers for Nexo agents (Termux and local exposure)."
-version       = "0.1.3"
+description   = "Legacy alias for `nexo-tunnel-quick` — re-exports every public item verbatim so existing callers keep building. Phase 92.11 retires this crate; prefer `nexo-tunnel-quick` in new code."
+version       = "0.3.0"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -12,27 +12,9 @@ documentation = { workspace = true }
 readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
-[dependencies]
-tokio       = { workspace = true, features = ["process", "io-util", "macros", "rt"] }
-anyhow      = { workspace = true }
-tracing     = { workspace = true }
-thiserror   = { workspace = true }
-# `stream` for `Response::bytes_stream()` (chunked cloudflared
-# download); `rustls-tls` because the workspace base reqwest has
-# `default-features = false` (no TLS backend). Both get unified in
-# at workspace level via the root bin's reqwest features, but a
-# standalone `cargo publish` of this crate must declare them itself.
-reqwest     = { workspace = true, features = ["stream", "rustls-tls"] }
-futures     = { workspace = true }
-directories = "5"
-flate2      = "1"
-tar         = "0.4"
-regex       = "1"
-bytes       = "1"
-indicatif   = "0.17"
 
-[dev-dependencies]
-tempfile    = "3"
+[dependencies]
+nexo-tunnel-quick = { workspace = true }
 
 [lints]
 workspace = true

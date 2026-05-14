@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::runtime::ReloadCommand;
+use crate::agent::spawn::{AgentSpawnerFn, SharedRuntimeContext};
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::telemetry;
 
@@ -70,6 +71,20 @@ pub struct ConfigReloadCoordinator {
     /// by the same gate as the reload to keep the contract simple
     /// (no observer can run mid-swap).
     post_hooks: Mutex<Vec<PostReloadHook>>,
+    /// Phase 81.32 — shared runtime context the coordinator
+    /// hands to `spawn_agent_runtime` when an agent id appears
+    /// in the new config that wasn't there before. `None` keeps
+    /// the legacy "adding a new agent at runtime is not
+    /// supported" rejection so tests that haven't wired the
+    /// context stay on the old behaviour.
+    shared_ctx: ArcSwapOption<SharedRuntimeContext>,
+    /// Phase 81.32 c6 — spawner closure the coordinator invokes
+    /// when an unknown agent id appears in `agents.yaml`. `None`
+    /// keeps the legacy rejection ("adding a new agent at
+    /// runtime is not supported"). Installed at boot via
+    /// [`Self::set_spawner`] once `src/main.rs` has finished
+    /// constructing all per-agent dependencies.
+    spawner: ArcSwapOption<AgentSpawnerFn>,
     shutdown: CancellationToken,
 }
 
@@ -102,8 +117,57 @@ impl ConfigReloadCoordinator {
             gate: Mutex::new(()),
             broker: ArcSwapOption::from(None),
             post_hooks: Mutex::new(Vec::new()),
+            shared_ctx: ArcSwapOption::from(None),
+            spawner: ArcSwapOption::from(None),
             shutdown,
         }
+    }
+
+    /// Phase 81.32 — install the [`SharedRuntimeContext`] the
+    /// reload coordinator hands to `spawn_agent_runtime` when an
+    /// agent id appears in the freshly-loaded config that wasn't
+    /// in the previous one. Without this wired, the legacy
+    /// rejection ("adding a new agent at runtime is not
+    /// supported") fires for unknown ids.
+    ///
+    /// Late-bindable so `src/main.rs` can build the coordinator
+    /// before the boot-loop singletons are fully assembled and
+    /// upgrade it once they are.
+    pub fn with_shared_context(self, shared: Arc<SharedRuntimeContext>) -> Self {
+        self.shared_ctx.store(Some(shared));
+        self
+    }
+
+    /// Phase 81.32 — read-only handle to the configured shared
+    /// context. `None` when [`Self::with_shared_context`] has
+    /// not been called yet (legacy / test path).
+    pub fn shared_context(&self) -> Option<Arc<SharedRuntimeContext>> {
+        self.shared_ctx.load_full()
+    }
+
+    /// Phase 81.32 c6 — install the spawner closure invoked when
+    /// an unknown agent id appears in `agents.yaml`. Late-bindable
+    /// (same shape as [`Self::with_shared_context`]) so the
+    /// coordinator can exist before the boot loop captures every
+    /// per-agent dependency.
+    pub fn set_spawner(&self, spawner: Arc<AgentSpawnerFn>) {
+        self.spawner.store(Some(spawner));
+    }
+
+    /// Phase 81.32 c6 — read-only handle to the configured
+    /// spawner. `None` when [`Self::set_spawner`] has not yet
+    /// fired; callers fall back to the legacy "not supported"
+    /// rejection.
+    pub fn spawner(&self) -> Option<Arc<AgentSpawnerFn>> {
+        self.spawner.load_full()
+    }
+
+    /// Phase 81.32 — uninstall the per-agent reload handle when
+    /// an agent is hot-removed from `agents.yaml`. Returns the
+    /// handle so the coordinator can drive its
+    /// `ReloadCommand::Shutdown` send before dropping it.
+    pub fn unregister(&self, agent_id: &str) -> Option<AgentReloadHandle> {
+        self.runtimes.remove(agent_id).map(|(_, handle)| handle)
     }
 
     /// Register a closure that fires after every successful reload.
@@ -202,12 +266,64 @@ impl ConfigReloadCoordinator {
         drop(version_guard);
 
         for agent_cfg in &cfg.agents.agents {
+            // Phase 81.32 c8 — unknown agent id (wizard create
+            // path). Try the installed spawner first; fall back to
+            // the legacy rejection only when no spawner was wired
+            // (test harnesses / minimal embeddings). Closure
+            // invocation drops the lock guard via `self.runtimes
+            // .get(...)` returning `Some` only when an entry
+            // already exists; the spawner branch runs OUTSIDE the
+            // guard scope to keep `register(...)` reentrant.
+            if !self.runtimes.contains_key(&agent_cfg.id) {
+                let Some(spawner) = self.spawner() else {
+                    rejected.push(ReloadRejection {
+                        agent_id: Some(agent_cfg.id.clone()),
+                        reason: "adding a new agent at runtime is not supported; \
+                                 set a spawner via ConfigReloadCoordinator::set_spawner"
+                            .into(),
+                    });
+                    continue;
+                };
+                match spawner.call(agent_cfg.clone()).await {
+                    Ok(spawned) => {
+                        self.register(spawned.agent_id.clone(), spawned.reload_tx, spawned.known_tools);
+                        applied.push(spawned.agent_id.clone());
+                        // Best-effort firehose notification — operators
+                        // tail the broker events stream to see when a
+                        // wizard-created agent goes live.
+                        if let Some(b) = self.broker.load_full() {
+                            let evt = nexo_broker::Event::new(
+                                "events.runtime.agent.spawned",
+                                "config_reload",
+                                serde_json::json!({
+                                    "agent_id": spawned.agent_id,
+                                    "version": new_version,
+                                }),
+                            );
+                            let _ = b.publish("events.runtime.agent.spawned", evt).await;
+                        }
+                        tracing::info!(
+                            agent = %agent_cfg.id,
+                            "hot-spawned agent via ConfigReloadCoordinator",
+                        );
+                    }
+                    Err(e) => {
+                        rejected.push(ReloadRejection {
+                            agent_id: Some(agent_cfg.id.clone()),
+                            reason: format!("spawn: {e}"),
+                        });
+                    }
+                }
+                continue;
+            }
             let Some(handle) = self.runtimes.get(&agent_cfg.id) else {
+                // Race window between `contains_key` + `get` —
+                // operator hot-removed the agent mid-reload. Treat
+                // as a rejection for this cycle; the next reload
+                // re-detects.
                 rejected.push(ReloadRejection {
                     agent_id: Some(agent_cfg.id.clone()),
-                    reason: "adding a new agent at runtime is not supported in Phase 18; \
-                             restart to spawn"
-                        .into(),
+                    reason: "agent vanished between hot-spawn check and snapshot build".into(),
                 });
                 continue;
             };
@@ -254,16 +370,57 @@ impl ConfigReloadCoordinator {
         }
 
         // 4. Detect removed agents (registered but absent from new cfg).
-        for entry in self.runtimes.iter() {
-            let id = entry.key();
-            if !cfg.agents.agents.iter().any(|a| &a.id == id) {
-                rejected.push(ReloadRejection {
-                    agent_id: Some(id.clone()),
-                    reason: "removing an agent at runtime is not supported in Phase 18; \
-                             restart to drop"
-                        .into(),
-                });
+        // Phase 81.32 c9 — hot-teardown. Send `ReloadCommand::Shutdown`
+        // to the per-agent runtime so it drops broker subs +
+        // heartbeat tasks cleanly, then `unregister` the handle so
+        // future reloads can `hot-spawn` the same id without
+        // colliding with stale state. Best-effort event publish so
+        // operators watching the firehose see hot-remove distinctly
+        // from a regular reload.
+        //
+        // Collect removed ids first (can't mutate the map while
+        // iterating it; DashMap reentrant remove panics on the same
+        // shard).
+        let removed_ids: Vec<String> = self
+            .runtimes
+            .iter()
+            .filter_map(|entry| {
+                let id = entry.key();
+                if !cfg.agents.agents.iter().any(|a| &a.id == id) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in removed_ids {
+            let Some(handle) = self.unregister(&id) else {
+                continue;
+            };
+            // Best-effort `Shutdown` dispatch. A full mailbox /
+            // closed channel here means the runtime task already
+            // exited — log + carry on so the operator still sees
+            // the agent disappear from `runtimes`.
+            if let Err(e) = handle.reload_tx.send(ReloadCommand::Shutdown).await {
+                tracing::warn!(
+                    agent = %id,
+                    error = %e,
+                    "hot-remove: runtime mailbox dispatch failed (task may have exited already)",
+                );
             }
+            if let Some(b) = self.broker.load_full() {
+                let evt = nexo_broker::Event::new(
+                    "events.runtime.agent.removed",
+                    "config_reload",
+                    serde_json::json!({
+                        "agent_id": id,
+                        "version": new_version,
+                    }),
+                );
+                let _ = b.publish("events.runtime.agent.removed", evt).await;
+            }
+            applied.push(id.clone());
+            tracing::info!(agent = %id, "hot-removed agent via ConfigReloadCoordinator");
         }
 
         let elapsed_ms = started.elapsed().as_millis() as u64;

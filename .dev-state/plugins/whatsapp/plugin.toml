@@ -1,0 +1,43 @@
+# Phase 81.19.a — manifest for the out-of-tree WhatsApp plugin.
+#
+# Bundled into the binary at compile-time via
+# `include_str!("../nexo-plugin.toml")` in `src/main.rs`. The daemon
+# parses this on the JSON-RPC `initialize` reply and validates the
+# `[plugin.capabilities.broker]` allowlist against its boot policy
+# before routing the first message.
+
+[plugin]
+id              = "whatsapp"
+version         = "0.1.8"
+name            = "WhatsApp Bot"
+description     = "WhatsApp channel plugin via wa-agent (Signal Protocol + Bot API + QR pairing)."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+# Phase 82.15.bx — explicit broker allowlist. Defense-in-depth so a
+# misbehaving plugin can't broadcast outside the topics it declared.
+# `>` matches the per-instance suffix (`whatsapp.<instance>` and
+# `whatsapp` legacy single-account).
+[plugin.capabilities.broker]
+subscribe = ["plugin.outbound.whatsapp", "plugin.outbound.whatsapp.>"]
+publish   = ["plugin.inbound.whatsapp",  "plugin.inbound.whatsapp.>"]
+
+# Plugin-driven pairing UI descriptor. Consumed by the
+# admin's `nexo/admin/pairing/channels` RPC to drive the
+# channel-selector + per-channel modal flow generically —
+# no per-channel hardcoded logic in the admin frontend.
+[plugin.pairing]
+kind  = "qr"
+label = "WhatsApp"
+
+[plugin.pairing.instructions]
+es = "Abrí WhatsApp en tu teléfono → Configuración → Dispositivos vinculados → Vincular un dispositivo, y escaneá el código QR."
+en = "Open WhatsApp on your phone → Settings → Linked Devices → Link a device, and scan the QR code."
+
+# Phase 81.30 follow-up #2 — entrypoint rewritten at install time
+# to point at the dev-state binary; everything else above came
+# straight from /home/familia/chat/nexo-rs-plugin-whatsapp/nexo-plugin.toml.
+[plugin.entrypoint]
+command = "/home/familia/chat/proyecto/.dev-state/plugins/whatsapp/nexo-plugin-whatsapp"

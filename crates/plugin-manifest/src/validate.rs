@@ -87,6 +87,15 @@ pub fn run_all_with_sandbox_env(
         &manifest.plugin.tools.deferred,
         errors,
     );
+    // Phase 81.33.a — every outbound spec's `name` must appear in
+    // expose so the namespace pass + deferred pass observe it.
+    // Also checks that the JSON schema string parses as an object.
+    validate_outbound_tools(
+        &manifest.plugin.id,
+        &manifest.plugin.tools.expose,
+        &manifest.plugin.tools.outbound,
+        errors,
+    );
     validate_path_security(
         "agents.contributes_dir",
         manifest.plugin.agents.contributes_dir.as_deref(),
@@ -107,6 +116,7 @@ pub fn run_all_with_sandbox_env(
     validate_capability_gates_unique(&manifest.plugin.capability_gates.gates, errors);
     validate_supervisor(&manifest.plugin.supervisor, errors);
     validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
+    validate_pairing(&manifest.plugin.pairing, errors);
 }
 
 /// Guard against a manifest requesting an
@@ -153,6 +163,55 @@ fn validate_supervisor(
 /// `enabled = false` (the section is descriptive but inactive).
 /// Otherwise checks: path absoluteness, denylist match,
 /// `${state_dir}` placement, host-network capability gate.
+/// Phase 81.30 follow-up #5 — guard against manifest authoring
+/// mistakes in `[plugin.pairing]`. Silent dead config (e.g.
+/// `kind = "form"` without `fields`) would land in the admin's
+/// channel descriptor + render an empty modal at runtime; better
+/// to refuse the plugin at boot with a typed error.
+fn validate_pairing(
+    pairing: &crate::pairing::PairingSection,
+    errors: &mut Vec<ManifestError>,
+) {
+    use crate::pairing::PairingKind;
+    let Some(kind) = pairing.kind else {
+        return;
+    };
+    match kind {
+        PairingKind::Form => {
+            if pairing.fields.is_empty() {
+                errors.push(ManifestError::PairingFormWithoutFields);
+            }
+        }
+        PairingKind::Custom => {
+            if pairing
+                .rpc_namespace
+                .as_deref()
+                .map(str::is_empty)
+                .unwrap_or(true)
+            {
+                errors.push(ManifestError::PairingCustomWithoutRpcNamespace);
+            }
+            if !pairing.fields.is_empty() {
+                errors.push(ManifestError::PairingFieldsWithoutFormKind {
+                    kind: "custom".into(),
+                });
+            }
+        }
+        PairingKind::Qr | PairingKind::Info => {
+            if !pairing.fields.is_empty() {
+                let kind_str = match kind {
+                    PairingKind::Qr => "qr",
+                    PairingKind::Info => "info",
+                    _ => unreachable!(),
+                };
+                errors.push(ManifestError::PairingFieldsWithoutFormKind {
+                    kind: kind_str.into(),
+                });
+            }
+        }
+    }
+}
+
 fn validate_sandbox(
     sandbox: &SandboxSection,
     host_net_allowed: bool,
@@ -345,6 +404,68 @@ fn validate_deferred_subset(
             errors.push(ManifestError::DeferredNotInExpose {
                 tool_name: tool_name.clone(),
             });
+        }
+    }
+}
+
+/// Phase 81.33.a — outbound spec validator.
+///
+/// Two checks: (1) every `outbound[].name` is in `expose` so the
+/// namespace + deferred passes already saw it; (2) `input_schema`
+/// is a non-empty JSON value whose top-level type is `"object"`
+/// (we don't validate the full schema — only the shape the LLM
+/// tool catalog expects).
+fn validate_outbound_tools(
+    plugin_id: &str,
+    expose: &[String],
+    outbound: &[crate::manifest::OutboundToolSpec],
+    errors: &mut Vec<ManifestError>,
+) {
+    let expose_set: HashSet<&str> = expose.iter().map(String::as_str).collect();
+    for spec in outbound {
+        if !expose_set.contains(spec.name.as_str()) {
+            errors.push(ManifestError::OutboundNotExposed {
+                plugin_id: plugin_id.to_string(),
+                tool_name: spec.name.clone(),
+            });
+        }
+        if spec.input_schema.trim().is_empty() {
+            errors.push(ManifestError::OutboundInvalidSchema {
+                plugin_id: plugin_id.to_string(),
+                tool_name: spec.name.clone(),
+                reason: "input_schema is empty".to_string(),
+            });
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(&spec.input_schema) {
+            Ok(serde_json::Value::Object(map)) => {
+                // Root must declare `"type":"object"`.
+                let ty = map.get("type").and_then(|v| v.as_str());
+                if ty != Some("object") {
+                    errors.push(ManifestError::OutboundInvalidSchema {
+                        plugin_id: plugin_id.to_string(),
+                        tool_name: spec.name.clone(),
+                        reason: format!(
+                            "root `type` must be \"object\", got {:?}",
+                            ty.unwrap_or("missing")
+                        ),
+                    });
+                }
+            }
+            Ok(_) => {
+                errors.push(ManifestError::OutboundInvalidSchema {
+                    plugin_id: plugin_id.to_string(),
+                    tool_name: spec.name.clone(),
+                    reason: "input_schema must be a JSON object".to_string(),
+                });
+            }
+            Err(e) => {
+                errors.push(ManifestError::OutboundInvalidSchema {
+                    plugin_id: plugin_id.to_string(),
+                    tool_name: spec.name.clone(),
+                    reason: format!("invalid JSON: {e}"),
+                });
+            }
         }
     }
 }
@@ -579,6 +700,128 @@ deferred = ["marketing_ghost"]
             e,
             ManifestError::DeferredNotInExpose { tool_name } if tool_name == "marketing_ghost"
         )));
+    }
+
+    /// Phase 81.33.a — outbound spec round-trip parses every
+    /// field with default + override values.
+    #[test]
+    fn manifest_outbound_tools_round_trip() {
+        let toml = r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "Telegram"
+description = "Telegram bot"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_send_message", "telegram_pin_message"]
+
+[[plugin.tools.outbound]]
+name = "telegram_send_message"
+description = "Send a Telegram text message."
+input_schema = """{"type":"object","properties":{"chat_id":{"type":"string"},"text":{"type":"string"}},"required":["chat_id","text"]}"""
+
+[[plugin.tools.outbound]]
+name = "telegram_pin_message"
+description = "Pin a message in a chat."
+input_schema = """{"type":"object","properties":{"chat_id":{"type":"string"}}}"""
+rpc_method = "telegram.pin"
+timeout_ms = 5000
+"#
+        .to_string();
+        let m = parse(&toml);
+        // Validate is clean — every name is in expose; both
+        // schemas parse as valid JSON objects.
+        m.validate(&current()).expect("manifest validates");
+        let outbound = &m.plugin.tools.outbound;
+        assert_eq!(outbound.len(), 2);
+        assert_eq!(outbound[0].name, "telegram_send_message");
+        assert_eq!(outbound[0].rpc_method, "outbound_tool.invoke");
+        assert_eq!(outbound[0].timeout_ms, None);
+        assert_eq!(outbound[1].name, "telegram_pin_message");
+        assert_eq!(outbound[1].rpc_method, "telegram.pin");
+        assert_eq!(outbound[1].timeout_ms, Some(5000));
+    }
+
+    /// Phase 81.33.a — outbound entries whose `name` is not in
+    /// `expose` must surface a typed error so the operator
+    /// fixes the manifest before runtime.
+    #[test]
+    fn manifest_rejects_outbound_entry_missing_from_expose() {
+        let toml = r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "T"
+description = "x"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_send_message"]
+
+[[plugin.tools.outbound]]
+name = "telegram_ghost"
+description = "Not in expose"
+input_schema = """{"type":"object"}"""
+"#
+        .to_string();
+        let m = parse(&toml);
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::OutboundNotExposed { plugin_id, tool_name }
+                    if plugin_id == "telegram" && tool_name == "telegram_ghost"
+            )),
+            "expected OutboundNotExposed for telegram_ghost; got {errs:?}"
+        );
+    }
+
+    /// Phase 81.33.a — invalid `input_schema` strings surface as
+    /// `OutboundInvalidSchema` so operators see a clear reason
+    /// (empty / non-JSON / wrong shape).
+    #[test]
+    fn manifest_rejects_outbound_invalid_schema_shapes() {
+        let cases: &[(&str, &str)] = &[
+            // empty schema
+            ("", "empty"),
+            // not an object
+            (r#""just a string""#, "not an object"),
+            // missing type:object
+            (r#"{"properties":{}}"#, "missing type"),
+            // invalid JSON
+            (r#"{not json}"#, "invalid JSON"),
+        ];
+        for (schema, label) in cases {
+            let toml = format!(
+                r#"
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "T"
+description = "x"
+min_nexo_version = ">=0.1.0"
+[plugin.tools]
+expose = ["telegram_x"]
+
+[[plugin.tools.outbound]]
+name = "telegram_x"
+description = "x"
+input_schema = '''{schema}'''
+"#
+            );
+            let m = parse(&toml);
+            let errs = m
+                .validate(&current())
+                .expect_err(&format!("schema `{label}` must fail"));
+            assert!(
+                errs.iter().any(|e| matches!(
+                    e,
+                    ManifestError::OutboundInvalidSchema { tool_name, .. }
+                        if tool_name == "telegram_x"
+                )),
+                "case `{label}`: expected OutboundInvalidSchema; got {errs:?}"
+            );
+        }
     }
 
     #[test]
@@ -1072,6 +1315,85 @@ expose = ["wrong_prefix"]
         // tightening of the bounds doesn't accidentally break the
         // builtin defaults.
         let m = manifest_with_supervisor_block("respawn = true");
+        m.validate(&current()).unwrap();
+    }
+
+    // ── Phase 81.30 follow-up #5 — pairing validator ─────────
+
+    fn manifest_with_pairing(body: &str) -> PluginManifest {
+        let toml = format!("{}\n[plugin.pairing]\n{}\n", base_manifest_toml(), body);
+        parse(&toml)
+    }
+
+    #[test]
+    fn pairing_form_without_fields_rejected() {
+        let m = manifest_with_pairing("kind = \"form\"\nlabel = \"X\"");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PairingFormWithoutFields)),
+            "expected PairingFormWithoutFields, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_form_with_fields_accepted() {
+        let m = manifest_with_pairing(
+            "kind = \"form\"\nlabel = \"X\"\n\
+             [[plugin.pairing.fields]]\n\
+             name = \"token\"\n\
+             label = \"Bot token\"\n",
+        );
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_custom_without_rpc_namespace_rejected() {
+        let m = manifest_with_pairing("kind = \"custom\"");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PairingCustomWithoutRpcNamespace)),
+            "expected PairingCustomWithoutRpcNamespace, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_custom_with_rpc_namespace_accepted() {
+        let m = manifest_with_pairing("kind = \"custom\"\nrpc_namespace = \"myauth\"");
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_qr_with_fields_rejected() {
+        let m = manifest_with_pairing(
+            "kind = \"qr\"\n\
+             [[plugin.pairing.fields]]\n\
+             name = \"token\"\n\
+             label = \"X\"\n",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PairingFieldsWithoutFormKind { kind } if kind == "qr"
+            )),
+            "expected PairingFieldsWithoutFormKind(qr), got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_minimal_accepted() {
+        let m = manifest_with_pairing("kind = \"qr\"\nlabel = \"WhatsApp\"");
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_section_absent_skipped() {
+        // No `[plugin.pairing]` section at all — validator must
+        // pass (the field is opt-in for plugins that don't expose
+        // a pair-able channel).
+        let m = parse(&base_manifest_toml());
         m.validate(&current()).unwrap();
     }
 }

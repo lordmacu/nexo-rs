@@ -69,6 +69,27 @@ pub enum ManifestError {
     )]
     DeferredNotInExpose { tool_name: String },
 
+    #[error(
+        "outbound tool `{tool_name}` in `[[plugin.tools.outbound]]` is not listed in \
+         `tools.expose`. Every outbound entry's `name` must also appear in `expose` so the \
+         namespace + deferred passes see it. Plugin: `{plugin_id}`."
+    )]
+    OutboundNotExposed {
+        plugin_id: String,
+        tool_name: String,
+    },
+
+    #[error(
+        "outbound tool `{tool_name}` has invalid `input_schema`: {reason}. \
+         Plugin: `{plugin_id}`. The schema must be a non-empty JSON object with \
+         `\"type\":\"object\"` at the root."
+    )]
+    OutboundInvalidSchema {
+        plugin_id: String,
+        tool_name: String,
+        reason: String,
+    },
+
     #[error("duplicate capability gate env_var `{env_var}` (each gate must be unique)")]
     DuplicateGateEnvVar { env_var: String },
 
@@ -192,6 +213,36 @@ pub enum ManifestError {
          NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1. Either set that env var or switch to network = \"deny\"."
     )]
     SandboxHostNetworkWithoutCapability,
+
+    /// `[plugin.pairing] kind = "form"` declared but the manifest
+    /// did not ship any `fields`. Without fields the admin
+    /// renders an empty form — almost certainly an authoring
+    /// mistake. Phase 81.30 follow-up #5.
+    #[error(
+        "[plugin.pairing] kind = \"form\" requires at least one entry under [[plugin.pairing.fields]] — empty form would render nothing."
+    )]
+    PairingFormWithoutFields,
+
+    /// `[plugin.pairing] kind = "custom"` requires the plugin to
+    /// declare `rpc_namespace = "..."` so the admin knows which
+    /// notify method to subscribe to. Phase 81.30 follow-up #5.
+    #[error(
+        "[plugin.pairing] kind = \"custom\" requires `rpc_namespace = \"...\"` — admin would not know which `nexo/notify/<rpc_namespace>/status_changed` channel to listen on."
+    )]
+    PairingCustomWithoutRpcNamespace,
+
+    /// `[plugin.pairing]` declared `fields` but `kind` is not
+    /// `form`. Fields are only consumed by the form-flow modal;
+    /// any other kind silently ignores them. Reject at boot so
+    /// the operator notices the dead config. Phase 81.30 follow-
+    /// up #5.
+    #[error(
+        "[plugin.pairing] fields = [...] only valid with kind = \"form\" (got kind = {kind:?})."
+    )]
+    PairingFieldsWithoutFormKind {
+        /// Kind that was declared instead of `form`.
+        kind: String,
+    },
 }
 
 #[cfg(test)]

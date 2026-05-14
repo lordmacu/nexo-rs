@@ -1,0 +1,7 @@
+discovery:
+  search_paths:
+    - "/home/familia/chat/proyecto/.dev-state/plugins"
+  disabled: []
+  allowlist: []
+  follow_symlinks: false
+schema_version: 11

@@ -535,3 +535,58 @@ pub enum LocaleParseError {
     #[error("unsupported subtag count: locale `{0}` has more than one region/script subtag")]
     TooManySubtags(String),
 }
+
+/// Default voice id used when no locale is supplied. Matches the
+/// SDK's pre-Phase-89 default ("English neutral, female").
+pub const DEFAULT_VOICE_ID: &str = "en-US-AriaNeural";
+
+/// Phase 89 (relocated from `nexo-microapp-sdk::voice` in Phase
+/// 81.31 follow-up #2) — recommended Microsoft Edge neural voice
+/// id for a given locale. Lookup is a deterministic match on
+/// `(LangCode, Option<RegionCode>)`; returns
+/// [`DEFAULT_VOICE_ID`] when `locale` is `None`. Same data the
+/// microapp SDK's voice-mode runtime consumes; surfaced here so
+/// admin surfaces (wizard, PersonaEditor) can preview which voice
+/// a locale would use without pulling in the full SDK.
+pub fn default_voice_for_locale(locale: Option<&Locale>) -> &'static str {
+    let Some(loc) = locale else {
+        return DEFAULT_VOICE_ID;
+    };
+    match (loc.language(), loc.region()) {
+        // Spanish family.
+        (LangCode::Es, Some(RegionCode::Ar)) => "es-AR-ElenaNeural",
+        (LangCode::Es, Some(RegionCode::Mx)) => "es-MX-DaliaNeural",
+        (LangCode::Es, Some(RegionCode::Es)) => "es-ES-ElviraNeural",
+        (LangCode::Es, Some(RegionCode::Co)) => "es-CO-SalomeNeural",
+        (LangCode::Es, Some(RegionCode::Pe)) => "es-PE-CamilaNeural",
+        (LangCode::Es, Some(RegionCode::Cl)) => "es-CL-CatalinaNeural",
+        (LangCode::Es, Some(RegionCode::Us)) => "es-US-PalomaNeural",
+        (LangCode::Es, _) => "es-MX-DaliaNeural",
+        // English family.
+        (LangCode::En, Some(RegionCode::Us)) => "en-US-AriaNeural",
+        (LangCode::En, Some(RegionCode::Gb)) => "en-GB-SoniaNeural",
+        (LangCode::En, Some(RegionCode::Au)) => "en-AU-NatashaNeural",
+        (LangCode::En, Some(RegionCode::Ca)) => "en-CA-ClaraNeural",
+        (LangCode::En, _) => "en-US-AriaNeural",
+        // Portuguese.
+        (LangCode::Pt, Some(RegionCode::Br)) => "pt-BR-FranciscaNeural",
+        (LangCode::Pt, Some(RegionCode::Pt)) => "pt-PT-RaquelNeural",
+        (LangCode::Pt, _) => "pt-BR-FranciscaNeural",
+        // French.
+        (LangCode::Fr, Some(RegionCode::Fr)) => "fr-FR-DeniseNeural",
+        (LangCode::Fr, Some(RegionCode::Ca)) => "fr-CA-SylvieNeural",
+        (LangCode::Fr, _) => "fr-FR-DeniseNeural",
+        // Italian.
+        (LangCode::It, Some(RegionCode::It)) => "it-IT-ElsaNeural",
+        (LangCode::It, _) => "it-IT-ElsaNeural",
+        // German.
+        (LangCode::De, Some(RegionCode::De)) => "de-DE-KatjaNeural",
+        (LangCode::De, _) => "de-DE-KatjaNeural",
+        // Japanese.
+        (LangCode::Ja, Some(RegionCode::Jp)) => "ja-JP-NanamiNeural",
+        (LangCode::Ja, _) => "ja-JP-NanamiNeural",
+        // Chinese.
+        (LangCode::Zh, Some(RegionCode::Cn)) => "zh-CN-XiaoxiaoNeural",
+        (LangCode::Zh, _) => "zh-CN-XiaoxiaoNeural",
+    }
+}

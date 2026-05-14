@@ -1,0 +1,7 @@
+tenants:
+- id: test
+  display_name: test
+  active: true
+  created_at: 2026-05-14T18:12:45.949672399Z
+  llm_provider_refs: []
+  metadata: {}

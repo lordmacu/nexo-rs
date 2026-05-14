@@ -1,0 +1,8 @@
+providers:
+  anthropic-906d:
+    auth:
+      mode: oauth_bundle
+      bundle: /home/familia/chat/proyecto/.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt
+    base_url: https://api.anthropic.com/v1
+    factory_type: anthropic
+schema_version: 11

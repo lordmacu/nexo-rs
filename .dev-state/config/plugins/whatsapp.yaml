@@ -1,0 +1,11 @@
+whatsapp:
+  enabled: true
+  session_dir: /home/familia/chat/proyecto/.dev-state/data/whatsapp/session
+  media_dir: /home/familia/chat/proyecto/.dev-state/data/whatsapp/media
+  acl: { allow_list: [], from_env: "" }
+  behavior: { ignore_chat_meta: true, ignore_from_me: true, ignore_groups: false }
+  rate_limit: { global_per_sec: 2.0, per_jid_per_sec: 1.0, burst: 5 }
+  bridge: { response_timeout_ms: 30000, on_timeout: noop }
+  transcriber: { enabled: false }
+  daemon: { prefer_existing: true }
+schema_version: 11

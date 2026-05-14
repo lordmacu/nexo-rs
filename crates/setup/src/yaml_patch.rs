@@ -231,6 +231,20 @@ pub fn list_agents_by_tenant(file: &Path, tenant_id: &str) -> Result<Vec<String>
 }
 
 pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
+    list_agent_ids_merged(file, &[])
+}
+
+/// Like `list_agent_ids` but also scans every `<extra>/agents.d/*.yaml`
+/// directory after the canonical `agents.yaml` + sibling `agents.d/`.
+/// Persona install roots (e.g.
+/// `~/.nexo/state/personas/cody-0.2.0`) pass through here so
+/// persona-registered agents surface in `agents/list` alongside
+/// operator-written entries. First occurrence of an id wins
+/// (operator agents.yaml takes precedence over persona drop-ins).
+pub fn list_agent_ids_merged(
+    file: &Path,
+    extra_persona_roots: &[std::path::PathBuf],
+) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -246,24 +260,34 @@ pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
     // 1. The canonical `agents.yaml`.
     push_from(file)?;
 
+    let walk_agents_d = |dir: &Path, push: &mut dyn FnMut(&Path) -> Result<()>| -> Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        let mut entries: Vec<_> = fs::read_dir(dir)
+            .with_context(|| format!("read_dir {}", dir.display()))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                n.ends_with(".yaml") && !n.ends_with(".example.yaml")
+            })
+            .collect();
+        entries.sort();
+        for p in entries {
+            push(&p)?;
+        }
+        Ok(())
+    };
+
     // 2. The `agents.d/*.yaml` drop-in directory next to it.
     if let Some(parent) = file.parent() {
-        let drop_in = parent.join("agents.d");
-        if drop_in.is_dir() {
-            let mut entries: Vec<_> = fs::read_dir(&drop_in)
-                .with_context(|| format!("read_dir {}", drop_in.display()))?
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    n.ends_with(".yaml") && !n.ends_with(".example.yaml")
-                })
-                .collect();
-            entries.sort();
-            for p in entries {
-                push_from(&p)?;
-            }
-        }
+        walk_agents_d(&parent.join("agents.d"), &mut push_from)?;
+    }
+
+    // 3. Persona install roots — `<root>/agents.d/*.yaml`.
+    for root in extra_persona_roots {
+        walk_agents_d(&root.join("agents.d"), &mut push_from)?;
     }
 
     Ok(out)
@@ -641,6 +665,40 @@ fn set_path(root: &mut Value, parts: &[&str], value: Value) -> Result<()> {
 /// `dotted` relative to that agent. Returns `Ok(None)` when either the
 /// agent or any path segment is missing.
 pub fn read_agent_field(path: &Path, agent_id: &str, dotted: &str) -> Result<Option<Value>> {
+    read_agent_field_merged(path, &[], agent_id, dotted)
+}
+
+/// Like `read_agent_field` but also walks every
+/// `<extra>/agents.d/*.yaml` after the canonical file when the agent
+/// isn't found in `agents.yaml` or the sibling `agents.d/`. Used by
+/// the admin RPC to surface persona-registered agents read-only.
+/// First file containing the id wins.
+pub fn read_agent_field_merged(
+    path: &Path,
+    extra_persona_roots: &[std::path::PathBuf],
+    agent_id: &str,
+    dotted: &str,
+) -> Result<Option<Value>> {
+    // 1. Canonical `agents.yaml`.
+    if let Some(v) = read_one(path, agent_id, dotted)? {
+        return Ok(Some(v));
+    }
+    // 2. Sibling `agents.d/*.yaml`.
+    if let Some(parent) = path.parent() {
+        if let Some(v) = read_one_dir(&parent.join("agents.d"), agent_id, dotted)? {
+            return Ok(Some(v));
+        }
+    }
+    // 3. Persona install roots.
+    for root in extra_persona_roots {
+        if let Some(v) = read_one_dir(&root.join("agents.d"), agent_id, dotted)? {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
+}
+
+fn read_one(path: &Path, agent_id: &str, dotted: &str) -> Result<Option<Value>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -669,6 +727,28 @@ pub fn read_agent_field(path: &Path, agent_id: &str, dotted: &str) -> Result<Opt
         }
     }
     Ok(Some(cur.clone()))
+}
+
+fn read_one_dir(dir: &Path, agent_id: &str, dotted: &str) -> Result<Option<Value>> {
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let mut entries: Vec<_> = fs::read_dir(dir)
+        .with_context(|| format!("read_dir {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            n.ends_with(".yaml") && !n.ends_with(".example.yaml")
+        })
+        .collect();
+    entries.sort();
+    for p in entries {
+        if let Some(v) = read_one(&p, agent_id, dotted)? {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
 }
 
 /// Upsert `value` at the dotted path inside the matching agent's
@@ -904,6 +984,82 @@ fn write_atomic(path: &Path, root: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn list_agent_ids_merged_includes_persona_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("agents.yaml");
+        fs::write(&main, "agents:\n  - id: alice\n").unwrap();
+
+        let persona = dir.path().join("personas/cody-0.2.0");
+        fs::create_dir_all(persona.join("agents.d")).unwrap();
+        fs::write(
+            persona.join("agents.d/cody.yaml"),
+            "agents:\n  - id: cody\n",
+        )
+        .unwrap();
+
+        let ids = list_agent_ids_merged(&main, &[persona.clone()]).unwrap();
+        assert_eq!(ids, vec!["alice".to_string(), "cody".to_string()]);
+    }
+
+    #[test]
+    fn list_agent_ids_merged_dedupes_when_operator_overrides_persona() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("agents.yaml");
+        fs::write(&main, "agents:\n  - id: cody\n").unwrap();
+
+        let persona = dir.path().join("personas/cody-0.2.0");
+        fs::create_dir_all(persona.join("agents.d")).unwrap();
+        fs::write(
+            persona.join("agents.d/cody.yaml"),
+            "agents:\n  - id: cody\n",
+        )
+        .unwrap();
+
+        let ids = list_agent_ids_merged(&main, &[persona]).unwrap();
+        // Operator entry wins; persona duplicate filtered.
+        assert_eq!(ids, vec!["cody".to_string()]);
+    }
+
+    #[test]
+    fn list_agent_ids_merged_handles_missing_main_file() {
+        // Daemon zero-config — agents.yaml doesn't exist but a
+        // persona ships agents.d/cody.yaml. Patcher must still
+        // surface the persona-shipped agent.
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("agents.yaml"); // never created
+
+        let persona = dir.path().join("personas/cody-0.2.0");
+        fs::create_dir_all(persona.join("agents.d")).unwrap();
+        fs::write(
+            persona.join("agents.d/cody.yaml"),
+            "agents:\n  - id: cody\n",
+        )
+        .unwrap();
+
+        let ids = list_agent_ids_merged(&main, &[persona]).unwrap();
+        assert_eq!(ids, vec!["cody".to_string()]);
+    }
+
+    #[test]
+    fn read_agent_field_merged_finds_persona_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("agents.yaml");
+        fs::write(&main, "agents: []\n").unwrap();
+
+        let persona = dir.path().join("personas/cody-0.2.0");
+        fs::create_dir_all(persona.join("agents.d")).unwrap();
+        fs::write(
+            persona.join("agents.d/cody.yaml"),
+            "agents:\n  - id: cody\n    model:\n      provider: minimax\n      id: M2.5\n",
+        )
+        .unwrap();
+
+        let v = read_agent_field_merged(&main, &[persona], "cody", "model.provider")
+            .unwrap();
+        assert_eq!(v, Some(Value::String("minimax".into())));
+    }
 
     #[test]
     fn creates_file_when_absent() {

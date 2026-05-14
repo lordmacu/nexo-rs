@@ -2654,6 +2654,178 @@ impl NexoPlugin for SubprocessNexoPlugin {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    /// Phase 81.33.a — override the default no-op trait impl
+    /// with the manifest-driven outbound tool registration.
+    ///
+    /// Iterates `self.cached_manifest.plugin.tools.outbound` and
+    /// installs one [`GenericRpcToolHandler`] per entry against
+    /// `registry`. Schema parse failures + missing-weak-self
+    /// degrade gracefully (warn + skip the entry) rather than
+    /// panicking, so a buggy outbound entry doesn't take the
+    /// whole agent's tool surface offline.
+    fn register_outbound_tools(&self, registry: &crate::agent::tool_registry::ToolRegistry) {
+        let outbound = &self.cached_manifest.plugin.tools.outbound;
+        if outbound.is_empty() {
+            return;
+        }
+        let Some(weak) = self.weak_self_ref() else {
+            tracing::warn!(
+                plugin = %self.cached_manifest.plugin.id,
+                "register_outbound_tools: weak_self not populated — \
+                 plugin built outside the factory; skipping {} outbound tools",
+                outbound.len(),
+            );
+            return;
+        };
+        // Daemon-wide default. Per-spec timeouts override.
+        let daemon_default = std::env::var("NEXO_PLUGIN_TOOL_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(crate::agent::generic_rpc_tool::DEFAULT_OUTBOUND_TOOL_TIMEOUT);
+        let mut registered = 0usize;
+        let mut skipped = 0usize;
+        for spec in outbound {
+            let parameters: serde_json::Value =
+                match serde_json::from_str(&spec.input_schema) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %self.cached_manifest.plugin.id,
+                            tool = %spec.name,
+                            error = %e,
+                            "outbound tool input_schema failed to parse; skipping",
+                        );
+                        skipped += 1;
+                        continue;
+                    }
+                };
+            let def = nexo_llm::types::ToolDef {
+                name: spec.name.clone(),
+                description: spec.description.clone(),
+                parameters,
+            };
+            let timeout = spec
+                .timeout_ms
+                .map(std::time::Duration::from_millis)
+                .unwrap_or(daemon_default);
+            let handler = crate::agent::generic_rpc_tool::GenericRpcToolHandler::new(
+                self.cached_manifest.plugin.id.clone(),
+                weak.clone(),
+                spec.rpc_method.clone(),
+                spec.name.clone(),
+                timeout,
+            );
+            registry.register_arc(def, std::sync::Arc::new(handler));
+            registered += 1;
+        }
+        tracing::info!(
+            plugin = %self.cached_manifest.plugin.id,
+            registered,
+            skipped,
+            "outbound tools registered from manifest",
+        );
+    }
+}
+
+impl SubprocessNexoPlugin {
+    /// Phase 81.33.a — handle for [`GenericRpcToolHandler`] so it
+    /// can upgrade back to a typed `Arc<Self>` per call. `None`
+    /// only when the factory pattern was bypassed (raw test
+    /// constructions); production paths always populate
+    /// `weak_self` immediately after `Arc::new(...)`.
+    pub fn weak_self_ref(&self) -> Option<std::sync::Weak<SubprocessNexoPlugin>> {
+        self.weak_self.get().cloned()
+    }
+
+    /// Phase 81.33.a — invoke an outbound-tool RPC against the
+    /// running subprocess. Used by
+    /// [`GenericRpcToolHandler::call`] (lives in
+    /// `agent::generic_rpc_tool`).
+    ///
+    /// Acquires the inner mutex, sends the request through
+    /// `stdin_tx`, awaits the reply via the shared `pending`
+    /// DashMap.
+    ///
+    /// Returns the JSON-RPC `result` value verbatim on success.
+    /// Errors:
+    ///   - "plugin not running" — `inner` is None (boot failed
+    ///     or plugin shutdown).
+    ///   - timeout — request sent but no reply within `timeout`;
+    ///     the pending slot is cleaned up so it doesn't leak.
+    ///   - mapped JSON-RPC error (see
+    ///     [`crate::agent::generic_rpc_tool::map_rpc_error`]).
+    pub async fn invoke_outbound_tool(
+        &self,
+        rpc_method: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (stdin_tx, pending, next_id) = {
+            let guard = self.inner.lock().await;
+            let Some(inner) = guard.as_ref() else {
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: plugin `{}` is not running",
+                    self.cached_manifest.plugin.id,
+                );
+            };
+            (
+                inner.stdin_tx.clone(),
+                inner.pending.clone(),
+                inner.next_id.clone(),
+            )
+        };
+        let id = next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": rpc_method,
+            "params": {
+                "tool_name": tool_name,
+                "args": args,
+            },
+        });
+        let (tx, rx) = tokio::sync::oneshot::channel::<
+            Result<serde_json::Value, String>,
+        >();
+        pending.insert(id, tx);
+        if let Err(e) = stdin_tx.send(request).await {
+            pending.remove(&id);
+            anyhow::bail!(
+                "outbound tool `{tool_name}`: stdin send failed (plugin likely crashed): {e}"
+            );
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(msg))) => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    if let (Some(code), Some(message)) = (
+                        parsed.get("code").and_then(|v| v.as_i64()),
+                        parsed.get("message").and_then(|v| v.as_str()),
+                    ) {
+                        return Err(
+                            crate::agent::generic_rpc_tool::map_rpc_error(code, message),
+                        );
+                    }
+                }
+                Err(anyhow::anyhow!("outbound rpc error: {msg}"))
+            }
+            Ok(Err(_canceled)) => {
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: response channel closed (plugin restart?)",
+                );
+            }
+            Err(_elapsed) => {
+                pending.remove(&id);
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: timed out after {} ms",
+                    timeout.as_millis(),
+                );
+            }
+        }
+    }
 }
 
 /// Factory helper for subprocess plugins. Reads the
