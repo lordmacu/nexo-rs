@@ -95,6 +95,33 @@ pub trait NexoPlugin: Send + Sync + 'static {
     /// Concrete types return `&self`; required (no default impl)
     /// so each plugin opts in explicitly.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Phase 81.33 — plugin opts in to register its **outbound
+    /// LLM tools** into a per-agent registry.
+    ///
+    /// Called by boot (per-agent loop) and by the hot-spawn
+    /// closure (Phase 81.32) once an agent is detected to declare
+    /// this plugin via `cfg.plugins`. Both call sites pass the
+    /// SAME `&ToolRegistry` they're populating so plugin authors
+    /// don't need to discriminate between paths.
+    ///
+    /// Default no-op: plugins with no outbound tools (anything
+    /// pure-inbound) inherit the empty impl. Plugins like
+    /// `nexo-plugin-whatsapp` / `-telegram` / `-email` /
+    /// `-google` override to call their `register_*_tools(...)`
+    /// helper, which removes the hardcoded
+    /// `cfg.plugins.iter().any(|p| p == "whatsapp")` block from
+    /// `src/main.rs` and lets out-of-tree plugins (slack, discord,
+    /// sms, instagram, …) self-register without daemon edits.
+    ///
+    /// Convention: implementations must respect the same scoping
+    /// rules as `init()` (only `<plugin_id>_*` names, no reserved
+    /// prefixes). Registration failures here are best-effort —
+    /// plugins log + skip rather than panic so a buggy outbound
+    /// tool doesn't take down the whole boot.
+    fn register_outbound_tools(&self, _registry: &super::tool_registry::ToolRegistry) {
+        // Default: plugin exposes no outbound tools.
+    }
 }
 
 /// Bundle of handles a plugin's `init` receives. Lifetimes tied
