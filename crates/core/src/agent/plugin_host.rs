@@ -96,6 +96,34 @@ pub trait NexoPlugin: Send + Sync + 'static {
     /// so each plugin opts in explicitly.
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Phase 81.33.b — plugin opts in to provide a
+    /// [`nexo_pairing::adapter::PairingChannelAdapter`] for
+    /// inbound sender normalisation + challenge delivery.
+    ///
+    /// Default `None` — plugins without a pair-able channel
+    /// (memory, browser pure-control) skip. Plugins that ship a
+    /// pairing flow (whatsapp / telegram / future sms / discord)
+    /// override to return `Some(Arc<dyn PairingChannelAdapter>)`.
+    ///
+    /// Boot + spawner call this on every loaded plugin handle
+    /// and register the returned adapters into the shared
+    /// `PairingAdapterRegistry`. Eliminates the per-plugin
+    /// hardcoded `Arc::new(XxxPairingAdapter::new(broker))`
+    /// blocks the daemon previously needed.
+    ///
+    /// `SubprocessNexoPlugin::build_pairing_adapter` will move
+    /// to manifest-driven `GenericBrokerPairingAdapter` in
+    /// Phase 81.33.b.real (separate session) once the manifest
+    /// schema for `[plugin.pairing.adapter]` is finalised.
+    /// Until then the default `None` keeps subprocess plugins
+    /// on the legacy hardcoded path in `src/main.rs`.
+    fn build_pairing_adapter(
+        &self,
+        _broker: nexo_broker::AnyBroker,
+    ) -> Option<std::sync::Arc<dyn nexo_pairing::adapter::PairingChannelAdapter>> {
+        None
+    }
+
     /// Phase 81.33 — plugin opts in to register its **outbound
     /// LLM tools** into a per-agent registry.
     ///

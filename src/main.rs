@@ -1541,6 +1541,29 @@ where
     }
 }
 
+/// Phase 81.33.b — single source of truth for the in-tree
+/// `PairingChannelAdapter` registrations the daemon ships with.
+///
+/// Boot path + spawner closure + the late dispatcher-hook block
+/// previously open-coded the same 4-line `pairing_registry
+/// .register(Arc::new(XxxPairingAdapter::new(broker.clone())))`
+/// dance three times each. Consolidating into one helper keeps
+/// the hardcoded plugin set in exactly one place — the next
+/// step (81.33.b.real, separate session) replaces this helper
+/// with a loop over `plugin_handles`' `build_pairing_adapter`
+/// trait method once `SubprocessNexoPlugin` ships the
+/// manifest-driven `GenericBrokerPairingAdapter`.
+fn build_known_pairing_registry(broker: &nexo_broker::AnyBroker) -> nexo_pairing::PairingAdapterRegistry {
+    let registry = nexo_pairing::PairingAdapterRegistry::new();
+    registry.register(std::sync::Arc::new(
+        nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
+    ));
+    registry.register(std::sync::Arc::new(
+        nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
+    ));
+    registry
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -6310,13 +6333,7 @@ async fn main() -> Result<()> {
         // `TelegramPairingAdapter`) live in plugin crates that
         // depend on nexo-core; constructing them inside core would
         // create a cycle.
-        let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
-        pairing_registry.register(std::sync::Arc::new(
-            nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
-        ));
-        pairing_registry.register(std::sync::Arc::new(
-            nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
-        ));
+        let pairing_registry = build_known_pairing_registry(&broker);
         let assembly_deps = nexo_core::agent::spawn::RuntimeAssemblyDeps {
             tools: Arc::clone(&tools),
             memory: memory.clone(),
@@ -7093,16 +7110,10 @@ async fn main() -> Result<()> {
                 let agent_cfg = cfg.clone();
                 let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
-                // 5. Pairing adapter registry — rebuilt per spawn
-                //    because the adapter types live in plugin
-                //    crates outside nexo-core.
-                let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
-                pairing_registry.register(std::sync::Arc::new(
-                    nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
-                ));
-                pairing_registry.register(std::sync::Arc::new(
-                    nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
-                ));
+                // 5. Pairing adapter registry — built per spawn
+                //    via the shared `build_known_pairing_registry`
+                //    helper (Phase 81.33.b).
+                let pairing_registry = build_known_pairing_registry(&broker);
 
                 // 6. Assemble runtime via shared helper.
                 let assembly_deps = RuntimeAssemblyDeps {
@@ -8022,13 +8033,9 @@ async fn boot_dispatch_ctx_if_enabled(
     // Hook dispatcher with the channel adapters the pairing layer
     // owns. Adapters are registered into a SHARED registry here so
     // notify_origin reaches WhatsApp / Telegram out of the box.
-    let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
-    pairing_registry.register(Arc::new(nexo_plugin_whatsapp::WhatsappPairingAdapter::new(
-        _broker.clone(),
-    )));
-    pairing_registry.register(Arc::new(nexo_plugin_telegram::TelegramPairingAdapter::new(
-        _broker.clone(),
-    )));
+    // Phase 81.33.b — single source of truth via
+    // `build_known_pairing_registry` helper.
+    let pairing_registry = build_known_pairing_registry(_broker);
     // Hook idempotency store. Lives next to other state sidecars
     // in $NEXO_HOME/state/. On failure the dispatcher degrades to
     // idempotency-less mode (hooks can fire twice on NATS replay) but
