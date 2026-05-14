@@ -1,0 +1,69 @@
+# Phase 81.18 — manifest for the out-of-tree Telegram plugin.
+#
+# Bundled into the binary at compile-time via
+# `include_str!("../nexo-plugin.toml")` in `src/main.rs`. The daemon
+# parses this on the JSON-RPC `initialize` reply and validates the
+# `[capabilities.broker]` allowlist against its boot policy before
+# routing the first message.
+
+[plugin]
+id              = "telegram"
+version         = "0.1.4"
+name            = "Telegram Bot"
+description     = "Telegram bot channel for nexo agents."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+[plugin.extends]
+tools = [
+    "telegram_send_message",
+    "telegram_send_reply",
+    "telegram_send_reaction",
+    "telegram_send_location",
+    "telegram_send_media",
+    "telegram_edit_message",
+]
+
+# Phase 82.15.bx — explicit broker allowlist. Defense-in-depth so a
+# misbehaving plugin can't broadcast outside the topics it declared.
+# `>` matches the per-instance suffix (`telegram.<instance>` and
+# `telegram` legacy).
+[plugin.capabilities.broker]
+subscribe = ["plugin.outbound.telegram", "plugin.outbound.telegram.>"]
+publish   = ["plugin.inbound.telegram",  "plugin.inbound.telegram.>"]
+
+# Plugin-driven pairing UI descriptor. Form flow — the
+# operator pastes a BotFather token + a username; the admin
+# submits the pair to `credentials/register` on submit.
+[plugin.pairing]
+kind           = "form"
+label          = "Telegram"
+# Phase 81.30 follow-up #4 — explicit instance-field declaration.
+# Matches the conventional `"instance"` name today; future plugins
+# whose form uses a different discriminator just point this here.
+instance_field = "instance"
+
+[plugin.pairing.instructions]
+es = "Conseguí un token con @BotFather en Telegram y pegalo aquí junto al username del bot."
+en = "Get a token from @BotFather in Telegram and paste it here together with the bot username."
+
+[[plugin.pairing.fields]]
+name        = "instance"
+label       = "Bot username"
+placeholder = "mi_bot"
+required    = true
+
+[[plugin.pairing.fields]]
+name        = "token"
+label       = "Bot token"
+placeholder = "123456:ABC-DEF..."
+sensitive   = true
+required    = true
+
+# Phase 81.30 follow-up #2 — entrypoint rewritten at install time
+# to point at the dev-state binary; everything else above came
+# straight from /home/familia/chat/nexo-rs-plugin-telegram/nexo-plugin.toml.
+[plugin.entrypoint]
+command = "/home/familia/chat/proyecto/.dev-state/plugins/telegram/nexo-plugin-telegram"

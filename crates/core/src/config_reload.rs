@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::runtime::ReloadCommand;
+use crate::agent::spawn::SharedRuntimeContext;
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::telemetry;
 
@@ -70,6 +71,13 @@ pub struct ConfigReloadCoordinator {
     /// by the same gate as the reload to keep the contract simple
     /// (no observer can run mid-swap).
     post_hooks: Mutex<Vec<PostReloadHook>>,
+    /// Phase 81.32 — shared runtime context the coordinator
+    /// hands to `spawn_agent_runtime` when an agent id appears
+    /// in the new config that wasn't there before. `None` keeps
+    /// the legacy "adding a new agent at runtime is not
+    /// supported" rejection so tests that haven't wired the
+    /// context stay on the old behaviour.
+    shared_ctx: ArcSwapOption<SharedRuntimeContext>,
     shutdown: CancellationToken,
 }
 
@@ -102,8 +110,39 @@ impl ConfigReloadCoordinator {
             gate: Mutex::new(()),
             broker: ArcSwapOption::from(None),
             post_hooks: Mutex::new(Vec::new()),
+            shared_ctx: ArcSwapOption::from(None),
             shutdown,
         }
+    }
+
+    /// Phase 81.32 — install the [`SharedRuntimeContext`] the
+    /// reload coordinator hands to `spawn_agent_runtime` when an
+    /// agent id appears in the freshly-loaded config that wasn't
+    /// in the previous one. Without this wired, the legacy
+    /// rejection ("adding a new agent at runtime is not
+    /// supported") fires for unknown ids.
+    ///
+    /// Late-bindable so `src/main.rs` can build the coordinator
+    /// before the boot-loop singletons are fully assembled and
+    /// upgrade it once they are.
+    pub fn with_shared_context(self, shared: Arc<SharedRuntimeContext>) -> Self {
+        self.shared_ctx.store(Some(shared));
+        self
+    }
+
+    /// Phase 81.32 — read-only handle to the configured shared
+    /// context. `None` when [`Self::with_shared_context`] has
+    /// not been called yet (legacy / test path).
+    pub fn shared_context(&self) -> Option<Arc<SharedRuntimeContext>> {
+        self.shared_ctx.load_full()
+    }
+
+    /// Phase 81.32 — uninstall the per-agent reload handle when
+    /// an agent is hot-removed from `agents.yaml`. Returns the
+    /// handle so the coordinator can drive its
+    /// `ReloadCommand::Shutdown` send before dropping it.
+    pub fn unregister(&self, agent_id: &str) -> Option<AgentReloadHandle> {
+        self.runtimes.remove(agent_id).map(|(_, handle)| handle)
     }
 
     /// Register a closure that fires after every successful reload.

@@ -1,0 +1,10 @@
+short_term:
+  max_history_turns: 50
+  session_ttl: 24h
+long_term:
+  backend: sqlite
+  sqlite:
+    path: /home/familia/chat/proyecto/.dev-state/data/memory.db
+vector:
+  enabled: false
+schema_version: 11

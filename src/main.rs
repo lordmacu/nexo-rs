@@ -818,7 +818,10 @@ struct CronRebuildDeps {
     web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
     link_extractor: Arc<nexo_core::link_understanding::LinkExtractor>,
     dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>>,
-    tools_per_agent: Arc<std::collections::HashMap<String, Arc<nexo_core::agent::ToolRegistry>>>,
+    // Phase 81.32 c5 — `DashMap` so hot-spawn can insert post-boot
+    // without an `RwLock` write lock that would serialise the cron
+    // post-hook against runtime spawn.
+    tools_per_agent: Arc<dashmap::DashMap<String, Arc<nexo_core::agent::ToolRegistry>>>,
     cron_tool_call_cfg: nexo_config::types::runtime::RuntimeCronToolCallsConfig,
 }
 
@@ -1306,7 +1309,7 @@ fn seed_email_subprocess_env_for(
 /// during the boot agent loop and never extended; reload picks up
 /// policy changes for EXISTING agents only.
 fn build_cron_bindings_from_snapshots(
-    snapshots: &std::collections::HashMap<
+    snapshots: &dashmap::DashMap<
         String,
         Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
     >,
@@ -1314,10 +1317,16 @@ fn build_cron_bindings_from_snapshots(
 ) -> std::collections::HashMap<String, CronToolBindingContext> {
     let mut by_binding: std::collections::HashMap<String, CronToolBindingContext> =
         std::collections::HashMap::new();
-    for (agent_id, snapshot_handle) in snapshots {
+    for entry in snapshots.iter() {
+        let agent_id = entry.key();
+        let snapshot_handle = entry.value();
         let snap = snapshot_handle.load_full();
         let agent_cfg = Arc::clone(&snap.nexo_config);
-        let Some(tools) = deps.tools_per_agent.get(agent_id).cloned() else {
+        let Some(tools) = deps
+            .tools_per_agent
+            .get(agent_id)
+            .map(|r| Arc::clone(r.value()))
+        else {
             tracing::debug!(
                 agent = %agent_id,
                 "build_cron_bindings_from_snapshots: agent missing from tools_per_agent; skipping"
@@ -4812,14 +4821,18 @@ async fn main() -> Result<()> {
     // `agent_snapshot_handles` captures each runtime's snapshot
     // ArcSwap so the post-hook can re-read the current effective
     // policy after a reload swap.
-    let mut tools_per_agent: std::collections::HashMap<
-        String,
-        Arc<nexo_core::agent::ToolRegistry>,
-    > = std::collections::HashMap::new();
-    let mut agent_snapshot_handles: std::collections::HashMap<
-        String,
-        Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
-    > = std::collections::HashMap::new();
+    // Phase 81.32 c5 — `Arc<DashMap>` for both. Built empty; the
+    // per-agent loop inserts via `.insert(id, …)` and the
+    // hot-spawn path (c8) inserts the same way without a global
+    // lock. Wrapping in `Arc` up-front (vs after the loop)
+    // collapses two binding sites the cron post-hook + reload
+    // coordinator clone from.
+    let tools_per_agent: Arc<
+        dashmap::DashMap<String, Arc<nexo_core::agent::ToolRegistry>>,
+    > = Arc::new(dashmap::DashMap::new());
+    let agent_snapshot_handles: Arc<
+        dashmap::DashMap<String, Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>>,
+    > = Arc::new(dashmap::DashMap::new());
 
     // Clone primary's id + config before the
     // agent loop consumes `cfg.agents.agents` so the daemon-embed
@@ -6623,8 +6636,8 @@ async fn main() -> Result<()> {
 
     // Wrap aggregated cron-rebuild maps + build deps struct
     // for the post-hook + initial boot-time cron binding build.
-    let tools_per_agent = Arc::new(tools_per_agent);
-    let agent_snapshot_handles = Arc::new(agent_snapshot_handles);
+    // Phase 81.32 c5 — both maps already `Arc<DashMap>` at boot;
+    // no post-loop wrap needed.
     let cron_rebuild_deps = CronRebuildDeps {
         broker: broker.clone(),
         sessions: Arc::clone(&sessions),
@@ -6710,7 +6723,10 @@ async fn main() -> Result<()> {
                 let (primary_id, primary_cfg) = primary_for_mcp_embed.clone().ok_or_else(|| {
                     anyhow::anyhow!("mcp_server.daemon_embed enabled but agents.yaml has no agents")
                 })?;
-                let primary_tools = tools_per_agent.get(&primary_id).cloned().ok_or_else(|| {
+                let primary_tools = tools_per_agent
+                    .get(&primary_id)
+                    .map(|r| Arc::clone(r.value()))
+                    .ok_or_else(|| {
                     anyhow::anyhow!(
                         "mcp_server.daemon_embed: primary agent `{}` not in tools_per_agent map",
                         primary_id

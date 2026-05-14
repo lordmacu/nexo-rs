@@ -163,6 +163,13 @@ pub enum ReloadCommand {
     /// Swap in a new snapshot. Picked up by the next event's
     /// `snapshot.load()` read — in-flight turns keep the old Arc.
     Apply(Arc<RuntimeSnapshot>),
+    /// Phase 81.32 — request the runtime to tear itself down.
+    /// The runtime cancels its broker subscriptions, drops
+    /// heartbeat/dream tasks, and exits its event loop. In-flight
+    /// turns finish naturally (no LLM call is aborted); new
+    /// inbound events stop being dispatched as soon as the
+    /// subscriber is closed.
+    Shutdown,
 }
 impl AgentRuntime {
     pub fn new(agent: Arc<Agent>, broker: AnyBroker, sessions: Arc<SessionManager>) -> Self {
@@ -489,6 +496,24 @@ impl AgentRuntime {
                                     version,
                                     "config reload: snapshot applied",
                                 );
+                            }
+                            Some(ReloadCommand::Shutdown) => {
+                                // Phase 81.32 — operator soft-removed
+                                // the agent from agents.yaml (e.g. via
+                                // wizard delete). Exit the event loop;
+                                // broker subscribers drop with the
+                                // `plugin_sub` / `heartbeat_sub` /
+                                // `route_sub` owners; in-flight LLM
+                                // turns finish naturally. The task
+                                // returns, JoinHandle resolves, and
+                                // the coordinator drops the per-agent
+                                // handle so no further inbound events
+                                // route to this agent.
+                                tracing::info!(
+                                    agent_id = %agent.id,
+                                    "config reload: shutdown received, exiting runtime loop",
+                                );
+                                break;
                             }
                             None => {
                                 tracing::debug!(agent_id = %agent.id, "reload channel closed");

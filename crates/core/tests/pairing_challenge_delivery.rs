@@ -109,6 +109,7 @@ fn agent_with_pairing_on() -> AgentConfig {
         web_search: serde_json::Value::Null,
         pairing_policy: serde_json::Value::Null,
         language: None,
+        locale_prompts: Default::default(),
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),
             allowed_tools: None,

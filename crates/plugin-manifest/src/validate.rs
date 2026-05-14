@@ -107,6 +107,7 @@ pub fn run_all_with_sandbox_env(
     validate_capability_gates_unique(&manifest.plugin.capability_gates.gates, errors);
     validate_supervisor(&manifest.plugin.supervisor, errors);
     validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
+    validate_pairing(&manifest.plugin.pairing, errors);
 }
 
 /// Guard against a manifest requesting an
@@ -153,6 +154,55 @@ fn validate_supervisor(
 /// `enabled = false` (the section is descriptive but inactive).
 /// Otherwise checks: path absoluteness, denylist match,
 /// `${state_dir}` placement, host-network capability gate.
+/// Phase 81.30 follow-up #5 — guard against manifest authoring
+/// mistakes in `[plugin.pairing]`. Silent dead config (e.g.
+/// `kind = "form"` without `fields`) would land in the admin's
+/// channel descriptor + render an empty modal at runtime; better
+/// to refuse the plugin at boot with a typed error.
+fn validate_pairing(
+    pairing: &crate::pairing::PairingSection,
+    errors: &mut Vec<ManifestError>,
+) {
+    use crate::pairing::PairingKind;
+    let Some(kind) = pairing.kind else {
+        return;
+    };
+    match kind {
+        PairingKind::Form => {
+            if pairing.fields.is_empty() {
+                errors.push(ManifestError::PairingFormWithoutFields);
+            }
+        }
+        PairingKind::Custom => {
+            if pairing
+                .rpc_namespace
+                .as_deref()
+                .map(str::is_empty)
+                .unwrap_or(true)
+            {
+                errors.push(ManifestError::PairingCustomWithoutRpcNamespace);
+            }
+            if !pairing.fields.is_empty() {
+                errors.push(ManifestError::PairingFieldsWithoutFormKind {
+                    kind: "custom".into(),
+                });
+            }
+        }
+        PairingKind::Qr | PairingKind::Info => {
+            if !pairing.fields.is_empty() {
+                let kind_str = match kind {
+                    PairingKind::Qr => "qr",
+                    PairingKind::Info => "info",
+                    _ => unreachable!(),
+                };
+                errors.push(ManifestError::PairingFieldsWithoutFormKind {
+                    kind: kind_str.into(),
+                });
+            }
+        }
+    }
+}
+
 fn validate_sandbox(
     sandbox: &SandboxSection,
     host_net_allowed: bool,
@@ -1072,6 +1122,85 @@ expose = ["wrong_prefix"]
         // tightening of the bounds doesn't accidentally break the
         // builtin defaults.
         let m = manifest_with_supervisor_block("respawn = true");
+        m.validate(&current()).unwrap();
+    }
+
+    // ── Phase 81.30 follow-up #5 — pairing validator ─────────
+
+    fn manifest_with_pairing(body: &str) -> PluginManifest {
+        let toml = format!("{}\n[plugin.pairing]\n{}\n", base_manifest_toml(), body);
+        parse(&toml)
+    }
+
+    #[test]
+    fn pairing_form_without_fields_rejected() {
+        let m = manifest_with_pairing("kind = \"form\"\nlabel = \"X\"");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PairingFormWithoutFields)),
+            "expected PairingFormWithoutFields, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_form_with_fields_accepted() {
+        let m = manifest_with_pairing(
+            "kind = \"form\"\nlabel = \"X\"\n\
+             [[plugin.pairing.fields]]\n\
+             name = \"token\"\n\
+             label = \"Bot token\"\n",
+        );
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_custom_without_rpc_namespace_rejected() {
+        let m = manifest_with_pairing("kind = \"custom\"");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PairingCustomWithoutRpcNamespace)),
+            "expected PairingCustomWithoutRpcNamespace, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_custom_with_rpc_namespace_accepted() {
+        let m = manifest_with_pairing("kind = \"custom\"\nrpc_namespace = \"myauth\"");
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_qr_with_fields_rejected() {
+        let m = manifest_with_pairing(
+            "kind = \"qr\"\n\
+             [[plugin.pairing.fields]]\n\
+             name = \"token\"\n\
+             label = \"X\"\n",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PairingFieldsWithoutFormKind { kind } if kind == "qr"
+            )),
+            "expected PairingFieldsWithoutFormKind(qr), got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_qr_minimal_accepted() {
+        let m = manifest_with_pairing("kind = \"qr\"\nlabel = \"WhatsApp\"");
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_section_absent_skipped() {
+        // No `[plugin.pairing]` section at all — validator must
+        // pass (the field is opt-in for plugins that don't expose
+        // a pair-able channel).
+        let m = parse(&base_manifest_toml());
         m.validate(&current()).unwrap();
     }
 }

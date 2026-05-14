@@ -108,6 +108,7 @@ fn two_binding_agent() -> AgentConfig {
         web_search: serde_json::Value::Null,
         pairing_policy: serde_json::Value::Null,
         language: None,
+        locale_prompts: Default::default(),
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
             InboundBinding {
@@ -361,6 +362,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         web_search: serde_json::Value::Null,
         pairing_policy: serde_json::Value::Null,
         language: None,
+        locale_prompts: Default::default(),
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),

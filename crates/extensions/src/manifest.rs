@@ -513,12 +513,22 @@ fn validate_description(desc: Option<&str>) -> Result<(), ManifestError> {
 }
 
 fn validate_capabilities(caps: &Capabilities) -> Result<(), ManifestError> {
-    let total = caps.tools.len()
+    // Phase 81.31 follow-up — admin-only extensions
+    // (nexo-plugin-admin is the canonical example) ship NO
+    // tools/hooks/channels/providers/pollers but DO declare an
+    // `[capabilities.admin]` block + optionally `[capabilities.
+    // http_server]`. Count those toward "has something" so the
+    // extension validator stops rejecting admin-only plugins
+    // with the misleading "must declare at least one tool, hook,
+    // channel, or provider" message.
+    let contribution_total = caps.tools.len()
         + caps.hooks.len()
         + caps.channels.len()
         + caps.providers.len()
         + caps.pollers.len();
-    if total == 0 {
+    let admin_total = caps.admin.required.len() + caps.admin.optional.len();
+    let http_total = if caps.http_server.is_some() { 1 } else { 0 };
+    if contribution_total + admin_total + http_total == 0 {
         return Err(ManifestError::NoCapabilities);
     }
     validate_capability_list("tools", &caps.tools)?;
@@ -1212,6 +1222,60 @@ url = "ftp://example.com/mcp"
         assert!(
             matches!(err, ManifestError::McpInvalidHttpUrl { ref name, .. } if name == "api"),
             "got {:?}",
+            err
+        );
+    }
+
+    /// Phase 81.31 follow-up — admin-only extension (no
+    /// tools/hooks/channels/providers/pollers) passes the validator
+    /// when it declares `[capabilities.admin]`. Mirrors the
+    /// `nexo-plugin-admin` extension manifest shape.
+    #[test]
+    fn validate_accepts_admin_only_extension() {
+        let src = r#"
+[plugin]
+id = "nexo-plugin-admin"
+version = "0.1.16"
+name = "Nexo Admin"
+description = "Admin UI"
+
+[transport]
+kind = "stdio"
+command = "./bin/nexo-plugin-admin"
+
+[capabilities.admin]
+required = ["agents_crud", "skills_crud"]
+optional = []
+
+[capabilities.http_server]
+port = 18000
+bind = "127.0.0.1"
+token_env = "NEXO_ADMIN_TOKEN"
+health_path = "/healthz"
+"#;
+        let m = ExtensionManifest::from_str(src).expect("admin-only manifest must parse");
+        assert_eq!(m.plugin.id, "nexo-plugin-admin");
+        assert_eq!(m.capabilities.admin.required.len(), 2);
+    }
+
+    /// Truly-empty manifest (no contributions, no admin, no
+    /// http_server) is still rejected.
+    #[test]
+    fn validate_rejects_extension_with_no_capabilities_at_all() {
+        let src = r#"
+[plugin]
+id = "empty"
+version = "0.1.0"
+name = "Empty"
+
+[transport]
+kind = "stdio"
+command = "./bin/empty"
+"#;
+        let err = ExtensionManifest::from_str(src).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::NoCapabilities),
+            "expected NoCapabilities, got {:?}",
             err
         );
     }

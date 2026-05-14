@@ -1,0 +1,27 @@
+[plugin]
+id          = "nexo-plugin-admin"
+version     = "0.1.16"
+name        = "Nexo Admin"
+description = "Admin UI for nexo-rs."
+
+[transport]
+kind    = "stdio"
+command = "./bin/nexo-plugin-admin"
+
+[capabilities.admin]
+required = [
+    "agents_crud", "skills_crud", "llm_keys_crud", "channels_crud",
+    "pairing_initiate", "transcripts_read", "operator_intervention",
+    "escalations_read", "escalations_resolve", "audit_read",
+    "memory_query", "plugin_doctor", "tenants_crud", "mcp_crud",
+]
+optional = [
+    "auth_rotate", "secrets_write", "agent_events_subscribe_all",
+    "credentials_crud", "plugin_restart",
+]
+
+[capabilities.http_server]
+port        = 18000
+bind        = "127.0.0.1"
+token_env   = "NEXO_ADMIN_TOKEN"
+health_path = "/healthz"

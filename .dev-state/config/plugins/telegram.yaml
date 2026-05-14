@@ -1,0 +1,9 @@
+telegram:
+- instance: nexotest1_bot
+  token: ${file:./secrets/telegram_nexotest1_bot_token.txt}
+  polling:
+    enabled: true
+    interval_ms: 1000
+  allow_agents: []
+  allowlist:
+    chat_ids: []

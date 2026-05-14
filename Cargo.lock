@@ -5562,6 +5562,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dashmap 6.1.0",
  "dirs 5.0.1",
  "futures",
  "humantime",

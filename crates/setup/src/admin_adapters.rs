@@ -5700,6 +5700,15 @@ impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsRead
 
             let linked_instances = by_channel.remove(plugin_id).unwrap_or_default();
 
+            // Phase 81.30 follow-up #4 — surface `instance_field`
+            // only when the plugin actually declared it. Empty
+            // string is treated as None so the admin falls back to
+            // its literal `"instance"` default.
+            let instance_field = pairing
+                .instance_field
+                .clone()
+                .filter(|s| !s.is_empty());
+
             channels.push(PairingChannelInfo {
                 channel: plugin_id.clone(),
                 kind: wire_kind,
@@ -5707,6 +5716,7 @@ impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsRead
                 instructions,
                 fields,
                 linked_instances,
+                instance_field,
                 notify_method,
             });
         }
@@ -6188,6 +6198,18 @@ impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemP
         // operator agents.yaml — refuses to mutate persona-shipped
         // YAML (those are immutable from the admin's perspective;
         // operators should override at the operator file).
+        //
+        // Phase 81.31 follow-up #3 — atomic rollback. The four
+        // workspace files have already landed on disk by this
+        // point. If the yaml patch fails for any reason (disk
+        // full, race, parse error from a concurrent edit), we
+        // delete the freshly-written files so the agent doesn't
+        // end up with localised content the yaml never advertises.
+        // Rollback is best-effort: each `fs::remove_file` error
+        // is logged at warn level and ignored — the operator can
+        // resave to recover the consistent state. We never abort
+        // the rollback halfway since one stale file is better
+        // than four.
         if req.patch_yaml {
             let operator_path = self.config_dir.join("agents.yaml");
             // If the agent lives in operator's yaml, patch in place.
@@ -6204,13 +6226,29 @@ impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemP
             } else {
                 operator_path
             };
-            crate::yaml_patch::upsert_agent_field(
+            if let Err(yaml_err) = crate::yaml_patch::upsert_agent_field(
                 &target,
                 &req.agent_id,
                 &format!("locale_prompts.{}", req.locale),
                 serde_yaml::Value::String(req.system_prompt.clone()),
-            )
-            .map_err(|e| PersonaStoreError::Io(format!("yaml patch: {e}")))?;
+            ) {
+                // Rollback every workspace file the prior
+                // `write_persona_snapshot` call landed on disk.
+                for path in &written {
+                    if let Err(rm_err) = std::fs::remove_file(path) {
+                        tracing::warn!(
+                            target = "persona.save_localized",
+                            path = %path.display(),
+                            error = %rm_err,
+                            "rollback failed; partial state remains on disk"
+                        );
+                    }
+                }
+                return Err(PersonaStoreError::Io(format!(
+                    "yaml patch failed (rolled back {} workspace file(s)): {yaml_err}",
+                    written.len()
+                )));
+            }
         }
 
         let refreshed = self.read_locales(&req.agent_id).await.unwrap_or_default();
@@ -6341,6 +6379,75 @@ mod persona_store_tests {
             std::fs::read_to_string(dir.path().join("ws/ana/IDENTITY.es.md")).unwrap(),
             "identidad"
         );
+    }
+
+    /// Phase 81.31 follow-up #3 — yaml-patch failure rolls back
+    /// the four workspace files. We force the failure by chmod'ing
+    /// the dir holding `agents.yaml` to read-only AFTER the agent
+    /// is located but BEFORE the patcher's atomic-rename runs.
+    /// The ordering is achieved by giving the store two paths:
+    /// the resolver finds the agent in `agents.d/` (writable
+    /// subdir), and the patch routes to operator
+    /// `agents.yaml` whose parent dir we make read-only.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_localized_rolls_back_workspace_files_when_yaml_patch_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        // Operator workspace lives at <root>/ws/ana (writable
+        // throughout the test).
+        std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
+        // Operator-side agents.yaml — resolver will route the
+        // yaml patch here (operator path priority).
+        write_agents_yaml(
+            dir.path(),
+            r#"agents:
+  - id: ana
+    workspace: ws/ana
+    system_prompt: top
+"#,
+        );
+
+        // Block writes to the operator agents.yaml by making its
+        // parent dir read-only. `write_atomic` (temp+rename) fails
+        // because the temp file can't be created.
+        let mut perms = std::fs::metadata(dir.path()).unwrap().permissions();
+        let original_mode = perms.mode();
+        perms.set_mode(0o555); // r-x for everyone
+        std::fs::set_permissions(dir.path(), perms).unwrap();
+
+        let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![]);
+        let result = store
+            .save_localized(PersonaSaveLocalizedRequest {
+                agent_id: "ana".into(),
+                locale: "es".into(),
+                system_prompt: "rollback me".into(),
+                identity: "i".into(),
+                soul: "s".into(),
+                user: "u".into(),
+                agents: "a".into(),
+                patch_yaml: true,
+            })
+            .await;
+
+        // Restore perms so the tempdir cleanup works regardless of
+        // the test outcome.
+        let mut restore = std::fs::metadata(dir.path()).unwrap().permissions();
+        restore.set_mode(original_mode);
+        std::fs::set_permissions(dir.path(), restore).unwrap();
+
+        let err = result.expect_err("yaml patch must fail in read-only dir");
+        let msg = format!("{err}");
+        assert!(msg.contains("rolled back"), "got: {msg}");
+
+        // Workspace files must not exist on disk after rollback.
+        // (The workspace dir IS writable since it sits under the
+        // root which we chmod'd back; check after restore.)
+        let ws = dir.path().join("ws/ana");
+        assert!(!ws.join("IDENTITY.es.md").exists(), "IDENTITY.es.md left behind");
+        assert!(!ws.join("SOUL.es.md").exists());
+        assert!(!ws.join("USER.es.md").exists());
+        assert!(!ws.join("AGENTS.es.md").exists());
     }
 
     #[tokio::test]

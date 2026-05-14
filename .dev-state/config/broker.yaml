@@ -1,0 +1,10 @@
+broker:
+  type: local
+  url: ""
+  persistence:
+    enabled: true
+    path: /home/familia/chat/proyecto/.dev-state/data/broker.db
+  limits:
+    max_payload: 4MB
+    max_pending: 10000
+schema_version: 11

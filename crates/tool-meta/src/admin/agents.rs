@@ -195,6 +195,14 @@ pub struct AgentUpsertInput {
     /// the toggle off explicitly persists `enabled: false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat: Option<HeartbeatWire>,
+    /// Phase 81.31 follow-up — per-locale `system_prompt` map.
+    /// `None` keeps the existing yaml value; `Some({})` clears
+    /// the block entirely (the agent becomes single-locale
+    /// again). Each key is a BCP-47 tag validated server-side via
+    /// `Locale::from_str` before write — invalid keys return
+    /// `-32602 invalid_params`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale_prompts: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Params for `nexo/admin/agents/delete`. Soft-delete:
@@ -309,6 +317,7 @@ mod tests {
             workspace: None,
             extra_docs: None,
             heartbeat: None,
+            locale_prompts: None,
         };
         let v = serde_json::to_value(&i).unwrap();
         let obj = v.as_object().unwrap();
