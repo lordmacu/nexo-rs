@@ -29,8 +29,9 @@ pub use error::ManifestError;
 pub use pairing::{PairingFieldDescriptor, PairingKind, PairingSection};
 pub use manifest::{
     AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
-    CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection,
-    ContractsSection, EntrypointSection, ExtendsSection, GateKind, GateRisk, HttpServerCapability,
+    CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSchemaSection,
+    ConfigSection, ConfigShape, ContractsSection, EntrypointSection, ExtendsSection, GateKind,
+    GateRisk, HttpServerCapability,
     MetaSection, PluginManifest, PluginSection, RequiresSection, SkillsSection, SupervisorSection,
     ToolsSection, UiHint, UiSection, CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS,
     PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
