@@ -2656,6 +2656,105 @@ impl NexoPlugin for SubprocessNexoPlugin {
     }
 }
 
+impl SubprocessNexoPlugin {
+    /// Phase 81.33.a — handle for [`GenericRpcToolHandler`] so it
+    /// can upgrade back to a typed `Arc<Self>` per call. `None`
+    /// only when the factory pattern was bypassed (raw test
+    /// constructions); production paths always populate
+    /// `weak_self` immediately after `Arc::new(...)`.
+    pub fn weak_self_ref(&self) -> Option<std::sync::Weak<SubprocessNexoPlugin>> {
+        self.weak_self.get().cloned()
+    }
+
+    /// Phase 81.33.a — invoke an outbound-tool RPC against the
+    /// running subprocess. Used by
+    /// [`GenericRpcToolHandler::call`] (lives in
+    /// `agent::generic_rpc_tool`).
+    ///
+    /// Acquires the inner mutex, sends the request through
+    /// `stdin_tx`, awaits the reply via the shared `pending`
+    /// DashMap.
+    ///
+    /// Returns the JSON-RPC `result` value verbatim on success.
+    /// Errors:
+    ///   - "plugin not running" — `inner` is None (boot failed
+    ///     or plugin shutdown).
+    ///   - timeout — request sent but no reply within `timeout`;
+    ///     the pending slot is cleaned up so it doesn't leak.
+    ///   - mapped JSON-RPC error (see
+    ///     [`crate::agent::generic_rpc_tool::map_rpc_error`]).
+    pub async fn invoke_outbound_tool(
+        &self,
+        rpc_method: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (stdin_tx, pending, next_id) = {
+            let guard = self.inner.lock().await;
+            let Some(inner) = guard.as_ref() else {
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: plugin `{}` is not running",
+                    self.cached_manifest.plugin.id,
+                );
+            };
+            (
+                inner.stdin_tx.clone(),
+                inner.pending.clone(),
+                inner.next_id.clone(),
+            )
+        };
+        let id = next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": rpc_method,
+            "params": {
+                "tool_name": tool_name,
+                "args": args,
+            },
+        });
+        let (tx, rx) = tokio::sync::oneshot::channel::<
+            Result<serde_json::Value, String>,
+        >();
+        pending.insert(id, tx);
+        if let Err(e) = stdin_tx.send(request).await {
+            pending.remove(&id);
+            anyhow::bail!(
+                "outbound tool `{tool_name}`: stdin send failed (plugin likely crashed): {e}"
+            );
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(msg))) => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&msg) {
+                    if let (Some(code), Some(message)) = (
+                        parsed.get("code").and_then(|v| v.as_i64()),
+                        parsed.get("message").and_then(|v| v.as_str()),
+                    ) {
+                        return Err(
+                            crate::agent::generic_rpc_tool::map_rpc_error(code, message),
+                        );
+                    }
+                }
+                Err(anyhow::anyhow!("outbound rpc error: {msg}"))
+            }
+            Ok(Err(_canceled)) => {
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: response channel closed (plugin restart?)",
+                );
+            }
+            Err(_elapsed) => {
+                pending.remove(&id);
+                anyhow::bail!(
+                    "outbound tool `{tool_name}`: timed out after {} ms",
+                    timeout.as_millis(),
+                );
+            }
+        }
+    }
+}
+
 /// Factory helper for subprocess plugins. Reads the
 /// manifest at registration time and returns a closure that builds
 /// a fresh `Arc<SubprocessNexoPlugin>` per call. Each `factory(&m)`

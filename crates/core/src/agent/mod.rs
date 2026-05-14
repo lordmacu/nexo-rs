@@ -77,6 +77,7 @@ pub mod send_message_to_worker_tool;
 pub mod send_to_peer_tool;
 pub mod send_user_message_tool;
 pub mod sender_rate_limit;
+pub mod generic_rpc_tool;
 pub mod spawn;
 pub mod session_logs_tool;
 pub mod skills;
