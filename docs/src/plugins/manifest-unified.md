@@ -203,3 +203,42 @@ reason }`:
 Operator YAML against `schema` runs at boot (Phase 93.2) using
 the same lightweight validator already shipping for install-time
 microapp config (Phase 83.17).
+
+### Runtime delivery (Phase 93.2)
+
+Once schema validation passes, the host calls the plugin's
+`NexoPlugin::configure(value)` async hook with the operator's
+YAML slice. The trait method has a default no-op so plugins
+that haven't migrated keep working through the Phase 93.5
+deprecation window.
+
+Subprocess plugins receive the same value over their stdio
+JSON-RPC channel as a `plugin.configure` request:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "plugin.configure",
+  "params": { "value": <operator-YAML-as-JSON> }
+}
+```
+
+The host BUFFERS the value during the brief window between
+`configure(value)` and the child's spawn completing; the
+buffered value is delivered automatically after `initialize`
+acks. Plugin SDKs should treat `plugin.configure` as
+re-entrant — hot-reload sends a fresh request when the
+operator's YAML changes.
+
+Three error categories from `PluginConfigureError`:
+
+| Variant            | Source | Meaning                                                                       |
+|--------------------|--------|-------------------------------------------------------------------------------|
+| `SchemaValidation` | host   | Operator YAML failed `[plugin.config_schema]` walker before the plugin ran.   |
+| `PluginRejected`   | plugin | Plugin's own runtime check (typed deserialise, secret resolve, probe) failed. |
+| `SubprocessRpc`    | host   | Subprocess plugin didn't ack `plugin.configure` (transport, timeout, error).  |
+
+Configure-then-init is the boot order: `init`'s registrations
+may inspect what `configure` accepted, so the plugin sees a
+consistent world from the first `init` call onward.

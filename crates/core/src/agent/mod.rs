@@ -150,7 +150,7 @@ pub use plugin_config_loader::{
     config_error_kind, load_plugin_config, plugin_config_dir_for, PluginConfig, PluginConfigError,
 };
 pub use plugin_host::{
-    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+    NexoPlugin, PluginConfigureError, PluginInitContext, PluginInitError, PluginShutdownError,
     DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
 };
 pub use rate_limit::{ToolRateLimitConfig, ToolRateLimiter, ToolRateLimitsConfig};
