@@ -92,6 +92,43 @@ pub fn get(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
     }
 }
 
+/// Phase 81.31 — `nexo/admin/agents/get` with persona-locale
+/// enrichment. When `snapshot` is `Some`, the response includes
+/// `persona_locales` populated from
+/// [`crate::agent::admin_rpc::domains::persona::PersonaSnapshotReader`].
+/// `None` keeps legacy single-locale behavior identical to
+/// [`get`].
+pub async fn get_with_persona(
+    patcher: &dyn YamlPatcher,
+    snapshot: Option<&dyn super::persona::PersonaSnapshotReader>,
+    params: Value,
+) -> AdminRpcResult {
+    let p: AgentsGetParams = match serde_json::from_value(params) {
+        Ok(p) => p,
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string()));
+        }
+    };
+    let mut detail = match read_detail(patcher, &p.agent_id) {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "not_found: agent `{}` not in yaml",
+                p.agent_id
+            )))
+        }
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml read failed: {e}"
+            )))
+        }
+    };
+    if let Some(reader) = snapshot {
+        detail.persona_locales = reader.read_locales(&p.agent_id).await;
+    }
+    AdminRpcResult::ok(serde_json::to_value(detail).unwrap_or(Value::Null))
+}
+
 /// `nexo/admin/agents/upsert` — create or update an agent block.
 pub fn upsert(
     patcher: &dyn YamlPatcher,
@@ -294,6 +331,11 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
         workspace,
         extra_docs,
         heartbeat,
+        // Phase 81.31 — populated in c4 (PersonaSnapshotReader
+        // injection). Until that wires through, legacy callers see
+        // `None` and the admin renders the wizard's single-locale
+        // fallback path.
+        persona_locales: None,
     }))
 }
 

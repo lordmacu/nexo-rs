@@ -77,21 +77,40 @@ use crate::yaml_patch;
 #[derive(Debug, Clone)]
 pub struct AgentsYamlPatcher {
     path: PathBuf,
+    /// Persona install roots scanned for read-only agents.d/*.yaml
+    /// drop-ins (`nexo persona install` results). Writes still go
+    /// exclusively to `path` (the operator-owned `agents.yaml`);
+    /// persona-shipped agents surface in `list_agent_ids` and
+    /// `read_agent_field` so the admin UI can render them, but
+    /// `upsert_agent_field` / `remove_agent` stay scoped to the
+    /// operator file.
+    persona_roots: Vec<PathBuf>,
 }
 
 impl AgentsYamlPatcher {
     /// Path to the operator-managed `agents.yaml`.
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            persona_roots: Vec::new(),
+        }
+    }
+
+    /// Attach persona install roots. Each root is the directory of
+    /// one installed persona (`<state>/personas/<id>-<ver>/`); the
+    /// patcher scans `<root>/agents.d/*.yaml` for read-only entries.
+    pub fn with_persona_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.persona_roots = roots;
+        self
     }
 }
 
 impl YamlPatcher for AgentsYamlPatcher {
     fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        yaml_patch::list_agent_ids(&self.path)
+        // The merged variant tolerates a missing operator file and
+        // still returns persona-registered agents — the wizard sees
+        // them without requiring an empty `agents.yaml` to exist.
+        yaml_patch::list_agent_ids_merged(&self.path, &self.persona_roots)
     }
 
     fn read_agent_field(
@@ -99,7 +118,12 @@ impl YamlPatcher for AgentsYamlPatcher {
         agent_id: &str,
         dotted: &str,
     ) -> anyhow::Result<Option<serde_json::Value>> {
-        match yaml_patch::read_agent_field(&self.path, agent_id, dotted)? {
+        match yaml_patch::read_agent_field_merged(
+            &self.path,
+            &self.persona_roots,
+            agent_id,
+            dotted,
+        )? {
             Some(yaml_value) => Ok(Some(yaml_to_json(yaml_value)?)),
             None => Ok(None),
         }
@@ -4501,14 +4525,11 @@ impl nexo_core::agent::admin_rpc::domains::plugin_doctor::PluginDoctorReader
         )
         .await;
         let snap = wire.registry.snapshot();
-        let json = nexo_core::agent::nexo_plugin_registry::doctor_render::render_json(
-            &snap,
-            &wire.channel_adapter_registry,
-            &self.config_dir,
-            &self.version,
-        );
-        let parsed: serde_json::Value = serde_json::from_str(&json)?;
-        Ok(parsed)
+        // Return `PluginDiscoveryReport` directly — the frontend reads
+        // `report.loaded_ids`, `report.scanned`, etc. at the top level.
+        // `render_json` wraps these under `snapshot_report` (for the
+        // CLI text renderer), which is the wrong shape here.
+        Ok(serde_json::to_value(&snap.last_report)?)
     }
 }
 
@@ -5530,6 +5551,820 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for L
                 llm,
             )
             .await
+    }
+}
+
+// ── Pairing channels descriptor adapter ──────────────────────
+//
+// `nexo/admin/pairing/channels` reader. Enumerates loaded plugin
+// manifests via the [`SharedPluginHandles`] cell (same source
+// LivePluginRestarter uses) and joins the result with the
+// credentials store so the admin sees `linked_instances` per
+// channel without an extra round-trip.
+
+/// Production impl of [`PairingChannelsReader`]. Walks the plugin
+/// manifest catalog + joins credentials in a single async call.
+///
+/// Built at admin bootstrap with an empty `SharedPluginHandles`
+/// cell; main.rs populates the cell after `wire_plugin_registry`.
+/// If the cell is still empty when an operator opens the wizard,
+/// the adapter returns an empty channels list (the admin then
+/// shows the "no channels available" empty state — same UX as
+/// having no manifests).
+#[derive(Clone)]
+pub struct PairingChannelsReaderImpl {
+    handles_cell: SharedPluginHandles,
+    credentials: std::sync::Arc<
+        dyn nexo_core::agent::admin_rpc::domains::credentials::CredentialStore,
+    >,
+}
+
+impl std::fmt::Debug for PairingChannelsReaderImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingChannelsReaderImpl")
+            .field("handles_cell", &"<shared-plugin-handles>")
+            .finish()
+    }
+}
+
+impl PairingChannelsReaderImpl {
+    pub fn new(
+        handles_cell: SharedPluginHandles,
+        credentials: std::sync::Arc<
+            dyn nexo_core::agent::admin_rpc::domains::credentials::CredentialStore,
+        >,
+    ) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            handles_cell,
+            credentials,
+        })
+    }
+}
+
+#[async_trait]
+impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsReader
+    for PairingChannelsReaderImpl
+{
+    async fn list(
+        &self,
+        locale: &str,
+    ) -> Result<
+        nexo_tool_meta::admin::pairing_channels::PairingChannelsResponse,
+        nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsError,
+    > {
+        use nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsError;
+        use nexo_plugin_manifest::PairingKind;
+        use nexo_tool_meta::admin::pairing_channels::{
+            PairingChannelField, PairingChannelInfo, PairingChannelKind, PairingChannelsResponse,
+        };
+
+        // Read manifests. Empty cell → empty channels response;
+        // matches LivePluginRestarter's "not yet populated" boot
+        // window but the wizard is recoverable: operator just sees
+        // an empty channel list until the daemon finishes booting.
+        let handles = self.handles_cell.read().await;
+        let map = match handles.as_ref() {
+            Some(m) => m.clone(),
+            None => return Ok(PairingChannelsResponse::default()),
+        };
+        drop(handles);
+
+        // Credential join — list once, bucket by channel id.
+        let creds = self
+            .credentials
+            .list_credentials()
+            .map_err(|e| PairingChannelsError::Credentials(e.to_string()))?;
+
+        let mut by_channel: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (channel, instance) in creds {
+            by_channel
+                .entry(channel)
+                .or_default()
+                .push(instance.unwrap_or_default());
+        }
+
+        // Walk manifests with a [plugin.pairing] section that has
+        // a kind set. Ordered by plugin id (BTreeMap iteration).
+        let mut channels: Vec<PairingChannelInfo> = Vec::new();
+        for (plugin_id, plugin) in map.iter() {
+            let manifest = plugin.manifest();
+            let pairing = &manifest.plugin.pairing;
+            let Some(kind) = pairing.kind else { continue };
+
+            let label = pairing
+                .label
+                .clone()
+                .unwrap_or_else(|| manifest.plugin.name.clone());
+
+            // Locale fallback: exact → base lang ("pt-BR" → "pt")
+            // → "en" → first entry. Empty string when no
+            // instructions block.
+            let instructions = resolve_locale(&pairing.instructions, locale)
+                .unwrap_or_default()
+                .to_string();
+
+            let wire_kind = match kind {
+                PairingKind::Qr => PairingChannelKind::Qr,
+                PairingKind::Form => PairingChannelKind::Form,
+                PairingKind::Info => PairingChannelKind::Info,
+                PairingKind::Custom => PairingChannelKind::Custom,
+            };
+
+            let fields = if matches!(kind, PairingKind::Form) {
+                pairing
+                    .fields
+                    .iter()
+                    .map(|f| PairingChannelField {
+                        name: f.name.clone(),
+                        label: f.label.clone(),
+                        help: f.help.clone(),
+                        sensitive: f.sensitive,
+                        placeholder: f.placeholder.clone(),
+                        required: f.required,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let notify_method = if matches!(kind, PairingKind::Custom) {
+                let ns = pairing
+                    .rpc_namespace
+                    .clone()
+                    .unwrap_or_else(|| plugin_id.clone());
+                Some(format!("nexo/notify/{ns}/status_changed"))
+            } else {
+                None
+            };
+
+            let linked_instances = by_channel.remove(plugin_id).unwrap_or_default();
+
+            channels.push(PairingChannelInfo {
+                channel: plugin_id.clone(),
+                kind: wire_kind,
+                label,
+                instructions,
+                fields,
+                linked_instances,
+                notify_method,
+            });
+        }
+
+        Ok(PairingChannelsResponse { channels })
+    }
+}
+
+/// Resolve a BCP-47 locale tag against the manifest's instructions
+/// map: exact match → base language → "en" → first entry → None
+/// when the map is empty.
+fn resolve_locale<'a>(
+    map: &'a std::collections::BTreeMap<String, String>,
+    locale: &str,
+) -> Option<&'a str> {
+    if map.is_empty() {
+        return None;
+    }
+    if let Some(s) = map.get(locale) {
+        return Some(s.as_str());
+    }
+    if let Some((base, _)) = locale.split_once('-') {
+        if let Some(s) = map.get(base) {
+            return Some(s.as_str());
+        }
+    }
+    if let Some(s) = map.get("en") {
+        return Some(s.as_str());
+    }
+    map.values().next().map(String::as_str)
+}
+
+#[cfg(test)]
+mod pairing_channels_adapter_tests {
+    //! Adapter-level coverage exercising the manifest enumeration
+    //! + credentials join + locale fallback. We build synthetic
+    //! `NexoPlugin` handles with hand-rolled manifests rather
+    //! than spinning up subprocess plugins.
+
+    use super::*;
+    use async_trait::async_trait;
+    use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
+    use nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsReader;
+    use nexo_plugin_manifest::PluginManifest;
+    use nexo_tool_meta::admin::pairing_channels::PairingChannelKind;
+    use serde_json::Value;
+
+    fn manifest_with_pairing(toml_src: &str) -> PluginManifest {
+        toml::from_str::<PluginManifest>(toml_src).expect("manifest parses")
+    }
+
+    /// Synthetic NexoPlugin handle that only exposes a manifest.
+    /// Every other method panics — the adapter is not supposed to
+    /// touch them.
+    #[derive(Debug)]
+    struct ManifestOnlyPlugin {
+        manifest: PluginManifest,
+    }
+
+    #[async_trait]
+    impl nexo_core::agent::plugin_host::NexoPlugin for ManifestOnlyPlugin {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn init(
+            &self,
+            _ctx: &mut nexo_core::agent::plugin_host::PluginInitContext<'_>,
+        ) -> Result<(), nexo_core::agent::plugin_host::PluginInitError> {
+            unimplemented!("not exercised by adapter")
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct StubCredentials(Vec<(String, Option<String>)>);
+
+    impl CredentialStore for StubCredentials {
+        fn list_credentials(&self) -> anyhow::Result<Vec<(String, Option<String>)>> {
+            Ok(self.0.clone())
+        }
+        fn write_credential(
+            &self,
+            _channel: &str,
+            _instance: Option<&str>,
+            _payload: &Value,
+        ) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        fn delete_credential(
+            &self,
+            _channel: &str,
+            _instance: Option<&str>,
+        ) -> anyhow::Result<bool> {
+            unimplemented!()
+        }
+    }
+
+    async fn build_handles(
+        plugins: Vec<(&str, PluginManifest)>,
+    ) -> SharedPluginHandles {
+        let cell = shared_plugin_handles_cell();
+        let mut map = std::collections::BTreeMap::new();
+        for (id, manifest) in plugins {
+            let plugin: std::sync::Arc<
+                dyn nexo_core::agent::plugin_host::NexoPlugin,
+            > = std::sync::Arc::new(ManifestOnlyPlugin { manifest });
+            map.insert(id.to_string(), plugin);
+        }
+        *cell.write().await = Some(std::sync::Arc::new(map));
+        cell
+    }
+
+    /// Plugins without a `[plugin.pairing]` section never appear
+    /// in the channels list.
+    #[tokio::test]
+    async fn plugins_without_pairing_section_are_filtered_out() {
+        let plain = manifest_with_pairing(
+            r#"
+manifest_version = 2
+[plugin]
+id = "browser"
+version = "0.1.0"
+name = "Browser"
+description = "x"
+min_nexo_version = ">=0.0.0"
+"#,
+        );
+        let handles = build_handles(vec![("browser", plain)]).await;
+        let creds = std::sync::Arc::new(StubCredentials::default());
+        let reader = PairingChannelsReaderImpl::new(handles, creds);
+        let resp = reader.list("en").await.unwrap();
+        assert!(resp.channels.is_empty());
+    }
+
+    /// QR channel with credentials joins linked_instances.
+    #[tokio::test]
+    async fn qr_channel_with_credentials_lists_linked_instances() {
+        let wa = manifest_with_pairing(
+            r#"
+manifest_version = 2
+[plugin]
+id = "whatsapp"
+version = "0.1.0"
+name = "WhatsApp"
+description = "x"
+min_nexo_version = ">=0.0.0"
+
+[plugin.pairing]
+kind = "qr"
+label = "WhatsApp"
+
+[plugin.pairing.instructions]
+en = "Open WhatsApp and scan."
+es = "Escaneá."
+"#,
+        );
+        let handles = build_handles(vec![("whatsapp", wa)]).await;
+        let creds = std::sync::Arc::new(StubCredentials(vec![(
+            "whatsapp".to_string(),
+            Some("549@s.whatsapp.net".to_string()),
+        )]));
+        let reader = PairingChannelsReaderImpl::new(handles, creds);
+        let resp = reader.list("en").await.unwrap();
+        assert_eq!(resp.channels.len(), 1);
+        let ch = &resp.channels[0];
+        assert_eq!(ch.channel, "whatsapp");
+        assert!(matches!(ch.kind, PairingChannelKind::Qr));
+        assert_eq!(ch.label, "WhatsApp");
+        assert_eq!(ch.instructions, "Open WhatsApp and scan.");
+        assert_eq!(ch.linked_instances, vec!["549@s.whatsapp.net"]);
+    }
+
+    /// Form channel projects fields verbatim into the wire shape.
+    #[tokio::test]
+    async fn form_channel_projects_fields() {
+        let tg = manifest_with_pairing(
+            r#"
+manifest_version = 2
+[plugin]
+id = "telegram"
+version = "0.1.0"
+name = "Telegram"
+description = "x"
+min_nexo_version = ">=0.0.0"
+
+[plugin.pairing]
+kind = "form"
+label = "Telegram"
+
+[[plugin.pairing.fields]]
+name = "instance"
+label = "Bot username"
+required = true
+
+[[plugin.pairing.fields]]
+name = "token"
+label = "Bot token"
+sensitive = true
+required = true
+"#,
+        );
+        let handles = build_handles(vec![("telegram", tg)]).await;
+        let creds = std::sync::Arc::new(StubCredentials::default());
+        let reader = PairingChannelsReaderImpl::new(handles, creds);
+        let resp = reader.list("en").await.unwrap();
+        let ch = &resp.channels[0];
+        assert!(matches!(ch.kind, PairingChannelKind::Form));
+        assert_eq!(ch.fields.len(), 2);
+        assert_eq!(ch.fields[0].name, "instance");
+        assert!(ch.fields[1].sensitive);
+        assert!(ch.linked_instances.is_empty());
+    }
+
+    /// Custom channel derives the notify_method from rpc_namespace
+    /// (and falls back to the plugin id when absent).
+    #[tokio::test]
+    async fn custom_channel_derives_notify_method() {
+        let myauth = manifest_with_pairing(
+            r#"
+manifest_version = 2
+[plugin]
+id = "myauth"
+version = "0.1.0"
+name = "MyAuth"
+description = "x"
+min_nexo_version = ">=0.0.0"
+
+[plugin.pairing]
+kind = "custom"
+rpc_namespace = "myauth"
+"#,
+        );
+        let handles = build_handles(vec![("myauth", myauth)]).await;
+        let creds = std::sync::Arc::new(StubCredentials::default());
+        let reader = PairingChannelsReaderImpl::new(handles, creds);
+        let resp = reader.list("en").await.unwrap();
+        let ch = &resp.channels[0];
+        assert_eq!(
+            ch.notify_method.as_deref(),
+            Some("nexo/notify/myauth/status_changed")
+        );
+    }
+
+    /// Locale fallback: requested pt-BR → base "pt" → "en".
+    #[tokio::test]
+    async fn locale_fallback_uses_en_when_base_missing() {
+        let wa = manifest_with_pairing(
+            r#"
+manifest_version = 2
+[plugin]
+id = "whatsapp"
+version = "0.1.0"
+name = "WhatsApp"
+description = "x"
+min_nexo_version = ">=0.0.0"
+
+[plugin.pairing]
+kind = "qr"
+[plugin.pairing.instructions]
+en = "english"
+es = "spanish"
+"#,
+        );
+        let handles = build_handles(vec![("whatsapp", wa)]).await;
+        let creds = std::sync::Arc::new(StubCredentials::default());
+        let reader = PairingChannelsReaderImpl::new(handles, creds);
+        let resp = reader.list("pt-BR").await.unwrap();
+        assert_eq!(resp.channels[0].instructions, "english");
+    }
+
+    #[test]
+    fn resolve_locale_handles_all_fallbacks() {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("en".to_string(), "english".to_string());
+        m.insert("es".to_string(), "spanish".to_string());
+        // exact
+        assert_eq!(resolve_locale(&m, "es"), Some("spanish"));
+        // base
+        assert_eq!(resolve_locale(&m, "es-AR"), Some("spanish"));
+        // en fallback
+        assert_eq!(resolve_locale(&m, "pt-BR"), Some("english"));
+        // empty map
+        let empty = std::collections::BTreeMap::new();
+        assert_eq!(resolve_locale(&empty, "en"), None);
+        // no en, first entry
+        let mut m2 = std::collections::BTreeMap::new();
+        m2.insert("fr".to_string(), "french".to_string());
+        assert_eq!(resolve_locale(&m2, "de"), Some("french"));
+    }
+}
+
+// ── Persona multi-locale store + snapshot reader ─────────────
+use std::collections::BTreeMap as PersonaBTreeMap;
+// alias so we don't shadow other modules' BTreeMap imports
+
+//
+// Phase 81.31. Adapter walks the same set of files
+// `AgentsYamlPatcher` does (operator agents.yaml + agents.d/ +
+// persona install roots) to locate the agent's workspace dir +
+// `locale_prompts` map, then delegates to `persona_files::*`
+// for filesystem ops.
+
+/// Production [`PersonaStore`] +
+/// [`PersonaSnapshotReader`] implementation. Both read sides share
+/// the same agent-locator pipeline; write side patches the YAML
+/// file that owns the agent block.
+#[derive(Clone)]
+pub struct FilesystemPersonaStore {
+    config_dir: PathBuf,
+    persona_roots: Vec<PathBuf>,
+}
+
+impl std::fmt::Debug for FilesystemPersonaStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilesystemPersonaStore")
+            .field("config_dir", &self.config_dir)
+            .field("persona_roots", &self.persona_roots.len())
+            .finish()
+    }
+}
+
+impl FilesystemPersonaStore {
+    pub fn new(config_dir: PathBuf, persona_roots: Vec<PathBuf>) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            config_dir,
+            persona_roots,
+        })
+    }
+
+    /// Locate the YAML file that owns `agent_id` (operator
+    /// agents.yaml, sibling agents.d/*.yaml, or any persona
+    /// agents.d/*.yaml). Returns `None` when the id is unknown.
+    fn find_agent_file(&self, agent_id: &str) -> Option<PathBuf> {
+        // 1. operator config_dir
+        if let Ok(Some(p)) = crate::yaml_patch::find_agent_file(&self.config_dir, agent_id) {
+            return Some(p);
+        }
+        // 2. persona install roots
+        for root in &self.persona_roots {
+            if let Ok(Some(p)) = crate::yaml_patch::find_agent_file(root, agent_id) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Read the agent block from the located yaml file as a
+    /// raw serde_yaml mapping. Used to extract `workspace`,
+    /// `system_prompt`, `locale_prompts`, `language`.
+    fn read_agent_yaml(
+        &self,
+        file: &Path,
+        agent_id: &str,
+    ) -> Option<serde_yaml::Value> {
+        let text = std::fs::read_to_string(file).ok()?;
+        let root: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+        let seq = root.get("agents").and_then(serde_yaml::Value::as_sequence)?;
+        seq.iter()
+            .find(|it| it.get("id").and_then(serde_yaml::Value::as_str) == Some(agent_id))
+            .cloned()
+    }
+
+    /// Resolve the workspace directory for an agent block. When
+    /// `workspace` is relative, it's interpreted against the
+    /// YAML file's parent directory (matches
+    /// `config::resolve_relative_paths` semantics).
+    fn workspace_dir_for(&self, yaml_file: &Path, agent_yaml: &serde_yaml::Value) -> PathBuf {
+        let workspace = agent_yaml
+            .get("workspace")
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if workspace.is_empty() {
+            // Default convention: <yaml_dir>/data/workspace/<id>/
+            return yaml_file
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+        }
+        let p = Path::new(&workspace);
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+        yaml_file
+            .parent()
+            .map(|parent| parent.join(p))
+            .unwrap_or_else(|| p.to_path_buf())
+    }
+}
+
+#[async_trait]
+impl nexo_core::agent::admin_rpc::domains::persona::PersonaSnapshotReader
+    for FilesystemPersonaStore
+{
+    async fn read_locales(
+        &self,
+        agent_id: &str,
+    ) -> Option<nexo_tool_meta::admin::persona::PersonaLocales> {
+        let file = self.find_agent_file(agent_id)?;
+        let agent = self.read_agent_yaml(&file, agent_id)?;
+        let workspace_dir = self.workspace_dir_for(&file, &agent);
+        let top_system_prompt = agent
+            .get("system_prompt")
+            .and_then(serde_yaml::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let language = agent
+            .get("language")
+            .and_then(serde_yaml::Value::as_str)
+            .map(str::to_string);
+        let locale_prompts: PersonaBTreeMap<String, String> = agent
+            .get("locale_prompts")
+            .and_then(serde_yaml::Value::as_mapping)
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| {
+                        Some((
+                            k.as_str()?.to_string(),
+                            v.as_str().unwrap_or("").to_string(),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(crate::persona_files::build_persona_locales(
+            &workspace_dir,
+            &top_system_prompt,
+            &locale_prompts,
+            language.as_deref(),
+        ))
+    }
+}
+
+#[async_trait]
+impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemPersonaStore {
+    async fn save_localized(
+        &self,
+        req: nexo_tool_meta::admin::persona::PersonaSaveLocalizedRequest,
+    ) -> Result<
+        nexo_tool_meta::admin::persona::PersonaSaveLocalizedResponse,
+        nexo_core::agent::admin_rpc::domains::persona::PersonaStoreError,
+    > {
+        use nexo_core::agent::admin_rpc::domains::persona::{
+            PersonaSnapshotReader, PersonaStoreError,
+        };
+
+        let file = self.find_agent_file(&req.agent_id).ok_or_else(|| {
+            PersonaStoreError::NotFound(req.agent_id.clone())
+        })?;
+        let agent_yaml = self
+            .read_agent_yaml(&file, &req.agent_id)
+            .ok_or_else(|| PersonaStoreError::NotFound(req.agent_id.clone()))?;
+        let workspace_dir = self.workspace_dir_for(&file, &agent_yaml);
+
+        // Write 4 workspace files (write_persona_snapshot
+        // validates the locale BCP-47 before any I/O).
+        let written = crate::persona_files::write_persona_snapshot(
+            &workspace_dir,
+            &req.locale,
+            &crate::persona_files::PersonaSnapshotInput {
+                identity: req.identity.clone(),
+                soul: req.soul.clone(),
+                user: req.user.clone(),
+                agents: req.agents.clone(),
+            },
+        )
+        .map_err(|e| match e {
+            crate::persona_files::PersonaWriteError::InvalidLocale { locale, message } => {
+                PersonaStoreError::InvalidLocale(format!("{locale}: {message}"))
+            }
+            crate::persona_files::PersonaWriteError::Io { path, source } => {
+                PersonaStoreError::Io(format!("{}: {source}", path.display()))
+            }
+        })?;
+
+        // Patch locale_prompts when requested. Restricted to the
+        // operator agents.yaml — refuses to mutate persona-shipped
+        // YAML (those are immutable from the admin's perspective;
+        // operators should override at the operator file).
+        if req.patch_yaml {
+            let operator_path = self.config_dir.join("agents.yaml");
+            // If the agent lives in operator's yaml, patch in place.
+            // Otherwise route the patch to operator's agents.yaml
+            // (creates the entry as an override of the persona one).
+            let target = if file == operator_path {
+                operator_path
+            } else if let Some(parent) = file.parent() {
+                if parent == self.config_dir.join("agents.d") {
+                    file.clone()
+                } else {
+                    operator_path
+                }
+            } else {
+                operator_path
+            };
+            crate::yaml_patch::upsert_agent_field(
+                &target,
+                &req.agent_id,
+                &format!("locale_prompts.{}", req.locale),
+                serde_yaml::Value::String(req.system_prompt.clone()),
+            )
+            .map_err(|e| PersonaStoreError::Io(format!("yaml patch: {e}")))?;
+        }
+
+        let refreshed = self.read_locales(&req.agent_id).await.unwrap_or_default();
+        Ok(nexo_tool_meta::admin::persona::PersonaSaveLocalizedResponse {
+            written_paths: written
+                .into_iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            persona_locales: refreshed,
+        })
+    }
+}
+
+#[cfg(test)]
+mod persona_store_tests {
+    use super::*;
+    use nexo_core::agent::admin_rpc::domains::persona::{
+        PersonaSnapshotReader, PersonaStore,
+    };
+    use nexo_tool_meta::admin::persona::PersonaSaveLocalizedRequest;
+
+    fn write_agents_yaml(dir: &Path, body: &str) -> PathBuf {
+        let p = dir.join("agents.yaml");
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[tokio::test]
+    async fn read_locales_returns_catalog_for_yaml_only_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        // workspace lives under config_dir for simplicity
+        std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
+        std::fs::write(
+            dir.path().join("ws/ana/IDENTITY.md"),
+            "default identity",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("ws/ana/IDENTITY.es.md"),
+            "ana identidad",
+        )
+        .unwrap();
+        write_agents_yaml(
+            dir.path(),
+            r#"agents:
+  - id: ana
+    workspace: ws/ana
+    system_prompt: top
+    language: en
+    locale_prompts:
+      en: english prompt
+      es: spanish prompt
+"#,
+        );
+        let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![]);
+        let locales = store.read_locales("ana").await.expect("some");
+        assert_eq!(locales.available, vec!["en", "es"]);
+        assert_eq!(locales.snapshots[0].locale, "en");
+        assert_eq!(locales.snapshots[1].snapshot.identity, "ana identidad");
+    }
+
+    #[tokio::test]
+    async fn read_locales_falls_through_to_persona_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let persona = dir.path().join("personas/cody-0.2.0");
+        std::fs::create_dir_all(persona.join("agents.d")).unwrap();
+        std::fs::write(
+            persona.join("agents.d/cody.yaml"),
+            r#"agents:
+  - id: cody
+    workspace: ../data/workspace/cody
+    system_prompt: cody top
+    language: en
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(persona.join("data/workspace/cody")).unwrap();
+        std::fs::write(
+            persona.join("data/workspace/cody/IDENTITY.md"),
+            "cody identity",
+        )
+        .unwrap();
+
+        let store = FilesystemPersonaStore::new(
+            dir.path().to_path_buf(),
+            vec![persona.clone()],
+        );
+        let locales = store.read_locales("cody").await.expect("some");
+        assert_eq!(locales.available, vec!["en"]);
+        assert_eq!(locales.snapshots[0].snapshot.identity, "cody identity");
+    }
+
+    #[tokio::test]
+    async fn save_localized_writes_files_and_patches_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
+        write_agents_yaml(
+            dir.path(),
+            r#"agents:
+  - id: ana
+    workspace: ws/ana
+    system_prompt: top
+    language: en
+"#,
+        );
+        let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![]);
+        let resp = store
+            .save_localized(PersonaSaveLocalizedRequest {
+                agent_id: "ana".into(),
+                locale: "es".into(),
+                system_prompt: "hola prompt".into(),
+                identity: "identidad".into(),
+                soul: "alma".into(),
+                user: "usuario".into(),
+                agents: "agentes".into(),
+                patch_yaml: true,
+            })
+            .await
+            .expect("ok");
+        assert_eq!(resp.written_paths.len(), 4);
+        assert!(resp.persona_locales.available.contains(&"es".to_string()));
+        // YAML now has locale_prompts.es
+        let body = std::fs::read_to_string(dir.path().join("agents.yaml")).unwrap();
+        assert!(body.contains("locale_prompts"));
+        assert!(body.contains("hola prompt"));
+        // Files exist on disk
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("ws/ana/IDENTITY.es.md")).unwrap(),
+            "identidad"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_localized_rejects_invalid_locale() {
+        let dir = tempfile::tempdir().unwrap();
+        write_agents_yaml(
+            dir.path(),
+            "agents:\n  - id: ana\n    system_prompt: t\n",
+        );
+        let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![]);
+        let err = store
+            .save_localized(PersonaSaveLocalizedRequest {
+                agent_id: "ana".into(),
+                locale: "klingon".into(),
+                system_prompt: "".into(),
+                identity: "".into(),
+                soul: "".into(),
+                user: "".into(),
+                agents: "".into(),
+                patch_yaml: false,
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("klingon"));
     }
 }
 

@@ -506,9 +506,9 @@ enum Mode {
     /// on first use if it isn't on PATH, prints the loopback URL,
     /// probes whether the daemon has it running, and — with `--open`
     /// — launches the URL in the default browser. `--tunnel` brings
-    /// up a free Cloudflare quick tunnel (downloading `cloudflared`
-    /// for this OS/arch if needed) so the admin page is reachable
-    /// from anywhere, and blocks until Ctrl-C.
+    /// up a free Cloudflare quick tunnel natively (pure-Rust QUIC +
+    /// capnp-RPC client, no `cloudflared` subprocess) so the admin
+    /// page is reachable from anywhere, and blocks until Ctrl-C.
     Admin {
         port: u16,
         /// `--open`: launch the admin URL in the default browser.
@@ -2198,6 +2198,33 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
+    // Pre-discover persona install roots so the admin RPC's
+    // `AgentsYamlPatcher` sees persona-shipped `agents.d/*.yaml`
+    // entries in `nexo/admin/agents/list`. The full persona
+    // registration loop further down (see "Boot-time persona
+    // discovery") re-runs `discover_personas` to register the
+    // `InMemoryPersonaAdmin` cell — running it twice is cheap
+    // (just a fs walk + TOML parse per pack) and avoids reshuffling
+    // the existing post-bootstrap registration block.
+    let persona_install_roots: Vec<std::path::PathBuf> = if cfg
+        .personas
+        .discovery
+        .search_paths
+        .is_empty()
+        || std::env::var("NEXO_DISABLE_BUNDLED_PERSONAS")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
+            .unwrap_or(false)
+    {
+        Vec::new()
+    } else {
+        nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths)
+            .await
+            .into_iter()
+            .filter(|d| cfg.personas.discovery.id_passes_filters(&d.manifest.persona.id))
+            .map(|d| d.install_root)
+            .collect()
+    };
+
     // Single Arc<LlmRegistry> shared
     // between the admin bootstrap (used by LivePluginRestarter
     // when respawning a child, by `RegistryLlmCompleter` for
@@ -2264,14 +2291,15 @@ async fn main() -> Result<()> {
                 config_dir.join("agents.yaml"),
             ),
         ));
-        // Filesystem-backed skills store at
-        // `./skills` (matches the default `skills_dir` every agent
-        // config uses). `nexo/admin/skills/*` admin writes land
-        // where the runtime `SkillLoader` reads from.
+        // Filesystem-backed skills store. Resolved against
+        // `config_dir` so the path is stable regardless of the
+        // operator's working directory when the daemon starts.
+        // `nexo/admin/skills/*` writes land where the runtime
+        // `SkillLoader` reads from.
         let skills_store: Option<
             std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>,
         > = Some(std::sync::Arc::new(
-            nexo_setup::admin_adapters::FsSkillsStore::new("./skills"),
+            nexo_setup::admin_adapters::FsSkillsStore::new(config_dir.join("skills")),
         ));
         // In-memory escalation store. v0
         // semantics: pause-resume cycle clears state, daemon
@@ -2356,6 +2384,13 @@ async fn main() -> Result<()> {
                 tenant_store: tenant_store.clone(),
                 mcp_store: mcp_store.clone(),
                 plugin_doctor: plugin_doctor.clone(),
+                // Reuse the shared plugin handles cell that backs
+                // `LivePluginRestarter` so the pairing-channels
+                // descriptor reader sees the same live manifest
+                // catalog. Setup constructs the adapter from this
+                // cell + the credential store wired internally.
+                plugin_handles_cell: Some(plugin_handles_cell.clone()),
+                persona_install_roots: persona_install_roots.clone(),
                 // Manual restart
                 // adapter, wired against `plugin_handles_cell`
                 // declared above. The cell is empty at this
@@ -3694,7 +3729,7 @@ async fn main() -> Result<()> {
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
 
-    // Auto-open a Cloudflare Tunnel to expose
+    // Auto-open a Cloudflare quick tunnel to expose
     // `/whatsapp/pair` publicly. Tunnels the first account's pairing
     // page; multi-account operators should reach their own instance
     // via `/whatsapp/<instance>/pair` on the tunnelled URL.
@@ -3704,9 +3739,9 @@ async fn main() -> Result<()> {
             let only_until_paired = tcfg.only_until_paired;
             tokio::spawn(async move {
                 // Wait for the local HTTP server to actually bind before
-                // cloudflared tries to open a tunnel to it — otherwise
-                // the tunnel comes up first and Cloudflare returns 502
-                // "error opening stream to origin" for every request
+                // the tunnel registers — otherwise the tunnel comes up
+                // first and Cloudflare returns 502 "error opening stream
+                // to origin" for every request
                 // until the race resolves on its own.
                 for attempt in 0..60u32 {
                     if reqwest::Client::new()
@@ -3745,7 +3780,7 @@ async fn main() -> Result<()> {
                         eprintln!("│  Abre esa URL desde el teléfono donde tengas WhatsApp.   │");
                         eprintln!("╰───────────────────────────────────────────────────────────╯");
                         eprintln!();
-                        tracing::info!(%url, "cloudflared public tunnel up");
+                        tracing::info!(%url, "Cloudflare quick tunnel up");
 
                         if only_until_paired {
                             // Poll pairing state; once connected, close
@@ -3767,7 +3802,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "cloudflared tunnel failed to start — pairing will need LAN or port-forward");
+                        tracing::warn!(error = %e, "Cloudflare quick tunnel failed to start — pairing will need LAN or port-forward");
                     }
                 }
             });
@@ -4804,9 +4839,18 @@ async fn main() -> Result<()> {
         // `RuntimeSnapshot::policy_for(binding_idx)` per inbound event).
         let effective_boot =
             nexo_core::agent::effective::EffectiveBindingPolicy::from_agent_defaults(&agent_cfg);
-        let llm = llm_registry
-            .build(&cfg.llm, &agent_cfg.model)
-            .with_context(|| format!("failed to build LLM client for agent {agent_id}"))?;
+        let llm = match llm_registry.build(&cfg.llm, &agent_cfg.model) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    agent = %agent_id,
+                    error = %e,
+                    "skipping agent — LLM provider not configured \
+                     (configure it via the admin UI and reload)",
+                );
+                continue;
+            }
+        };
 
         // Construct per-agent ExtractMemories when
         // the YAML opted in. Wire-shape `ExtractMemoriesYamlConfig`
@@ -9521,10 +9565,10 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
         },
         [cmd] if cmd == "admin" => {
-            // --port <N> or --port=<N>. Default 9099 (away from 8080 /
-            // 9090 / 9091 used by the main daemon's health / metrics /
-            // admin servers so `agent admin` can run alongside them).
-            let mut port: u16 = 9099;
+            // --port <N> or --port=<N>. Default 18000 — matches
+            // `nexo-plugin-admin`'s `[plugin.capabilities.http_server].port`
+            // so the CLI probes the same port the plugin binds.
+            let mut port: u16 = 18000;
             let mut open = false;
             let mut iter = positional.iter();
             while let Some(a) = iter.next() {
@@ -9903,6 +9947,14 @@ async fn run_admin_via_plugin(
     println!();
 
     if will_autostart {
+        // Auto-generate the operator bearer token if not already set.
+        // The daemon passes it through to the admin plugin subprocess
+        // via env inheritance; without it the admin plugin disables its
+        // HTTP server and the operator can't reach the UI.
+        if std::env::var("NEXO_ADMIN_TOKEN").map_or(true, |t| t.is_empty()) {
+            let token = uuid::Uuid::new_v4().to_string();
+            std::env::set_var("NEXO_ADMIN_TOKEN", &token);
+        }
         run_daemon_start(config_dir).await?;
         use std::io::Write as _;
         print!("waiting for the admin server on :{port} …");
@@ -9935,7 +9987,7 @@ async fn run_admin_via_plugin(
                  you start the daemon (`nexo start`)."
             );
         }
-        println!("Bringing up a Cloudflare quick tunnel (downloads `cloudflared` if needed) …");
+        println!("Bringing up a Cloudflare quick tunnel (pure-Rust, no `cloudflared` subprocess) …");
         match nexo_tunnel::TunnelManager::new(port).start().await {
             Ok(handle) => {
                 let public = handle.url.clone();
@@ -10484,10 +10536,26 @@ fn admin_binary_installed() -> bool {
         return false;
     };
     for entry in entries.flatten() {
-        if entry.file_type().map_or(false, |t| t.is_dir())
-            && entry.path().join("nexo-plugin-admin").is_file()
-        {
+        if !entry.file_type().map_or(false, |t| t.is_dir()) {
+            continue;
+        }
+        let plugin_dir = entry.path();
+        // Cargo-installed plugins place the binary at the root.
+        if plugin_dir.join("nexo-plugin-admin").is_file() {
             return true;
+        }
+        // Tarball-extracted plugins (install.sh / `nexo plugin install`) use a
+        // `bin/` subdirectory — the binary name varies, so check for any file.
+        let bin_dir = plugin_dir.join("bin");
+        if bin_dir.is_dir() {
+            if let Ok(bin_entries) = std::fs::read_dir(&bin_dir) {
+                if bin_entries
+                    .flatten()
+                    .any(|e| e.file_type().map_or(false, |t| t.is_file()))
+                {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -15901,7 +15969,8 @@ mcp_server:
             web_search: serde_json::Value::Null,
             pairing_policy: serde_json::Value::Null,
             language: None,
-            outbound_allowlist: OutboundAllowlistConfig::default(),
+
+            locale_prompts: Default::default(),            outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),

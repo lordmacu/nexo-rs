@@ -95,6 +95,15 @@ pub struct AgentDetail {
     /// to the microapp.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub heartbeat: Option<HeartbeatWire>,
+    /// Phase 81.31 — localised persona catalog. `None` for legacy
+    /// agents where the daemon doesn't have a `PersonaSnapshotReader`
+    /// wired; otherwise carries the available locales + per-locale
+    /// snapshots of `system_prompt + IDENTITY + SOUL + USER +
+    /// AGENTS`. Populated by `agents/get` so the admin renders the
+    /// wizard's "copy existing" + locale-picker flow without an
+    /// extra roundtrip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_locales: Option<crate::admin::persona::PersonaLocales>,
 }
 
 /// Wire mirror of `nexo_config::types::agents::HeartbeatConfig`.
@@ -247,6 +256,7 @@ mod tests {
             workspace: String::new(),
             extra_docs: vec![],
             heartbeat: None,
+            persona_locales: None,
         };
         let v = serde_json::to_value(&d).unwrap();
         let obj = v.as_object().unwrap();
@@ -275,6 +285,7 @@ mod tests {
                 enabled: true,
                 interval: "30m".into(),
             }),
+            persona_locales: None,
         };
         let v = serde_json::to_value(&d).unwrap();
         let back: AgentDetail = serde_json::from_value(v).unwrap();

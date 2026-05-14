@@ -32,6 +32,8 @@ use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::mcp::McpServerStore;
 use super::domains::memory::{MemoryReader, MemorySnapshotReader};
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
+use super::domains::pairing_channels::PairingChannelsReader;
+use super::domains::persona::{PersonaSnapshotReader, PersonaStore};
 use super::domains::plugin_doctor::PluginDoctorReader;
 use super::domains::plugin_restart::PluginRestarter;
 use super::domains::processing::ProcessingControlStore;
@@ -262,6 +264,19 @@ pub struct AdminRpcDispatcher {
     /// `None` keeps `nexo/admin/plugins/doctor` returning a typed
     /// `plugins domain not configured` -32603.
     plugin_doctor: Option<Arc<dyn PluginDoctorReader>>,
+    /// Plugin-driven pairing UI descriptor reader.
+    /// `None` keeps `nexo/admin/pairing/channels` returning a typed
+    /// `pairing channels domain not configured` -32603. Production
+    /// wires `nexo_setup::admin_adapters::PairingChannelsReaderImpl`.
+    pairing_channels_reader: Option<Arc<dyn PairingChannelsReader>>,
+    /// Phase 81.31 — read-side of the multi-locale persona system.
+    /// When `Some`, `agents/get` enriches the response with
+    /// `persona_locales`. `None` keeps legacy single-locale behavior.
+    persona_snapshot_reader: Option<Arc<dyn PersonaSnapshotReader>>,
+    /// Phase 81.31 — write-side. `None` keeps
+    /// `nexo/admin/persona/save_localized` returning typed
+    /// `persona domain not configured` -32603.
+    persona_store: Option<Arc<dyn PersonaStore>>,
     /// Manual plugin restart adapter.
     /// `None` keeps `nexo/admin/plugins/restart` returning a typed
     /// `plugin restart domain not configured` -32603. Production
@@ -370,6 +385,9 @@ impl AdminRpcDispatcher {
             tenant_store: None,
             mcp_store: None,
             plugin_doctor: None,
+            pairing_channels_reader: None,
+            persona_snapshot_reader: None,
+            persona_store: None,
             plugin_restarter: None,
             memory_reader: None,
             memory_snapshot_reader: None,
@@ -679,6 +697,39 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Install the pairing-channels descriptor reader.
+    /// Production wires `nexo_setup::admin_adapters::
+    /// PairingChannelsReaderImpl`, which enumerates loaded plugin
+    /// manifests via `wire_plugin_registry` + joins linked
+    /// instances from `credentials/list`. `None` disables
+    /// `nexo/admin/pairing/channels`.
+    pub fn with_pairing_channels(
+        mut self,
+        reader: Arc<dyn PairingChannelsReader>,
+    ) -> Self {
+        self.pairing_channels_reader = Some(reader);
+        self
+    }
+
+    /// Install the Phase 81.31 persona-snapshot reader. Without
+    /// one, `agents/get` returns `persona_locales: None` and the
+    /// admin wizard falls back to the single-locale flow.
+    pub fn with_persona_snapshot_reader(
+        mut self,
+        reader: Arc<dyn PersonaSnapshotReader>,
+    ) -> Self {
+        self.persona_snapshot_reader = Some(reader);
+        self
+    }
+
+    /// Install the Phase 81.31 persona store (write-side).
+    /// Without one, `nexo/admin/persona/save_localized` returns
+    /// `persona domain not configured` -32603.
+    pub fn with_persona_store(mut self, store: Arc<dyn PersonaStore>) -> Self {
+        self.persona_store = Some(store);
+        self
+    }
+
     /// Install the long-term memory query
     /// reader. Production wires
     /// `nexo_setup::admin_adapters::LiveMemoryReader` around the
@@ -822,6 +873,14 @@ impl AdminRpcDispatcher {
             // on `plugin_doctor`; nexo-plugin-admin declares it
             // required.
             "nexo/admin/plugins/doctor" => Some("plugin_doctor"),
+            // Plugin-driven pairing UI descriptor —
+            // reuses `pairing_initiate` (same gate as `pairing/start`)
+            // because operators able to start a pairing flow already
+            // see the channel catalog implicitly.
+            "nexo/admin/pairing/channels" => Some("pairing_initiate"),
+            // Phase 81.31 — persona localised write
+            // is operator-edit territory; reuses `agents_crud`.
+            "nexo/admin/persona/save_localized" => Some("agents_crud"),
             // Manual plugin restart
             // is write+destructive; distinct capability from the
             // read-only `plugin_doctor` so security review can
@@ -958,7 +1017,10 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/agents/get" => match &self.agents_yaml {
-                Some(yaml) => super::domains::agents::get(yaml.as_ref(), params),
+                Some(yaml) => {
+                    let snapshot = self.persona_snapshot_reader.as_deref();
+                    super::domains::agents::get_with_persona(yaml.as_ref(), snapshot, params).await
+                }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agents domain not configured".into(),
                 )),
@@ -1428,6 +1490,31 @@ impl AdminRpcDispatcher {
                 Some(reader) => super::domains::plugin_doctor::doctor(reader.as_ref()).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugins domain not configured".into(),
+                )),
+            },
+            "nexo/admin/persona/save_localized" => match &self.persona_store {
+                Some(store) => {
+                    super::domains::persona::save_localized(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "persona domain not configured".into(),
+                )),
+            },
+            "nexo/admin/pairing/channels" => match &self.pairing_channels_reader {
+                Some(reader) => {
+                    // Best-effort locale extraction: empty params /
+                    // missing field falls back to `"en"`. We do not
+                    // hard-fail on bad shape so the admin gets the
+                    // catalog even when it forgets to pass locale.
+                    let locale = params
+                        .get("locale")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("en")
+                        .to_string();
+                    super::domains::pairing_channels::list_channels(reader.as_ref(), &locale).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "pairing channels domain not configured".into(),
                 )),
             },
             "nexo/admin/memory/query" => match &self.memory_reader {
