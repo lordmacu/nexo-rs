@@ -20,6 +20,7 @@ pub mod adapter;
 pub mod code;
 pub mod gate;
 pub mod generic_adapter;
+pub mod plugin_http;
 pub mod qr;
 pub mod registry;
 pub mod session_store;

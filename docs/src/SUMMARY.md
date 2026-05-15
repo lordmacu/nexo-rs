@@ -29,6 +29,7 @@
 - [Authoring overview](./plugins/authoring.md)
 - [Manifest (Phase 81.13 unified)](./plugins/manifest-unified.md)
 - [Manifest `[plugin.pairing.adapter]`](./plugins/manifest-pairing-adapter.md)
+- [Manifest `[plugin.http]`](./plugins/manifest-http.md)
 - [Plugin contract](./plugins/contract.md)
 - [Patterns (8 common shapes)](./plugins/patterns.md)
 - [Rust SDK](./plugins/rust-sdk.md)
