@@ -515,3 +515,227 @@ fn published_binary_stealth_three_instances_google_brave_github() {
     let _ = child.wait_timeout_or_kill(Duration::from_secs(10));
     drop(tmp);
 }
+
+#[test]
+fn published_binary_compares_search_engine_bot_detection() {
+    let Some(bin) = locate_binary() else {
+        eprintln!("skipping: NEXO_PLUGIN_BROWSER_BIN unset and default path missing");
+        return;
+    };
+    let Ok(chromium) = std::env::var("CHROMIUM_BIN") else {
+        eprintln!("skipping: CHROMIUM_BIN unset");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let mut child = Command::new(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("NEXO_PLUGIN_BROWSER_USER_DATA_DIR", tmp.path())
+        .env("NEXO_PLUGIN_BROWSER_EXECUTABLE", &chromium)
+        .env("RUST_LOG", "warn")
+        .spawn()
+        .expect("spawn published binary");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+    );
+
+    let args_value: Vec<Value> =
+        stealth_args().iter().map(|s| Value::String(s.to_string())).collect();
+    let cfg = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "plugin.configure",
+            "params": {
+                "value": [
+                    { "instance": "g",
+                      "headless": true,
+                      "executable": chromium,
+                      "command_timeout_ms": 30000,
+                      "args": args_value },
+                    { "instance": "b",
+                      "headless": true,
+                      "executable": chromium,
+                      "command_timeout_ms": 30000,
+                      "args": args_value }
+                ]
+            }
+        }),
+    );
+    assert!(cfg["error"].is_null(), "configure failed: {cfg}");
+
+    fn nav_one(
+        stdin: &mut ChildStdin,
+        stdout: &mut BufReader<ChildStdout>,
+        id: i64,
+        instance: &str,
+        url: &str,
+    ) -> Value {
+        rpc(
+            stdin,
+            stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tool.invoke",
+                "params": {
+                    "plugin_id": "browser",
+                    "tool_name": "browser_navigate",
+                    "args": { "instance": instance, "url": url }
+                }
+            }),
+        )
+    }
+    fn eval_one(
+        stdin: &mut ChildStdin,
+        stdout: &mut BufReader<ChildStdout>,
+        id: i64,
+        instance: &str,
+        script: &str,
+    ) -> Value {
+        rpc(
+            stdin,
+            stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tool.invoke",
+                "params": {
+                    "plugin_id": "browser",
+                    "tool_name": "browser_evaluate",
+                    "args": { "instance": instance, "script": script }
+                }
+            }),
+        )
+    }
+
+    let query = "rust+programming+language";
+
+    // Page-fingerprint per engine: final URL, anchor count (proxy
+    // for rendered results), title, body-text excerpt + length, and
+    // a regex probe for known captcha / block keywords.
+    let probe_script = r#"({
+        url: location.href,
+        title: document.title,
+        anchors: document.querySelectorAll('a').length,
+        bodyTextLen: document.body ? document.body.innerText.length : 0,
+        bodyExcerpt: document.body ? document.body.innerText.slice(0, 240) : '',
+        webdriver: String(navigator.webdriver),
+        captchaHit: /captcha|unusual traffic|verify you are human|recaptcha|not a robot|sorry\/index/i.test(document.body ? document.body.innerText : '')
+    })"#;
+
+    let nav_g = nav_one(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "g",
+        &format!("https://www.google.com/search?q={query}"),
+    );
+    if nav_g["error"].is_object() {
+        eprintln!("skipping: google navigate failed: {}", nav_g["error"]);
+        let _ = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}),
+        );
+        let _ = child.wait_timeout_or_kill(Duration::from_secs(5));
+        return;
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    let g_probe = eval_one(&mut stdin, &mut stdout, 11, "g", probe_script);
+    let g = &g_probe["result"]["result"];
+
+    let nav_b = nav_one(
+        &mut stdin,
+        &mut stdout,
+        20,
+        "b",
+        &format!("https://search.brave.com/search?q={query}"),
+    );
+    if nav_b["error"].is_object() {
+        eprintln!("skipping: brave navigate failed: {}", nav_b["error"]);
+        let _ = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}),
+        );
+        let _ = child.wait_timeout_or_kill(Duration::from_secs(5));
+        return;
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    let b_probe = eval_one(&mut stdin, &mut stdout, 21, "b", probe_script);
+    let b = &b_probe["result"]["result"];
+
+    let g_url = g["url"].as_str().unwrap_or("");
+    let g_title = g["title"].as_str().unwrap_or("");
+    let g_anchors = g["anchors"].as_u64().unwrap_or(0);
+    let g_captcha = g["captchaHit"].as_bool().unwrap_or(false);
+    let g_body_len = g["bodyTextLen"].as_u64().unwrap_or(0);
+    let g_excerpt = g["bodyExcerpt"].as_str().unwrap_or("");
+
+    let b_url = b["url"].as_str().unwrap_or("");
+    let b_title = b["title"].as_str().unwrap_or("");
+    let b_anchors = b["anchors"].as_u64().unwrap_or(0);
+    let b_captcha = b["captchaHit"].as_bool().unwrap_or(false);
+    let b_body_len = b["bodyTextLen"].as_u64().unwrap_or(0);
+    let b_excerpt = b["bodyExcerpt"].as_str().unwrap_or("");
+
+    eprintln!("\n── GOOGLE ─────────────────────────────────────────");
+    eprintln!("  URL:       {g_url}");
+    eprintln!("  title:     {g_title}");
+    eprintln!("  anchors:   {g_anchors}");
+    eprintln!("  body len:  {g_body_len}");
+    eprintln!("  captcha?:  {g_captcha}");
+    eprintln!("  excerpt:   {g_excerpt}");
+    eprintln!("\n── BRAVE ──────────────────────────────────────────");
+    eprintln!("  URL:       {b_url}");
+    eprintln!("  title:     {b_title}");
+    eprintln!("  anchors:   {b_anchors}");
+    eprintln!("  body len:  {b_body_len}");
+    eprintln!("  captcha?:  {b_captcha}");
+    eprintln!("  excerpt:   {b_excerpt}\n");
+
+    // Hard assertion: Brave should serve real results.
+    assert!(
+        b_url.contains("search.brave.com"),
+        "Brave should keep us on its search domain; got {b_url}"
+    );
+    assert!(
+        !b_captcha,
+        "Brave should NOT trigger a captcha for stealth chromium; got: {b_excerpt}"
+    );
+    assert!(
+        b_anchors >= 30,
+        "Brave search results should render many anchor tags; got only {b_anchors}"
+    );
+
+    let google_blocked = g_url.contains("/sorry/") || g_captcha || g_anchors < 30;
+    if google_blocked {
+        eprintln!(
+            "VERDICT — Google: BLOCKED automation (/sorry/={}, captcha={g_captcha}, anchors={g_anchors})",
+            g_url.contains("/sorry/")
+        );
+    } else {
+        eprintln!("VERDICT — Google: served results (anchors={g_anchors}, body_len={g_body_len})");
+    }
+    eprintln!(
+        "VERDICT — Brave: served results (anchors={b_anchors}, body_len={b_body_len}, captcha={b_captcha})"
+    );
+
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}),
+    );
+    let _ = child.wait_timeout_or_kill(Duration::from_secs(10));
+    drop(tmp);
+}
