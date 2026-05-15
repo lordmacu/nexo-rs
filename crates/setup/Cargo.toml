@@ -19,6 +19,14 @@ default = []
 # compiles and exposes the concrete `YamlPatchApplier` +
 # `DenylistChecker` impls main.rs wires per-agent.
 config-self-edit = ["nexo-core/config-self-edit"]
+# Phase 93.12.c — propagate the daemon-level whatsapp gate
+# into setup. With this feature on, `admin_bootstrap` /
+# `admin_adapters` / `writer` compile the whatsapp-specific
+# integration sites (`WhatsappBotHandle`,
+# `dispatch::TOPIC_OUTBOUND`, `session::pair_once`).
+# Off → those sites disappear and the admin RPC dispatcher
+# is constructed without the `with_wa_bot_handle(...)` call.
+plugin-whatsapp = ["dep:nexo-plugin-whatsapp"]
 
 [dependencies]
 nexo-config = { version = "0.1.8", path = "../config" }
@@ -66,7 +74,7 @@ webbrowser = "1"
 # Phase 81.19.a — pulled through `[workspace.dependencies]` so the
 # version + path stay synchronised with the proyecto Cargo.toml
 # entry that points at the standalone repo.
-nexo-plugin-whatsapp = { workspace = true }
+nexo-plugin-whatsapp = { workspace = true, optional = true }
 nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
 nexo-pairing = { version = "0.1.5", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher

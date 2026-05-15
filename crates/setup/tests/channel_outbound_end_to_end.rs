@@ -3,6 +3,12 @@
 //! per-channel `plugin.outbound.<channel>[.<account>]` topic
 //! with the payload shape the plugin's existing dispatcher
 //! consumes.
+//!
+//! Phase 93.12.c.1 — gated behind `plugin-whatsapp` because the
+//! end-to-end assertion exercises `WhatsAppTranslator` directly.
+//! Without the feature, the translator does not compile.
+
+#![cfg(feature = "plugin-whatsapp")]
 
 use nexo_broker::{AnyBroker, BrokerHandle, LocalBroker};
 use nexo_core::agent::admin_rpc::channel_outbound::{ChannelOutboundDispatcher, OutboundMessage};

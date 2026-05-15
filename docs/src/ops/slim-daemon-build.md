@@ -11,19 +11,44 @@ compile graph.
 | Feature | Default | Drops crate |
 |---|---|---|
 | `plugin-telegram` | ✅ on | `nexo-plugin-telegram` |
+| `plugin-whatsapp` | ✅ on | `nexo-plugin-whatsapp` (setup-crate scaffolding shipped 93.12.c.1; daemon main.rs gates pending 93.12.c.2) |
 | `plugin-browser` | off | (no-op placeholder; browser already has no Cargo dep) |
 
-`whatsapp` and `email` are NOT yet feature-gated:
+`email` is NOT feature-gated — structurally in-process by
+design (Phase 93.11 audit, bucket D). Autonomous worker +
+EmailToolContext + `/metrics` rendering all hold
+`Arc<EmailPlugin>` in-process. No subprocess driver today.
 
-- **whatsapp** — Phase 93.12.c (deferred). Setup crate
-  (`crates/setup/`) contains admin-RPC integration sites
-  (`with_wa_bot_handle`, `dispatch::TOPIC_OUTBOUND`,
-  `session::pair_once`) that require cross-crate refactor
-  before the daemon import graph can drop the crate.
-- **email** — structurally in-process by design (Phase 93.11
-  audit, bucket D). Autonomous worker + EmailToolContext
-  + `/metrics` rendering all hold `Arc<EmailPlugin>`
-  in-process. No subprocess driver today.
+### whatsapp gate status
+
+Phase 93.12.c.1 shipped the cross-crate scaffolding:
+
+- `nexo-plugin-whatsapp` moved to `optional = true` in
+  workspace deps + daemon deps.
+- `crates/setup/Cargo.toml` gains a `plugin-whatsapp` feature.
+- The daemon's `plugin-whatsapp` feature forwards through
+  `nexo-setup/plugin-whatsapp` so setup compiles whatsapp-less.
+- 3 setup-side import sites cfg-gated:
+  `writer.rs` (`session::pair_once` pairing flow),
+  `admin_bootstrap.rs` (`with_wa_bot_handle` admin RPC),
+  `admin_adapters.rs` (`WhatsAppTranslator` + outbound
+  topic constant).
+
+Validated: `cargo check -p nexo-setup --no-default-features`
+green AND `cargo check -p nexo-setup --features plugin-whatsapp`
+green. Setup-crate tests 317/317 with default features.
+
+**Phase 93.12.c.2 (pending)** — daemon main.rs sites. The
+remaining ~10 blocks include `RuntimeHealth.wa_pairing`
+typed field (`BTreeMap<String, SharedPairingState>`), the
+instance-loop population (~25 LOC), subscriber spawn
+(~30 LOC), HTTP `/whatsapp/*` route dispatcher (~30 LOC),
+pairing trigger registration, pairing adapter constructor,
+register_whatsapp_tools fallbacks (boot + hot-spawn). Estimated
+~6-8h in a dedicated session. Until 93.12.c.2 lands,
+`cargo build --bin nexo --no-default-features` will fail
+fast on the whatsapp typed-import sites; the daemon ships
+with `plugin-whatsapp` enabled by default.
 
 ## Building a telegram-less daemon
 

@@ -201,7 +201,7 @@ include = [
 workspace = true
 
 [features]
-default = ["plugin-telegram"]
+default = ["plugin-telegram", "plugin-whatsapp"]
 # Phase 93.12.a — Cargo feature-gate for telegram canonical plugin.
 # Enabled by default so existing deployments keep the same binary
 # surface; operators targeting Android / slim embedded daemons can
@@ -218,6 +218,18 @@ plugin-telegram = ["dep:nexo-plugin-telegram"]
 # subprocess. The feature-flag exists for symmetry + so future
 # browser-side helpers can be gated without a churn-PR.
 plugin-browser = []
+# Phase 93.12.c — Cargo feature-gate for whatsapp canonical plugin.
+# Forwards to `nexo-setup/plugin-whatsapp` so the bubble-up reaches
+# the admin RPC dispatcher's `with_wa_bot_handle`, the broker topic
+# constant `dispatch::TOPIC_OUTBOUND`, and the `session::pair_once`
+# command handler. With this feature off, the daemon binary compiles
+# without `nexo-plugin-whatsapp` in its dep graph — proven by
+# `cargo tree --no-default-features -i nexo-plugin-whatsapp`.
+# Runtime path with subprocess discovery unchanged.
+plugin-whatsapp = [
+    "dep:nexo-plugin-whatsapp",
+    "nexo-setup/plugin-whatsapp",
+]
 # Phase 79.10 — gated self-config tool. Off until security review.
 # Forwards to both nexo-core (the tool body) and nexo-setup
 # (the YamlPatchApplier + DenylistChecker bridge structs main.rs
@@ -423,7 +435,7 @@ nexo-cdp = { version = "0.1.1", path = "crates/cdp" }
 # `../nexo-rs-plugin-whatsapp/` (Shape B: lib + bin). Pulled
 # through `[workspace.dependencies]` above so member crates +
 # the proyecto binary stay synchronised on version + path.
-nexo-plugin-whatsapp = { workspace = true }
+nexo-plugin-whatsapp = { workspace = true, optional = true }
 # Phase 81.18 — telegram plugin extracted to standalone repo.
 # crates.io-only dep wire (no `path =`); see the
 # nexo-plugin-whatsapp comment in [workspace.dependencies] for
