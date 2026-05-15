@@ -38,10 +38,8 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
     let secrets_dir = secrets_dir_for(config_dir);
     let result = nexo_auth::build_credentials(
         &cfg.agents.agents,
-        &cfg.plugins.whatsapp,
-        &cfg.plugins.telegram,
+        &cfg.plugins,
         &google,
-        cfg.plugins.email.as_ref(),
         &secrets_dir,
         nexo_auth::StrictLevel::Lenient,
     );

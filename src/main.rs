@@ -2189,10 +2189,8 @@ async fn main() -> Result<()> {
     let secrets_dir = secrets_dir_for(&config_dir);
     let credentials = match nexo_auth::build_credentials(
         &cfg.agents.agents,
-        &cfg.plugins.whatsapp,
-        &cfg.plugins.telegram,
+        &cfg.plugins,
         &google_auth,
-        cfg.plugins.email.as_ref(),
         &secrets_dir,
         nexo_auth::StrictLevel::Lenient,
     ) {
@@ -14061,10 +14059,8 @@ async fn start_mcp_autonomous_worker(
     let secrets_dir = secrets_dir_for(config_dir);
     let creds_bundle = nexo_auth::build_credentials(
         &full_cfg.agents.agents,
-        &full_cfg.plugins.whatsapp,
-        &full_cfg.plugins.telegram,
+        &full_cfg.plugins,
         &google_auth,
-        full_cfg.plugins.email.as_ref(),
         &secrets_dir,
         StrictLevel::Lenient,
     )
@@ -15757,10 +15753,8 @@ fn run_check_config(config_dir: &std::path::Path, strict: bool) -> Result<()> {
     };
     let result = nexo_auth::build_credentials(
         &cfg.agents.agents,
-        &cfg.plugins.whatsapp,
-        &cfg.plugins.telegram,
+        &cfg.plugins,
         &google,
-        cfg.plugins.email.as_ref(),
         &secrets_dir_for(config_dir),
         level,
     );
