@@ -80,10 +80,8 @@ fn strict_rejects_inline_google_auth() {
     let agent = agent_with_inline_google("ana");
     let err = build_credentials(
         &[agent],
-        &[],
-        &[],
+        &nexo_config::types::plugins::PluginsConfig::default(),
         &GoogleAuthConfig::default(),
-        None,
         std::path::Path::new("/nonexistent"),
         StrictLevel::Strict,
     )
@@ -100,10 +98,8 @@ fn lenient_accepts_inline_google_auth_with_warning() {
     let agent = agent_with_inline_google("ana");
     let bundle = build_credentials(
         &[agent],
-        &[],
-        &[],
+        &nexo_config::types::plugins::PluginsConfig::default(),
         &GoogleAuthConfig::default(),
-        None,
         std::path::Path::new("/nonexistent"),
         StrictLevel::Lenient,
     )
@@ -123,10 +119,8 @@ fn strict_error_never_leaks_client_id() {
     let agent = agent_with_inline_google("ana");
     let err = build_credentials(
         &[agent],
-        &[],
-        &[],
+        &nexo_config::types::plugins::PluginsConfig::default(),
         &GoogleAuthConfig::default(),
-        None,
         std::path::Path::new("/nonexistent"),
         StrictLevel::Strict,
     )

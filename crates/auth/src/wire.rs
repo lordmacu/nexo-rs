@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use nexo_config::types::agents::AgentConfig;
 use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
-use nexo_config::types::plugins::{EmailPluginConfig, TelegramPluginConfig, WhatsappPluginConfig};
+use nexo_config::types::plugins::PluginsConfig;
 
 use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 use crate::error::BuildError;
@@ -215,15 +215,23 @@ pub fn load_google_auth(dir: &Path) -> Result<GoogleAuthConfig> {
 /// Run the boot gauntlet and build stores + resolver. Every error is
 /// accumulated; a single `anyhow::Error` with a multi-line body is
 /// returned so operators see every misconfiguration at once.
+///
+/// Phase 93.5.b — takes `&PluginsConfig` (instead of three explicit
+/// per-channel parameters) so callers stop knowing the typed
+/// per-channel shape. Internal slicing pulls `whatsapp`, `telegram`,
+/// and `email` from the bundle. `GoogleAuthConfig` stays separate
+/// because it ships from a different YAML file
+/// (`plugins/google-auth.yaml`, loaded by [`load_google_auth`]).
 pub fn build_credentials(
     agents: &[AgentConfig],
-    whatsapp: &[WhatsappPluginConfig],
-    telegram: &[TelegramPluginConfig],
+    plugins: &PluginsConfig,
     google: &GoogleAuthConfig,
-    email: Option<&EmailPluginConfig>,
     secrets_dir: &Path,
     strict: StrictLevel,
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
+    let whatsapp = plugins.whatsapp.as_slice();
+    let telegram = plugins.telegram.as_slice();
+    let email = plugins.email.as_ref();
     let mut errors: Vec<BuildError> = Vec::new();
 
     // ── 1. Path claims (session_dir WA + credential files Google) ──
@@ -577,10 +585,8 @@ pub fn reload_resolver(
     // tool-side ACL, which is the V1 invariant we promised.
     let fresh = build_credentials(
         &cfg.agents.agents,
-        &cfg.plugins.whatsapp,
-        &cfg.plugins.telegram,
+        &cfg.plugins,
         &google,
-        cfg.plugins.email.as_ref(),
         secrets_dir,
         strict,
     )?;
@@ -716,7 +722,11 @@ mod tests {
         }
     }
 
-    fn wa_cfg(instance: Option<&str>, dir: &Path, allow: &[&str]) -> WhatsappPluginConfig {
+    fn wa_cfg(
+        instance: Option<&str>,
+        dir: &Path,
+        allow: &[&str],
+    ) -> nexo_config::types::plugins::WhatsappPluginConfig {
         use nexo_config::types::plugins::*;
         WhatsappPluginConfig {
             enabled: true,
@@ -736,6 +746,18 @@ mod tests {
         }
     }
 
+    /// Phase 93.5.b — wrap a fixture `Vec<WhatsappPluginConfig>`
+    /// (and optionally a fixture telegram/email) into the
+    /// `PluginsConfig` shape `build_credentials` now expects.
+    fn plugins_with_whatsapp(
+        wa: Vec<nexo_config::types::plugins::WhatsappPluginConfig>,
+    ) -> PluginsConfig {
+        PluginsConfig {
+            whatsapp: wa,
+            ..PluginsConfig::default()
+        }
+    }
+
     #[test]
     fn happy_path_one_agent_one_instance() {
         let dir = TempDir::new().unwrap();
@@ -745,10 +767,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("personal"));
         let bundle = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Strict,
         )
@@ -765,10 +785,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("personal"));
         let err = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Lenient,
         )
@@ -790,10 +808,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("a"));
         let err = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Lenient,
         )
@@ -814,10 +830,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("personal"));
         let bundle = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Strict,
         )
@@ -841,10 +855,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("personal"));
         let bundle = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Strict,
         )
@@ -866,10 +878,8 @@ mod tests {
         let agent = minimal_agent("ana", Some("personal"));
         let bundle = build_credentials(
             &[agent],
-            &wa,
-            &[],
+            &plugins_with_whatsapp(wa),
             &GoogleAuthConfig::default(),
-            None,
             std::path::Path::new("/nonexistent"),
             StrictLevel::Strict,
         )
