@@ -154,6 +154,15 @@ pub struct PluginSection {
     #[serde(default)]
     pub meta: MetaSection,
 
+    /// Phase 81.33.b.real Stage 4 — daemon-forwarded admin RPC
+    /// commands the plugin owns. Daemon iterates registered
+    /// plugins on every admin call; methods matching a plugin's
+    /// `method_prefix` get forwarded via broker JSON-RPC instead
+    /// of needing a hardcoded `.with_<plugin>_handle()` builder
+    /// call on the dispatcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin: Option<crate::admin::PluginAdminSection>,
+
     /// Phase 81.33.b.real Stage 2 — daemon-proxied HTTP routes
     /// the plugin owns. Distinct from `[plugin.http_server]`
     /// (which advertises a plugin-bound port the daemon does NOT

@@ -443,6 +443,15 @@ pub struct AdminBootstrapInputs<'a> {
     /// registered plugin (today: `whatsapp` → `WhatsappPairingTrigger`,
     /// future: `telegram` → telegram-link, etc).
     pub pairing_triggers: nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers,
+    /// Phase 81.33.b.real Stage 4 — manifest-driven plugin admin
+    /// router. Daemon builds this from
+    /// `wire.plugin_handles[..].manifest().plugin.admin` at boot
+    /// (longest-prefix-first; reserved-prefix collisions warn-
+    /// logged + skipped). `None` keeps the dispatcher on the
+    /// legacy `.with_<plugin>_handle()` typed path; production
+    /// always passes `Some`.
+    pub plugin_admin_router:
+        Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
 }
 
 impl AdminRpcBootstrap {
@@ -709,6 +718,18 @@ impl AdminRpcBootstrap {
                 .with_credentials_domain(credential_store.clone())
                 .with_pairing_domain(pairing_store.clone(), Some(pairing_notifier.clone()))
                 .with_pairing_triggers(inputs.pairing_triggers.clone());
+            // Phase 81.33.b.real Stage 4 — manifest-driven plugin
+            // admin router. Wired here as a shared `Arc<>` so the
+            // daemon can populate it AFTER `wire_plugin_registry`
+            // returns (admin_bootstrap runs BEFORE wire today; the
+            // router is empty at this point and the daemon registers
+            // entries post-wire). The dispatcher consults the router
+            // on every method that's unknown to the static map.
+            if let (Some(router), Some(broker_handle)) =
+                (inputs.plugin_admin_router.clone(), inputs.broker.clone())
+            {
+                dispatcher = dispatcher.with_plugin_admin_router(router, broker_handle);
+            }
             // Phase 93.12.c — whatsapp bot handle is the only
             // channel-specific admin RPC dependency. When the
             // `plugin-whatsapp` feature is off the daemon ships
@@ -1174,6 +1195,7 @@ mod tests {
             agent_event_log: None,
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
+            plugin_admin_router: None,
         })
         .await
         .unwrap();
@@ -1218,6 +1240,7 @@ mod tests {
             agent_event_log: None,
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
+            plugin_admin_router: None,
         })
         .await
         .unwrap_err();
@@ -1263,6 +1286,7 @@ mod tests {
             agent_event_log: None,
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
+            plugin_admin_router: None,
         })
         .await
         .unwrap()
@@ -1323,6 +1347,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1375,6 +1400,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1427,6 +1453,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1487,6 +1514,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1553,6 +1581,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1614,6 +1643,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
@@ -1674,6 +1704,7 @@ mod tests {
             agent_event_log: None,
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
+            plugin_admin_router: None,
         })
         .await
         .unwrap()
@@ -1755,6 +1786,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             false,
         )
@@ -1818,6 +1850,7 @@ mod tests {
                 agent_event_log: Some(log.clone()),
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
+            plugin_admin_router: None,
             },
             true,
         )
