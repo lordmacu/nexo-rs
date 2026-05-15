@@ -33,8 +33,6 @@ pub struct Summary {
 }
 
 pub fn run(config_dir: &Path) -> Result<Summary> {
-    use nexo_auth::CredentialStore;
-
     let cfg = nexo_config::AppConfig::load(config_dir)?;
     let google = nexo_auth::load_google_auth(config_dir)?;
     let secrets_dir = secrets_dir_for(config_dir);
@@ -66,9 +64,9 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
                 bindings.push((agent.id.clone(), per));
             }
             Ok(Summary {
-                accounts_wa: bundle.stores.whatsapp.list().len(),
-                accounts_tg: bundle.stores.telegram.list().len(),
-                accounts_google: bundle.stores.google.list().len(),
+                accounts_wa: bundle.account_count(nexo_auth::handle::WHATSAPP),
+                accounts_tg: bundle.account_count(nexo_auth::handle::TELEGRAM),
+                accounts_google: bundle.account_count(nexo_auth::handle::GOOGLE),
                 warnings: bundle.warnings,
                 errors: Vec::new(),
                 bindings,

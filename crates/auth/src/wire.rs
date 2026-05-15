@@ -35,6 +35,12 @@ use crate::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
 /// Bundle returned by [`build_credentials`] — holds every store plus
 /// the resolver. `main.rs` hands this to plugins / tools.
 pub struct CredentialsBundle {
+    /// Phase 93.9.a — added [`Self::account_count`] as the
+    /// preferred accessor for count consumers. The typed field
+    /// stays public during the deprecation window so poller +
+    /// wizard runtime consumers (Phase 93.9.c-e migrations) keep
+    /// compiling; 93.9.f flips it to `pub(crate)` once every
+    /// caller is gone.
     pub stores: CredentialStores,
     pub resolver: Arc<AgentCredentialResolver>,
     /// Per-`(channel, instance)` circuit breakers shared with plugin
@@ -45,11 +51,38 @@ pub struct CredentialsBundle {
     /// Phase 93.7 — opt-in plugin-contributed credential stores
     /// keyed by `manifest.plugin.id`. Empty at boot; populated by
     /// the init-loop after each plugin's `init(ctx)` succeeds via
-    /// `NexoPlugin::credential_store()`. Phase 93.8 migrates per-
-    /// plugin consumers from `bundle.stores.X` to
-    /// `bundle.stores_v2.get("X")`; Phase 93.9 drops the typed
-    /// `stores` field above.
+    /// `NexoPlugin::credential_store()`. Phase 93.9.a hides the
+    /// typed `stores` field; .b-.f migrate the remaining runtime
+    /// consumers to walk this map exclusively.
     pub stores_v2: DashMap<String, Arc<dyn GenericCredentialStore>>,
+}
+
+impl CredentialsBundle {
+    /// Account count for `channel`. Reads from `stores_v2` first
+    /// (plugin-contributed `GenericCredentialStore`); falls back to
+    /// the internal typed `CredentialStores` so boot-time consumers
+    /// see correct counts before plugin init lands.
+    ///
+    /// `stores_v2.list()` is async; this accessor blocks via
+    /// [`tokio::task::block_in_place`]. Callers must be on a
+    /// multi-thread Tokio runtime. The daemon's `#[tokio::main]`
+    /// satisfies this; unit tests should use
+    /// `#[tokio::test(flavor = "multi_thread")]`.
+    pub fn account_count(&self, channel: Channel) -> usize {
+        if let Some(store) = self.stores_v2.get(channel).map(|e| e.value().clone()) {
+            let list = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(store.list())
+            });
+            return list.len();
+        }
+        match channel {
+            WHATSAPP => self.stores.whatsapp.list().len(),
+            TELEGRAM => self.stores.telegram.list().len(),
+            GOOGLE => self.stores.google.list().len(),
+            c if c == crate::handle::EMAIL => self.stores.email.list().len(),
+            _ => 0,
+        }
+    }
 }
 
 impl std::fmt::Debug for CredentialsBundle {
@@ -671,6 +704,31 @@ mod tests {
         assert!(err
             .iter()
             .any(|e| matches!(e, BuildError::DuplicatePath { .. })));
+    }
+
+    /// Phase 93.9.a — `account_count` walks `stores_v2` first
+    /// and falls back to the internal typed stores for channels
+    /// with no plugin contribution yet.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn account_count_falls_back_to_typed_when_v2_empty() {
+        let dir = TempDir::new().unwrap();
+        let wa_dir = dir.path().join("ana");
+        std::fs::create_dir_all(&wa_dir).unwrap();
+        let wa = vec![wa_cfg(Some("personal"), &wa_dir, &["ana"])];
+        let agent = minimal_agent("ana", Some("personal"));
+        let bundle = build_credentials(
+            &[agent],
+            &wa,
+            &[],
+            &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
+            StrictLevel::Strict,
+        )
+        .unwrap();
+        assert_eq!(bundle.account_count(WHATSAPP), 1);
+        assert_eq!(bundle.account_count(TELEGRAM), 0);
+        assert_eq!(bundle.account_count(GOOGLE), 0);
     }
 
     /// Phase 93.7 — `build_credentials` initialises `stores_v2`
