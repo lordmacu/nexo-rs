@@ -1653,6 +1653,7 @@ fn build_known_pairing_registry(broker: &nexo_broker::AnyBroker) -> nexo_pairing
     registry.register(std::sync::Arc::new(
         nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
     ));
+    #[cfg(feature = "plugin-telegram")]
     registry.register(std::sync::Arc::new(
         nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
     ));
@@ -5128,6 +5129,7 @@ async fn main() -> Result<()> {
             nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
             tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent (fallback)");
         }
+        #[cfg(feature = "plugin-telegram")]
         if agent_cfg.plugins.iter().any(|p| p == "telegram") {
             nexo_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent (fallback)");
@@ -6916,6 +6918,7 @@ async fn main() -> Result<()> {
                 if cfg.plugins.iter().any(|p| p == "whatsapp") {
                     nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
                 }
+                #[cfg(feature = "plugin-telegram")]
                 if cfg.plugins.iter().any(|p| p == "telegram") {
                     nexo_plugin_telegram::register_telegram_tools(&tools);
                 }

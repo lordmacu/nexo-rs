@@ -201,7 +201,23 @@ include = [
 workspace = true
 
 [features]
-default = []
+default = ["plugin-telegram"]
+# Phase 93.12.a — Cargo feature-gate for telegram canonical plugin.
+# Enabled by default so existing deployments keep the same binary
+# surface; operators targeting Android / slim embedded daemons can
+# `--no-default-features` to drop the `nexo-plugin-telegram` crate
+# from the compile graph entirely. Telegram still runs as a
+# discovered subprocess if its manifest sits in
+# `plugins.discovery.search_paths` — the gate removes only the
+# daemon's compile-time imports (pairing adapter constructor +
+# outbound-tool fallback registration).
+plugin-telegram = ["dep:nexo-plugin-telegram"]
+# Phase 93.12.b — placeholder. `nexo-plugin-browser` has no Cargo
+# dep on the daemon; the browser config seeding path translates
+# typed `nexo-config::BrowserConfig` into env vars consumed by the
+# subprocess. The feature-flag exists for symmetry + so future
+# browser-side helpers can be gated without a churn-PR.
+plugin-browser = []
 # Phase 79.10 — gated self-config tool. Off until security review.
 # Forwards to both nexo-core (the tool body) and nexo-setup
 # (the YamlPatchApplier + DenylistChecker bridge structs main.rs
@@ -412,7 +428,7 @@ nexo-plugin-whatsapp = { workspace = true }
 # crates.io-only dep wire (no `path =`); see the
 # nexo-plugin-whatsapp comment in [workspace.dependencies] for
 # why path-deps were dropped in Phase 81.19.b cleanup.
-nexo-plugin-telegram = { version = "0.1.1" }
+nexo-plugin-telegram = { version = "0.1.1", optional = true }
 nexo-plugin-email = { workspace = true }
 nexo-plugin-google = { version = "0.1.2", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.2", path = "crates/setup" }

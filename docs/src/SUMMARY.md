@@ -69,6 +69,7 @@
 # Operations
 
 - [Docker](./ops/docker.md)
+- [Slim daemon builds (Cargo features)](./ops/slim-daemon-build.md)
 - [Metrics (Prometheus)](./ops/metrics.md)
 - [Logging](./ops/logging.md)
 - [DLQ](./ops/dlq.md)
@@ -109,6 +110,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Agent runtime](./architecture/agent-runtime.md)
 - [Event bus (NATS)](./architecture/event-bus.md)
 - [Broker shapes (local / NATS / embedded)](./architecture/broker-shapes.md)
+- [Phase 93.11 compile-time plugin decoupling audit](./architecture/phase-93-decoupling-audit.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
