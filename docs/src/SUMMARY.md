@@ -32,6 +32,7 @@
 - [Manifest `[plugin.http]`](./plugins/manifest-http.md)
 - [Manifest `[plugin.admin]`](./plugins/manifest-admin.md)
 - [Manifest `[plugin.metrics]`](./plugins/manifest-metrics.md)
+- [Manifest `[plugin.dashboard]`](./plugins/manifest-dashboard.md)
 - [Plugin contract](./plugins/contract.md)
 - [Patterns (8 common shapes)](./plugins/patterns.md)
 - [Rust SDK](./plugins/rust-sdk.md)
