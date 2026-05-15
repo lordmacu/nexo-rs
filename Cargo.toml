@@ -114,6 +114,7 @@ members = [
     # cargo-dist's manifest planner can opt it out of release
     # tarballs via `[package.metadata.dist] dist = false`.
     "crates/test-fixtures/mock-subprocess-plugin",
+    "crates/test-fixtures/reference-plugin",
 ]
 # Keep standalone extension templates out of the agent workspace so
 # they don't inherit our deps or lockfile — `cp -r` (or `nexo plugin

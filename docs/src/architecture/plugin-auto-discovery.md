@@ -534,3 +534,35 @@ Per the project's `/forge` flow, the actual execution begins
 with `/forge brainstorm 81.33.b.real` → spec → plan → ejecutar.
 This memo is the architectural anchor that every brainstorm
 must reference.
+
+## Update 2026-05-15 — Stages 1+2+4+5+6 + reference plugin shipped
+
+Five of the seven pending stages closed in a single session:
+
+- Stage 1 (pairing adapter) — PR #65.
+- Stage 2 (HTTP routes) — PR #66.
+- Stage 4 (admin RPC) — PR #67.
+- Stage 5 (Prometheus metrics) — PR #68.
+- Stage 6 (dashboard surface) — PR #69.
+- Reference plugin demo + tests — PR #70.
+
+Stage 3 (orchestration tunnel) skipped after re-evaluation: the
+generic state-map / subscriber-bridge originally scoped became
+redundant once Stage 2 routed HTTP through broker, and the
+remaining tunnel auto-open is daemon-side polish that operators
+can already trigger via `nexo admin --tunnel`. Stage 7 (cleanup
+hardcoded fallbacks) deferred pending coordinated releases of
+the 3 canonical plugin crates adopting the new manifest
+sections — daemon-side legacy paths cannot be retired until
+plugin-side migration ships.
+
+**Reference plugin.** `crates/test-fixtures/reference-plugin/`
+exercises every manifest section in one place. Pure-function
+broker handlers (no I/O) so each contract is unit-testable
+without spinning up a real subprocess. Operators / plugin
+authors copy the crate as a starting template.
+
+The user-visible auto-discovery goal is met today: any new
+plugin can declare the 5 manifest sections + ship broker
+handlers, and the daemon auto-discovers every capability with
+zero framework code change.

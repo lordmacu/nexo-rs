@@ -1,0 +1,90 @@
+manifest_version = 2
+
+[plugin]
+id              = "reference_demo"
+version         = "0.0.1"
+name            = "Reference Plugin Demo"
+description     = "Exercises every Phase 81.33.b.real manifest section so plugin authors have a copy-pastable template."
+min_nexo_version = ">=0.1.0"
+
+# ────────────────────────────────────────────────────────────────
+# Phase 81.33.b.real Stage 1 — pairing adapter via broker dispatch.
+#
+# Daemon publishes to:
+#   plugin.reference_demo.pairing.normalize_sender
+#   plugin.reference_demo.pairing.send_reply
+#   plugin.reference_demo.pairing.send_qr_image
+#
+# Plugin subscribes + replies. See `src/lib.rs` `pairing::*`.
+# ────────────────────────────────────────────────────────────────
+[plugin.pairing]
+kind  = "qr"                                # Required for the wizard pairing UI.
+label = "Reference"
+
+[plugin.pairing.adapter]
+channel_id           = "reference_demo"
+broker_topic_prefix  = "plugin.reference_demo"
+
+# ────────────────────────────────────────────────────────────────
+# Phase 81.33.b.real Stage 2 — daemon-proxied HTTP routes.
+#
+# Daemon mounts everything under `/reference_demo/*` on its
+# health server (`:8080`) and forwards each request via:
+#   plugin.reference_demo.http.request
+#
+# Plugin owns the internal router under the prefix. See
+# `src/lib.rs` `http::handle_request`.
+# ────────────────────────────────────────────────────────────────
+[plugin.http]
+mount_prefix    = "/reference_demo"
+timeout_seconds = 30
+
+# ────────────────────────────────────────────────────────────────
+# Phase 81.33.b.real Stage 4 — admin RPC commands forwarded by
+# broker.
+#
+# Daemon receives `nexo/admin/reference_demo/<verb>` and
+# forwards via:
+#   plugin.reference_demo.admin.<verb>
+#
+# Plugin's broker handler returns `{ ok, result, error }` per the
+# admin RPC envelope. See `src/lib.rs` `admin::handle`.
+# ────────────────────────────────────────────────────────────────
+[plugin.admin]
+method_prefix       = "nexo/admin/reference_demo/"
+broker_topic_prefix = "plugin.reference_demo.admin"
+timeout_seconds     = 15
+
+# ────────────────────────────────────────────────────────────────
+# Phase 81.33.b.real Stage 5 — Prometheus metrics scrape.
+#
+# Daemon publishes per `/metrics` HTTP request to:
+#   plugin.reference_demo.metrics.scrape
+#
+# Plugin replies `{ "text": "<prometheus text>" }`. See
+# `src/lib.rs` `metrics::scrape`.
+# ────────────────────────────────────────────────────────────────
+[plugin.metrics]
+prometheus          = true
+broker_topic_prefix = "plugin.reference_demo"
+timeout_seconds     = 5
+
+# ────────────────────────────────────────────────────────────────
+# Phase 81.33.b.real Stage 6 — setup wizard dashboard surface.
+#
+# `nexo-setup`'s `ManifestDashboardSource` consumes this section
+# directly (no plugin-side broker handler needed — auth checks
+# happen daemon-side via filesystem inspection).
+# ────────────────────────────────────────────────────────────────
+[plugin.dashboard.layout]
+kind = "single"
+
+[plugin.dashboard.auth_check]
+kind = "file_presence"
+path = "reference_demo_token.txt"
+
+[plugin.entrypoint]
+# Real plugins ship a binary here. The reference demo is a
+# library crate (no subprocess); the entrypoint is documented but
+# inert. Operators wiring a real plugin would set:
+#   command = "/usr/local/bin/nexo-plugin-<id>"
