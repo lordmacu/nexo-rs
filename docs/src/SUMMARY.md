@@ -111,6 +111,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Event bus (NATS)](./architecture/event-bus.md)
 - [Broker shapes (local / NATS / embedded)](./architecture/broker-shapes.md)
 - [Phase 93.11 compile-time plugin decoupling audit](./architecture/phase-93-decoupling-audit.md)
+- [Plugin auto-discovery design memo](./architecture/plugin-auto-discovery.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
