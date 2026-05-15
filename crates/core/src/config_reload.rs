@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle};
-use nexo_config::{AppConfig, TelegramPluginConfig};
+use nexo_config::AppConfig;
 use nexo_llm::LlmRegistry;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -234,10 +234,9 @@ impl ConfigReloadCoordinator {
         // `src/main.rs::validate_agents_with_providers`.
         let known_providers =
             crate::agent::KnownProviders::new(cfg.llm.providers.keys().map(String::as_str));
-        let telegram_instances: &[TelegramPluginConfig] = &cfg.plugins.telegram;
         if let Err(e) = crate::agent::validate_agents_with_providers(
             &cfg.agents.agents,
-            telegram_instances,
+            &cfg.plugins,
             &crate::agent::KnownTools::default(),
             &known_providers,
         ) {
@@ -335,7 +334,7 @@ impl ConfigReloadCoordinator {
             // into a "tool not available" error every turn.
             let known_strs: Vec<&str> = handle.known_tools.iter().map(|s| s.as_str()).collect();
             let catalog = crate::agent::KnownTools::new(known_strs);
-            if let Err(e) = crate::agent::validate_agent(agent_cfg, &cfg.plugins.telegram, &catalog)
+            if let Err(e) = crate::agent::validate_agent(agent_cfg, &cfg.plugins, &catalog)
             {
                 rejected.push(ReloadRejection {
                     agent_id: Some(agent_cfg.id.clone()),

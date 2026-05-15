@@ -53,6 +53,36 @@ impl PluginsConfig {
         self.entries.keys()
     }
 
+    /// Phase 93.5.e — extract `instance` field values from the
+    /// plugin's array-shaped YAML. Returns an empty vec when the
+    /// plugin is absent, single-instance (Mapping), or has no
+    /// `instance` fields. Used by the daemon's per-plugin binding
+    /// validator so a new array-shape plugin (slack/discord/sms)
+    /// participates without daemon-side typed access.
+    ///
+    /// Convention: array-shape plugin entries identify themselves
+    /// via an `instance: <name>` field (WhatsApp + Telegram +
+    /// Email accounts follow this pattern). Plugins that don't
+    /// declare a manifest `[plugin.config_schema] shape = "array"`
+    /// produce no instances here.
+    pub fn instances_for(&self, plugin_id: &str) -> Vec<String> {
+        let Some(value) = self.entries.get(plugin_id) else {
+            return Vec::new();
+        };
+        let Value::Sequence(seq) = value else {
+            return Vec::new();
+        };
+        seq.iter()
+            .filter_map(|entry| {
+                entry
+                    .as_mapping()?
+                    .get(Value::String("instance".to_string()))?
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
+            .collect()
+    }
+
     /// Phase 93.5.a — uniform presence check. Returns `true` when
     /// the operator declared this plugin AND the declaration is
     /// non-empty (single-instance object OR non-empty array).
@@ -123,6 +153,44 @@ mod plugins_config_helpers_tests {
             ..PluginsConfig::default()
         };
         assert!(cfg.is_active("email"));
+    }
+
+    #[test]
+    fn instances_for_extracts_named_entries_from_array() {
+        let cfg = PluginsConfig {
+            entries: entries_from(
+                "telegram:\n  - instance: main\n    token: t1\n  - instance: backup\n    token: t2\n",
+            ),
+            ..PluginsConfig::default()
+        };
+        assert_eq!(
+            cfg.instances_for("telegram"),
+            vec!["main".to_string(), "backup".to_string()]
+        );
+    }
+
+    #[test]
+    fn instances_for_returns_empty_when_no_instance_field() {
+        let cfg = PluginsConfig {
+            entries: entries_from("telegram:\n  - token: only_token_no_instance\n"),
+            ..PluginsConfig::default()
+        };
+        assert_eq!(cfg.instances_for("telegram"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn instances_for_returns_empty_for_single_instance_object() {
+        let cfg = PluginsConfig {
+            entries: entries_from("email:\n  enabled: true\n"),
+            ..PluginsConfig::default()
+        };
+        assert_eq!(cfg.instances_for("email"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn instances_for_returns_empty_for_unknown_plugin() {
+        let cfg = PluginsConfig::default();
+        assert_eq!(cfg.instances_for("slack"), Vec::<String>::new());
     }
 
     #[test]
