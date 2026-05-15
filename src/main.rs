@@ -1661,6 +1661,45 @@ fn register_instance_subprocess_factories<C>(
     Some(())
 }
 
+/// Phase 93.5.d closure — does this plugin declare outbound
+/// tools in its manifest? When `true`, the daemon-side hardcoded
+/// tool register fallback (`register_whatsapp_tools` /
+/// `register_telegram_tools` / …) SKIPS — the plugin's own
+/// `NexoPlugin::register_outbound_tools()` trait method (driven
+/// off `[[plugin.tools.outbound]]`) handles registration. When
+/// `false` (plugin manifest predates the section), the fallback
+/// keeps running so the plugin stays functional. Result: a
+/// plugin upgrading to a manifest revision with
+/// `[[plugin.tools.outbound]]` auto-switches to the generic
+/// path without operator action; legacy stays additive-safe
+/// for unmigrated plugins.
+#[cfg(any(feature = "plugin-whatsapp", feature = "plugin-telegram"))]
+fn plugin_declares_outbound_tools(
+    handles: &std::collections::BTreeMap<
+        String,
+        std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>,
+    >,
+    plugin_id: &str,
+) -> bool {
+    handles
+        .get(plugin_id)
+        .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
+        .unwrap_or(false)
+}
+
+/// Phase 93.5.d closure — does this plugin declare a Prometheus
+/// metrics scrape descriptor in its manifest? When `true`, the
+/// daemon-side hardcoded metrics call (e.g.
+/// `nexo_plugin_email::metrics::render_prometheus`) SKIPS — the
+/// `nexo_pairing::plugin_metrics::scrape_all` path picks the
+/// plugin up via broker RPC.
+fn plugin_declares_metrics(
+    descriptors: &[nexo_pairing::plugin_metrics::PluginMetricsDescriptor],
+    plugin_id: &str,
+) -> bool {
+    descriptors.iter().any(|d| d.plugin_id == plugin_id)
+}
+
 /// Phase 81.33.b — single source of truth for the in-tree
 /// `PairingChannelAdapter` registrations the daemon ships with.
 ///
@@ -5293,13 +5332,22 @@ async fn main() -> Result<()> {
         // collision because old plugins declare zero outbound in
         // manifest). Removed in Phase 81.33.a step 6 after the
         // matching plugin patch publishes.
+        // Phase 93.5.d closure — fallback skips when plugin
+        // manifest declares `[[plugin.tools.outbound]]`. The
+        // generic `register_outbound_tools` trait call above
+        // takes over; legacy stays additive-safe for unmigrated
+        // plugins.
         #[cfg(feature = "plugin-whatsapp")]
-        if agent_cfg.plugins.iter().any(|p| p == "whatsapp") {
+        if agent_cfg.plugins.iter().any(|p| p == "whatsapp")
+            && !plugin_declares_outbound_tools(&wire.plugin_handles, "whatsapp")
+        {
             nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
             tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent (fallback)");
         }
         #[cfg(feature = "plugin-telegram")]
-        if agent_cfg.plugins.iter().any(|p| p == "telegram") {
+        if agent_cfg.plugins.iter().any(|p| p == "telegram")
+            && !plugin_declares_outbound_tools(&wire.plugin_handles, "telegram")
+        {
             nexo_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent (fallback)");
         }
@@ -7099,18 +7147,41 @@ async fn main() -> Result<()> {
                 }
                 // Fallback to legacy hardcoded calls during the
                 // migration window (Phase 81.33.a step 4 →
-                // step 6). The generic loop above already runs;
-                // these stay because plugins haven't yet shipped
-                // `[[plugin.tools.outbound]]` in their manifests.
-                // Removed in step 6 once the plugin patches
-                // publish.
+                // step 6 / Phase 93.5.d closure). Skips when the
+                // plugin manifest declares
+                // `[[plugin.tools.outbound]]` — the generic loop
+                // above handled registration already; firing the
+                // fallback would double-register.
+                #[cfg(any(feature = "plugin-whatsapp", feature = "plugin-telegram"))]
+                let (wa_in_manifest, tg_in_manifest) = {
+                    let guard = plugin_handles_cell.read().await;
+                    match guard.as_ref() {
+                        Some(handles) => (
+                            handles
+                                .get("whatsapp")
+                                .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
+                                .unwrap_or(false),
+                            handles
+                                .get("telegram")
+                                .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
+                                .unwrap_or(false),
+                        ),
+                        None => (false, false),
+                    }
+                };
                 #[cfg(feature = "plugin-whatsapp")]
-                if cfg.plugins.iter().any(|p| p == "whatsapp") {
+                if cfg.plugins.iter().any(|p| p == "whatsapp") && !wa_in_manifest {
                     nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
                 }
                 #[cfg(feature = "plugin-telegram")]
-                if cfg.plugins.iter().any(|p| p == "telegram") {
+                if cfg.plugins.iter().any(|p| p == "telegram") && !tg_in_manifest {
                     nexo_plugin_telegram::register_telegram_tools(&tools);
+                }
+                #[cfg(not(any(feature = "plugin-whatsapp", feature = "plugin-telegram")))]
+                {
+                    // No plugin-* features enabled — no fallback to skip.
+                    // Suppress unused-variable warnings on `wa_in_manifest`
+                    // + `tg_in_manifest` by declaring them as `_`.
                 }
                 if cfg.heartbeat.enabled {
                     if let Some(mem) = memory.clone() {
@@ -15334,15 +15405,20 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
         Some(p) => p.health_map().await,
         None => None,
     };
-    body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
+    // Phase 93.5.d closure — email metrics direct call skips
+    // when email plugin manifest declares `[plugin.metrics]`.
+    // The broker scrape path (below) takes over for migrated
+    // plugins; legacy call stays for unmigrated email crates.
+    if !plugin_declares_metrics(&health.plugin_metrics, "email") {
+        body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
+    }
     // Phase 81.33.b.real Stage 5 — scrape every plugin that
     // declared `[plugin.metrics] prometheus = true`. Sequential
     // dispatch with per-plugin timeout; one slow / unresponsive
     // plugin warn-logs + contributes empty (handler does not
-    // stall). Once `nexo-plugin-email` ships the manifest section
-    // the hardcoded line above becomes dead weight; until then
-    // both paths coexist (in-process call + broker scrape will
-    // both fire for plugins that opt in to manifest).
+    // stall). When `nexo-plugin-email` ships the manifest section
+    // the daemon switches automatically: the direct call above
+    // skips + this scrape line takes over.
     body.push_str(
         &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics)
             .await,
