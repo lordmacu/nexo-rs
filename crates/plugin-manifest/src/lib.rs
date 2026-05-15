@@ -13,6 +13,7 @@
 pub mod admin;
 pub mod compat_v1;
 pub mod config_schema;
+pub mod dashboard;
 pub mod discover;
 pub mod error;
 pub mod http;

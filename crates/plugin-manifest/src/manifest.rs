@@ -154,6 +154,16 @@ pub struct PluginSection {
     #[serde(default)]
     pub meta: MetaSection,
 
+    /// Phase 81.33.b.real Stage 6 — setup wizard dashboard
+    /// surface declaration. Plugins describe how their instances
+    /// + auth state are discovered. `nexo-setup`'s generic
+    /// `ManifestDashboardSource` consumes this section so new
+    /// canonical channels (signal, sms, …) auto-surface in the
+    /// wizard without an in-tree
+    /// `crates/setup/src/services/channels_dashboard.rs` impl.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dashboard: Option<crate::dashboard::PluginDashboardSection>,
+
     /// Phase 81.33.b.real Stage 5 — Prometheus metrics
     /// declaration. Plugins exposing metrics opt in here; the
     /// daemon's `/metrics` aggregator iterates declarers,

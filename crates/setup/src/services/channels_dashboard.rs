@@ -171,6 +171,162 @@ impl ChannelDashboardSource for EmailDashboardSource {
     }
 }
 
+/// Phase 81.33.b.real Stage 6 — manifest-driven dashboard
+/// source. Consumes a parsed
+/// `[plugin.dashboard]` section and interprets it generically
+/// (no per-channel hardcoded impl needed). New canonical
+/// channels (signal, sms, …) drop a manifest section + auto-
+/// surface in the wizard.
+pub struct ManifestDashboardSource {
+    plugin_id: String,
+    section: nexo_plugin_manifest::dashboard::PluginDashboardSection,
+}
+
+impl ManifestDashboardSource {
+    pub fn new(
+        plugin_id: impl Into<String>,
+        section: nexo_plugin_manifest::dashboard::PluginDashboardSection,
+    ) -> Self {
+        Self {
+            plugin_id: plugin_id.into(),
+            section,
+        }
+    }
+}
+
+impl ChannelDashboardSource for ManifestDashboardSource {
+    fn channel_id(&self) -> &'static str {
+        // The trait demands `'static`; we keep this leaked once
+        // per source. Channel ids come from manifest data and
+        // live for daemon lifetime.
+        // Lazy Box::leak per first call; cached via OnceLock not
+        // needed because the trait method returns one of the
+        // leaked statics that we initialise on construction.
+        // Simplest: leak in `new` and store as &'static — but
+        // String allocation pattern doesn't allow that without
+        // unsafe-ish. We use a tiny intern table keyed by
+        // plugin_id.
+        intern_static_str(&self.plugin_id)
+    }
+
+    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
+        use nexo_plugin_manifest::dashboard::InstanceLayout;
+        match &self.section.layout {
+            InstanceLayout::Single => Ok(vec![ChannelEntry {
+                channel: self.plugin_id.clone(),
+                instance: "default".into(),
+                auth: probe_auth(secrets_dir, &self.section.auth_check, None),
+                bound_agents: list_agents_with_plugin(config_dir, &self.plugin_id)?,
+            }]),
+            InstanceLayout::WorkspaceWalk { subdir } => {
+                let mut out = Vec::new();
+                let workspace_root = config_dir
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join("data/workspace");
+                let mut saw_instance = false;
+                if workspace_root.is_dir() {
+                    if let Ok(read) = std::fs::read_dir(&workspace_root) {
+                        for ent in read.flatten() {
+                            let agent = match ent.file_name().to_str().map(str::to_string) {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let plugin_dir = ent.path().join(subdir);
+                            if !plugin_dir.is_dir() {
+                                continue;
+                            }
+                            if let Ok(insts) = std::fs::read_dir(&plugin_dir) {
+                                for inst in insts.flatten() {
+                                    let instance = match inst.file_name().to_str().map(str::to_string)
+                                    {
+                                        Some(s) => s,
+                                        None => continue,
+                                    };
+                                    out.push(ChannelEntry {
+                                        channel: self.plugin_id.clone(),
+                                        instance: format!("{agent}/{instance}"),
+                                        auth: probe_auth(
+                                            secrets_dir,
+                                            &self.section.auth_check,
+                                            Some(&inst.path()),
+                                        ),
+                                        bound_agents: vec![agent.clone()],
+                                    });
+                                    saw_instance = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !saw_instance {
+                    out.push(ChannelEntry {
+                        channel: self.plugin_id.clone(),
+                        instance: "default".into(),
+                        auth: AuthState::NotAuthenticated,
+                        bound_agents: list_agents_with_plugin(config_dir, &self.plugin_id)?,
+                    });
+                }
+                Ok(out)
+            }
+        }
+    }
+}
+
+/// Resolve an auth-check spec against the filesystem.
+/// `instance_dir` only used by `SessionDirFiles`; `secrets_dir`
+/// used by `FilePresence`.
+fn probe_auth(
+    secrets_dir: &Path,
+    check: &nexo_plugin_manifest::dashboard::AuthCheck,
+    instance_dir: Option<&Path>,
+) -> AuthState {
+    use nexo_plugin_manifest::dashboard::AuthCheck;
+    match check {
+        AuthCheck::FilePresence { path } => file_state(&secrets_dir.join(path)),
+        AuthCheck::SessionDirFiles { candidates } => match instance_dir {
+            Some(dir) => {
+                if !dir.is_dir() {
+                    return AuthState::NotAuthenticated;
+                }
+                for c in candidates {
+                    if dir.join(c).exists() {
+                        return AuthState::Authenticated;
+                    }
+                }
+                if std::fs::read_dir(dir)
+                    .map(|r| r.flatten().next().is_some())
+                    .unwrap_or(false)
+                {
+                    AuthState::Stale
+                } else {
+                    AuthState::NotAuthenticated
+                }
+            }
+            None => AuthState::NotAuthenticated,
+        },
+    }
+}
+
+/// Phase 81.33.b.real Stage 6 — process-wide intern table for
+/// channel id strings sourced from plugin manifests. The
+/// `ChannelDashboardSource::channel_id` trait method demands
+/// `&'static str`; manifest data is owned `String`. Bounded by
+/// plugin count.
+fn intern_static_str(s: &str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static INTERN: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let map = INTERN.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().expect("intern table poisoned");
+    if let Some(existing) = guard.get(s) {
+        return *existing;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    guard.insert(s.to_string(), leaked);
+    leaked
+}
+
 /// Default registry of canonical dashboard sources. Whatsapp
 /// source is `#[cfg(feature = "plugin-whatsapp")]`-gated so a
 /// slim daemon binary (Phase 93.12.c) does NOT surface whatsapp
@@ -181,6 +337,28 @@ pub fn default_dashboard_sources() -> Vec<Box<dyn ChannelDashboardSource>> {
     #[cfg(feature = "plugin-whatsapp")]
     out.push(Box::new(WhatsappDashboardSource));
     out.push(Box::new(EmailDashboardSource));
+    out
+}
+
+/// Phase 81.33.b.real Stage 6 — build dashboard sources from a
+/// slice of parsed plugin manifests. Plugins that declare
+/// `[plugin.dashboard]` contribute a `ManifestDashboardSource`;
+/// plugins that don't are silently skipped. Combine with
+/// [`default_dashboard_sources`] for a hybrid registry that
+/// keeps canonical-plugin coverage while picking up new
+/// manifest-driven channels automatically.
+pub fn dashboard_sources_from_manifests(
+    manifests: &[nexo_plugin_manifest::manifest::PluginManifest],
+) -> Vec<Box<dyn ChannelDashboardSource>> {
+    let mut out: Vec<Box<dyn ChannelDashboardSource>> = Vec::new();
+    for m in manifests {
+        if let Some(section) = m.plugin.dashboard.as_ref() {
+            out.push(Box::new(ManifestDashboardSource::new(
+                m.plugin.id.clone(),
+                section.clone(),
+            )));
+        }
+    }
     out
 }
 
@@ -915,4 +1093,167 @@ fn locate_agent_file(config_dir: &Path, agent_id: &str) -> Option<std::path::Pat
         }
     }
     None
+}
+
+#[cfg(test)]
+mod manifest_dashboard_tests {
+    use super::*;
+    use nexo_plugin_manifest::dashboard::{
+        AuthCheck, InstanceLayout, PluginDashboardSection,
+    };
+
+    fn write_secret(secrets_dir: &Path, filename: &str, content: &str) {
+        std::fs::write(secrets_dir.join(filename), content).expect("write secret");
+    }
+
+    fn telegram_section() -> PluginDashboardSection {
+        PluginDashboardSection {
+            layout: InstanceLayout::Single,
+            auth_check: AuthCheck::FilePresence {
+                path: "telegram_bot_token.txt".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn manifest_source_single_layout_with_present_secret_reports_authenticated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let secrets_dir = dir.path().join("secrets");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&secrets_dir).unwrap();
+        write_secret(&secrets_dir, "telegram_bot_token.txt", "abc");
+        let src =
+            ManifestDashboardSource::new("telegram", telegram_section());
+        let out = src.discover(&config_dir, &secrets_dir).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].channel, "telegram");
+        assert_eq!(out[0].instance, "default");
+        assert!(matches!(out[0].auth, AuthState::Authenticated));
+    }
+
+    #[test]
+    fn manifest_source_single_layout_with_missing_secret_reports_not_authenticated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let secrets_dir = dir.path().join("secrets");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&secrets_dir).unwrap();
+        let src =
+            ManifestDashboardSource::new("telegram", telegram_section());
+        let out = src.discover(&config_dir, &secrets_dir).unwrap();
+        assert!(matches!(out[0].auth, AuthState::NotAuthenticated));
+    }
+
+    #[test]
+    fn manifest_source_workspace_walk_finds_instance_with_session_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let secrets_dir = dir.path().join("secrets");
+        let workspace = dir.path().join("data/workspace");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&secrets_dir).unwrap();
+        // Layout: <workspace>/kate/whatsapp/inst1/session.db
+        let inst_dir = workspace.join("kate/whatsapp/inst1");
+        std::fs::create_dir_all(&inst_dir).unwrap();
+        std::fs::write(inst_dir.join("session.db"), "").unwrap();
+        let section = PluginDashboardSection {
+            layout: InstanceLayout::WorkspaceWalk {
+                subdir: "whatsapp".into(),
+            },
+            auth_check: AuthCheck::SessionDirFiles {
+                candidates: vec!["session.db".into(), "state.db".into()],
+            },
+        };
+        let src = ManifestDashboardSource::new("whatsapp", section);
+        let out = src.discover(&config_dir, &secrets_dir).unwrap();
+        // No instance found because data/workspace is sibling of config_dir; layout config_dir.parent()/data/workspace
+        // The walk uses config_dir.parent().unwrap_or(".").join("data/workspace") so it lands at <tmp>/data/workspace which we created.
+        assert!(!out.is_empty(), "expected at least one entry");
+        assert!(out.iter().any(|e| e.instance == "kate/inst1"));
+        let entry = out.iter().find(|e| e.instance == "kate/inst1").unwrap();
+        assert!(matches!(entry.auth, AuthState::Authenticated));
+    }
+
+    #[test]
+    fn manifest_source_workspace_walk_falls_back_to_default_when_no_instance() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = dir.path().join("config");
+        let secrets_dir = dir.path().join("secrets");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&secrets_dir).unwrap();
+        let section = PluginDashboardSection {
+            layout: InstanceLayout::WorkspaceWalk {
+                subdir: "whatsapp".into(),
+            },
+            auth_check: AuthCheck::SessionDirFiles {
+                candidates: vec!["session.db".into()],
+            },
+        };
+        let src = ManifestDashboardSource::new("whatsapp", section);
+        let out = src.discover(&config_dir, &secrets_dir).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].instance, "default");
+        assert!(matches!(out[0].auth, AuthState::NotAuthenticated));
+    }
+
+    #[test]
+    fn dashboard_sources_from_manifests_filters_to_declaring_plugins() {
+        use nexo_plugin_manifest::manifest::{Capabilities, MetaSection, PluginManifest, PluginSection};
+        use semver::{Version, VersionReq};
+        fn skeleton(id: &str, dashboard: Option<PluginDashboardSection>) -> PluginManifest {
+            PluginManifest {
+                manifest_version: 2,
+                plugin: PluginSection {
+                    id: id.into(),
+                    version: Version::new(0, 1, 0),
+                    name: id.into(),
+                    description: id.into(),
+                    min_nexo_version: VersionReq::parse(">=0.1.0").unwrap(),
+                    enabled_by_default: false,
+                    capabilities: Capabilities::default(),
+                    tools: Default::default(),
+                    advisors: Default::default(),
+                    agents: Default::default(),
+                    channels: Default::default(),
+                    skills: Default::default(),
+                    config: Default::default(),
+                    config_schema: None,
+                    credentials_schema: None,
+                    extends: Default::default(),
+                    requires: Default::default(),
+                    capability_gates: Default::default(),
+                    ui: Default::default(),
+                    pairing: Default::default(),
+                    dashboard,
+                    metrics: None,
+                    admin: None,
+                    http: None,
+                    contracts: Default::default(),
+                    meta: MetaSection::default(),
+                    entrypoint: Default::default(),
+                    supervisor: Default::default(),
+                    sandbox: Default::default(),
+                    subscriptions: Default::default(),
+                    http_server: None,
+                },
+            }
+        }
+        let manifests = vec![
+            skeleton("plugin_a", None),
+            skeleton(
+                "plugin_b",
+                Some(PluginDashboardSection {
+                    layout: InstanceLayout::Single,
+                    auth_check: AuthCheck::FilePresence {
+                        path: "b.txt".into(),
+                    },
+                }),
+            ),
+            skeleton("plugin_c", None),
+        ];
+        let sources = dashboard_sources_from_manifests(&manifests);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].channel_id(), "plugin_b");
+    }
 }

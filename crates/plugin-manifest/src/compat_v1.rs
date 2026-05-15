@@ -354,6 +354,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         capability_gates: Default::default(),
         ui: Default::default(),
         pairing: Default::default(),
+        dashboard: None,
         metrics: None,
         admin: None,
         http: None,
