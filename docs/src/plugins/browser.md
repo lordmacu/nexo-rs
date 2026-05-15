@@ -61,6 +61,14 @@ inbound event from a web page to the agent.
 
 ## Config
 
+Two shapes accepted: a single map (0.2.x back-compat — keeps the
+legacy per-`agent_id` profile fan-out from Phase 81.17.c.multi-profile)
+**or** a sequence of maps (0.3.0+ declared multi-instance — operator
+names each session, every instance has its own Chrome process +
+`user_data_dir`).
+
+### Single-map (legacy)
+
 ```yaml
 # config/plugins/browser.yaml
 browser:
@@ -74,6 +82,42 @@ browser:
   command_timeout_ms: 15000
   args: []                           # extra CLI flags for Chrome
 ```
+
+### Multi-instance (0.3.0+)
+
+```yaml
+# config/plugins/browser.yaml
+browser:
+  - instance: marketing
+    headless: false
+    user_data_dir: ""               # empty → ${state_dir}/instances/marketing/
+    allow_agents: [ana]             # empty = accept any agent
+  - instance: research
+    headless: true
+    allow_agents: [juan, marketing]
+```
+
+Every `browser_*` tool gains an optional `instance: string` argument.
+Resolution:
+
+1. Explicit `instance` matches a declared label → routes there.
+2. No `instance` + exactly 1 declared instance → uses it (compat shim).
+3. No `instance` + 0 declared instances → falls back to the legacy
+   per-`agent_id` profile path.
+4. No `instance` + N>1 declared instances → `ArgumentInvalid` (the
+   caller must name an instance).
+
+Pairing flow: the dashboard surfaces each declared instance with its
+`.nexo-paired` sentinel status. Operator clicks "open Chrome" via the
+admin RPC `nexo/admin/browser/launch_visible`, logs in to the sites
+manually, then "mark paired" persists the sentinel so the wizard
+flips green. The runtime `headless: true → false` toggle on
+`launch_visible` is a deferred follow-up
+(`browser.launch_visible.runtime`).
+
+Cost: ~200-500 MB RAM per declared Chrome instance. Single-instance
+shared-profile mode stays available via the legacy single-map shape
+or a 1-element array.
 
 | Field | Default | Purpose |
 |-------|---------|---------|
