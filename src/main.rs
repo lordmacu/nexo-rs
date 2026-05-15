@@ -3296,7 +3296,7 @@ async fn main() -> Result<()> {
                 ))
             })
         });
-    if email_plugin.is_none() && cfg.plugins.email.is_some() {
+    if email_plugin.is_none() && cfg.plugins.is_active("email") {
         tracing::info!("email plugin present but disabled / empty / missing creds — skipping");
     }
     plugins
@@ -3454,7 +3454,7 @@ async fn main() -> Result<()> {
         nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
     > = Vec::new();
     // Phase 81.33.e — telegram subprocess flip via shared helper.
-    if !cfg.plugins.telegram.is_empty() {
+    if cfg.plugins.is_active("telegram") {
         let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
             &discovery_cfg_clone,
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
@@ -3496,7 +3496,7 @@ async fn main() -> Result<()> {
     // so events arriving on `plugin.inbound.whatsapp.<inst>` find
     // the daemon-owned `wa_pairing` slots already populated above.
     // Phase 81.33.e — whatsapp subprocess flip via shared helper.
-    if !cfg.plugins.whatsapp.is_empty() {
+    if cfg.plugins.is_active("whatsapp") {
         let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
             &discovery_cfg_clone,
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
@@ -15801,19 +15801,30 @@ fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
     println!("broker: {:?}", cfg.broker.broker.kind);
     println!();
     println!("plugins:");
-    for (i, wa) in cfg.plugins.whatsapp.iter().enumerate() {
-        let label = wa.instance.as_deref().unwrap_or("<default>");
-        println!("  • whatsapp[{i}] (instance={label})");
-    }
-    for (i, tg) in cfg.plugins.telegram.iter().enumerate() {
-        let label = tg.instance.as_deref().unwrap_or("<default>");
-        println!("  • telegram[{i}] (instance={label})");
-    }
-    if cfg.plugins.email.is_some() {
-        println!("  • email");
-    }
-    if cfg.plugins.browser.is_some() {
-        println!("  • browser");
+    // Phase 93.5.a — walk the opaque entries map so newly-declared
+    // plugins (slack/discord/sms) surface in `nexo doctor` without
+    // a daemon-side typed-field addition. Daemon-native channels
+    // (whatsapp/telegram) keep showing per-instance labels by
+    // dipping into the still-typed fields when present.
+    for plugin_id in cfg.plugins.plugin_ids() {
+        match plugin_id.as_str() {
+            "whatsapp" => {
+                for (i, wa) in cfg.plugins.whatsapp.iter().enumerate() {
+                    let label = wa.instance.as_deref().unwrap_or("<default>");
+                    println!("  • whatsapp[{i}] (instance={label})");
+                }
+            }
+            "telegram" => {
+                for (i, tg) in cfg.plugins.telegram.iter().enumerate() {
+                    let label = tg.instance.as_deref().unwrap_or("<default>");
+                    println!("  • telegram[{i}] (instance={label})");
+                }
+            }
+            other if cfg.plugins.is_active(other) => {
+                println!("  • {other}");
+            }
+            _ => {}
+        }
     }
     println!();
     println!("agents ({}):", agents.len());
