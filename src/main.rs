@@ -15080,6 +15080,13 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
         None => None,
     };
     body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
+    // Phase 92 follow-up — surface tunnel lifecycle counters
+    // (`tunnel_starts_total`, `tunnel_starts_failed_total`,
+    // `tunnel_shutdowns_total`). Per-tunnel supervisor counters
+    // (`tunnel_streams_total` etc.) need live `TunnelHandle`
+    // references plumbed through a handle registry and stay
+    // dark until that follow-up lands.
+    body.push_str(&nexo_tunnel_quick::metrics::render_prometheus());
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
 }
