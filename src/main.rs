@@ -2393,6 +2393,16 @@ async fn main() -> Result<()> {
     // runtime one). Sharing the Arc closes that gap.
     let llm_registry = std::sync::Arc::new(nexo_llm::LlmRegistry::with_builtins());
 
+    // Phase 81.33.b.real Stage 4 — shared admin router Arc.
+    // Hoisted ABOVE the admin_bootstrap if-block so the same Arc
+    // survives into the post-wire `register()` loop further down
+    // in boot. Empty at construction; entries land after
+    // `wire_plugin_registry` returns. Interior mutability makes
+    // mid-flight registrations visible to in-flight dispatch.
+    let plugin_admin_router = std::sync::Arc::new(
+        nexo_pairing::plugin_admin::PluginAdminRouter::new(),
+    );
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2716,6 +2726,14 @@ async fn main() -> Result<()> {
                     nexo_setup::persisters::WhatsappPersister::new(),
                 ],
                 pairing_triggers,
+                // Phase 81.33.b.real Stage 4 — manifest-driven
+                // plugin admin router. Shared Arc — the dispatcher
+                // holds a clone and the daemon populates entries
+                // AFTER `wire_plugin_registry` returns. Interior
+                // mutability on `PluginAdminRouter` makes the
+                // post-wire `register()` calls visible to in-flight
+                // dispatch operations.
+                plugin_admin_router: Some(plugin_admin_router.clone()),
             },
         )
         .await
@@ -3824,6 +3842,37 @@ async fn main() -> Result<()> {
         Arc::new(std::sync::OnceLock::new());
     let tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>> =
         Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    // Phase 81.33.b.real Stage 4 — populate the plugin admin router
+    // from every loaded plugin's `[plugin.admin]` manifest section.
+    // Reserved-prefix collisions warn-log + skip (the daemon's
+    // own admin namespaces are never overwritten). The router
+    // Arc is shared with the dispatcher; in-flight admin RPC
+    // calls observe new entries immediately via interior
+    // mutability.
+    for (plugin_id, handle) in wire.plugin_handles.iter() {
+        if let Some(admin) = handle.manifest().plugin.admin.as_ref() {
+            match plugin_admin_router.register(
+                plugin_id,
+                &admin.method_prefix,
+                &admin.broker_topic_prefix,
+                admin.timeout_seconds.map(std::time::Duration::from_secs),
+            ) {
+                Ok(()) => tracing::info!(
+                    plugin = %plugin_id,
+                    method_prefix = %admin.method_prefix,
+                    broker_topic_prefix = %admin.broker_topic_prefix,
+                    "registered plugin admin route (Phase 81.33.b.real Stage 4)",
+                ),
+                Err(err) => tracing::warn!(
+                    plugin = %plugin_id,
+                    method_prefix = %admin.method_prefix,
+                    error = %err,
+                    "plugin admin route registration rejected — reserved prefix",
+                ),
+            }
+        }
+    }
+
     // Phase 81.33.b.real Stage 2 — build the plugin HTTP router
     // from every loaded plugin's `[plugin.http]` manifest section.
     // Plugins that don't declare the section contribute nothing

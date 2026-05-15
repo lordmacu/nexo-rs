@@ -181,6 +181,20 @@ pub struct AdminRpcDispatcher {
     /// WhatsApp bot channel handle. `None` disables
     /// `nexo/admin/whatsapp/bot/*`.
     wa_bot_handle: super::wa_bot::WaBotHandleArc,
+    /// Phase 81.33.b.real Stage 4 — generic plugin admin router.
+    /// Plugins declaring `[plugin.admin] method_prefix = "..."`
+    /// in their manifest register with this router; the
+    /// dispatcher consults it BEFORE returning method-not-found
+    /// so plugin admin methods get forwarded via broker JSON-RPC
+    /// without needing a hardcoded `.with_<plugin>_handle()`
+    /// builder. `None` = no plugin admin routes (or daemon
+    /// running without subprocess plugins).
+    plugin_admin_router:
+        Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
+    /// Broker handle paired with `plugin_admin_router` so the
+    /// dispatcher can issue the forward request. `None` when the
+    /// router is also `None`.
+    plugin_admin_broker: Option<nexo_broker::AnyBroker>,
     /// Push channel for
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
@@ -397,6 +411,8 @@ impl AdminRpcDispatcher {
             llm_provider_probe: None,
             llm_completer: None,
             auth_rotator: None,
+            plugin_admin_router: None,
+            plugin_admin_broker: None,
         }
     }
 
@@ -545,6 +561,25 @@ impl AdminRpcDispatcher {
     /// `nexo/admin/whatsapp/bot/{list,send}`. Pass the
     /// implementation owned by the WhatsApp plugin at boot. Calling
     /// this with `None` (default) disables the routes.
+    /// Phase 81.33.b.real Stage 4 — install the generic plugin
+    /// admin router so manifest-declared admin methods get
+    /// forwarded via broker JSON-RPC. Plugins opt in by adding
+    /// `[plugin.admin] method_prefix = "..."` to their manifest;
+    /// the daemon iterates plugin handles at boot and registers
+    /// every declaration. The router is consulted BEFORE the
+    /// dispatcher returns method-not-found, so plugin admin
+    /// commands work without needing a per-plugin
+    /// `.with_<plugin>_handle()` builder method.
+    pub fn with_plugin_admin_router(
+        mut self,
+        router: std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>,
+        broker: nexo_broker::AnyBroker,
+    ) -> Self {
+        self.plugin_admin_router = Some(router);
+        self.plugin_admin_broker = Some(broker);
+        self
+    }
+
     pub fn with_wa_bot_handle(mut self, handle: Arc<dyn super::wa_bot::WaBotHandle>) -> Self {
         self.wa_bot_handle = Some(handle);
         self
@@ -943,8 +978,22 @@ impl AdminRpcDispatcher {
         let tenant_id = super::audit::extract_tenant_id(&params);
 
         // 1. Method routing — capability lookup serves double
-        //    duty: identifies the method, names the gate.
-        let Some(capability) = Self::required_capability(method) else {
+        //    duty: identifies the method, names the gate. Phase
+        //    81.33.b.real Stage 4 adds a fallback: methods unknown
+        //    to the static map AND matched by the
+        //    `plugin_admin_router` are treated as gated by
+        //    `channels_crud` (reuse the existing capability so
+        //    operators with channel-admin grants can call plugin
+        //    admin methods without a fresh capability). Per-plugin
+        //    capability grants are a follow-up if needed.
+        let static_cap = Self::required_capability(method);
+        let plugin_router_match = self
+            .plugin_admin_router
+            .as_ref()
+            .and_then(|r| r.match_method(method).is_some().then_some(()));
+        let Some(capability) =
+            static_cap.or_else(|| plugin_router_match.map(|_| "channels_crud"))
+        else {
             let row = AdminAuditRow {
                 microapp_id: microapp_id.to_string(),
                 method: method.to_string(),
@@ -1005,6 +1054,40 @@ impl AdminRpcDispatcher {
 
     /// Method router.
     async fn call_handler(&self, microapp_id: &str, method: &str, params: Value) -> AdminRpcResult {
+        // Phase 81.33.b.real Stage 4 — generic plugin admin
+        // forwarder. Methods whose prefix matches a manifest-
+        // declared `[plugin.admin] method_prefix` get forwarded
+        // via broker JSON-RPC; the plugin's subprocess handles
+        // internal dispatch. Runs BEFORE the typed match arms so
+        // a plugin that declares `nexo/admin/whatsapp/bot/` wins
+        // over the legacy hardcoded `wa_bot_handle` block —
+        // smooth migration once canonical plugins ship the
+        // manifest section.
+        if let (Some(router), Some(broker)) =
+            (self.plugin_admin_router.as_ref(), self.plugin_admin_broker.as_ref())
+        {
+            if let Some(info) = router.match_method(method) {
+                match nexo_pairing::plugin_admin::forward_request(
+                    broker, info, method, params,
+                )
+                .await
+                {
+                    Ok(reply) => {
+                        if reply.ok {
+                            return AdminRpcResult::ok(reply.result);
+                        }
+                        return AdminRpcResult::err(AdminRpcError::Internal(
+                            reply.error,
+                        ));
+                    }
+                    Err(err) => {
+                        return AdminRpcResult::err(AdminRpcError::Internal(
+                            format!("plugin admin forward failed: {err}"),
+                        ));
+                    }
+                }
+            }
+        }
         match method {
             "nexo/admin/echo" => AdminRpcResult::ok(serde_json::json!({
                 "echoed": params,

@@ -10,6 +10,7 @@
 //! and ship full mini-applications (agents + tools + skills +
 //! channels + advisors + capability gates).
 
+pub mod admin;
 pub mod compat_v1;
 pub mod config_schema;
 pub mod discover;
