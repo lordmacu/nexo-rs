@@ -1,0 +1,45 @@
+# Phase 81.33.b.real reference plugin demo. Exercises every
+# manifest section a plugin can declare for full auto-discovery:
+#
+#   - `[plugin.pairing.adapter]` (Stage 1)
+#   - `[plugin.http]`            (Stage 2)
+#   - `[plugin.admin]`           (Stage 4)
+#   - `[plugin.metrics]`         (Stage 5)
+#   - `[plugin.dashboard]`       (Stage 6)
+#
+# Library crate (not a binary) — exports the broker handler
+# functions a real subprocess plugin would subscribe each topic
+# to. Tests round-trip every handler against a `LocalBroker` so
+# the JSON wire shape is locked down. Real plugin authors copy
+# this crate as a starting template.
+[package]
+name        = "nexo-reference-plugin"
+version     = "0.0.1"
+description = "Internal demo plugin — manifest + broker handler reference for plugin auto-discovery. Not published."
+publish     = false
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.dist]
+dist = false
+
+[dependencies]
+anyhow         = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+base64         = { workspace = true }
+
+[dev-dependencies]
+nexo-broker          = { path = "../../broker" }
+nexo-plugin-manifest = { path = "../../plugin-manifest" }
+tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json           = { workspace = true }
+toml                 = "0.8"
