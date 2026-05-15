@@ -265,6 +265,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 &rt.llm_registry,
                 &shared_hook_registry,
                 &shared_vector_backend_registry,
+                None, // Phase 93.7 — bundle threading from main.rs deferred; collect_credential_store no-ops when bundle is None.
                 |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
@@ -297,6 +298,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 &legacy_llm_registry,
                 &shared_hook_registry,
                 &shared_vector_backend_registry,
+                None, // Phase 93.7 — legacy factory path; bundle threading deferred.
                 |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \

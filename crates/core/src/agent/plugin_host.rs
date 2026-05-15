@@ -175,6 +175,27 @@ pub trait NexoPlugin: Send + Sync + 'static {
     ) -> Result<(), PluginConfigureError> {
         Ok(())
     }
+
+    /// Phase 93.7 — opt-in credential store contribution. Plugins
+    /// that own credentials return
+    /// `Some(Arc<dyn GenericCredentialStore>)`. Default `None` —
+    /// plugins without credentials (pure tools, browser pure-control,
+    /// …) skip.
+    ///
+    /// Called by the init-loop AFTER `configure(value)` + AFTER
+    /// `init(ctx)` succeed. The returned store is inserted into
+    /// `bundle.stores_v2` under the plugin's reported `plugin_id()`.
+    /// Collisions emit `tracing::warn!` (last-write-wins).
+    ///
+    /// Sync return — the store is plugin-side state already
+    /// initialised by `init` time; exposing it is an `Arc::clone`.
+    /// The store's own `list() / resolve_bytes()` methods are
+    /// async; only the lookup is sync.
+    fn credential_store(
+        &self,
+    ) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
+        None
+    }
 }
 
 /// Bundle of handles a plugin's `init` receives. Lifetimes tied

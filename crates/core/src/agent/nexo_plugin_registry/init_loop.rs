@@ -79,6 +79,10 @@ where
         let start = Instant::now();
         match handle.init(&mut ctx).await {
             Ok(()) => {
+                // Phase 93.7 — `run_plugin_init_loop` (non-factory)
+                // doesn't carry a `&CredentialsBundle`; the legacy
+                // path is tests/no-handle only. Bundle threading
+                // lives in `run_plugin_init_loop_with_factory`.
                 let duration_ms = start.elapsed().as_millis() as u64;
                 outcomes.insert(id, InitOutcome::Ok { duration_ms });
             }
@@ -183,6 +187,28 @@ async fn configure_plugin_with_value(
         handle.configure(&Value::Null).await
     } else {
         handle.configure(plugin_cfg).await
+    }
+}
+
+/// Phase 93.7 — collect a plugin's credential store contribution
+/// (if any) and insert into `bundle.stores_v2` under the plugin's
+/// reported `plugin_id()`. Last-write-wins on collision; emits
+/// `tracing::warn!` on overwrite. No-op when `bundle` is `None`
+/// (tests that drive the init loop without a real bundle) or when
+/// the plugin returns `None` from `credential_store()`.
+fn collect_credential_store(
+    handle: &Arc<dyn NexoPlugin>,
+    bundle: Option<&nexo_auth::wire::CredentialsBundle>,
+) {
+    let Some(bundle) = bundle else { return };
+    let Some(store) = handle.credential_store() else { return };
+    let plugin_id = store.plugin_id().to_string();
+    if let Some(_replaced) = bundle.stores_v2.insert(plugin_id.clone(), store) {
+        tracing::warn!(
+            target: "auth.stores.collision",
+            plugin_id = %plugin_id,
+            "plugin store overwrote existing entry in bundle.stores_v2",
+        );
     }
 }
 
@@ -562,6 +588,7 @@ pub async fn run_plugin_init_loop_with_factory<'env, F>(
     llm_registry: &Arc<nexo_llm::LlmRegistry>,
     hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
     vector_backend_registry: &Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
+    bundle: Option<&nexo_auth::wire::CredentialsBundle>,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
@@ -621,6 +648,9 @@ where
                         let start = std::time::Instant::now();
                         match handle.init(&mut ctx).await {
                             Ok(()) => {
+                                // Phase 93.7 — collect plugin's
+                                // credential store contribution.
+                                collect_credential_store(&handle, bundle);
                                 let duration_ms = start.elapsed().as_millis() as u64;
                                 if let Some(failed) = check_namespace_after_init(&id, &ctx) {
                                     outcomes.insert(id, failed);
@@ -749,6 +779,9 @@ where
                 let start = std::time::Instant::now();
                 match handle.init(&mut ctx).await {
                     Ok(()) => {
+                        // Phase 93.7 — collect plugin's credential
+                        // store contribution.
+                        collect_credential_store(&handle, bundle);
                         let duration_ms = start.elapsed().as_millis() as u64;
                         if let Some(failed) = check_namespace_after_init(&id, &ctx) {
                             outcomes.insert(id, failed);
@@ -928,6 +961,7 @@ mod tests {
             &llm_reg,
             &hook_reg,
             &vec_reg,
+            None, // Phase 93.7 bundle (tests don't carry one)
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!("ctx_factory must NOT be invoked when the factory closure returns Err")
             },
@@ -1034,6 +1068,7 @@ mod tests {
             &llm_reg,
             &hook_reg,
             &vec_reg,
+            None, // Phase 93.7 bundle (tests don't carry one)
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!("ctx_factory must NOT be invoked for non-subprocess manifests")
             },
@@ -1105,6 +1140,7 @@ mod tests {
             &llm_reg,
             &hook_reg,
             &vec_reg,
+            None, // Phase 93.7 bundle (tests don't carry one)
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!("ctx_factory must NOT be invoked when config load fails")
             },
@@ -1303,5 +1339,160 @@ mod tests {
             .await
             .expect("no-schema path ok");
         assert!(plugin.configure_called.load(Ordering::SeqCst));
+    }
+
+    // ── Phase 93.7: collect_credential_store helper ─────────────
+
+    use nexo_auth::generic_store::GenericCredentialStore;
+    use nexo_auth::wire::CredentialsBundle;
+    use nexo_auth::handle::TELEGRAM;
+    use nexo_auth::CredentialHandle;
+    use nexo_auth::resolver::CredentialStores;
+
+    /// Phase 93.7 — minimal credential store impl for init-loop
+    /// helper tests. Carries an id + a "version tag" byte so
+    /// collision tests can distinguish which store won.
+    struct TestGenericStore {
+        id: String,
+        version: u8,
+    }
+
+    #[async_trait]
+    impl GenericCredentialStore for TestGenericStore {
+        fn plugin_id(&self) -> &str {
+            &self.id
+        }
+        async fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+        async fn issue(
+            &self,
+            account_id: &str,
+            agent_id: &str,
+        ) -> Result<CredentialHandle, nexo_auth::CredentialError> {
+            Ok(CredentialHandle::new(TELEGRAM, account_id, agent_id))
+        }
+        async fn resolve_bytes(
+            &self,
+            _handle: &CredentialHandle,
+        ) -> Result<Vec<u8>, nexo_auth::CredentialError> {
+            Ok(vec![self.version])
+        }
+    }
+
+    /// Phase 93.7 — minimal NexoPlugin that returns a contributed
+    /// store from `credential_store()`.
+    struct StoreContributingPlugin {
+        manifest: PluginManifest,
+        store: Arc<dyn GenericCredentialStore>,
+    }
+
+    #[async_trait]
+    impl NexoPlugin for StoreContributingPlugin {
+        fn manifest(&self) -> &PluginManifest {
+            &self.manifest
+        }
+        async fn init(
+            &self,
+            _ctx: &mut PluginInitContext<'_>,
+        ) -> Result<(), crate::agent::plugin_host::PluginInitError> {
+            Ok(())
+        }
+        async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+            Ok(())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn credential_store(&self) -> Option<Arc<dyn GenericCredentialStore>> {
+            Some(self.store.clone())
+        }
+    }
+
+    fn empty_bundle() -> CredentialsBundle {
+        let resolver = Arc::new(nexo_auth::AgentCredentialResolver::empty());
+        CredentialsBundle {
+            stores: CredentialStores::empty(),
+            resolver,
+            breakers: Arc::new(nexo_auth::breaker::BreakerRegistry::default()),
+            warnings: Vec::new(),
+            stores_v2: dashmap::DashMap::new(),
+        }
+    }
+
+    fn manifest_for(id: &str) -> PluginManifest {
+        let raw = format!(
+            "[plugin]\n\
+             id = \"{id}\"\n\
+             version = \"0.1.0\"\n\
+             name = \"{id}\"\n\
+             description = \"fixture\"\n\
+             min_nexo_version = \">=0.0.1\"\n",
+        );
+        toml::from_str(&raw).expect("manifest TOML parses")
+    }
+
+    #[tokio::test]
+    async fn collect_credential_store_inserts_plugin_contribution() {
+        let bundle = empty_bundle();
+        let plugin = Arc::new(StoreContributingPlugin {
+            manifest: manifest_for("alpha"),
+            store: Arc::new(TestGenericStore {
+                id: "alpha".into(),
+                version: 1,
+            }),
+        });
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        collect_credential_store(&handle, Some(&bundle));
+        assert!(bundle.stores_v2.get("alpha").is_some());
+        assert_eq!(bundle.stores_v2.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn collect_credential_store_collision_last_write_wins() {
+        let bundle = empty_bundle();
+        let plugin_v1 = Arc::new(StoreContributingPlugin {
+            manifest: manifest_for("dup"),
+            store: Arc::new(TestGenericStore {
+                id: "dup".into(),
+                version: 1,
+            }),
+        });
+        let plugin_v2 = Arc::new(StoreContributingPlugin {
+            manifest: manifest_for("dup"),
+            store: Arc::new(TestGenericStore {
+                id: "dup".into(),
+                version: 2,
+            }),
+        });
+        let h1: Arc<dyn NexoPlugin> = plugin_v1.clone();
+        let h2: Arc<dyn NexoPlugin> = plugin_v2.clone();
+        collect_credential_store(&h1, Some(&bundle));
+        collect_credential_store(&h2, Some(&bundle));
+
+        let dummy = CredentialHandle::new(TELEGRAM, "x", "y");
+        let bytes = bundle
+            .stores_v2
+            .get("dup")
+            .unwrap()
+            .resolve_bytes(&dummy)
+            .await
+            .unwrap();
+        assert_eq!(bytes, vec![2u8], "last write wins on collision");
+    }
+
+    #[tokio::test]
+    async fn collect_credential_store_skips_when_bundle_none() {
+        // Non-factory init path passes `None`; helper short-circuits.
+        let plugin = Arc::new(StoreContributingPlugin {
+            manifest: manifest_for("beta"),
+            store: Arc::new(TestGenericStore {
+                id: "beta".into(),
+                version: 1,
+            }),
+        });
+        let handle: Arc<dyn NexoPlugin> = plugin.clone();
+        // No assertion needed — function is no-op + must not panic.
+        collect_credential_store(&handle, None);
     }
 }
