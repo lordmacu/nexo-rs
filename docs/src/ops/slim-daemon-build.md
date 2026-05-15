@@ -11,7 +11,7 @@ compile graph.
 | Feature | Default | Drops crate |
 |---|---|---|
 | `plugin-telegram` | ✅ on | `nexo-plugin-telegram` |
-| `plugin-whatsapp` | ✅ on | `nexo-plugin-whatsapp` (setup-crate scaffolding shipped 93.12.c.1; daemon main.rs gates pending 93.12.c.2) |
+| `plugin-whatsapp` | ✅ on | `nexo-plugin-whatsapp` |
 | `plugin-browser` | off | (no-op placeholder; browser already has no Cargo dep) |
 
 `email` is NOT feature-gated — structurally in-process by
@@ -19,36 +19,51 @@ design (Phase 93.11 audit, bucket D). Autonomous worker +
 EmailToolContext + `/metrics` rendering all hold
 `Arc<EmailPlugin>` in-process. No subprocess driver today.
 
-### whatsapp gate status
+### whatsapp gate (93.12.c.1 + 93.12.c.2, shipped)
 
-Phase 93.12.c.1 shipped the cross-crate scaffolding:
+Both halves shipped — slim daemon binary can be built
+without `nexo-plugin-whatsapp` in its compile graph:
 
-- `nexo-plugin-whatsapp` moved to `optional = true` in
-  workspace deps + daemon deps.
-- `crates/setup/Cargo.toml` gains a `plugin-whatsapp` feature.
-- The daemon's `plugin-whatsapp` feature forwards through
-  `nexo-setup/plugin-whatsapp` so setup compiles whatsapp-less.
-- 3 setup-side import sites cfg-gated:
-  `writer.rs` (`session::pair_once` pairing flow),
-  `admin_bootstrap.rs` (`with_wa_bot_handle` admin RPC),
-  `admin_adapters.rs` (`WhatsAppTranslator` + outbound
-  topic constant).
+```bash
+cargo build --release --bin nexo --no-default-features
+cargo tree --no-default-features -i nexo-plugin-whatsapp
+# expected: error: package ID specification ... did not match any packages
+```
 
-Validated: `cargo check -p nexo-setup --no-default-features`
-green AND `cargo check -p nexo-setup --features plugin-whatsapp`
-green. Setup-crate tests 317/317 with default features.
+Gated sites:
 
-**Phase 93.12.c.2 (pending)** — daemon main.rs sites. The
-remaining ~10 blocks include `RuntimeHealth.wa_pairing`
-typed field (`BTreeMap<String, SharedPairingState>`), the
-instance-loop population (~25 LOC), subscriber spawn
-(~30 LOC), HTTP `/whatsapp/*` route dispatcher (~30 LOC),
-pairing trigger registration, pairing adapter constructor,
-register_whatsapp_tools fallbacks (boot + hot-spawn). Estimated
-~6-8h in a dedicated session. Until 93.12.c.2 lands,
-`cargo build --bin nexo --no-default-features` will fail
-fast on the whatsapp typed-import sites; the daemon ships
-with `plugin-whatsapp` enabled by default.
+| Crate | Site | Detail |
+|---|---|---|
+| `src/main.rs` | `RuntimeHealth.wa_pairing` | typed `BTreeMap<String, SharedPairingState>` field |
+| `src/main.rs` | `spawn_whatsapp_pairing_state_subscriber` | broker subscriber fn |
+| `src/main.rs` | `spawn_whatsapp_typing_presence_subscriber` | typing-presence broker bridge fn |
+| `src/main.rs` | `build_known_pairing_registry` | `WhatsappPairingAdapter::new` |
+| `src/main.rs` | admin pairing trigger map | `WhatsappPairingTrigger::from_configs` |
+| `src/main.rs` | instance loop | `wa_pairing` + `wa_tunnel_cfg` population |
+| `src/main.rs` | subscriber spawn block | `spawn_whatsapp_pairing_state_subscriber` call |
+| `src/main.rs` | tunnel auto-open | `/whatsapp/pair` Cloudflare quick tunnel |
+| `src/main.rs` | tool fallback (boot) | `register_whatsapp_tools` |
+| `src/main.rs` | tool fallback (hot-spawn) | `register_whatsapp_tools` |
+| `src/main.rs` | HTTP handler | `/whatsapp/*` route dispatcher |
+| `crates/setup/src/writer.rs` | pairing flow | `session::pair_once` + helpers + dual-shape `wipe_channel_session` |
+| `crates/setup/src/admin_bootstrap.rs` | admin RPC | `with_wa_bot_handle` + outbound translator |
+| `crates/setup/src/admin_adapters.rs` | outbound translator | `WhatsAppTranslator` struct + impl + tests |
+| `crates/setup/tests/channel_outbound_end_to_end.rs` | e2e test | file-level `#![cfg]` |
+
+Runtime impact when `--no-default-features`:
+
+- Admin RPC `/whatsapp/*` returns channel-unavailable.
+- HTTP `/whatsapp/*` route returns 404 (handler block absent).
+- Auto-open Cloudflare quick tunnel for pairing is skipped.
+- Pairing trigger map has no whatsapp entry — `admin pairing/start`
+  returns "channel not supported".
+- Outbound dispatcher rejects whatsapp routes with typed
+  `TranslationError::UnsupportedChannel`.
+
+WhatsApp still runs as a discovered subprocess if its
+manifest sits in `plugins.discovery.search_paths` and the
+binary is installed — the gate removes only compile-time
+imports. Subprocess broker path is unaffected.
 
 ## Building a telegram-less daemon
 

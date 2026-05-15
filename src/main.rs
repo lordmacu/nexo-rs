@@ -706,6 +706,11 @@ struct RuntimeHealth {
     ///   `/whatsapp/pair{,/qr,/status}` — first instance (back-compat)
     ///   `/whatsapp/<instance>/pair{,/qr,/status}` — targeted
     ///   `/whatsapp/instances` — JSON list of available instances
+    ///
+    /// Phase 93.12.c.2 — gated. Without `plugin-whatsapp` the
+    /// `SharedPairingState` type isn't linked, so the field is
+    /// absent; `/whatsapp/*` routes return 404.
+    #[cfg(feature = "plugin-whatsapp")]
     wa_pairing:
         std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
     /// `/email/health` exposes the per-account
@@ -1031,6 +1036,7 @@ fn seed_telegram_subprocess_env_for(
 /// instance label. Events arriving for an unknown instance are
 /// silently dropped (operator deleted the cfg entry between events
 /// and this task draining them).
+#[cfg(feature = "plugin-whatsapp")]
 #[allow(dead_code)] // Wired in the whatsapp-loop flip below.
 fn spawn_whatsapp_pairing_state_subscriber(
     broker: nexo_broker::AnyBroker,
@@ -1147,6 +1153,7 @@ fn spawn_whatsapp_pairing_state_subscriber(
 /// `WhatsappPlugin::with_emitter` used to wire the emitter
 /// directly; after the subprocess flip the emitter Arc doesn't
 /// cross the process boundary, so the broker hop closes the loop.
+#[cfg(feature = "plugin-whatsapp")]
 #[allow(dead_code)] // Wired in the whatsapp-loop block below.
 fn spawn_whatsapp_typing_presence_subscriber(
     broker: nexo_broker::AnyBroker,
@@ -1650,6 +1657,8 @@ fn register_instance_subprocess_factories<C>(
 /// manifest-driven `GenericBrokerPairingAdapter`.
 fn build_known_pairing_registry(broker: &nexo_broker::AnyBroker) -> nexo_pairing::PairingAdapterRegistry {
     let registry = nexo_pairing::PairingAdapterRegistry::new();
+    let _ = broker;
+    #[cfg(feature = "plugin-whatsapp")]
     registry.register(std::sync::Arc::new(
         nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
     ));
@@ -2486,8 +2495,10 @@ async fn main() -> Result<()> {
         // map. Empty when no whatsapp instance is configured;
         // admin pairing/start then returns
         // `channel not supported` instead of stalling Pending.
+        #[allow(unused_mut)]
         let mut pairing_triggers =
             nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers::new();
+        #[cfg(feature = "plugin-whatsapp")]
         if !cfg.plugins.whatsapp.is_empty() {
             pairing_triggers.insert(
                 nexo_plugin_whatsapp::pairing_trigger::CHANNEL_ID.to_string(),
@@ -3222,11 +3233,19 @@ async fn main() -> Result<()> {
     // broker bridge, so subprocess instances don't surface
     // `AgentEventKind::PeerTyping` events on the firehose until
     // a follow-up ships the RPC callback.
+    // Phase 93.12.c.2 — whatsapp orchestration state.
+    // With `plugin-whatsapp` off these variables don't exist
+    // (the plugin crate isn't linked); the RuntimeHealth struct,
+    // subscriber spawn, HTTP route handler, and tunnel orchestration
+    // are all gated symmetrically so the daemon binary still builds.
+    #[cfg(feature = "plugin-whatsapp")]
     let mut wa_pairing: std::collections::BTreeMap<
         String,
         nexo_plugin_whatsapp::pairing::SharedPairingState,
     > = std::collections::BTreeMap::new();
+    #[cfg(feature = "plugin-whatsapp")]
     let mut wa_tunnel_cfg: Option<nexo_config::WhatsappPublicTunnelConfig> = None;
+    #[cfg(feature = "plugin-whatsapp")]
     for (idx, wa_cfg) in cfg.plugins.whatsapp.clone().into_iter().enumerate() {
         if !wa_cfg.enabled {
             let label = wa_cfg.instance.clone().unwrap_or_else(|| "default".into());
@@ -3598,16 +3617,26 @@ async fn main() -> Result<()> {
     // session; cancellation handle wired into the existing
     // subprocess shutdown token so a graceful shutdown stops the
     // subscriber alongside the subprocess plugins.
-    let wa_pairing_arc = std::sync::Arc::new(wa_pairing.clone());
+    //
+    // Phase 93.12.c.2 — gated. Without `plugin-whatsapp` the
+    // daemon ships without the typed `SharedPairingState` so this
+    // subscriber (and the typing-presence bridge) can't exist.
+    // The shared shutdown token is still declared so downstream
+    // shutdown logic compiles uniformly.
+    #[cfg(feature = "plugin-whatsapp")]
     let wa_pairing_subscriber_shutdown = tokio_util::sync::CancellationToken::new();
-    let _wa_pairing_subscriber_handle = if !wa_pairing.is_empty() {
-        Some(spawn_whatsapp_pairing_state_subscriber(
-            broker.clone(),
-            wa_pairing_arc,
-            wa_pairing_subscriber_shutdown.clone(),
-        ))
-    } else {
-        None
+    #[cfg(feature = "plugin-whatsapp")]
+    let _wa_pairing_subscriber_handle = {
+        let wa_pairing_arc = std::sync::Arc::new(wa_pairing.clone());
+        if !wa_pairing.is_empty() {
+            Some(spawn_whatsapp_pairing_state_subscriber(
+                broker.clone(),
+                wa_pairing_arc,
+                wa_pairing_subscriber_shutdown.clone(),
+            ))
+        } else {
+            None
+        }
     };
 
     // Typing presence broker bridge. Subprocess
@@ -3619,6 +3648,7 @@ async fn main() -> Result<()> {
     // whatsapp instances are configured OR the bootstrap
     // emitter isn't wired yet (test boots without the SSE
     // firehose).
+    #[cfg(feature = "plugin-whatsapp")]
     let _wa_typing_subscriber_handle = match (
         wa_pairing.is_empty(),
         admin_bootstrap.as_ref().map(|bs| bs.event_emitter()),
@@ -3789,6 +3819,7 @@ async fn main() -> Result<()> {
     let health = RuntimeHealth {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
+        #[cfg(feature = "plugin-whatsapp")]
         wa_pairing: wa_pairing.clone(),
         email_plugin: email_plugin.clone(),
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
@@ -3801,7 +3832,14 @@ async fn main() -> Result<()> {
     // `/whatsapp/pair` publicly. Tunnels the first account's pairing
     // page; multi-account operators should reach their own instance
     // via `/whatsapp/<instance>/pair` on the tunnelled URL.
+    //
+    // Phase 93.12.c.2 — gated. Without `plugin-whatsapp` neither
+    // `wa_pairing` nor `wa_tunnel_cfg` exist; the auto-tunnel block
+    // is absent and operators wanting a tunnel for another channel
+    // must wire it through `nexo admin --tunnel` (Phase 92).
+    #[cfg(feature = "plugin-whatsapp")]
     let wa_first_pairing = wa_pairing.values().next().cloned();
+    #[cfg(feature = "plugin-whatsapp")]
     if let (Some(tcfg), Some(pairing)) = (wa_tunnel_cfg.as_ref(), wa_first_pairing) {
         if tcfg.enabled {
             let only_until_paired = tcfg.only_until_paired;
@@ -5125,6 +5163,7 @@ async fn main() -> Result<()> {
         // collision because old plugins declare zero outbound in
         // manifest). Removed in Phase 81.33.a step 6 after the
         // matching plugin patch publishes.
+        #[cfg(feature = "plugin-whatsapp")]
         if agent_cfg.plugins.iter().any(|p| p == "whatsapp") {
             nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
             tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent (fallback)");
@@ -6915,6 +6954,7 @@ async fn main() -> Result<()> {
                 // `[[plugin.tools.outbound]]` in their manifests.
                 // Removed in step 6 once the plugin patches
                 // publish.
+                #[cfg(feature = "plugin-whatsapp")]
                 if cfg.plugins.iter().any(|p| p == "whatsapp") {
                     nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
                 }
@@ -15166,6 +15206,12 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
     // Try to match `/whatsapp/...` routes first. Routing rules live in
     // `nexo_plugin_whatsapp::pairing::dispatch_route` so they're
     // unit-testable without a TCP listener.
+    //
+    // Phase 93.12.c.2 — gated behind `plugin-whatsapp`. Without the
+    // feature the daemon has no `wa_pairing` map (RuntimeHealth field
+    // is itself gated), so `/whatsapp/*` returns 404 from the
+    // bottom-of-fn fallthrough.
+    #[cfg(feature = "plugin-whatsapp")]
     if let Some(rest) = path.strip_prefix("/whatsapp/") {
         use nexo_plugin_whatsapp::pairing::{dispatch_route, WhatsappRoute};
         match dispatch_route(rest, &health.wa_pairing) {
