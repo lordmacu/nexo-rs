@@ -62,66 +62,141 @@ pub struct ChannelEntry {
     pub bound_agents: Vec<String>,
 }
 
-pub fn detect_channels(config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
-    let mut out: Vec<ChannelEntry> = Vec::new();
+/// Phase 93.10 — per-channel dashboard source. Each canonical
+/// channel (telegram / whatsapp / email) ships its own impl that
+/// encapsulates auth-state probing + instance discovery. The
+/// dispatcher iterates a registry built at startup so adding a
+/// 4th canonical channel (or feature-gating an existing one) is
+/// a single registration site change.
+///
+/// Sources live in `nexo-setup` rather than as `NexoPlugin` trait
+/// methods because (a) the auth-state shapes are filesystem-bound
+/// to setup's secret/workspace layout, and (b) plugin crates
+/// today are out-of-tree at distinct versions — pulling the trait
+/// into `NexoPlugin` would force a coordinated SDK + 3-plugin
+/// release for a setup-internal refactor.
+pub trait ChannelDashboardSource: Send + Sync {
+    /// Channel identifier as used in `agents.yaml::plugins` +
+    /// `cfg.plugins.entries.<id>`.
+    fn channel_id(&self) -> &'static str;
+    /// Discover all instances of this channel + their auth state
+    /// + bound agents. Returns multiple entries for multi-instance
+    /// channels (whatsapp walks `<workspace>/<agent>/whatsapp/<inst>/`).
+    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>>;
+}
 
-    out.push(ChannelEntry {
-        channel: "telegram".into(),
-        instance: "default".into(),
-        auth: telegram_auth_state(secrets_dir),
-        bound_agents: list_agents_with_plugin(config_dir, "telegram")?,
-    });
+pub struct TelegramDashboardSource;
+impl ChannelDashboardSource for TelegramDashboardSource {
+    fn channel_id(&self) -> &'static str {
+        "telegram"
+    }
+    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
+        Ok(vec![ChannelEntry {
+            channel: "telegram".into(),
+            instance: "default".into(),
+            auth: telegram_auth_state(secrets_dir),
+            bound_agents: list_agents_with_plugin(config_dir, "telegram")?,
+        }])
+    }
+}
 
-    let workspace_root = config_dir
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("data/workspace");
-    let mut wa_seen = false;
-    if workspace_root.is_dir() {
-        if let Ok(read) = std::fs::read_dir(&workspace_root) {
-            for ent in read.flatten() {
-                let agent = match ent.file_name().to_str().map(str::to_string) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                let wa_dir = ent.path().join("whatsapp");
-                if !wa_dir.is_dir() {
-                    continue;
-                }
-                if let Ok(insts) = std::fs::read_dir(&wa_dir) {
-                    for inst in insts.flatten() {
-                        let instance = match inst.file_name().to_str().map(str::to_string) {
-                            Some(s) => s,
-                            None => continue,
-                        };
-                        out.push(ChannelEntry {
-                            channel: "whatsapp".into(),
-                            instance: format!("{agent}/{instance}"),
-                            auth: whatsapp_auth_state(&inst.path()),
-                            bound_agents: vec![agent.clone()],
-                        });
-                        wa_seen = true;
+#[cfg(feature = "plugin-whatsapp")]
+pub struct WhatsappDashboardSource;
+#[cfg(feature = "plugin-whatsapp")]
+impl ChannelDashboardSource for WhatsappDashboardSource {
+    fn channel_id(&self) -> &'static str {
+        "whatsapp"
+    }
+    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
+        let _ = secrets_dir;
+        let mut out = Vec::new();
+        let workspace_root = config_dir
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("data/workspace");
+        let mut wa_seen = false;
+        if workspace_root.is_dir() {
+            if let Ok(read) = std::fs::read_dir(&workspace_root) {
+                for ent in read.flatten() {
+                    let agent = match ent.file_name().to_str().map(str::to_string) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let wa_dir = ent.path().join("whatsapp");
+                    if !wa_dir.is_dir() {
+                        continue;
+                    }
+                    if let Ok(insts) = std::fs::read_dir(&wa_dir) {
+                        for inst in insts.flatten() {
+                            let instance = match inst.file_name().to_str().map(str::to_string) {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            out.push(ChannelEntry {
+                                channel: "whatsapp".into(),
+                                instance: format!("{agent}/{instance}"),
+                                auth: whatsapp_auth_state(&inst.path()),
+                                bound_agents: vec![agent.clone()],
+                            });
+                            wa_seen = true;
+                        }
                     }
                 }
             }
         }
+        if !wa_seen {
+            out.push(ChannelEntry {
+                channel: "whatsapp".into(),
+                instance: "default".into(),
+                auth: AuthState::NotAuthenticated,
+                bound_agents: list_agents_with_plugin(config_dir, "whatsapp")?,
+            });
+        }
+        Ok(out)
     }
-    if !wa_seen {
-        out.push(ChannelEntry {
-            channel: "whatsapp".into(),
+}
+
+pub struct EmailDashboardSource;
+impl ChannelDashboardSource for EmailDashboardSource {
+    fn channel_id(&self) -> &'static str {
+        "email"
+    }
+    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
+        Ok(vec![ChannelEntry {
+            channel: "email".into(),
             instance: "default".into(),
-            auth: AuthState::NotAuthenticated,
-            bound_agents: list_agents_with_plugin(config_dir, "whatsapp")?,
-        });
+            auth: email_auth_state(secrets_dir),
+            bound_agents: list_agents_with_plugin(config_dir, "email")?,
+        }])
     }
+}
 
-    out.push(ChannelEntry {
-        channel: "email".into(),
-        instance: "default".into(),
-        auth: email_auth_state(secrets_dir),
-        bound_agents: list_agents_with_plugin(config_dir, "email")?,
-    });
+/// Default registry of canonical dashboard sources. Whatsapp
+/// source is `#[cfg(feature = "plugin-whatsapp")]`-gated so a
+/// slim daemon binary (Phase 93.12.c) does NOT surface whatsapp
+/// in the dashboard.
+pub fn default_dashboard_sources() -> Vec<Box<dyn ChannelDashboardSource>> {
+    let mut out: Vec<Box<dyn ChannelDashboardSource>> =
+        vec![Box::new(TelegramDashboardSource)];
+    #[cfg(feature = "plugin-whatsapp")]
+    out.push(Box::new(WhatsappDashboardSource));
+    out.push(Box::new(EmailDashboardSource));
+    out
+}
 
+pub fn detect_channels(config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
+    detect_channels_with_sources(&default_dashboard_sources(), config_dir, secrets_dir)
+}
+
+pub fn detect_channels_with_sources(
+    sources: &[Box<dyn ChannelDashboardSource>],
+    config_dir: &Path,
+    secrets_dir: &Path,
+) -> Result<Vec<ChannelEntry>> {
+    let mut out: Vec<ChannelEntry> = Vec::new();
+    for src in sources {
+        out.extend(src.discover(config_dir, secrets_dir)?);
+    }
     Ok(out)
 }
 
@@ -141,6 +216,7 @@ fn file_state(path: &Path) -> AuthState {
     }
 }
 
+#[cfg(feature = "plugin-whatsapp")]
 fn whatsapp_auth_state(session_dir: &Path) -> AuthState {
     if !session_dir.is_dir() {
         return AuthState::NotAuthenticated;
@@ -231,9 +307,15 @@ fn list_agents_with_plugin(config_dir: &Path, plugin: &str) -> Result<Vec<String
 ///    captura su chat_id y lo agrega a la allowlist. Si LIBRE: skip.
 /// 6. Exit. Un canal por invocación, sin loop, sin re-prompt.
 pub fn run_link_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
-    // 1. Pick channel.
-    let kinds = ["telegram", "whatsapp", "email"];
-    let labels: Vec<&str> = kinds.to_vec();
+    // 1. Pick channel. Phase 93.10 — `kinds` derived from
+    // registered dashboard sources so a slim build (whatsapp
+    // feature off) hides whatsapp from the picker entirely.
+    let sources = default_dashboard_sources();
+    let kinds: Vec<&'static str> = sources.iter().map(|s| s.channel_id()).collect();
+    if kinds.is_empty() {
+        bail!("no channel dashboard sources registered — daemon built without any channel plugin features");
+    }
+    let labels: Vec<&str> = kinds.clone();
     let ch_idx = prompt::pick_from_list("¿Qué canal querés configurar?", &labels)?;
     let channel = kinds[ch_idx];
 
