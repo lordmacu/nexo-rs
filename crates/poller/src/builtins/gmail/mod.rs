@@ -303,14 +303,13 @@ impl GmailPoller {
             return Ok(existing.clone());
         }
 
-        let stores = ctx.stores.as_ref().ok_or_else(|| PollerError::Config {
+        let bundle = ctx.bundle.as_ref().ok_or_else(|| PollerError::Config {
             job: ctx.job_id.clone(),
-            reason: "PollContext.stores is None — wire CredentialsBundle into PollerRunner".into(),
+            reason: "PollContext.bundle is None — wire CredentialsBundle into PollerRunner".into(),
         })?;
         let account =
-            stores
-                .google
-                .account(&account_id)
+            bundle
+                .google_account(&account_id)
                 .ok_or_else(|| PollerError::CredentialsMissing {
                     agent: ctx.agent_id.clone(),
                     channel: GOOGLE,

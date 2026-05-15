@@ -281,9 +281,7 @@ async fn client_for_agent(
         return Ok(Arc::clone(c.value()));
     }
     let account = bundle
-        .stores
-        .google
-        .account(&account_id)
+        .google_account(&account_id)
         .ok_or_else(|| anyhow!("Google account '{account_id}' not in store"))?;
     let cid = std::fs::read_to_string(&account.client_id_path)?
         .trim()

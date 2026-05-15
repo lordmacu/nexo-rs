@@ -215,13 +215,12 @@ async fn build_client(
     if let Some(c) = cache.get(&id) {
         return Ok(c.clone());
     }
-    let stores = ctx.stores.as_ref().ok_or_else(|| PollerError::Config {
+    let bundle = ctx.bundle.as_ref().ok_or_else(|| PollerError::Config {
         job: ctx.job_id.clone(),
-        reason: "PollContext.stores is None".into(),
+        reason: "PollContext.bundle is None".into(),
     })?;
-    let account = stores
-        .google
-        .account(&id)
+    let account = bundle
+        .google_account(&id)
         .ok_or_else(|| PollerError::CredentialsMissing {
             agent: ctx.agent_id.clone(),
             channel: GOOGLE,
