@@ -22,8 +22,11 @@ pub mod discovery;
 pub mod doctor_render;
 pub mod factory;
 pub mod init_loop;
+pub mod remote_credential_store;
 pub mod report;
 pub mod subprocess;
+
+pub use remote_credential_store::RemoteCredentialStore;
 
 pub use boot::{
     register_plugin_registry_reload_hook, wire_plugin_registry, wire_plugin_registry_with_runtime,
