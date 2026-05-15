@@ -154,6 +154,20 @@ pub struct PluginSection {
     #[serde(default)]
     pub meta: MetaSection,
 
+    /// Phase 81.33.b.real Stage 2 — daemon-proxied HTTP routes
+    /// the plugin owns. Distinct from `[plugin.http_server]`
+    /// (which advertises a plugin-bound port the daemon does NOT
+    /// proxy): this section declares route prefixes the daemon
+    /// mounts on its own HTTP server (`:8080`) and forwards every
+    /// request to via broker JSON-RPC.
+    ///
+    /// Absent / default = no daemon-side proxy. Plugins exposing
+    /// pairing pages, OAuth callbacks, webhook endpoints, etc.
+    /// declare their mount prefix here so the daemon doesn't need
+    /// hardcoded `/whatsapp/*` blocks per plugin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<crate::http::PluginHttpSection>,
+
     /// Optional subprocess entrypoint. When `command`
     /// is `Some`, the daemon spawns this binary as a child process
     /// and drives the plugin via newline-delimited JSON-RPC over

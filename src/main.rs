@@ -731,6 +731,14 @@ struct RuntimeHealth {
     /// Entries removed on graceful shutdown; stale entries
     /// after Drop emit zero from `metrics().await`.
     tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>>,
+    /// Phase 81.33.b.real Stage 2 — plugin HTTP route router.
+    /// Built at boot from `wire.plugin_handles[..].manifest().plugin.http`.
+    /// `handle_health_conn` checks the router BEFORE the legacy
+    /// hardcoded `/whatsapp/*` block; a match forwards the
+    /// request via broker JSON-RPC to the declaring plugin's
+    /// subprocess. Empty when no plugin declares
+    /// `[plugin.http]` — then the legacy path matchers serve.
+    http_router: Arc<nexo_pairing::plugin_http::PluginHttpRouter>,
 }
 
 #[derive(Clone)]
@@ -3816,6 +3824,36 @@ async fn main() -> Result<()> {
         Arc::new(std::sync::OnceLock::new());
     let tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>> =
         Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    // Phase 81.33.b.real Stage 2 — build the plugin HTTP router
+    // from every loaded plugin's `[plugin.http]` manifest section.
+    // Plugins that don't declare the section contribute nothing
+    // and the router stays empty for the legacy hardcoded path
+    // matchers to serve.
+    let http_router = {
+        let mut router = nexo_pairing::plugin_http::PluginHttpRouter::new();
+        for (plugin_id, handle) in wire.plugin_handles.iter() {
+            if let Some(http) = handle.manifest().plugin.http.as_ref() {
+                match router.register(
+                    plugin_id,
+                    &http.mount_prefix,
+                    http.timeout_seconds.map(std::time::Duration::from_secs),
+                ) {
+                    Ok(()) => tracing::info!(
+                        plugin = %plugin_id,
+                        prefix = %http.mount_prefix,
+                        "registered plugin HTTP route (Phase 81.33.b.real Stage 2)",
+                    ),
+                    Err(err) => tracing::warn!(
+                        plugin = %plugin_id,
+                        prefix = %http.mount_prefix,
+                        error = %err,
+                        "plugin HTTP route registration rejected — daemon-reserved prefix",
+                    ),
+                }
+            }
+        }
+        Arc::new(router)
+    };
     let health = RuntimeHealth {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
@@ -3824,6 +3862,7 @@ async fn main() -> Result<()> {
         email_plugin: email_plugin.clone(),
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
         tunnel_registry: Arc::clone(&tunnel_registry),
+        http_router: Arc::clone(&http_router),
     };
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
@@ -15249,7 +15288,66 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
         .await;
     }
 
-    let path = read_http_path(&mut stream).await?;
+    let parsed = read_http_request(&mut stream).await?;
+    let path = parsed.path.clone();
+    // Phase 81.33.b.real Stage 2 — plugin HTTP route dispatch.
+    // Check the manifest-driven router BEFORE the legacy
+    // hardcoded `/whatsapp/*` block. A match forwards via broker
+    // JSON-RPC to the declaring plugin's subprocess; the plugin
+    // returns the full response (status + headers + body). On
+    // broker failure the daemon renders a typed 502/504. With no
+    // matching prefix we fall through to the legacy handlers.
+    if let Some((plugin_id, timeout)) = health.http_router.match_path(&path) {
+        let plugin_id = plugin_id.to_string();
+        let forward = nexo_pairing::plugin_http::forward_request(
+            &health.broker,
+            &plugin_id,
+            &parsed.method,
+            &parsed.path,
+            &parsed.query,
+            &parsed.headers,
+            &parsed.body,
+            timeout,
+        )
+        .await;
+        match forward {
+            Ok(reply) => {
+                let body = reply.decoded_body();
+                let content_type = reply
+                    .header("Content-Type")
+                    .unwrap_or("application/octet-stream");
+                write_http_response_bytes(
+                    &mut stream,
+                    reply.status,
+                    content_type,
+                    &body,
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(err) => {
+                tracing::warn!(plugin = %plugin_id, error = %err, path = %parsed.path, "plugin HTTP forward failed");
+                let (status, body) = match &err {
+                    nexo_pairing::plugin_http::PluginHttpForwardError::Broker(_) => (
+                        504,
+                        r#"{"error":"plugin gateway timeout"}"#,
+                    ),
+                    nexo_pairing::plugin_http::PluginHttpForwardError::ParseReply(_) => (
+                        502,
+                        r#"{"error":"plugin reply malformed"}"#,
+                    ),
+                };
+                write_http_response(
+                    &mut stream,
+                    status,
+                    "application/json; charset=utf-8",
+                    body,
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
     // Try to match `/whatsapp/...` routes first. Routing rules live in
     // `nexo_plugin_whatsapp::pairing::dispatch_route` so they're
     // unit-testable without a TCP listener.
@@ -15488,17 +15586,109 @@ async fn handle_pair_ws(stream: TcpStream, ctx: &PairingHandshakeCtx) -> anyhow:
 }
 
 async fn read_http_path(stream: &mut TcpStream) -> anyhow::Result<String> {
-    let mut buf = [0u8; 1024];
+    Ok(read_http_request(stream).await?.path)
+}
+
+/// Parsed inbound HTTP request used by the plugin HTTP router
+/// (Phase 81.33.b.real Stage 2). Backwards-compatible with the
+/// legacy `read_http_path` callers that only need the path.
+#[derive(Debug, Clone, Default)]
+struct ParsedHttpRequest {
+    method: String,
+    path: String,
+    query: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+/// Read a full HTTP request from the stream. Today's caller
+/// surface is small: pairing pages (GET, no body), status/qr
+/// (GET, no body), and `/health` / `/metrics` daemon-internal
+/// (GET, no body). For Stage 2 we accept up to 16KB of body
+/// upfront; plugins needing large uploads must use
+/// `[plugin.http_server]` (own port) instead.
+async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<ParsedHttpRequest> {
+    let mut buf = vec![0u8; 16 * 1024];
     let n = stream.read(&mut buf).await?;
     if n == 0 {
         anyhow::bail!("empty request");
     }
-    let req = std::str::from_utf8(&buf[..n]).context("invalid request utf8")?;
-    let line = req.lines().next().unwrap_or_default();
-    let mut parts = line.split_whitespace();
-    let _method = parts.next().unwrap_or_default();
-    let path = parts.next().unwrap_or("/");
-    Ok(path.to_string())
+    buf.truncate(n);
+    // Split header / body at the first \r\n\r\n.
+    let mut header_end = None;
+    for i in 0..buf.len().saturating_sub(3) {
+        if &buf[i..i + 4] == b"\r\n\r\n" {
+            header_end = Some(i);
+            break;
+        }
+    }
+    let (header_bytes, body) = match header_end {
+        Some(idx) => (&buf[..idx], buf[idx + 4..].to_vec()),
+        None => (buf.as_slice(), Vec::new()),
+    };
+    let header_str =
+        std::str::from_utf8(header_bytes).context("invalid request header utf8")?;
+    let mut lines = header_str.lines();
+    let request_line = lines.next().unwrap_or_default();
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let full_path = parts.next().unwrap_or("/");
+    let (path, query) = match full_path.find('?') {
+        Some(i) => (full_path[..i].to_string(), full_path[i + 1..].to_string()),
+        None => (full_path.to_string(), String::new()),
+    };
+    let mut headers = Vec::new();
+    for line in lines {
+        if let Some(i) = line.find(':') {
+            headers.push((line[..i].trim().to_string(), line[i + 1..].trim().to_string()));
+        }
+    }
+    Ok(ParsedHttpRequest {
+        method,
+        path,
+        query,
+        headers,
+        body,
+    })
+}
+
+/// Phase 81.33.b.real Stage 2 — write a response with raw binary
+/// body. The string-body variant ([`write_http_response`]) handles
+/// the common case (JSON / HTML / text). Plugins returning images,
+/// PDFs, or anything binary use this entrypoint via the broker
+/// JSON-RPC forwarder which base64-decodes server-side.
+async fn write_http_response_bytes(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &[u8],
+) -> anyhow::Result<()> {
+    let status_text = match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "OK",
+    };
+    let header = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        status,
+        status_text,
+        content_type,
+        body.len(),
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(body).await?;
+    Ok(())
 }
 
 async fn write_http_response(
