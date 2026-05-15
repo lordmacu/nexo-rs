@@ -218,6 +218,7 @@ mod tests {
             resolver: Arc::new(AgentCredentialResolver::empty()),
             breakers: Arc::new(BreakerRegistry::default()),
             warnings: Vec::new(),
+            stores_v2: dashmap::DashMap::new(),
         })
     }
 

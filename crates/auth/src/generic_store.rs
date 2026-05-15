@@ -158,6 +158,24 @@ where
     }
 }
 
+/// Phase 93.7 — walk `bundle.stores_v2` and merge per-store
+/// `validate()` reports into one combined report. Boot gauntlet
+/// integration deferred to Phase 93.8 — 93.7 just exposes the
+/// helper so callers (and tests) can aggregate without
+/// boilerplate.
+pub fn validate_all_stores(bundle: &crate::wire::CredentialsBundle) -> ValidationReport {
+    let mut combined = ValidationReport::default();
+    for entry in bundle.stores_v2.iter() {
+        let report = entry.value().validate();
+        combined.accounts_ok += report.accounts_ok;
+        combined.warnings.extend(report.warnings);
+        combined.insecure_paths.extend(report.insecure_paths);
+        combined.unused.extend(report.unused);
+        combined.errors.extend(report.errors);
+    }
+    combined
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +311,113 @@ mod tests {
         // No override in `MockGenericStore`; falls through to the
         // trait default.
         assert!(store.reload().await.is_ok());
+    }
+
+    /// Phase 93.7 — store with custom validate() report.
+    struct ReportingStore {
+        report: ValidationReport,
+    }
+
+    #[async_trait]
+    impl GenericCredentialStore for ReportingStore {
+        fn plugin_id(&self) -> &str {
+            "reporting"
+        }
+        async fn list(&self) -> Vec<String> {
+            Vec::new()
+        }
+        async fn issue(
+            &self,
+            account_id: &str,
+            agent_id: &str,
+        ) -> Result<CredentialHandle, CredentialError> {
+            Ok(CredentialHandle::new(TELEGRAM, account_id, agent_id))
+        }
+        async fn resolve_bytes(
+            &self,
+            _handle: &CredentialHandle,
+        ) -> Result<Vec<u8>, CredentialError> {
+            Ok(Vec::new())
+        }
+        fn validate(&self) -> ValidationReport {
+            // Hand-clone the report (ValidationReport is not Clone).
+            ValidationReport {
+                accounts_ok: self.report.accounts_ok,
+                warnings: self.report.warnings.clone(),
+                insecure_paths: self.report.insecure_paths.clone(),
+                unused: self.report.unused.clone(),
+                errors: Vec::new(), // BuildError isn't Clone; tests don't exercise the errors path.
+            }
+        }
+    }
+
+    /// Phase 93.7 — `validate_all_stores` merges per-store reports
+    /// across `bundle.stores_v2.iter()`.
+    #[tokio::test]
+    async fn validate_all_stores_aggregates_warnings() {
+        use crate::resolver::{AgentCredentialResolver, CredentialStores};
+        use crate::wire::CredentialsBundle;
+        use std::sync::Arc;
+
+        // Hand-built minimal bundle (skip `build_credentials`'s full
+        // flow — empty stores + empty resolver is enough to walk
+        // `stores_v2`).
+        let resolver = Arc::new(AgentCredentialResolver::empty());
+        let bundle = CredentialsBundle {
+            stores: CredentialStores::empty(),
+            resolver,
+            breakers: Arc::new(crate::breaker::BreakerRegistry::default()),
+            warnings: Vec::new(),
+            stores_v2: dashmap::DashMap::new(),
+        };
+
+        let a = Arc::new(ReportingStore {
+            report: ValidationReport {
+                accounts_ok: 2,
+                warnings: vec!["warn-a".into()],
+                insecure_paths: vec![],
+                unused: vec![],
+                errors: vec![],
+            },
+        });
+        let b = Arc::new(ReportingStore {
+            report: ValidationReport {
+                accounts_ok: 3,
+                warnings: vec!["warn-b".into()],
+                insecure_paths: vec![],
+                unused: vec![],
+                errors: vec![],
+            },
+        });
+        bundle.stores_v2.insert("a".into(), a);
+        bundle.stores_v2.insert("b".into(), b);
+
+        let merged = validate_all_stores(&bundle);
+        assert_eq!(merged.accounts_ok, 5);
+        assert_eq!(merged.warnings.len(), 2);
+        let warns: Vec<&str> = merged.warnings.iter().map(String::as_str).collect();
+        assert!(warns.contains(&"warn-a"));
+        assert!(warns.contains(&"warn-b"));
+    }
+
+    /// Phase 93.7 — empty `stores_v2` yields a clean `ValidationReport`.
+    #[tokio::test]
+    async fn empty_stores_v2_validates_clean() {
+        use crate::resolver::{AgentCredentialResolver, CredentialStores};
+        use crate::wire::CredentialsBundle;
+        use std::sync::Arc;
+
+        let resolver = Arc::new(AgentCredentialResolver::empty());
+        let bundle = CredentialsBundle {
+            stores: CredentialStores::empty(),
+            resolver,
+            breakers: Arc::new(crate::breaker::BreakerRegistry::default()),
+            warnings: Vec::new(),
+            stores_v2: dashmap::DashMap::new(),
+        };
+        let merged = validate_all_stores(&bundle);
+        assert_eq!(merged.accounts_ok, 0);
+        assert!(merged.warnings.is_empty());
+        assert!(merged.errors.is_empty());
     }
 }

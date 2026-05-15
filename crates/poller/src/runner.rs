@@ -786,6 +786,7 @@ mod tests {
             resolver: Arc::new(nexo_auth::AgentCredentialResolver::empty()),
             breakers: Arc::new(nexo_auth::breaker::BreakerRegistry::default()),
             warnings: Vec::new(),
+            stores_v2: dashmap::DashMap::new(),
         })
     }
 

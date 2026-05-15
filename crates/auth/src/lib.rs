@@ -23,7 +23,7 @@ pub mod whatsapp;
 pub mod wire;
 
 pub use breaker::{BreakerRegistry, BreakerState};
-pub use generic_store::{GenericCredentialStore, TypedStoreAdapter};
+pub use generic_store::{validate_all_stores, GenericCredentialStore, TypedStoreAdapter};
 pub use wire::{build_credentials, load_google_auth, print_report, CredentialsBundle};
 
 pub use error::{BuildError, CredentialError, ResolveError};

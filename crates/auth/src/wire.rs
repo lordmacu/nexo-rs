@@ -11,12 +11,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use dashmap::DashMap;
 use nexo_config::types::agents::AgentConfig;
 use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
 use nexo_config::types::plugins::{EmailPluginConfig, TelegramPluginConfig, WhatsappPluginConfig};
 
 use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 use crate::error::BuildError;
+use crate::generic_store::GenericCredentialStore;
 use crate::gauntlet::{
     canonicalize_session_dirs, check_duplicate_paths, check_permissions, check_prefix_overlap,
     format_errors, PathClaim,
@@ -40,6 +42,14 @@ pub struct CredentialsBundle {
     /// never trips another.
     pub breakers: Arc<crate::breaker::BreakerRegistry>,
     pub warnings: Vec<String>,
+    /// Phase 93.7 — opt-in plugin-contributed credential stores
+    /// keyed by `manifest.plugin.id`. Empty at boot; populated by
+    /// the init-loop after each plugin's `init(ctx)` succeeds via
+    /// `NexoPlugin::credential_store()`. Phase 93.8 migrates per-
+    /// plugin consumers from `bundle.stores.X` to
+    /// `bundle.stores_v2.get("X")`; Phase 93.9 drops the typed
+    /// `stores` field above.
+    pub stores_v2: DashMap<String, Arc<dyn GenericCredentialStore>>,
 }
 
 impl std::fmt::Debug for CredentialsBundle {
@@ -49,6 +59,7 @@ impl std::fmt::Debug for CredentialsBundle {
             .field("telegram_instances", &self.stores.telegram.list().len())
             .field("google_accounts", &self.stores.google.list().len())
             .field("email_accounts", &self.stores.email.list().len())
+            .field("stores_v2_count", &self.stores_v2.len())
             .field("resolver_version", &self.resolver.version())
             .field("warnings", &self.warnings.len())
             .finish()
@@ -328,6 +339,7 @@ pub fn build_credentials(
                 resolver: Arc::new(resolver),
                 breakers: Arc::new(crate::breaker::BreakerRegistry::default()),
                 warnings,
+                stores_v2: DashMap::new(),
             })
         }
         Err(errs) => {
@@ -659,5 +671,32 @@ mod tests {
         assert!(err
             .iter()
             .any(|e| matches!(e, BuildError::DuplicatePath { .. })));
+    }
+
+    /// Phase 93.7 — `build_credentials` initialises `stores_v2`
+    /// as an empty `DashMap`. Plugin contributions land later in
+    /// the init-loop; no daemon-side auto-wrap of typed stores.
+    #[test]
+    fn build_credentials_initialises_empty_stores_v2() {
+        let dir = TempDir::new().unwrap();
+        let wa_dir = dir.path().join("ana");
+        std::fs::create_dir_all(&wa_dir).unwrap();
+        let wa = vec![wa_cfg(Some("personal"), &wa_dir, &["ana"])];
+        let agent = minimal_agent("ana", Some("personal"));
+        let bundle = build_credentials(
+            &[agent],
+            &wa,
+            &[],
+            &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
+            StrictLevel::Strict,
+        )
+        .unwrap();
+        assert_eq!(
+            bundle.stores_v2.len(),
+            0,
+            "Phase 93.7: stores_v2 is empty at boot — plugin contributions land via NexoPlugin::credential_store()",
+        );
     }
 }
