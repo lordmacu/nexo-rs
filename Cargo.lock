@@ -4552,6 +4552,7 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "base64 0.22.1",
  "dashmap 6.1.0",
  "hex",

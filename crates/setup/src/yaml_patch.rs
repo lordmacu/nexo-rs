@@ -999,7 +999,7 @@ mod tests {
         )
         .unwrap();
 
-        let ids = list_agent_ids_merged(&main, &[persona.clone()]).unwrap();
+        let ids = list_agent_ids_merged(&main, std::slice::from_ref(&persona)).unwrap();
         assert_eq!(ids, vec!["alice".to_string(), "cody".to_string()]);
     }
 
