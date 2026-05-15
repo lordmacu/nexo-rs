@@ -58,6 +58,64 @@ pub struct CredentialsBundle {
 }
 
 impl CredentialsBundle {
+    /// Phase 93.9.b — typed-account accessor for the daemon-owned
+    /// Google channel. Plugin extraction is deferred; runtime
+    /// consumers (gmail / google-calendar pollers, setup wizard
+    /// services) use this method instead of touching
+    /// `bundle.stores.google.account(...)` directly. Phase 93.9.f
+    /// flips `stores` to `pub(crate)` once every external caller
+    /// has migrated to these accessors.
+    pub fn google_account(&self, id: &str) -> Option<&crate::google::GoogleAccount> {
+        self.stores.google.account(id)
+    }
+
+    /// Same shape as [`Self::google_account`] but keyed by
+    /// `agent_id` — Google enforces a 1:1 account-to-agent rule, so
+    /// gmail-poller jobs that only know the agent can still recover
+    /// the account.
+    pub fn google_account_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Option<&crate::google::GoogleAccount> {
+        self.stores.google.account_for_agent(agent_id)
+    }
+
+    /// Phase 93.9.b — daemon-owned WhatsApp typed accessor. The
+    /// subprocess plugin contributes a `RemoteCredentialStore` to
+    /// `stores_v2` but legacy in-process consumers (gauntlet,
+    /// observability surface) still need typed access.
+    pub fn whatsapp_account(
+        &self,
+        instance: &str,
+    ) -> Option<&crate::whatsapp::WhatsappAccount> {
+        self.stores.whatsapp.account(instance)
+    }
+
+    /// Phase 93.9.b — daemon-owned Telegram typed accessor.
+    pub fn telegram_account(
+        &self,
+        instance: &str,
+    ) -> Option<&crate::telegram::TelegramAccount> {
+        self.stores.telegram.account(instance)
+    }
+
+    /// Phase 93.9.b — daemon-owned Email typed accessor. Wizard +
+    /// poller migrators in 93.9.c-e replace direct
+    /// `bundle.stores.email.account()` calls with this method.
+    pub fn email_account(&self, instance: &str) -> Option<&crate::email::EmailAccount> {
+        self.stores.email.account(instance)
+    }
+
+    /// Phase 93.9.b — refresh-lock accessor for Google's
+    /// concurrent-refresh guard. Hides the typed
+    /// `stores.google.refresh_lock(...)` call.
+    pub fn google_refresh_lock(
+        &self,
+        handle: &crate::handle::CredentialHandle,
+    ) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        self.stores.google.refresh_lock(handle)
+    }
+
     /// Account count for `channel`. Reads from `stores_v2` first
     /// (plugin-contributed `GenericCredentialStore`); falls back to
     /// the internal typed `CredentialStores` so boot-time consumers
@@ -704,6 +762,32 @@ mod tests {
         assert!(err
             .iter()
             .any(|e| matches!(e, BuildError::DuplicatePath { .. })));
+    }
+
+    /// Phase 93.9.b — `Bundle::google_account` accessor returns
+    /// the typed account when present and `None` when absent.
+    #[test]
+    fn google_account_accessor_returns_known_id() {
+        let dir = TempDir::new().unwrap();
+        let wa_dir = dir.path().join("ana");
+        std::fs::create_dir_all(&wa_dir).unwrap();
+        let wa = vec![wa_cfg(Some("personal"), &wa_dir, &["ana"])];
+        let agent = minimal_agent("ana", Some("personal"));
+        let bundle = build_credentials(
+            &[agent],
+            &wa,
+            &[],
+            &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
+            StrictLevel::Strict,
+        )
+        .unwrap();
+        assert!(bundle.google_account("nonexistent").is_none());
+        assert!(bundle.whatsapp_account("personal").is_some());
+        assert!(bundle.whatsapp_account("ghost").is_none());
+        assert!(bundle.telegram_account("anything").is_none());
+        assert!(bundle.email_account("anything").is_none());
     }
 
     /// Phase 93.9.a — `account_count` walks `stores_v2` first
