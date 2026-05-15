@@ -18,6 +18,7 @@ pub mod error;
 pub mod http;
 pub mod id_regex;
 pub mod manifest;
+pub mod metrics;
 pub mod pairing;
 pub mod sandbox;
 pub mod validate;

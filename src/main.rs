@@ -739,6 +739,16 @@ struct RuntimeHealth {
     /// subprocess. Empty when no plugin declares
     /// `[plugin.http]` — then the legacy path matchers serve.
     http_router: Arc<nexo_pairing::plugin_http::PluginHttpRouter>,
+    /// Phase 81.33.b.real Stage 5 — plugin Prometheus metrics
+    /// scrape descriptors. Built at boot from
+    /// `wire.plugin_handles[..].manifest().plugin.metrics`. The
+    /// `/metrics` handler iterates this list on every request,
+    /// issues a broker RPC per declaring plugin, and concatenates
+    /// the returned Prometheus text into the aggregate body.
+    /// Empty when no plugin declares `[plugin.metrics] prometheus
+    /// = true` — then only daemon-internal sources (LLM, MCP,
+    /// poller, tunnel, legacy email) feed the aggregate.
+    plugin_metrics: Arc<Vec<nexo_pairing::plugin_metrics::PluginMetricsDescriptor>>,
 }
 
 #[derive(Clone)]
@@ -3842,6 +3852,37 @@ async fn main() -> Result<()> {
         Arc::new(std::sync::OnceLock::new());
     let tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>> =
         Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    // Phase 81.33.b.real Stage 5 — build plugin metrics scrape
+    // descriptors from every plugin's `[plugin.metrics]` section.
+    // Descriptors are immutable for the daemon's lifetime
+    // (Vec, not RwLock) — hot-spawn restarts don't change the
+    // metrics manifest, only the broker subscriber identity, so
+    // the broker topic in the descriptor stays valid.
+    let plugin_metrics_descriptors = {
+        let mut out = Vec::new();
+        for (plugin_id, handle) in wire.plugin_handles.iter() {
+            if let Some(metrics) = handle.manifest().plugin.metrics.as_ref() {
+                if !metrics.prometheus {
+                    continue;
+                }
+                let mut d = nexo_pairing::plugin_metrics::PluginMetricsDescriptor::new(
+                    plugin_id.clone(),
+                    metrics.broker_topic_prefix.clone(),
+                );
+                if let Some(secs) = metrics.timeout_seconds {
+                    d = d.with_timeout(std::time::Duration::from_secs(secs));
+                }
+                tracing::info!(
+                    plugin = %plugin_id,
+                    broker_topic_prefix = %metrics.broker_topic_prefix,
+                    "registered plugin Prometheus metrics scrape (Phase 81.33.b.real Stage 5)",
+                );
+                out.push(d);
+            }
+        }
+        Arc::new(out)
+    };
+
     // Phase 81.33.b.real Stage 4 — populate the plugin admin router
     // from every loaded plugin's `[plugin.admin]` manifest section.
     // Reserved-prefix collisions warn-log + skip (the daemon's
@@ -3912,6 +3953,7 @@ async fn main() -> Result<()> {
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
         tunnel_registry: Arc::clone(&tunnel_registry),
         http_router: Arc::clone(&http_router),
+        plugin_metrics: Arc::clone(&plugin_metrics_descriptors),
     };
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
@@ -15293,6 +15335,18 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
         None => None,
     };
     body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
+    // Phase 81.33.b.real Stage 5 — scrape every plugin that
+    // declared `[plugin.metrics] prometheus = true`. Sequential
+    // dispatch with per-plugin timeout; one slow / unresponsive
+    // plugin warn-logs + contributes empty (handler does not
+    // stall). Once `nexo-plugin-email` ships the manifest section
+    // the hardcoded line above becomes dead weight; until then
+    // both paths coexist (in-process call + broker scrape will
+    // both fire for plugins that opt in to manifest).
+    body.push_str(
+        &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics)
+            .await,
+    );
     // Phase 92.followup.b — surface tunnel lifecycle counters
     // (`tunnel_starts_total`, `tunnel_starts_failed_total`,
     // `tunnel_shutdowns_total`) AND per-tunnel supervisor

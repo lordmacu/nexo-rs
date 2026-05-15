@@ -154,6 +154,14 @@ pub struct PluginSection {
     #[serde(default)]
     pub meta: MetaSection,
 
+    /// Phase 81.33.b.real Stage 5 — Prometheus metrics
+    /// declaration. Plugins exposing metrics opt in here; the
+    /// daemon's `/metrics` aggregator iterates declarers,
+    /// issues `<broker_topic_prefix>.metrics.scrape` broker RPC
+    /// per scrape, concatenates the returned Prometheus text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<crate::metrics::PluginMetricsSection>,
+
     /// Phase 81.33.b.real Stage 4 — daemon-forwarded admin RPC
     /// commands the plugin owns. Daemon iterates registered
     /// plugins on every admin call; methods matching a plugin's
