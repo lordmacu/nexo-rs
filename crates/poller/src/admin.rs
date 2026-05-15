@@ -195,8 +195,7 @@ mod tests {
     use crate::poller::{PollContext, Poller, TickOutcome};
     use crate::{PollState, PollerError, PollerRunner};
     use async_trait::async_trait;
-    use nexo_auth::resolver::CredentialStores;
-    use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
+    use nexo_auth::CredentialsBundle;
     use nexo_broker::AnyBroker;
     use nexo_config::types::pollers::{PollerJob, PollersConfig};
 
@@ -213,13 +212,7 @@ mod tests {
     }
 
     fn empty_creds() -> Arc<CredentialsBundle> {
-        Arc::new(CredentialsBundle {
-            stores: CredentialStores::empty(),
-            resolver: Arc::new(AgentCredentialResolver::empty()),
-            breakers: Arc::new(BreakerRegistry::default()),
-            warnings: Vec::new(),
-            stores_v2: dashmap::DashMap::new(),
-        })
+        Arc::new(CredentialsBundle::empty_for_testing())
     }
 
     fn job(id: &str) -> PollerJob {

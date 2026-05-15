@@ -2200,15 +2200,12 @@ async fn main() -> Result<()> {
             for w in &bundle.warnings {
                 tracing::warn!(target: "credentials", "{w}");
             }
-            {
-                use nexo_auth::CredentialStore;
-                tracing::info!(
-                    wa = bundle.stores.whatsapp.list().len(),
-                    tg = bundle.stores.telegram.list().len(),
-                    google = bundle.stores.google.list().len(),
-                    "credential gauntlet passed"
-                );
-            }
+            tracing::info!(
+                wa = bundle.account_count(nexo_auth::handle::WHATSAPP),
+                tg = bundle.account_count(nexo_auth::handle::TELEGRAM),
+                google = bundle.account_count(nexo_auth::handle::GOOGLE),
+                "credential gauntlet passed"
+            );
             Some(Arc::new(bundle))
         }
         Err(errs) => {
@@ -3293,8 +3290,8 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|_| std::path::PathBuf::from("data"));
                 Arc::new(nexo_plugin_email::EmailPlugin::new(
                     email_cfg.clone(),
-                    creds_bundle.stores.email.clone(),
-                    creds_bundle.stores.google.clone(),
+                    creds_bundle.email_store(),
+                    creds_bundle.google_store(),
                     data_dir,
                 ))
             })
@@ -3760,8 +3757,8 @@ async fn main() -> Result<()> {
                 .await
                 .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
             Some(Arc::new(nexo_plugin_email::EmailToolContext {
-                creds: creds_bundle.stores.email.clone(),
-                google: creds_bundle.stores.google.clone(),
+                creds: creds_bundle.email_store(),
+                google: creds_bundle.google_store(),
                 config: Arc::new(email_cfg.clone()),
                 dispatcher,
                 health,
@@ -5157,7 +5154,7 @@ async fn main() -> Result<()> {
             .or_else(|| {
                 credentials
                     .as_ref()
-                    .and_then(|b| b.stores.google.account_for_agent(&agent_cfg.id))
+                    .and_then(|b| b.google_account_for_agent(&agent_cfg.id))
                     .and_then(|acct| {
                         let cid = std::fs::read_to_string(&acct.client_id_path).ok()?;
                         let csec = std::fs::read_to_string(&acct.client_secret_path).ok()?;
@@ -14100,8 +14097,8 @@ async fn start_mcp_autonomous_worker(
         .unwrap_or_else(|_| std::path::PathBuf::from("data"));
     let email_plugin = Arc::new(nexo_plugin_email::EmailPlugin::new(
         email_cfg.clone(),
-        creds_bundle.stores.email.clone(),
-        creds_bundle.stores.google.clone(),
+        creds_bundle.email_store(),
+        creds_bundle.google_store(),
         data_dir,
     ));
     email_plugin
@@ -14124,8 +14121,8 @@ async fn start_mcp_autonomous_worker(
         .await
         .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
     let email_tool_ctx = Arc::new(nexo_plugin_email::EmailToolContext {
-        creds: creds_bundle.stores.email.clone(),
-        google: creds_bundle.stores.google.clone(),
+        creds: creds_bundle.email_store(),
+        google: creds_bundle.google_store(),
         config: Arc::new(email_cfg),
         dispatcher,
         health: email_health,

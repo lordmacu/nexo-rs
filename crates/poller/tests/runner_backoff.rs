@@ -6,21 +6,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use nexo_auth::resolver::CredentialStores;
-use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
+use nexo_auth::CredentialsBundle;
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
 use nexo_poller::poller::{PollContext, Poller, TickOutcome};
 use nexo_poller::{PollState, PollerError, PollerRunner};
 
 fn empty_creds() -> Arc<CredentialsBundle> {
-    Arc::new(CredentialsBundle {
-        stores: CredentialStores::empty(),
-        resolver: Arc::new(AgentCredentialResolver::empty()),
-        breakers: Arc::new(BreakerRegistry::default()),
-        warnings: Vec::new(),
-            stores_v2: dashmap::DashMap::new(),
-    })
+    Arc::new(CredentialsBundle::empty_for_testing())
 }
 
 struct AlwaysTransient {
