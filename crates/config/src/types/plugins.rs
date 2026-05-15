@@ -37,6 +37,105 @@ pub struct PluginsConfig {
     pub discovery: PluginDiscoveryConfig,
 }
 
+impl PluginsConfig {
+    /// Phase 93.5.a — opaque accessor returning the raw YAML
+    /// slice for `plugin_id`, or `None` when the operator did
+    /// not declare that plugin. Daemon-native channels (whatsapp,
+    /// telegram, email, browser) still expose typed fields above
+    /// for legacy consumers; new plugins (slack, discord, sms)
+    /// land only here.
+    pub fn entries_for(&self, plugin_id: &str) -> Option<&Value> {
+        self.entries.get(plugin_id)
+    }
+
+    /// Phase 93.5.a — every declared plugin id, sorted (BTreeMap).
+    pub fn plugin_ids(&self) -> impl Iterator<Item = &String> + '_ {
+        self.entries.keys()
+    }
+
+    /// Phase 93.5.a — uniform presence check. Returns `true` when
+    /// the operator declared this plugin AND the declaration is
+    /// non-empty (single-instance object OR non-empty array).
+    /// Replaces the per-channel `cfg.plugins.X.is_empty()` /
+    /// `cfg.plugins.X.is_some()` idioms so a new plugin (slack/
+    /// discord/sms) participates without daemon-side typed access.
+    pub fn is_active(&self, plugin_id: &str) -> bool {
+        let Some(value) = self.entries.get(plugin_id) else {
+            return false;
+        };
+        match value {
+            // Single-instance object (email, browser, discovery shape).
+            Value::Mapping(m) => !m.is_empty(),
+            // Multi-instance array (whatsapp, telegram shape).
+            Value::Sequence(s) => !s.is_empty(),
+            // Null / explicit empty → inactive.
+            Value::Null => false,
+            // Other primitives (bool, number, string) — declared,
+            // counted as active so the caller can decide how to
+            // interpret. Plugin manifests own validation.
+            _ => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod plugins_config_helpers_tests {
+    use super::*;
+
+    fn entries_from(yaml: &str) -> std::collections::BTreeMap<String, Value> {
+        let v: Value = serde_yaml::from_str(yaml).unwrap();
+        v.as_mapping()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.as_str().unwrap().to_string(), v.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn is_active_returns_true_for_non_empty_array() {
+        let cfg = PluginsConfig {
+            entries: entries_from("whatsapp:\n  - instance: main\n"),
+            ..PluginsConfig::default()
+        };
+        assert!(cfg.is_active("whatsapp"));
+    }
+
+    #[test]
+    fn is_active_returns_false_for_empty_array() {
+        let cfg = PluginsConfig {
+            entries: entries_from("telegram: []\n"),
+            ..PluginsConfig::default()
+        };
+        assert!(!cfg.is_active("telegram"));
+    }
+
+    #[test]
+    fn is_active_returns_false_for_unknown_plugin() {
+        let cfg = PluginsConfig::default();
+        assert!(!cfg.is_active("slack"));
+        assert_eq!(cfg.entries_for("slack"), None);
+    }
+
+    #[test]
+    fn is_active_returns_true_for_non_empty_object() {
+        let cfg = PluginsConfig {
+            entries: entries_from("email:\n  enabled: true\n"),
+            ..PluginsConfig::default()
+        };
+        assert!(cfg.is_active("email"));
+    }
+
+    #[test]
+    fn plugin_ids_lists_declared_plugins_sorted() {
+        let cfg = PluginsConfig {
+            entries: entries_from("whatsapp: []\nslack:\n  workspace: T1\ntelegram: []\n"),
+            ..PluginsConfig::default()
+        };
+        let ids: Vec<&String> = cfg.plugin_ids().collect();
+        assert_eq!(ids, vec!["slack", "telegram", "whatsapp"]);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginDiscoveryConfigFile {
