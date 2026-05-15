@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use nexo_auth::resolver::CredentialStores;
+use nexo_auth::wire::CredentialsBundle;
 use nexo_auth::{AgentCredentialResolver, Channel};
 use nexo_broker::AnyBroker;
 use nexo_llm::ToolDef;
@@ -83,11 +83,12 @@ pub struct PollContext {
     /// `GOOGLE` for inbound fetch, then `WHATSAPP`/`TELEGRAM` for
     /// outbound, but the trait is channel-agnostic).
     pub credentials: Arc<AgentCredentialResolver>,
-    /// Read-only handles to the per-channel credential stores. Pollers
-    /// that need paths (gmail → Google client_id_path / token_path,
-    /// future calendar → same store) borrow this. `None` in test
+    /// Phase 93.9.c — pollers that need typed account details
+    /// (gmail → Google client_id_path / token_path, calendar →
+    /// same store) reach them through bundle accessors like
+    /// [`CredentialsBundle::google_account`]. `None` in test
     /// fixtures that don't wire a full bundle.
-    pub stores: Option<Arc<CredentialStores>>,
+    pub bundle: Option<Arc<CredentialsBundle>>,
     /// Local broker handle. Modules SHOULD NOT publish directly —
     /// return `OutboundDelivery` and let the runner dispatch.
     /// Exposed in case a module needs to subscribe (rare).
