@@ -3713,9 +3713,16 @@ impl ChannelPayloadTranslator for EmailTranslator {
 /// optional `.<account_id>` suffix matching the plugin's
 /// existing convention. Payload mirrors the plugin's
 /// `OutboundPayload` (text, reply, media variants).
+///
+/// Phase 93.12.c — gated behind `plugin-whatsapp`. When the
+/// feature is off, the daemon ships without the whatsapp plugin
+/// crate; this translator (and the broker dispatcher registration
+/// that consumes it in `admin_bootstrap`) disappears with it.
+#[cfg(feature = "plugin-whatsapp")]
 #[derive(Debug, Default)]
 pub struct WhatsAppTranslator;
 
+#[cfg(feature = "plugin-whatsapp")]
 impl ChannelPayloadTranslator for WhatsAppTranslator {
     fn channel(&self) -> &str {
         "whatsapp"
@@ -3774,7 +3781,7 @@ impl ChannelPayloadTranslator for WhatsAppTranslator {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "plugin-whatsapp"))]
 mod broker_outbound_tests {
     use super::*;
     use nexo_broker::LocalBroker;

@@ -708,10 +708,21 @@ impl AdminRpcBootstrap {
                 .with_agents_domain(agents_yaml.clone(), inputs.reload_signal.clone())
                 .with_credentials_domain(credential_store.clone())
                 .with_pairing_domain(pairing_store.clone(), Some(pairing_notifier.clone()))
-                .with_pairing_triggers(inputs.pairing_triggers.clone())
-                .with_wa_bot_handle(Arc::new(
+                .with_pairing_triggers(inputs.pairing_triggers.clone());
+            // Phase 93.12.c — whatsapp bot handle is the only
+            // channel-specific admin RPC dependency. When the
+            // `plugin-whatsapp` feature is off the daemon ships
+            // without `nexo-plugin-whatsapp` in its dep graph so this
+            // call must disappear; the admin dispatcher then has no
+            // whatsapp bot handle and `/whatsapp/*` admin RPCs surface
+            // a "channel unavailable" error to the wizard.
+            #[cfg(feature = "plugin-whatsapp")]
+            {
+                dispatcher = dispatcher.with_wa_bot_handle(Arc::new(
                     nexo_plugin_whatsapp::bot_registry::WhatsappBotHandle,
-                ))
+                ));
+            }
+            dispatcher = dispatcher
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_llm_provider_catalog(inputs.llm_provider_catalog.clone())
                 .with_channels_domain();
@@ -755,11 +766,21 @@ impl AdminRpcBootstrap {
             // configured" error so callers diagnose the wire-up
             // gap clearly.
             if let Some(broker) = inputs.broker.clone() {
-                let outbound = Arc::new(
-                    crate::admin_adapters::BrokerOutboundDispatcher::new(broker)
-                        .with_translator(Box::new(crate::admin_adapters::WhatsAppTranslator)),
-                );
-                dispatcher = dispatcher.with_channel_outbound(outbound);
+                #[allow(unused_mut)]
+                let mut outbound =
+                    crate::admin_adapters::BrokerOutboundDispatcher::new(broker);
+                // Phase 93.12.c — `WhatsAppTranslator` lives behind
+                // `plugin-whatsapp`. Skip when the feature is off; the
+                // outbound dispatcher then routes whatsapp messages to
+                // the "no translator" path, which surfaces as a typed
+                // `TranslationError::UnsupportedChannel` to callers.
+                #[cfg(feature = "plugin-whatsapp")]
+                {
+                    outbound = outbound.with_translator(Box::new(
+                        crate::admin_adapters::WhatsAppTranslator,
+                    ));
+                }
+                dispatcher = dispatcher.with_channel_outbound(Arc::new(outbound));
             }
             // Wire the production transcript
             // appender when boot has the writer handle. Without

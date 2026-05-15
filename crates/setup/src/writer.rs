@@ -668,6 +668,7 @@ fn run_channel_pairing(
             println!("── Pairing Telegram ────────────────────────────────");
             run_telegram_link_sync(agent_id, secrets_dir, config_dir)?;
         }
+        #[cfg(feature = "plugin-whatsapp")]
         "whatsapp" => {
             // Inline pairing: wa-agent Client renders the QR, we block
             // the wizard until `connect()` returns (first real message
@@ -675,6 +676,17 @@ fn run_channel_pairing(
             println!();
             println!("── Pairing WhatsApp ────────────────────────────────");
             run_whatsapp_pairing_sync(agent_id, config_dir)?;
+        }
+        #[cfg(not(feature = "plugin-whatsapp"))]
+        "whatsapp" => {
+            // Phase 93.12.c — daemon built without `plugin-whatsapp`
+            // feature. Pairing is unavailable from this build of the
+            // wizard; the operator must enable the feature (default-on)
+            // or run the whatsapp pairing flow via the standalone
+            // subprocess binary's own admin interface.
+            anyhow::bail!(
+                "this daemon binary was built without the `plugin-whatsapp` feature; whatsapp pairing is unavailable"
+            );
         }
         "email" => {
             println!();
@@ -690,6 +702,7 @@ fn run_channel_pairing(
 /// Blow away the on-disk session for a channel scoped to ONE agent.
 /// Resolves the path from that agent's workspace (`<workspace>/<channel>/default`)
 /// so wiping `ana` never touches `kate`.
+#[cfg(feature = "plugin-whatsapp")]
 fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Result<()> {
     let target = match canal_id {
         "whatsapp" => agent_whatsapp_session_dir(config_dir, agent_id),
@@ -704,6 +717,16 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
     Ok(())
 }
 
+#[cfg(not(feature = "plugin-whatsapp"))]
+fn wipe_channel_session(_canal_id: &str, _agent_id: &str, _config_dir: &Path) -> Result<()> {
+    // Phase 93.12.c.1 — feature off: no whatsapp = nothing to wipe.
+    // Telegram / email channels do not own a daemon-side session dir
+    // (telegram credentials live in the credential store; email in
+    // SQLite). Other plugins extending this match-arm in the future
+    // would land their own `#[cfg(feature = "plugin-X")]` arm above.
+    Ok(())
+}
+
 /// Per-agent WhatsApp session path. Resolution order:
 ///   1. `config/plugins/whatsapp.yaml::whatsapp.session_dir` if present —
 ///      lets the operator pin a custom location (Docker bind mount,
@@ -715,6 +738,7 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 /// Docker-style `/app/` prefixes (from config files authored inside a
 /// container image) are rewritten to host-relative paths so the wizard
 /// running on the host touches the same dir the container agent would.
+#[cfg(feature = "plugin-whatsapp")]
 fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
     let wa_yaml = config_dir.join("plugins").join("whatsapp.yaml");
     if let Ok(Some(existing)) = crate::yaml_patch::get_string(&wa_yaml, "whatsapp.session_dir") {
@@ -734,6 +758,7 @@ fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
 
 /// Rewrite `/app/foo` → `./foo` so YAML authored for a container still
 /// resolves correctly when the wizard runs on the host.
+#[cfg(feature = "plugin-whatsapp")]
 fn resolve_docker_path(raw: &str) -> PathBuf {
     if let Some(rest) = raw.strip_prefix("/app/") {
         PathBuf::from(format!("./{rest}"))
@@ -747,6 +772,7 @@ fn resolve_docker_path(raw: &str) -> PathBuf {
 /// runtime reads this path as the active WhatsApp account; when
 /// pairing for a different agent we switch it. Multi-account is
 /// future work (list shape in the yaml).
+#[cfg(feature = "plugin-whatsapp")]
 fn set_active_whatsapp_session(config_dir: &Path, session_dir: &Path) -> Result<()> {
     let yaml_path = config_dir.join("plugins").join("whatsapp.yaml");
     crate::yaml_patch::upsert(
@@ -765,6 +791,7 @@ fn set_active_whatsapp_session(config_dir: &Path, session_dir: &Path) -> Result<
 ///
 /// Runs on its own thread+runtime (same pattern as the google consent
 /// flow) because `persist` is sync.
+#[cfg(feature = "plugin-whatsapp")]
 fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
     // Session dir is scoped to the agent — each agent has its own
     // credentials under <workspace>/whatsapp/default. The plugin
