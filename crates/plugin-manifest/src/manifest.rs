@@ -114,6 +114,16 @@ pub struct PluginSection {
     #[serde(default)]
     pub config_schema: Option<ConfigSchemaSection>,
 
+    /// Phase 93.8.a-daemon — optional declarative credential store
+    /// contract. When set with `enabled = true`, the daemon's
+    /// `SubprocessNexoPlugin::credential_store()` constructs a
+    /// `RemoteCredentialStore` and registers it into
+    /// `bundle.stores_v2[plugin.id]`. Absent or `enabled = false`
+    /// ⇒ no contribution; typed `bundle.stores.X` continues to
+    /// serve during the Phase 93.9 deprecation window.
+    #[serde(default)]
+    pub credentials_schema: Option<CredentialsSchemaSection>,
+
     /// Per-registry capability declarations.
     /// Subprocess plugins use this to declare which channel
     /// kinds / LLM provider IDs / memory backend IDs / hook IDs
@@ -853,6 +863,40 @@ pub enum ConfigShape {
     Object,
     /// Array of maps at `cfg.plugins.<plugin_id>` — multi-instance plugins.
     Array,
+}
+
+// ── Credentials schema section (Phase 93.8.a-daemon) ────────────
+
+/// Phase 93.8.a-daemon — opt-in credential store contribution.
+///
+/// When `enabled = true`, the subprocess plugin's daemon-side
+/// adapter (`SubprocessNexoPlugin::credential_store()`) constructs
+/// a `RemoteCredentialStore` and inserts it into
+/// `bundle.stores_v2[plugin.id]`. The store forwards each
+/// `GenericCredentialStore` method to the matching
+/// `plugin.credentials.*` JSON-RPC handler registered on the
+/// plugin's `PluginAdapter` (Phase 93.8.a-sdk).
+///
+/// `accounts_shape` is informational only — daemon doesn't enforce
+/// it; reused by future tooling / docs to describe what the
+/// operator's YAML at `cfg.plugins.<plugin_id>` looks like.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialsSchemaSection {
+    /// `true` ⇒ plugin contributes a credential store via the
+    /// Phase 93.8.a RPC contract. `false` / absent ⇒
+    /// `NexoPlugin::credential_store()` returns `None`.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// YAML wire shape at the operator's `cfg.plugins.<plugin_id>`
+    /// account list. Mirrors `ConfigShape` (Phase 93.1) —
+    /// `Some(ConfigShape::Array)` for multi-instance plugins
+    /// (telegram, whatsapp); `Some(ConfigShape::Object)` for
+    /// single-instance (email, browser). `None` ⇒ plugin
+    /// describes its own shape.
+    #[serde(default)]
+    pub accounts_shape: Option<ConfigShape>,
 }
 
 // ── contributed-skills validation ────────────────────────────────

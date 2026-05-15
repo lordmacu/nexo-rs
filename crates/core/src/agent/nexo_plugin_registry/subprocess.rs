@@ -282,6 +282,14 @@ struct Inner {
     /// closes (signalling end-of-stream to the consumer).
     streaming_pending: Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
 
+    /// Phase 93.8.a-daemon — per-call id allocator for the new
+    /// `plugin.credentials.*` RPCs. Initialised `1_000_000` in
+    /// `spawn_one_attempt` to avoid colliding with literal
+    /// `initialize`=1 / `shutdown`=2 / `plugin.configure`=3.
+    /// `fetch_add(1, SeqCst)` per RPC; resets per-respawn (safe —
+    /// old `Inner`'s pending receivers wake `Err` on drop).
+    next_credentials_id: Arc<std::sync::atomic::AtomicU64>,
+
     /// Tool catalog advertised by the subprocess
     /// at initialize-reply time. `register_remote_tool_handlers`
     /// reads this to build one `RemoteToolHandler` per declared
@@ -455,6 +463,182 @@ impl SubprocessNexoPlugin {
                 plugin_id,
                 reason: err_msg,
             }),
+        }
+    }
+
+    /// Phase 93.8.a-daemon — `plugin.credentials.list` host→child
+    /// RPC. 5s timeout (boot-time class). Returns the typed reply
+    /// or `Err(msg)` for transport / timeout / plugin-side error.
+    pub(crate) async fn send_credentials_list_rpc(
+        &self,
+    ) -> Result<crate::agent::nexo_plugin_registry::remote_credential_store::CredentialsListReply, String> {
+        use crate::agent::nexo_plugin_registry::remote_credential_store::CredentialsListReply;
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return Err("subprocess not spawned".to_string());
+        };
+        let id = inner
+            .next_credentials_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "plugin.credentials.list",
+            "params": {},
+        });
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        inner.pending.insert(id, tx);
+        if inner.stdin_tx.send(req).await.is_err() {
+            inner.pending.remove(&id);
+            return Err("stdin channel closed".to_string());
+        }
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Err(_) => {
+                inner.pending.remove(&id);
+                Err("plugin.credentials.list timeout".to_string())
+            }
+            Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
+            Ok(Ok(Ok(value))) => serde_json::from_value::<CredentialsListReply>(value)
+                .map_err(|e| format!("response decode: {e}")),
+            Ok(Ok(Err(msg))) => Err(msg),
+        }
+    }
+
+    /// Phase 93.8.a-daemon — `plugin.credentials.issue` host→child
+    /// RPC. 1s timeout (hot-path class).
+    pub(crate) async fn send_credentials_issue_rpc(
+        &self,
+        account_id: &str,
+        agent_id: &str,
+    ) -> Result<(), String> {
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return Err("subprocess not spawned".to_string());
+        };
+        let id = inner
+            .next_credentials_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "plugin.credentials.issue",
+            "params": { "account_id": account_id, "agent_id": agent_id },
+        });
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        inner.pending.insert(id, tx);
+        if inner.stdin_tx.send(req).await.is_err() {
+            inner.pending.remove(&id);
+            return Err("stdin channel closed".to_string());
+        }
+        match tokio::time::timeout(Duration::from_secs(1), rx).await {
+            Err(_) => {
+                inner.pending.remove(&id);
+                Err("plugin.credentials.issue timeout".to_string())
+            }
+            Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
+            Ok(Ok(Ok(value))) => {
+                if value
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    Ok(())
+                } else {
+                    Err("issue ack missing ok=true".to_string())
+                }
+            }
+            Ok(Ok(Err(msg))) => Err(msg),
+        }
+    }
+
+    /// Phase 93.8.a-daemon — `plugin.credentials.resolve_bytes`
+    /// host→child RPC. 1s timeout. Returns the base64-encoded
+    /// payload string (caller decodes via
+    /// `base64::engine::general_purpose::STANDARD.decode`).
+    pub(crate) async fn send_credentials_resolve_bytes_rpc(
+        &self,
+        account_id: &str,
+        agent_id: &str,
+        fingerprint: &str,
+    ) -> Result<String, String> {
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return Err("subprocess not spawned".to_string());
+        };
+        let id = inner
+            .next_credentials_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "plugin.credentials.resolve_bytes",
+            "params": {
+                "account_id": account_id,
+                "agent_id": agent_id,
+                "fingerprint": fingerprint,
+            },
+        });
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        inner.pending.insert(id, tx);
+        if inner.stdin_tx.send(req).await.is_err() {
+            inner.pending.remove(&id);
+            return Err("stdin channel closed".to_string());
+        }
+        match tokio::time::timeout(Duration::from_secs(1), rx).await {
+            Err(_) => {
+                inner.pending.remove(&id);
+                Err("plugin.credentials.resolve_bytes timeout".to_string())
+            }
+            Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
+            Ok(Ok(Ok(value))) => value
+                .get("bytes_b64")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| "resolve_bytes reply missing bytes_b64".to_string()),
+            Ok(Ok(Err(msg))) => Err(msg),
+        }
+    }
+
+    /// Phase 93.8.a-daemon — `plugin.credentials.reload` host→child
+    /// RPC. 5s timeout (boot-time class).
+    pub(crate) async fn send_credentials_reload_rpc(&self) -> Result<(), String> {
+        let inner_guard = self.inner.lock().await;
+        let Some(inner) = inner_guard.as_ref() else {
+            return Err("subprocess not spawned".to_string());
+        };
+        let id = inner
+            .next_credentials_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "plugin.credentials.reload",
+            "params": {},
+        });
+        let (tx, rx) = oneshot::channel::<Result<Value, String>>();
+        inner.pending.insert(id, tx);
+        if inner.stdin_tx.send(req).await.is_err() {
+            inner.pending.remove(&id);
+            return Err("stdin channel closed".to_string());
+        }
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Err(_) => {
+                inner.pending.remove(&id);
+                Err("plugin.credentials.reload timeout".to_string())
+            }
+            Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
+            Ok(Ok(Ok(value))) => {
+                if value
+                    .get("ok")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    Ok(())
+                } else {
+                    Err("reload ack missing ok=true".to_string())
+                }
+            }
+            Ok(Ok(Err(msg))) => Err(msg),
         }
     }
 
@@ -2172,6 +2356,7 @@ impl SubprocessNexoPlugin {
             pending,
             next_id: Arc::new(AtomicU64::new(2)),
             streaming_pending: Arc::new(DashMap::new()),
+            next_credentials_id: Arc::new(std::sync::atomic::AtomicU64::new(1_000_000)),
             declared_tools,
             tasks,
             child: child_handle,
@@ -2732,6 +2917,28 @@ impl NexoPlugin for SubprocessNexoPlugin {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    /// Phase 93.8.a-daemon — opt-in credential store contribution.
+    /// Returns `Some(Arc<RemoteCredentialStore>)` when the
+    /// manifest declares `[plugin.credentials_schema] enabled =
+    /// true` AND the factory populated `weak_self`. Otherwise
+    /// `None` (plugin opts out; typed `bundle.stores.X` continues
+    /// to serve during the Phase 93.9 deprecation window).
+    fn credential_store(
+        &self,
+    ) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
+        let cs = self.cached_manifest.plugin.credentials_schema.as_ref()?;
+        if !cs.enabled {
+            return None;
+        }
+        let weak = self.weak_self.get()?.clone();
+        Some(std::sync::Arc::new(
+            crate::agent::nexo_plugin_registry::remote_credential_store::RemoteCredentialStore::new(
+                self.cached_manifest.plugin.id.clone(),
+                weak,
+            ),
+        ))
     }
 
     /// Phase 93.2 — deliver the operator-supplied config slice to

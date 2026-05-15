@@ -1539,4 +1539,18 @@ expose = ["wrong_prefix"]
             "expected invalid-JSON error, got {errs:?}",
         );
     }
+
+    /// Phase 93.8.a-daemon — `[plugin.credentials_schema]` parses
+    /// with both `enabled` and `accounts_shape` fields.
+    #[test]
+    fn credentials_schema_section_parses_when_present() {
+        let mut s = base_manifest_toml();
+        s.push_str("\n[plugin.credentials_schema]\n");
+        s.push_str("enabled = true\n");
+        s.push_str("accounts_shape = \"array\"\n");
+        let m = parse(&s);
+        let cs = m.plugin.credentials_schema.as_ref().expect("section present");
+        assert!(cs.enabled);
+        assert_eq!(cs.accounts_shape, Some(crate::manifest::ConfigShape::Array));
+    }
 }
