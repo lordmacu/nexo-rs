@@ -35,13 +35,12 @@ use crate::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
 /// Bundle returned by [`build_credentials`] — holds every store plus
 /// the resolver. `main.rs` hands this to plugins / tools.
 pub struct CredentialsBundle {
-    /// Phase 93.9.a — added [`Self::account_count`] as the
-    /// preferred accessor for count consumers. The typed field
-    /// stays public during the deprecation window so poller +
-    /// wizard runtime consumers (Phase 93.9.c-e migrations) keep
-    /// compiling; 93.9.f flips it to `pub(crate)` once every
-    /// caller is gone.
-    pub stores: CredentialStores,
+    /// Phase 93.9.f — flipped to `pub(crate)` now that every
+    /// external caller migrated to the typed accessors
+    /// ([`Self::google_account`], [`Self::whatsapp_account`], …)
+    /// or to the v2 generic path ([`Self::stores_v2`]). External
+    /// code constructs the bundle via [`Self::for_testing`].
+    pub(crate) stores: CredentialStores,
     pub resolver: Arc<AgentCredentialResolver>,
     /// Per-`(channel, instance)` circuit breakers shared with plugin
     /// tools. Created with default config; failure on one account
@@ -58,6 +57,22 @@ pub struct CredentialsBundle {
 }
 
 impl CredentialsBundle {
+    /// Phase 93.9.f — public test-only constructor. External
+    /// crates (`crates/poller`, `crates/setup`, integration
+    /// tests) used to build the bundle directly by initialising
+    /// every field; now that [`Self::stores`] is `pub(crate)`,
+    /// this helper hands back an empty bundle suitable for fixtures
+    /// without exposing the typed `CredentialStores` shape.
+    pub fn empty_for_testing() -> Self {
+        Self {
+            stores: CredentialStores::empty(),
+            resolver: Arc::new(AgentCredentialResolver::empty()),
+            breakers: Arc::new(crate::breaker::BreakerRegistry::default()),
+            warnings: Vec::new(),
+            stores_v2: DashMap::new(),
+        }
+    }
+
     /// Phase 93.9.b — typed-account accessor for the daemon-owned
     /// Google channel. Plugin extraction is deferred; runtime
     /// consumers (gmail / google-calendar pollers, setup wizard
@@ -114,6 +129,30 @@ impl CredentialsBundle {
         handle: &crate::handle::CredentialHandle,
     ) -> Option<Arc<tokio::sync::Mutex<()>>> {
         self.stores.google.refresh_lock(handle)
+    }
+
+    /// Phase 93.9.f — typed `Arc<GoogleCredentialStore>` accessor
+    /// for plugin constructors that need the whole store (not a
+    /// single account). Hides the aggregate `CredentialStores`
+    /// shape from external code while preserving the typed-Arc
+    /// surface daemon-internal plugins still rely on.
+    pub fn google_store(&self) -> Arc<crate::google::GoogleCredentialStore> {
+        Arc::clone(&self.stores.google)
+    }
+
+    /// Phase 93.9.f — typed `Arc<EmailCredentialStore>` accessor.
+    pub fn email_store(&self) -> Arc<crate::email::EmailCredentialStore> {
+        Arc::clone(&self.stores.email)
+    }
+
+    /// Phase 93.9.f — typed `Arc<WhatsappCredentialStore>` accessor.
+    pub fn whatsapp_store(&self) -> Arc<crate::whatsapp::WhatsappCredentialStore> {
+        Arc::clone(&self.stores.whatsapp)
+    }
+
+    /// Phase 93.9.f — typed `Arc<TelegramCredentialStore>` accessor.
+    pub fn telegram_store(&self) -> Arc<crate::telegram::TelegramCredentialStore> {
+        Arc::clone(&self.stores.telegram)
     }
 
     /// Account count for `channel`. Reads from `stores_v2` first

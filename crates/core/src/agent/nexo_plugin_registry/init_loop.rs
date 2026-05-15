@@ -1347,7 +1347,6 @@ mod tests {
     use nexo_auth::wire::CredentialsBundle;
     use nexo_auth::handle::TELEGRAM;
     use nexo_auth::CredentialHandle;
-    use nexo_auth::resolver::CredentialStores;
 
     /// Phase 93.7 — minimal credential store impl for init-loop
     /// helper tests. Carries an id + a "version tag" byte so
@@ -1410,14 +1409,7 @@ mod tests {
     }
 
     fn empty_bundle() -> CredentialsBundle {
-        let resolver = Arc::new(nexo_auth::AgentCredentialResolver::empty());
-        CredentialsBundle {
-            stores: CredentialStores::empty(),
-            resolver,
-            breakers: Arc::new(nexo_auth::breaker::BreakerRegistry::default()),
-            warnings: Vec::new(),
-            stores_v2: dashmap::DashMap::new(),
-        }
+        CredentialsBundle::empty_for_testing()
     }
 
     fn manifest_for(id: &str) -> PluginManifest {

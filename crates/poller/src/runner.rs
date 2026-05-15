@@ -781,13 +781,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn empty_creds() -> Arc<CredentialsBundle> {
-        Arc::new(CredentialsBundle {
-            stores: nexo_auth::resolver::CredentialStores::empty(),
-            resolver: Arc::new(nexo_auth::AgentCredentialResolver::empty()),
-            breakers: Arc::new(nexo_auth::breaker::BreakerRegistry::default()),
-            warnings: Vec::new(),
-            stores_v2: dashmap::DashMap::new(),
-        })
+        Arc::new(CredentialsBundle::empty_for_testing())
     }
 
     struct MockPoller {
