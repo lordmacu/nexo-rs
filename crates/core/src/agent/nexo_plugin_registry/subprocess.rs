@@ -2919,6 +2919,32 @@ impl NexoPlugin for SubprocessNexoPlugin {
         self
     }
 
+    /// Phase 81.33.b.real — opt-in pairing adapter contribution.
+    ///
+    /// Returns `Some(Arc<GenericBrokerPairingAdapter>)` when the
+    /// manifest declares `[plugin.pairing.adapter]`. Daemon
+    /// registers the adapter into the shared
+    /// `PairingAdapterRegistry` under the manifest-supplied
+    /// `channel_id`, replacing the previously hardcoded
+    /// `Arc::new(XxxPairingAdapter::new(broker))` blocks.
+    ///
+    /// Plugins that haven't migrated their manifest yet inherit
+    /// `None`; the daemon's legacy hardcoded registration (gated
+    /// by `#[cfg(feature = "plugin-X")]`) continues to serve.
+    /// Once a plugin ships the manifest section, the generic
+    /// adapter wins on the registry `insert` overwrite path.
+    fn build_pairing_adapter(
+        &self,
+        broker: nexo_broker::AnyBroker,
+    ) -> Option<std::sync::Arc<dyn nexo_pairing::adapter::PairingChannelAdapter>> {
+        let section = self.cached_manifest.plugin.pairing.adapter.as_ref()?;
+        Some(std::sync::Arc::new(
+            nexo_pairing::generic_adapter::GenericBrokerPairingAdapter::from_manifest(
+                broker, section,
+            ),
+        ))
+    }
+
     /// Phase 93.8.a-daemon — opt-in credential store contribution.
     /// Returns `Some(Arc<RemoteCredentialStore>)` when the
     /// manifest declares `[plugin.credentials_schema] enabled =

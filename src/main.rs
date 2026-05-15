@@ -6414,6 +6414,26 @@ async fn main() -> Result<()> {
         // depend on nexo-core; constructing them inside core would
         // create a cycle.
         let pairing_registry = build_known_pairing_registry(&broker);
+        // Phase 81.33.b.real — manifest-driven pairing adapters.
+        // After legacy hardcoded registrations (above), iterate
+        // every loaded plugin handle and ask it to supply an
+        // adapter via the trait method. Plugins whose manifest
+        // declares `[plugin.pairing.adapter]` return
+        // `Some(GenericBrokerPairingAdapter)`; the registry's
+        // `register` overwrites by `channel_id` so a manifest-
+        // declared adapter wins over the matching legacy hardcoded
+        // one. Plugins that haven't migrated yet return `None` and
+        // the legacy registration keeps serving.
+        for (plugin_id, handle) in wire.plugin_handles.iter() {
+            if let Some(adapter) = handle.build_pairing_adapter(broker.clone()) {
+                tracing::info!(
+                    plugin = %plugin_id,
+                    channel = %adapter.channel_id(),
+                    "registered manifest-driven pairing adapter (Phase 81.33.b.real)",
+                );
+                pairing_registry.register(adapter);
+            }
+        }
         let assembly_deps = nexo_core::agent::spawn::RuntimeAssemblyDeps {
             tools: Arc::clone(&tools),
             memory: memory.clone(),
@@ -7198,8 +7218,25 @@ async fn main() -> Result<()> {
 
                 // 5. Pairing adapter registry — built per spawn
                 //    via the shared `build_known_pairing_registry`
-                //    helper (Phase 81.33.b).
+                //    helper (Phase 81.33.b) + iterate plugin
+                //    handles for manifest-declared adapters
+                //    (Phase 81.33.b.real).
                 let pairing_registry = build_known_pairing_registry(&broker);
+                {
+                    let guard = plugin_handles_cell.read().await;
+                    if let Some(handles) = guard.as_ref() {
+                        for (plugin_id, handle) in handles.iter() {
+                            if let Some(adapter) = handle.build_pairing_adapter(broker.clone()) {
+                                tracing::info!(
+                                    plugin = %plugin_id,
+                                    channel = %adapter.channel_id(),
+                                    "registered manifest-driven pairing adapter (hot-spawn, Phase 81.33.b.real)",
+                                );
+                                pairing_registry.register(adapter);
+                            }
+                        }
+                    }
+                }
 
                 // 6. Assemble runtime via shared helper.
                 let assembly_deps = RuntimeAssemblyDeps {
@@ -8121,6 +8158,16 @@ async fn boot_dispatch_ctx_if_enabled(
     // notify_origin reaches WhatsApp / Telegram out of the box.
     // Phase 81.33.b — single source of truth via
     // `build_known_pairing_registry` helper.
+    //
+    // Phase 81.33.b.real — this branch (`boot_dispatch_ctx_if_enabled`,
+    // dispatch-ctx / autonomous-worker mode) does NOT yet iterate
+    // `plugin_handles_cell` for manifest-driven adapters because
+    // the cell is not threaded into this function. Manifest
+    // adapters work for the primary agent runtime path
+    // (`src/main.rs:6416-6437` boot + `:7224-...` hot-spawn).
+    // Threading the cell here is a follow-up if dispatch-ctx mode
+    // grows pairing-aware hooks; until then it falls back to the
+    // legacy cfg-gated hardcoded registrations.
     let pairing_registry = build_known_pairing_registry(_broker);
     // Hook idempotency store. Lives next to other state sidecars
     // in $NEXO_HOME/state/. On failure the dispatcher degrades to

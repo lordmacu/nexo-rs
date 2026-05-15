@@ -19,6 +19,7 @@
 pub mod adapter;
 pub mod code;
 pub mod gate;
+pub mod generic_adapter;
 pub mod qr;
 pub mod registry;
 pub mod session_store;

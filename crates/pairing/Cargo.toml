@@ -30,6 +30,13 @@ sqlx           = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
 tracing        = { workspace = true }
+# Phase 81.33.b.real — `GenericBrokerPairingAdapter` translates
+# trait method calls into broker JSON-RPC against the plugin's
+# declared topic prefix, so subprocess plugins can supply an
+# adapter via manifest data instead of a hardcoded Rust
+# constructor on the daemon side.
+nexo-broker    = { version = "0.1.4", path = "../broker" }
+nexo-plugin-manifest = { version = "0.1.4", path = "../plugin-manifest" }
 hmac           = "0.12"
 subtle         = "2"
 rand           = "0.8"
