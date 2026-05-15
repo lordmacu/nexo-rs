@@ -716,6 +716,16 @@ struct RuntimeHealth {
     /// Companion WS handshake context — populated after pairing init.
     /// `None` until the daemon's pairing block completes.
     pairing_handshake: Arc<std::sync::OnceLock<PairingHandshakeCtx>>,
+    /// Phase 92.followup.b — live `TunnelHandle`s the daemon
+    /// owns. Populated by tunnel-creation sites
+    /// (`src/main.rs:3815` whatsapp-pairing public_tunnel +
+    /// `src/main.rs:10550` admin `--tunnel`) so the `/metrics`
+    /// aggregator can snapshot per-tunnel supervisor counters
+    /// (`tunnel_streams_total`, `tunnel_bytes_in_total`,
+    /// `tunnel_bytes_out_total`, `tunnel_reconnects_total`).
+    /// Entries removed on graceful shutdown; stale entries
+    /// after Drop emit zero from `metrics().await`.
+    tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>>,
 }
 
 #[derive(Clone)]
@@ -3773,12 +3783,15 @@ async fn main() -> Result<()> {
     // Slot for companion WS handshake context — filled after pairing init below.
     let pairing_handshake_slot: Arc<std::sync::OnceLock<PairingHandshakeCtx>> =
         Arc::new(std::sync::OnceLock::new());
+    let tunnel_registry: Arc<tokio::sync::RwLock<Vec<Arc<nexo_tunnel_quick::TunnelHandle>>>> =
+        Arc::new(tokio::sync::RwLock::new(Vec::new()));
     let health = RuntimeHealth {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
         wa_pairing: wa_pairing.clone(),
         email_plugin: email_plugin.clone(),
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
+        tunnel_registry: Arc::clone(&tunnel_registry),
     };
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
@@ -3791,6 +3804,7 @@ async fn main() -> Result<()> {
     if let (Some(tcfg), Some(pairing)) = (wa_tunnel_cfg.as_ref(), wa_first_pairing) {
         if tcfg.enabled {
             let only_until_paired = tcfg.only_until_paired;
+            let tunnel_registry_c = Arc::clone(&tunnel_registry);
             tokio::spawn(async move {
                 // Wait for the local HTTP server to actually bind before
                 // the tunnel registers — otherwise the tunnel comes up
@@ -3814,6 +3828,11 @@ async fn main() -> Result<()> {
                 }
                 match nexo_tunnel::TunnelManager::new(8080).start().await {
                     Ok(handle) => {
+                        // Phase 92.followup.b — register the live
+                        // handle so the `/metrics` aggregator can
+                        // snapshot per-tunnel supervisor counters.
+                        let handle = Arc::new(handle);
+                        tunnel_registry_c.write().await.push(Arc::clone(&handle));
                         // Big, hard-to-miss banner on stderr so
                         // operators see the URL even in noisy logs.
                         let url = handle.url.clone();
@@ -3846,13 +3865,25 @@ async fn main() -> Result<()> {
                                 if s.state == "connected" {
                                     tracing::info!("pairing complete — closing public tunnel");
                                     handle.shutdown().await;
+                                    // Phase 92.followup.b — drop the
+                                    // registry entry so `/metrics`
+                                    // stops emitting stale per-tunnel
+                                    // counters for the shut handle.
+                                    tunnel_registry_c
+                                        .write()
+                                        .await
+                                        .retain(|h| !Arc::ptr_eq(h, &handle));
                                     return;
                                 }
                             }
                         } else {
                             // Keep the handle alive for the rest of
-                            // the process lifetime.
-                            std::mem::forget(handle);
+                            // the process lifetime. The registry holds
+                            // the Arc so dropping the local binding
+                            // here is the right shape — Drop on the
+                            // last Arc still ticks the supervisor's
+                            // teardown.
+                            drop(handle);
                         }
                     }
                     Err(e) => {
@@ -15080,13 +15111,21 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
         None => None,
     };
     body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
-    // Phase 92 follow-up — surface tunnel lifecycle counters
+    // Phase 92.followup.b — surface tunnel lifecycle counters
     // (`tunnel_starts_total`, `tunnel_starts_failed_total`,
-    // `tunnel_shutdowns_total`). Per-tunnel supervisor counters
-    // (`tunnel_streams_total` etc.) need live `TunnelHandle`
-    // references plumbed through a handle registry and stay
-    // dark until that follow-up lands.
-    body.push_str(&nexo_tunnel_quick::metrics::render_prometheus());
+    // `tunnel_shutdowns_total`) AND per-tunnel supervisor
+    // counters (`tunnel_streams_total`, `tunnel_bytes_in/out_total`,
+    // `tunnel_reconnects_total`) for every handle live in the
+    // registry. The handle registry is populated by tunnel-
+    // creation sites (whatsapp-pairing public_tunnel today;
+    // admin `--tunnel` lives in a standalone CLI subcommand
+    // and is intentionally NOT routed through this aggregator).
+    {
+        let guard = health.tunnel_registry.read().await;
+        let refs: Vec<&nexo_tunnel_quick::TunnelHandle> =
+            guard.iter().map(|h| h.as_ref()).collect();
+        body.push_str(&nexo_tunnel_quick::metrics::render_prometheus_for(&refs).await);
+    }
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
 }
