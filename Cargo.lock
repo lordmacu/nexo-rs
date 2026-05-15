@@ -5550,8 +5550,10 @@ name = "nexo-reference-plugin"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "nexo-broker",
+ "nexo-pairing",
  "nexo-plugin-manifest",
  "serde",
  "serde_json",

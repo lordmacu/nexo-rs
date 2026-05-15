@@ -39,7 +39,9 @@ base64         = { workspace = true }
 
 [dev-dependencies]
 nexo-broker          = { path = "../../broker" }
+nexo-pairing         = { path = "../../pairing" }
 nexo-plugin-manifest = { path = "../../plugin-manifest" }
 tokio                = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_json           = { workspace = true }
 toml                 = "0.8"
+async-trait          = { workspace = true }
