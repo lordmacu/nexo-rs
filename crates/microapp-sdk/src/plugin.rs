@@ -156,6 +156,121 @@ where
     }
 }
 
+// ── Phase 93.8.a-sdk: plugin.credentials.* handlers ────────────
+
+/// Phase 93.8.a-sdk — reply shape for `plugin.credentials.list`.
+/// Returned by [`CredentialsListHandler::handle`]. Cached by the
+/// daemon-side `RemoteCredentialStore` (Phase 93.8.a-daemon) so
+/// per-call `list()` doesn't round-trip through stdio for every
+/// outbound resolve.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CredentialsListReply {
+    /// Account ids known to this plugin (multi-instance shape).
+    pub accounts: Vec<String>,
+    /// Operator-visible warnings (boot-time invariant violations
+    /// the plugin caught — missing env var, malformed instance
+    /// label). Merged into `bundle.warnings` daemon-side at next
+    /// reload.
+    pub warnings: Vec<String>,
+}
+
+/// Phase 93.8.a-sdk — handler invoked when the host sends
+/// `plugin.credentials.list`. Re-callable; hot-reload triggers a
+/// fresh request. Returning `Err(msg)` maps to a JSON-RPC
+/// `-32603` reply.
+pub trait CredentialsListHandler: Send + Sync + 'static {
+    /// Hook called per `plugin.credentials.list` request.
+    fn handle(&self) -> BoxFuture<'static, Result<CredentialsListReply, String>>;
+}
+
+impl<F, Fut> CredentialsListHandler for F
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<CredentialsListReply, String>> + Send + 'static,
+{
+    fn handle(&self) -> BoxFuture<'static, Result<CredentialsListReply, String>> {
+        Box::pin((self)())
+    }
+}
+
+/// Phase 93.8.a-sdk — handler invoked when the host sends
+/// `plugin.credentials.issue` requesting an opaque handle for
+/// `(account_id, agent_id)`. Plugin returns `Ok(())` when the
+/// allow-agents check passes; the daemon-side
+/// `RemoteCredentialStore::issue` constructs the `CredentialHandle`
+/// after this ack. `Err(msg)` maps to JSON-RPC `-32603`.
+pub trait CredentialsIssueHandler: Send + Sync + 'static {
+    /// Hook called per `plugin.credentials.issue` request.
+    fn handle(
+        &self,
+        account_id: String,
+        agent_id: String,
+    ) -> BoxFuture<'static, Result<(), String>>;
+}
+
+impl<F, Fut> CredentialsIssueHandler for F
+where
+    F: Fn(String, String) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    fn handle(
+        &self,
+        account_id: String,
+        agent_id: String,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        Box::pin((self)(account_id, agent_id))
+    }
+}
+
+/// Phase 93.8.a-sdk — handler invoked when the host sends
+/// `plugin.credentials.resolve_bytes`. Plugin returns the credential
+/// payload bytes for the `(account_id, agent_id, fingerprint)`
+/// tuple. Bytes are base64-encoded on the wire by the SDK; plugin
+/// authors return raw `Vec<u8>` (e.g. `serde_json::to_vec(&account)`).
+pub trait CredentialsResolveBytesHandler: Send + Sync + 'static {
+    /// Hook called per `plugin.credentials.resolve_bytes` request.
+    fn handle(
+        &self,
+        account_id: String,
+        agent_id: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<Vec<u8>, String>>;
+}
+
+impl<F, Fut> CredentialsResolveBytesHandler for F
+where
+    F: Fn(String, String, String) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Vec<u8>, String>> + Send + 'static,
+{
+    fn handle(
+        &self,
+        account_id: String,
+        agent_id: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<Vec<u8>, String>> {
+        Box::pin((self)(account_id, agent_id, fingerprint))
+    }
+}
+
+/// Phase 93.8.a-sdk — handler invoked when the host sends
+/// `plugin.credentials.reload`. Plugin re-reads from disk / env /
+/// external KMS. No-op `async { Ok(()) }` is the conventional
+/// default-impl shape.
+pub trait CredentialsReloadHandler: Send + Sync + 'static {
+    /// Hook called per `plugin.credentials.reload` request.
+    fn handle(&self) -> BoxFuture<'static, Result<(), String>>;
+}
+
+impl<F, Fut> CredentialsReloadHandler for F
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
+{
+    fn handle(&self) -> BoxFuture<'static, Result<(), String>> {
+        Box::pin((self)())
+    }
+}
+
 /// Child-side request-response correlation map.
 /// Each outbound request (memory.recall, llm.complete, ...) is
 /// keyed by an integer id; the dispatch loop's reader looks up
@@ -799,6 +914,19 @@ pub struct PluginAdapter {
     /// silently accepts the value with `{"result":{}}` so plugins
     /// that haven't migrated keep booting unchanged.
     on_configure: Option<Arc<dyn ConfigureHandler>>,
+    /// Phase 93.8.a-sdk — invoked when the host sends
+    /// `plugin.credentials.list`. `None` ⇒ dispatch arm replies
+    /// `-32601 method not found`.
+    on_credentials_list: Option<Arc<dyn CredentialsListHandler>>,
+    /// Phase 93.8.a-sdk — `plugin.credentials.issue`. `None` ⇒
+    /// `-32601`.
+    on_credentials_issue: Option<Arc<dyn CredentialsIssueHandler>>,
+    /// Phase 93.8.a-sdk — `plugin.credentials.resolve_bytes`. `None`
+    /// ⇒ `-32601`.
+    on_credentials_resolve_bytes: Option<Arc<dyn CredentialsResolveBytesHandler>>,
+    /// Phase 93.8.a-sdk — `plugin.credentials.reload`. `None` ⇒
+    /// `-32601`.
+    on_credentials_reload: Option<Arc<dyn CredentialsReloadHandler>>,
     /// Tool defs advertised in the `initialize`
     /// reply's `tools: [...]` field. The host's decoder
     /// (`nexo_core::agent::tool_remote::RemoteToolDef`) consumes
@@ -925,6 +1053,10 @@ impl PluginAdapter {
             on_broker_event: None,
             on_shutdown: None,
             on_configure: None,
+            on_credentials_list: None,
+            on_credentials_issue: None,
+            on_credentials_resolve_bytes: None,
+            on_credentials_reload: None,
             declared_tools: Vec::new(),
             tool_handler: None,
             tool_handler_with_context: None,
@@ -1055,6 +1187,45 @@ impl PluginAdapter {
     /// `Err(msg)` maps to a JSON-RPC `-32603` reply.
     pub fn on_configure<H: ConfigureHandler>(mut self, handler: H) -> Self {
         self.on_configure = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 93.8.a-sdk — register the handler invoked when the
+    /// host sends `plugin.credentials.list`. Returns the plugin's
+    /// known account ids + optional boot warnings.
+    pub fn on_credentials_list<H: CredentialsListHandler>(mut self, handler: H) -> Self {
+        self.on_credentials_list = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 93.8.a-sdk — register the handler invoked when the
+    /// host sends `plugin.credentials.issue` for a
+    /// `(account_id, agent_id)` tuple. Plugin returns `Ok(())`
+    /// when the issuance is permitted; daemon-side
+    /// `RemoteCredentialStore::issue` constructs the
+    /// `CredentialHandle` after the plugin's ack.
+    pub fn on_credentials_issue<H: CredentialsIssueHandler>(mut self, handler: H) -> Self {
+        self.on_credentials_issue = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 93.8.a-sdk — register the handler invoked when the
+    /// host sends `plugin.credentials.resolve_bytes`. Plugin
+    /// returns raw bytes (e.g. `serde_json::to_vec(&account)`); the
+    /// SDK base64-encodes them on the wire.
+    pub fn on_credentials_resolve_bytes<H: CredentialsResolveBytesHandler>(
+        mut self,
+        handler: H,
+    ) -> Self {
+        self.on_credentials_resolve_bytes = Some(Arc::new(handler));
+        self
+    }
+
+    /// Phase 93.8.a-sdk — register the handler invoked when the
+    /// host sends `plugin.credentials.reload`. Plugin re-reads
+    /// from disk / env / external KMS.
+    pub fn on_credentials_reload<H: CredentialsReloadHandler>(mut self, handler: H) -> Self {
+        self.on_credentials_reload = Some(Arc::new(handler));
         self
     }
 
@@ -1351,6 +1522,121 @@ where
                     }
                 } else {
                     write_result(&writer, id, json!({})).await?;
+                }
+            }
+            "plugin.credentials.list" => {
+                // Phase 93.8.a-sdk — host queries known account ids.
+                if let Some(handler) = &adapter.on_credentials_list {
+                    match handler.handle().await {
+                        Ok(reply) => {
+                            let value = serde_json::to_value(&reply).unwrap_or_else(|_| {
+                                json!({ "accounts": [], "warnings": [] })
+                            });
+                            write_result(&writer, id, value).await?;
+                        }
+                        Err(e) => write_error(&writer, id, -32603, &e).await?,
+                    }
+                } else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32601,
+                        "method not found: plugin.credentials.list (no handler registered — call PluginAdapter::on_credentials_list)",
+                    )
+                    .await?;
+                }
+            }
+            "plugin.credentials.issue" => {
+                // Phase 93.8.a-sdk — host requests issuance ack.
+                let account_id = params.get("account_id").and_then(|v| v.as_str());
+                let agent_id = params.get("agent_id").and_then(|v| v.as_str());
+                let (Some(account_id), Some(agent_id)) = (account_id, agent_id) else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32602,
+                        "invalid params: missing account_id or agent_id",
+                    )
+                    .await?;
+                    continue;
+                };
+                if let Some(handler) = &adapter.on_credentials_issue {
+                    match handler
+                        .handle(account_id.to_string(), agent_id.to_string())
+                        .await
+                    {
+                        Ok(()) => write_result(&writer, id, json!({ "ok": true })).await?,
+                        Err(e) => write_error(&writer, id, -32603, &e).await?,
+                    }
+                } else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32601,
+                        "method not found: plugin.credentials.issue (no handler registered — call PluginAdapter::on_credentials_issue)",
+                    )
+                    .await?;
+                }
+            }
+            "plugin.credentials.resolve_bytes" => {
+                // Phase 93.8.a-sdk — host requests credential payload.
+                let account_id = params.get("account_id").and_then(|v| v.as_str());
+                let agent_id = params.get("agent_id").and_then(|v| v.as_str());
+                let fingerprint = params.get("fingerprint").and_then(|v| v.as_str());
+                let (Some(account_id), Some(agent_id), Some(fingerprint)) =
+                    (account_id, agent_id, fingerprint)
+                else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32602,
+                        "invalid params: missing account_id, agent_id, or fingerprint",
+                    )
+                    .await?;
+                    continue;
+                };
+                if let Some(handler) = &adapter.on_credentials_resolve_bytes {
+                    match handler
+                        .handle(
+                            account_id.to_string(),
+                            agent_id.to_string(),
+                            fingerprint.to_string(),
+                        )
+                        .await
+                    {
+                        Ok(bytes) => {
+                            use base64::Engine as _;
+                            let b64 =
+                                base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            write_result(&writer, id, json!({ "bytes_b64": b64 })).await?;
+                        }
+                        Err(e) => write_error(&writer, id, -32603, &e).await?,
+                    }
+                } else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32601,
+                        "method not found: plugin.credentials.resolve_bytes (no handler registered — call PluginAdapter::on_credentials_resolve_bytes)",
+                    )
+                    .await?;
+                }
+            }
+            "plugin.credentials.reload" => {
+                // Phase 93.8.a-sdk — host triggers credential reload.
+                if let Some(handler) = &adapter.on_credentials_reload {
+                    match handler.handle().await {
+                        Ok(()) => write_result(&writer, id, json!({ "ok": true })).await?,
+                        Err(e) => write_error(&writer, id, -32603, &e).await?,
+                    }
+                } else {
+                    write_error(
+                        &writer,
+                        id,
+                        -32601,
+                        "method not found: plugin.credentials.reload (no handler registered — call PluginAdapter::on_credentials_reload)",
+                    )
+                    .await?;
                 }
             }
             "tool.invoke" => {
@@ -2384,6 +2670,126 @@ min_nexo_version = ">=0.1.0"
             m.get(serde_yaml::Value::String("token".into()))
                 .and_then(|v| v.as_str()),
             Some("abc"),
+        );
+    }
+
+    // ── Phase 93.8.a-sdk: plugin.credentials.* dispatch ─────────
+
+    /// Phase 93.8.a-sdk — `plugin.credentials.list` dispatch returns
+    /// the handler-supplied accounts + warnings.
+    #[tokio::test]
+    async fn credentials_list_dispatch_returns_accounts_and_warnings() {
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_credentials_list(|| async {
+                Ok(CredentialsListReply {
+                    accounts: vec!["main".into(), "secondary".into()],
+                    warnings: vec!["w1".into()],
+                })
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"plugin.credentials.list\",\"params\":{}}\n",
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 4);
+        let accounts = reply["result"]["accounts"]
+            .as_array()
+            .expect("accounts array");
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[0].as_str(), Some("main"));
+        assert_eq!(accounts[1].as_str(), Some("secondary"));
+        let warnings = reply["result"]["warnings"]
+            .as_array()
+            .expect("warnings array");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].as_str(), Some("w1"));
+    }
+
+    /// Phase 93.8.a-sdk — `plugin.credentials.issue` routes
+    /// (account_id, agent_id) to the registered handler.
+    #[tokio::test]
+    async fn credentials_issue_dispatch_routes_to_handler() {
+        use std::sync::Mutex;
+        let observed: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
+        let observed_h = observed.clone();
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_credentials_issue(move |account_id, agent_id| {
+                let slot = observed_h.clone();
+                async move {
+                    *slot.lock().unwrap() = Some((account_id, agent_id));
+                    Ok(())
+                }
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"plugin.credentials.issue\",\
+                 \"params\":{\"account_id\":\"main\",\"agent_id\":\"alice\"}}\n",
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 5);
+        assert_eq!(reply["result"]["ok"], serde_json::Value::Bool(true));
+        let captured = observed.lock().unwrap().clone();
+        assert_eq!(
+            captured,
+            Some(("main".to_string(), "alice".to_string())),
+        );
+    }
+
+    /// Phase 93.8.a-sdk — `plugin.credentials.resolve_bytes` returns
+    /// base64-encoded bytes.
+    #[tokio::test]
+    async fn credentials_resolve_bytes_dispatch_returns_base64() {
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_credentials_resolve_bytes(|_acc, _ag, _fp| async move {
+                Ok(vec![1u8, 2, 3, 4])
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"plugin.credentials.resolve_bytes\",\
+                 \"params\":{\"account_id\":\"main\",\"agent_id\":\"alice\",\"fingerprint\":\"abc\"}}\n",
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 6);
+        assert_eq!(
+            reply["result"]["bytes_b64"].as_str(),
+            Some("AQIDBA=="),
+            "base64(vec![1,2,3,4]) == AQIDBA==",
+        );
+    }
+
+    /// Phase 93.8.a-sdk — no handler registered → -32601 method not found.
+    #[tokio::test]
+    async fn credentials_method_without_handler_returns_method_not_found() {
+        let adapter = PluginAdapter::new(TEST_MANIFEST).expect("manifest parses");
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+        host_write
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"plugin.credentials.list\",\"params\":{}}\n",
+            )
+            .await
+            .unwrap();
+        let reply = read_reply_line(&mut host_read).await;
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["error"]["code"], -32601);
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("method not found"),
+            "expected method-not-found error, got {}",
+            reply["error"]["message"],
         );
     }
 }
