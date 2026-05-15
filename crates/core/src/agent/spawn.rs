@@ -292,11 +292,11 @@ pub fn resolve_workspace_dir(
 /// per-agent, built after the LLM bind step).
 pub fn validate_agent_config(
     cfg: &AgentConfig,
-    telegram_cfgs: &[nexo_config::TelegramPluginConfig],
+    plugins: &nexo_config::types::plugins::PluginsConfig,
     known_tool_names: &[&str],
 ) -> Result<(), SpawnError> {
     let catalog = crate::agent::KnownTools::new(known_tool_names.to_vec());
-    crate::agent::validate_agent(cfg, telegram_cfgs, &catalog)
+    crate::agent::validate_agent(cfg, plugins, &catalog)
         .map_err(|e| SpawnError::Validation(format!("agent `{}`: {e}", cfg.id)))
 }
 

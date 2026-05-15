@@ -2185,7 +2185,7 @@ async fn main() -> Result<()> {
     // LLM registry and tool registry are assembled.
     nexo_core::agent::validate_agents(
         &cfg.agents.agents,
-        &cfg.plugins.telegram,
+        &cfg.plugins,
         &nexo_core::agent::KnownTools::default(),
     )
     .context("per-binding override validation failed")?;
@@ -2827,7 +2827,7 @@ async fn main() -> Result<()> {
             nexo_core::agent::KnownProviders::new(provider_ids.iter().map(String::as_str));
         nexo_core::agent::validate_agents_with_providers(
             &cfg.agents.agents,
-            &cfg.plugins.telegram,
+            &cfg.plugins,
             &nexo_core::agent::KnownTools::default(),
             &known_providers,
         )
@@ -6196,7 +6196,7 @@ async fn main() -> Result<()> {
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
             nexo_core::agent::spawn::validate_agent_config(
                 &agent_cfg,
-                &cfg.plugins.telegram,
+                &cfg.plugins,
                 &names,
             )
             .map_err(|e| {
@@ -6774,8 +6774,12 @@ async fn main() -> Result<()> {
     // closure body keeps each invocation cheap (every field is
     // Arc-cloned, not deep-copied).
     let llm_cfg_for_spawn = Arc::new(cfg.llm.clone());
-    let telegram_cfgs_for_spawn: Vec<nexo_config::TelegramPluginConfig> =
-        cfg.plugins.telegram.clone();
+    // Phase 93.5.e — Arc-share the whole `PluginsConfig` instead
+    // of cloning a typed `Vec<TelegramPluginConfig>`. The
+    // spawn-time validator now walks `plugins.instances_for(id)`
+    // so any array-shape plugin participates without daemon-side
+    // typed access.
+    let plugins_for_spawn = Arc::new(cfg.plugins.clone());
         use nexo_core::agent::spawn::{
             assemble_agent_runtime, resolve_llm_client, validate_agent_config, AgentSpawnerFn,
             RuntimeAssemblyDeps, SpawnError, SpawnedAgent,
@@ -6789,7 +6793,7 @@ async fn main() -> Result<()> {
         let memory_c = memory.clone();
         let llm_registry_c = Arc::clone(&llm_registry);
         let llm_cfg_c = Arc::clone(&llm_cfg_for_spawn);
-        let telegram_cfgs_c = telegram_cfgs_for_spawn.clone();
+        let plugins_c = Arc::clone(&plugins_for_spawn);
         let peer_directory_c = Arc::clone(&peer_directory);
         let transcripts_redactor_c = Arc::clone(&transcripts_redactor);
         let transcripts_index_c = transcripts_index.clone();
@@ -6831,7 +6835,7 @@ async fn main() -> Result<()> {
             let memory = memory_c.clone();
             let llm_registry = Arc::clone(&llm_registry_c);
             let llm_cfg = Arc::clone(&llm_cfg_c);
-            let telegram_cfgs = telegram_cfgs_c.clone();
+            let plugins = Arc::clone(&plugins_c);
             let peer_directory = Arc::clone(&peer_directory_c);
             let transcripts_redactor = Arc::clone(&transcripts_redactor_c);
             let transcripts_index = transcripts_index_c.clone();
@@ -7141,7 +7145,7 @@ async fn main() -> Result<()> {
                 let tool_defs = tools.to_tool_defs();
                 let known_tool_names: Vec<&str> =
                     tool_defs.iter().map(|d| d.name.as_str()).collect();
-                validate_agent_config(&cfg, &telegram_cfgs, &known_tool_names)?;
+                validate_agent_config(&cfg, &plugins, &known_tool_names)?;
 
                 // 4. Behavior + Agent.
                 let behavior =
