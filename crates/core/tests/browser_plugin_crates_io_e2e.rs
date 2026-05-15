@@ -80,6 +80,21 @@ impl ChildExt for std::process::Child {
     }
 }
 
+/// Stealth flags that defeat the most obvious headless-Chrome
+/// fingerprints (navigator.webdriver, AutomationControlled blink
+/// feature, missing UA string). Not a real cloaking solution, but
+/// enough to stop Google's `/sorry/index` redirect on a fresh IP.
+fn stealth_args() -> Vec<&'static str> {
+    vec![
+        "--no-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]
+}
+
 #[test]
 fn published_binary_drives_two_chromes_one_to_google_one_to_github() {
     let Some(bin) = locate_binary() else {
@@ -263,6 +278,235 @@ fn published_binary_drives_two_chromes_one_to_google_one_to_github() {
     eprintln!("google_search title: {title_a}");
 
     // Clean shutdown.
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}),
+    );
+    let _ = child.wait_timeout_or_kill(Duration::from_secs(10));
+    drop(tmp);
+}
+
+#[test]
+fn published_binary_stealth_three_instances_google_brave_github() {
+    let Some(bin) = locate_binary() else {
+        eprintln!("skipping: NEXO_PLUGIN_BROWSER_BIN unset and default path missing");
+        return;
+    };
+    let Ok(chromium) = std::env::var("CHROMIUM_BIN") else {
+        eprintln!("skipping: CHROMIUM_BIN unset");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    let mut child = Command::new(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("NEXO_PLUGIN_BROWSER_USER_DATA_DIR", tmp.path())
+        .env("NEXO_PLUGIN_BROWSER_EXECUTABLE", &chromium)
+        .env("RUST_LOG", "warn")
+        .spawn()
+        .expect("spawn published binary");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
+
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+    );
+
+    // Three declared instances with the stealth flag set so
+    // navigator.webdriver is `undefined`. Each navigates to a
+    // different search engine (or repo host) to prove the wire
+    // routes by `instance` arg + the three Chromes hold three
+    // distinct origins at the same time.
+    let args_value: Vec<Value> =
+        stealth_args().iter().map(|s| Value::String(s.to_string())).collect();
+    let cfg = rpc(
+        &mut stdin,
+        &mut stdout,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "plugin.configure",
+            "params": {
+                "value": [
+                    { "instance": "google_stealth",
+                      "headless": true,
+                      "executable": chromium,
+                      "args": args_value },
+                    { "instance": "brave_stealth",
+                      "headless": true,
+                      "executable": chromium,
+                      "args": args_value },
+                    { "instance": "github_stealth",
+                      "headless": true,
+                      "executable": chromium,
+                      "args": args_value }
+                ]
+            }
+        }),
+    );
+    assert!(cfg["error"].is_null(), "configure failed: {cfg}");
+
+    let navigate = |stdin: &mut ChildStdin,
+                    stdout: &mut BufReader<ChildStdout>,
+                    id: i64,
+                    instance: &str,
+                    url: &str|
+     -> Value {
+        rpc(
+            stdin,
+            stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tool.invoke",
+                "params": {
+                    "plugin_id": "browser",
+                    "tool_name": "browser_navigate",
+                    "args": { "instance": instance, "url": url }
+                }
+            }),
+        )
+    };
+    let current_url = |stdin: &mut ChildStdin,
+                       stdout: &mut BufReader<ChildStdout>,
+                       id: i64,
+                       instance: &str|
+     -> String {
+        let r = rpc(
+            stdin,
+            stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tool.invoke",
+                "params": {
+                    "plugin_id": "browser",
+                    "tool_name": "browser_current_url",
+                    "args": { "instance": instance }
+                }
+            }),
+        );
+        r["result"]["result"].as_str().unwrap_or("").to_string()
+    };
+
+    // 1. Google (with stealth flags — should avoid /sorry/index).
+    let nav_g = navigate(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "google_stealth",
+        "https://www.google.com/search?q=rust+programming",
+    );
+    if nav_g["error"].is_object() {
+        eprintln!("skipping: google navigate failed (no network?): {}", nav_g["error"]);
+        let _ = rpc(
+            &mut stdin,
+            &mut stdout,
+            json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}),
+        );
+        let _ = child.wait_timeout_or_kill(Duration::from_secs(5));
+        return;
+    }
+    assert_eq!(nav_g["result"]["ok"], true);
+
+    // 2. Brave Search.
+    let nav_b = navigate(
+        &mut stdin,
+        &mut stdout,
+        11,
+        "brave_stealth",
+        "https://search.brave.com/search?q=rust+programming",
+    );
+    assert_eq!(nav_b["result"]["ok"], true, "brave navigate: {nav_b}");
+
+    // 3. GitHub.
+    let nav_gh = navigate(
+        &mut stdin,
+        &mut stdout,
+        12,
+        "github_stealth",
+        "https://github.com/lordmacu/nexo-plugin-browser",
+    );
+    assert_eq!(nav_gh["result"]["ok"], true);
+
+    // Read URLs back.
+    let url_g = current_url(&mut stdin, &mut stdout, 20, "google_stealth");
+    let url_b = current_url(&mut stdin, &mut stdout, 21, "brave_stealth");
+    let url_gh = current_url(&mut stdin, &mut stdout, 22, "github_stealth");
+    eprintln!("google_stealth URL: {url_g}");
+    eprintln!("brave_stealth URL:  {url_b}");
+    eprintln!("github_stealth URL: {url_gh}");
+
+    // Probe navigator.webdriver on each — should be `undefined`
+    // when the stealth flag is honoured.
+    let probe = |stdin: &mut ChildStdin,
+                 stdout: &mut BufReader<ChildStdout>,
+                 id: i64,
+                 instance: &str|
+     -> String {
+        let r = rpc(
+            stdin,
+            stdout,
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tool.invoke",
+                "params": {
+                    "plugin_id": "browser",
+                    "tool_name": "browser_evaluate",
+                    "args": {
+                        "instance": instance,
+                        "script": "String(navigator.webdriver)"
+                    }
+                }
+            }),
+        );
+        r["result"]["result"].as_str().unwrap_or("").to_string()
+    };
+    let webdriver_g = probe(&mut stdin, &mut stdout, 30, "google_stealth");
+    let webdriver_b = probe(&mut stdin, &mut stdout, 31, "brave_stealth");
+    let webdriver_gh = probe(&mut stdin, &mut stdout, 32, "github_stealth");
+    eprintln!("navigator.webdriver — google:{webdriver_g} brave:{webdriver_b} github:{webdriver_gh}");
+    for w in [&webdriver_g, &webdriver_b, &webdriver_gh] {
+        assert!(
+            w == "undefined" || w == "false",
+            "stealth flag must hide automation; got navigator.webdriver={w}"
+        );
+    }
+
+    // Pages are alive simultaneously + distinct origins.
+    assert!(
+        url_g.contains("google.com"),
+        "google should be on google.com (possibly /sorry if stealth wasn't enough); got {url_g}"
+    );
+    assert!(
+        url_b.contains("search.brave.com") || url_b.contains("brave.com"),
+        "brave instance should be on Brave Search; got {url_b}"
+    );
+    assert!(
+        url_gh.contains("github.com"),
+        "github instance should be on github.com; got {url_gh}"
+    );
+    // Three distinct origins ⇒ three Chromes really live.
+    assert_ne!(url_g, url_b);
+    assert_ne!(url_b, url_gh);
+    assert_ne!(url_g, url_gh);
+
+    // Bonus: did the google one escape /sorry/index?
+    if url_g.contains("/sorry/") {
+        eprintln!(
+            "NOTE: google still served the captcha redirect — stealth flags weren't \
+             enough on this IP. Real cloaking would need a residential UA + cookies."
+        );
+    } else {
+        eprintln!("✓ stealth flags evaded the google /sorry/ redirect");
+    }
+
     let _ = rpc(
         &mut stdin,
         &mut stdout,
