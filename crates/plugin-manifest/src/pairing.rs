@@ -61,6 +61,60 @@ pub struct PairingSection {
     /// when `kind = Form`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance_field: Option<String>,
+
+    /// Phase 81.33.b.real — pairing-adapter broker dispatch
+    /// descriptor. When present, daemon constructs a
+    /// `GenericBrokerPairingAdapter` from these fields and inserts
+    /// it into `PairingAdapterRegistry` under
+    /// `adapter.channel_id`. Plugins that supply this section
+    /// no longer need a hardcoded `XxxPairingAdapter::new(broker)`
+    /// block on the daemon side.
+    ///
+    /// Sub-section of `[plugin.pairing]` because the adapter is
+    /// only meaningful for plugins that ALSO ship a pairing UI
+    /// descriptor (a plugin without a pair-able channel has no
+    /// reason to declare an adapter).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<PairingAdapterSection>,
+}
+
+/// Pairing adapter broker dispatch descriptor. Daemon-side
+/// `GenericBrokerPairingAdapter` reads these to translate trait
+/// method calls into JSON-RPC requests on the plugin's broker
+/// subject prefix.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PairingAdapterSection {
+    /// Stable string id matching what the gate stores in
+    /// `pairing_pending.channel` and `pairing_allow_from.channel`.
+    /// Must equal `PairingSection::kind`-derived channel name in
+    /// practice; daemon trusts what the manifest declares here as
+    /// the registry key.
+    pub channel_id: String,
+
+    /// Broker subject prefix the adapter dispatches under. Daemon
+    /// publishes JSON-RPC requests to:
+    /// - `<broker_topic_prefix>.pairing.normalize_sender`
+    /// - `<broker_topic_prefix>.pairing.send_reply`
+    /// - `<broker_topic_prefix>.pairing.send_qr_image`
+    /// - `<broker_topic_prefix>.pairing.format_challenge_text`
+    ///   (only if `format_challenge_text_kind = "broker"`; default
+    ///   uses the trait's built-in formatter).
+    pub broker_topic_prefix: String,
+
+    /// Format-challenge dispatch mode. `default` (the value the
+    /// trait already supplies) handles the common case; `broker`
+    /// asks the plugin per challenge so channels that need custom
+    /// formatting (e.g. Telegram MarkdownV2 escape) can override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_challenge_text_kind: Option<String>,
+
+    /// Cache TTL in seconds for `normalize_sender` results. `None`
+    /// = unbounded (cache lives the daemon's lifetime). Pairing
+    /// flows are low-volume so unbounded is the default; channels
+    /// with churn can declare a TTL to evict stale entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalize_cache_ttl_seconds: Option<u64>,
 }
 
 impl PairingSection {
@@ -74,6 +128,7 @@ impl PairingSection {
             && self.fields.is_empty()
             && self.rpc_namespace.is_none()
             && self.instance_field.is_none()
+            && self.adapter.is_none()
     }
 }
 

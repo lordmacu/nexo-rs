@@ -5262,6 +5262,8 @@ dependencies = [
  "hex",
  "hmac",
  "image",
+ "nexo-broker",
+ "nexo-plugin-manifest",
  "qrcode",
  "rand 0.8.6",
  "serde",

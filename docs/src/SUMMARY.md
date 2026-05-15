@@ -28,6 +28,7 @@
 - [Quickstart (10 min)](./plugins/quickstart.md)
 - [Authoring overview](./plugins/authoring.md)
 - [Manifest (Phase 81.13 unified)](./plugins/manifest-unified.md)
+- [Manifest `[plugin.pairing.adapter]`](./plugins/manifest-pairing-adapter.md)
 - [Plugin contract](./plugins/contract.md)
 - [Patterns (8 common shapes)](./plugins/patterns.md)
 - [Rust SDK](./plugins/rust-sdk.md)
