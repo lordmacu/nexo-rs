@@ -209,7 +209,7 @@ voice = [
 # Phase 93.4.a — `plugin.configure` dispatch deserialises operator
 # YAML via serde_yaml::Value, so the plugin feature now pulls
 # serde_yaml unconditionally.
-plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:nexo-llm", "dep:nexo-memory", "dep:toml", "dep:dashmap", "dep:serde_yaml"]
+plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:nexo-llm", "dep:nexo-memory", "dep:toml", "dep:dashmap", "dep:serde_yaml", "dep:base64"]
 # Phase 82.15 / M15.3 — identity store traits + sqlite default
 # impl. Person + PersonEmail + Company stores keyed by tenant
 # id with composite indexes. Pulls sqlx + chrono so non-CRM
