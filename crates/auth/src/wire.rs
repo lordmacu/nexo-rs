@@ -18,6 +18,62 @@ use nexo_config::types::plugins::PluginsConfig;
 
 use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 
+// Wave 6 — opaque telegram cfg slice. Same pattern as email Wave 5:
+// minimal shape locally so nexo-auth stays decoupled from
+// `nexo-plugin-telegram`. Reads `cfg.plugins.entries["telegram"]`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct TelegramAllowlistSlice {
+    #[serde(default)]
+    pub chat_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct TelegramCredEntry {
+    pub token: String,
+    #[serde(default)]
+    pub instance: Option<String>,
+    #[serde(default)]
+    pub allow_agents: Vec<String>,
+    #[serde(default)]
+    pub allowlist: TelegramAllowlistSlice,
+    #[serde(flatten)]
+    _rest: std::collections::BTreeMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum TelegramCredShape {
+    Single(TelegramCredEntry),
+    Many(Vec<TelegramCredEntry>),
+}
+
+impl TelegramCredShape {
+    fn into_vec(self) -> Vec<TelegramCredEntry> {
+        match self {
+            Self::Single(t) => vec![t],
+            Self::Many(v) => v,
+        }
+    }
+}
+
+fn telegram_entries(plugins: &PluginsConfig) -> Vec<TelegramCredEntry> {
+    let Some(value) = plugins.entries.get("telegram") else {
+        return Vec::new();
+    };
+    match serde_yaml::from_value::<TelegramCredShape>(value.clone()) {
+        Ok(shape) => shape.into_vec(),
+        Err(e) => {
+            tracing::warn!(
+                target: "credentials.wire",
+                error = %e,
+                "failed to deserialize cfg.plugins.entries[\"telegram\"]; falling back \
+                 to no telegram accounts"
+            );
+            Vec::new()
+        }
+    }
+}
+
 // Wave 5 — opaque email cfg slice. nexo_config no longer carries
 // typed `EmailPluginConfig` (Phase 93 framework decoupling); we
 // deserialize a minimal account-only shape from
@@ -294,7 +350,10 @@ pub fn build_credentials(
     strict: StrictLevel,
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
     let whatsapp = plugins.whatsapp.as_slice();
-    let telegram = plugins.telegram.as_slice();
+    // Wave 6 — telegram cfg flows through opaque entries; same
+    // pattern as email Wave 5. nexo-config no longer carries typed
+    // telegram. Local minimal shape suffices for credential wiring.
+    let telegram_entries_vec = telegram_entries(plugins);
     // Wave 5 — opaque email cfg. Flatten across all declared tenants
     // (multi-tenant credential aggregation). The full plugin config
     // stays inside `nexo-plugin-email`; we only need account-level
@@ -353,7 +412,7 @@ pub fn build_credentials(
             })
         })
         .collect();
-    let tg_accounts: Vec<TelegramAccount> = telegram
+    let tg_accounts: Vec<TelegramAccount> = telegram_entries_vec
         .iter()
         .filter_map(|c| {
             let instance = c.instance.as_ref()?.clone();
