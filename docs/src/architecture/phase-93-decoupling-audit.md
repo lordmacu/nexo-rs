@@ -2,6 +2,20 @@
 
 Status: **closed 2026-05-16**. All 47 anchor sites cleared.
 
+## Phase 94 close-out — 5/5 plugin extraction milestone
+
+Status: **closed 2026-05-16**. The Phase 81 plugin-extraction
+lineage is complete: browser (81.17.c) → telegram (81.18) →
+whatsapp (81.19.a) → email (81.19.b) → **google (94)**.
+
+`nexo-rs-plugin-google` lives in a standalone repo and ships as
+`nexo-plugin-google 0.2.0` (subprocess binary). The daemon
+(`nexo-rs`) no longer imports `nexo_plugin_google::*` from `main.rs`
+nor from `crates/setup/`. `crates/plugins/google/` survives as the
+lib dep for `nexo-poller`'s `google_calendar` + `gmail` builtins
+(in-process callers); future cleanup migrates the poller to the
+published lib crate so the in-tree dir can be deleted.
+
 ## Result
 
 `cargo tree -i nexo-plugin-{whatsapp,telegram,email,browser}`

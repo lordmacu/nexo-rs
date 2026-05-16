@@ -37,6 +37,10 @@ cron         = "0.12"
 humantime    = { workspace = true }
 regex        = "1"
 base64       = { workspace = true }
+# Phase 94 — kept (NOT dropped). `google_calendar` + `gmail`
+# builtins call the OAuth client in-process. Follow-up: migrate
+# to the published `nexo-plugin-google` 0.2.0 lib crate after the
+# subprocess publish lands so the same code stops living twice.
 nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
 
 [features]
