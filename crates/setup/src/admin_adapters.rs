@@ -3732,11 +3732,15 @@ impl ChannelPayloadTranslator for WhatsAppTranslator {
         &self,
         msg: &OutboundMessage,
     ) -> Result<(String, serde_json::Value), TranslationError> {
-        let base = nexo_plugin_whatsapp::dispatch::TOPIC_OUTBOUND;
+        // Phase 81.20.x Stage 7 BC.1 — inline the broker-topic
+        // constant. Was: `nexo_plugin_whatsapp::dispatch::TOPIC_OUTBOUND`.
+        // Constant value is part of the plugin's broker contract,
+        // so a daemon-side literal is acceptable here without
+        // re-importing the plugin crate just for one string.
         let topic = if msg.account_id.is_empty() || msg.account_id == "default" {
-            base.to_string()
+            "plugin.outbound.whatsapp".to_string()
         } else {
-            format!("{base}.{}", msg.account_id)
+            format!("plugin.outbound.whatsapp.{}", msg.account_id)
         };
         let payload = match msg.msg_kind.as_str() {
             "text" => serde_json::json!({

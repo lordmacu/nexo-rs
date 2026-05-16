@@ -730,19 +730,13 @@ impl AdminRpcBootstrap {
             {
                 dispatcher = dispatcher.with_plugin_admin_router(router, broker_handle);
             }
-            // Phase 93.12.c — whatsapp bot handle is the only
-            // channel-specific admin RPC dependency. When the
-            // `plugin-whatsapp` feature is off the daemon ships
-            // without `nexo-plugin-whatsapp` in its dep graph so this
-            // call must disappear; the admin dispatcher then has no
-            // whatsapp bot handle and `/whatsapp/*` admin RPCs surface
-            // a "channel unavailable" error to the wizard.
-            #[cfg(feature = "plugin-whatsapp")]
-            {
-                dispatcher = dispatcher.with_wa_bot_handle(Arc::new(
-                    nexo_plugin_whatsapp::bot_registry::WhatsappBotHandle,
-                ));
-            }
+            // Phase 81.20.x Stage 7 BC.2 — `with_wa_bot_handle` block
+            // removed. Whatsapp's `nexo/admin/whatsapp/*` admin RPCs
+            // are now routed via `PluginAdminRouter` (Stage 4 wired
+            // above through `with_plugin_admin_router`); the legacy
+            // typed handle is redundant. With this drop the
+            // admin_bootstrap module no longer imports the
+            // `nexo_plugin_whatsapp::bot_registry` path.
             dispatcher = dispatcher
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_llm_provider_catalog(inputs.llm_provider_catalog.clone())
