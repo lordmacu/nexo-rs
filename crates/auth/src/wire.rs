@@ -18,6 +18,37 @@ use nexo_config::types::plugins::PluginsConfig;
 
 use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 
+// Wave 7 — opaque whatsapp cfg slice. Same pattern as telegram /
+// email: minimal shape locally so nexo-auth stays decoupled from
+// `nexo-plugin-whatsapp`. Reads `cfg.plugins.entries["whatsapp"]`.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct WhatsappCredEntry {
+    #[serde(default)]
+    pub instance: Option<String>,
+    #[serde(default)]
+    pub session_dir: String,
+    #[serde(default)]
+    pub media_dir: String,
+    #[serde(default)]
+    pub allow_agents: Vec<String>,
+    #[serde(flatten)]
+    _rest: std::collections::BTreeMap<String, serde_yaml::Value>,
+}
+
+fn whatsapp_entries(plugins: &PluginsConfig) -> Vec<WhatsappCredEntry> {
+    let Some(value) = plugins.entries.get("whatsapp") else {
+        return Vec::new();
+    };
+    let seq: Vec<serde_yaml::Value> = match value {
+        serde_yaml::Value::Sequence(s) => s.clone(),
+        serde_yaml::Value::Mapping(_) => vec![value.clone()],
+        _ => return Vec::new(),
+    };
+    seq.into_iter()
+        .filter_map(|v| serde_yaml::from_value::<WhatsappCredEntry>(v).ok())
+        .collect()
+}
+
 // Wave 6 — opaque telegram cfg slice. Same pattern as email Wave 5:
 // minimal shape locally so nexo-auth stays decoupled from
 // `nexo-plugin-telegram`. Reads `cfg.plugins.entries["telegram"]`.
@@ -349,7 +380,8 @@ pub fn build_credentials(
     secrets_dir: &Path,
     strict: StrictLevel,
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
-    let whatsapp = plugins.whatsapp.as_slice();
+    // Wave 7 — whatsapp cfg via opaque entries.
+    let whatsapp = whatsapp_entries(plugins);
     // Wave 6 — telegram cfg flows through opaque entries; same
     // pattern as email Wave 5. nexo-config no longer carries typed
     // telegram. Local minimal shape suffices for credential wiring.
@@ -847,38 +879,52 @@ mod tests {
         }
     }
 
+    /// Wave 7 — opaque whatsapp fixture built as a serde_yaml::Value
+    /// directly. nexo-auth no longer depends on `nexo_config::Whatsapp*`
+    /// typed structs.
     fn wa_cfg(
         instance: Option<&str>,
         dir: &Path,
         allow: &[&str],
-    ) -> nexo_config::types::plugins::WhatsappPluginConfig {
-        use nexo_config::types::plugins::*;
-        WhatsappPluginConfig {
-            enabled: true,
-            session_dir: dir.to_string_lossy().into_owned(),
-            media_dir: format!("{}/media", dir.display()),
-            credentials_file: None,
-            acl: WhatsappAclConfig::default(),
-            behavior: WhatsappBehaviorConfig::default(),
-            rate_limit: WhatsappRateLimitConfig::default(),
-            bridge: WhatsappBridgeConfig::default(),
-            transcriber: WhatsappTranscriberConfig::default(),
-            daemon: WhatsappDaemonConfig::default(),
-            public_tunnel: Default::default(),
-            instance: instance.map(|s| s.to_string()),
-            allow_agents: allow.iter().map(|s| s.to_string()).collect(),
-            typing_mode: None,
+    ) -> serde_yaml::Value {
+        let mut map = serde_yaml::Mapping::new();
+        map.insert(
+            serde_yaml::Value::String("enabled".into()),
+            serde_yaml::Value::Bool(true),
+        );
+        map.insert(
+            serde_yaml::Value::String("session_dir".into()),
+            serde_yaml::Value::String(dir.to_string_lossy().into_owned()),
+        );
+        map.insert(
+            serde_yaml::Value::String("media_dir".into()),
+            serde_yaml::Value::String(format!("{}/media", dir.display())),
+        );
+        if let Some(inst) = instance {
+            map.insert(
+                serde_yaml::Value::String("instance".into()),
+                serde_yaml::Value::String(inst.into()),
+            );
         }
+        let allow_seq: Vec<serde_yaml::Value> = allow
+            .iter()
+            .map(|s| serde_yaml::Value::String((*s).into()))
+            .collect();
+        map.insert(
+            serde_yaml::Value::String("allow_agents".into()),
+            serde_yaml::Value::Sequence(allow_seq),
+        );
+        serde_yaml::Value::Mapping(map)
     }
 
-    /// Phase 93.5.b — wrap a fixture `Vec<WhatsappPluginConfig>`
-    /// (and optionally a fixture telegram/email) into the
-    /// `PluginsConfig` shape `build_credentials` now expects.
-    fn plugins_with_whatsapp(
-        wa: Vec<nexo_config::types::plugins::WhatsappPluginConfig>,
-    ) -> PluginsConfig {
+    fn plugins_with_whatsapp(wa: Vec<serde_yaml::Value>) -> PluginsConfig {
+        let mut entries: std::collections::BTreeMap<String, serde_yaml::Value> =
+            std::collections::BTreeMap::new();
+        if !wa.is_empty() {
+            entries.insert("whatsapp".to_string(), serde_yaml::Value::Sequence(wa));
+        }
         PluginsConfig {
-            whatsapp: wa,
+            entries,
             ..PluginsConfig::default()
         }
     }

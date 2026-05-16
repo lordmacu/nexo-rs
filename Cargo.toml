@@ -402,7 +402,7 @@ nexo-media         = { version = "0.1.7", path = "crates/media" }
 # reqwest / lettre / async-nats). Default `native-tls` would drag
 # `openssl-sys` through `tokio-tungstenite` and break musl
 # cross-build.
-nexo-plugin-whatsapp = { version = "0.1.3", default-features = false, features = ["rustls-tls"] }
+nexo-plugin-whatsapp = { version = "0.4.0", default-features = false, features = ["rustls-tls"] }
 nexo-plugin-email    = { version = "0.5.2" }
 nexo-tunnel-quick    = { version = "0.1", path = "crates/tunnel-quick" }
 

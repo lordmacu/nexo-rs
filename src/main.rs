@@ -2611,15 +2611,25 @@ async fn main() -> Result<()> {
         let mut pairing_triggers =
             nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers::new();
         #[cfg(feature = "plugin-whatsapp")]
-        if !cfg.plugins.whatsapp.is_empty() {
-            pairing_triggers.insert(
-                nexo_plugin_whatsapp::pairing_trigger::CHANNEL_ID.to_string(),
-                std::sync::Arc::new(
-                    nexo_plugin_whatsapp::pairing_trigger::WhatsappPairingTrigger::from_configs(
-                        &cfg.plugins.whatsapp,
+        if cfg.plugins.is_active("whatsapp") {
+            // Wave 7 — deserialize opaque entries directly into the
+            // plugin's own typed config; nexo_config no longer
+            // carries whatsapp types.
+            let plugin_cfgs: Vec<nexo_plugin_whatsapp::WhatsappPluginConfig> =
+                opaque_plugin_entries(&cfg.plugins, "whatsapp")
+                    .into_iter()
+                    .filter_map(|v| serde_yaml::from_value(v).ok())
+                    .collect();
+            if !plugin_cfgs.is_empty() {
+                pairing_triggers.insert(
+                    nexo_plugin_whatsapp::pairing_trigger::CHANNEL_ID.to_string(),
+                    std::sync::Arc::new(
+                        nexo_plugin_whatsapp::pairing_trigger::WhatsappPairingTrigger::from_configs(
+                            &plugin_cfgs,
+                        ),
                     ),
-                ),
-            );
+                );
+            }
         }
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
@@ -3363,24 +3373,29 @@ async fn main() -> Result<()> {
         String,
         nexo_plugin_whatsapp::pairing::SharedPairingState,
     > = std::collections::BTreeMap::new();
+    // Wave 7 — wa_tunnel_cfg stays opaque; the first declared
+    // tenant's `public_tunnel` block is reconstructed from YAML
+    // when needed by downstream tunnel-autoboot code.
     #[cfg(feature = "plugin-whatsapp")]
-    let mut wa_tunnel_cfg: Option<nexo_config::WhatsappPublicTunnelConfig> = None;
+    let mut wa_tunnel_cfg: Option<serde_yaml::Value> = None;
     #[cfg(feature = "plugin-whatsapp")]
-    for (idx, wa_cfg) in cfg.plugins.whatsapp.clone().into_iter().enumerate() {
-        if !wa_cfg.enabled {
-            let label = wa_cfg.instance.clone().unwrap_or_else(|| "default".into());
-            tracing::info!(instance = %label, "whatsapp plugin configured but disabled — skipping");
+    for (idx, wa_cfg) in opaque_plugin_entries(&cfg.plugins, "whatsapp")
+        .into_iter()
+        .enumerate()
+    {
+        let enabled = wa_cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let instance_label = wa_cfg
+            .get("instance")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "default".into());
+        if !enabled {
+            tracing::info!(instance = %instance_label, "whatsapp plugin configured but disabled — skipping");
             continue;
         }
-        let instance_label = wa_cfg.instance.clone().unwrap_or_else(|| "default".into());
         if idx == 0 {
-            wa_tunnel_cfg = Some(wa_cfg.public_tunnel.clone());
+            wa_tunnel_cfg = wa_cfg.get("public_tunnel").cloned();
         }
-        // Daemon-owned PairingState for HTTP UI rendering. The
-        // subprocess plugin holds its own internal state (used by
-        // its own dispatcher) — the two are populated in parallel:
-        // subprocess via wa-agent callbacks, daemon via the broker
-        // subscriber that listens on `plugin.inbound.whatsapp.<inst>`.
         let pairing = nexo_plugin_whatsapp::pairing::PairingState::new();
         wa_pairing.insert(instance_label.clone(), pairing);
         tracing::info!(
@@ -3945,8 +3960,13 @@ async fn main() -> Result<()> {
     let wa_first_pairing = wa_pairing.values().next().cloned();
     #[cfg(feature = "plugin-whatsapp")]
     if let (Some(tcfg), Some(pairing)) = (wa_tunnel_cfg.as_ref(), wa_first_pairing) {
-        if tcfg.enabled {
-            let only_until_paired = tcfg.only_until_paired;
+        // Wave 7 — read opaque YAML fields.
+        let enabled = tcfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        if enabled {
+            let only_until_paired = tcfg
+                .get("only_until_paired")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             let tunnel_registry_c = Arc::clone(&tunnel_registry);
             tokio::spawn(async move {
                 // Wait for the local HTTP server to actually bind before
@@ -9359,11 +9379,18 @@ fn print_loopback_seed_hint(config_dir: &std::path::Path) {
         }
     }
     if let Ok(text) = std::fs::read_to_string(plugins_dir.join("whatsapp.yaml")) {
-        if let Ok(file) = serde_yaml::from_str::<nexo_config::WhatsappPluginConfigFile>(&text) {
-            for wa in file.whatsapp.into_vec() {
-                let account = wa.instance.as_deref().unwrap_or("default");
-                eprintln!("  nexo pair seed whatsapp {account} <YOUR_WHATSAPP_NUMBER>");
-                suggested = true;
+        // Wave 7 — opaque YAML; nexo-config no longer carries typed
+        // whatsapp. Pull `whatsapp: [{instance: ...}]` directly.
+        if let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+            if let Some(seq) = v.get("whatsapp").and_then(|x| x.as_sequence()) {
+                for entry in seq {
+                    let account = entry
+                        .get("instance")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+                    eprintln!("  nexo pair seed whatsapp {account} <YOUR_WHATSAPP_NUMBER>");
+                    suggested = true;
+                }
             }
         }
     }
@@ -16305,9 +16332,14 @@ fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
     for plugin_id in cfg.plugins.plugin_ids() {
         match plugin_id.as_str() {
             "whatsapp" => {
-                for (i, wa) in cfg.plugins.whatsapp.iter().enumerate() {
-                    let label = wa.instance.as_deref().unwrap_or("<default>");
-                    println!("  • whatsapp[{i}] (instance={label})");
+                // Wave 7 — opaque entries.
+                for (i, inst) in cfg
+                    .plugins
+                    .instances_for("whatsapp")
+                    .iter()
+                    .enumerate()
+                {
+                    println!("  • whatsapp[{i}] (instance={inst})");
                 }
             }
             "telegram" => {
@@ -16394,15 +16426,16 @@ mod tests {
         route_cron_subcommand, seed_telegram_subprocess_env_for, seed_whatsapp_subprocess_env_for,
         subprocess_broker_kind_str, Mode,
     };
-    use nexo_config::types::plugins::{
-        WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
-        WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
-        WhatsappRateLimitConfig, WhatsappTranscriberConfig,
-    };
-    // Wave 6 — telegram types now live in the plugin crate.
+    // Wave 6 — telegram types live in the plugin crate.
     use nexo_plugin_telegram::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
         TelegramPollingConfig,
+    };
+    // Wave 7 — whatsapp types live in the plugin crate.
+    use nexo_plugin_whatsapp::{
+        WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
+        WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
+        WhatsappRateLimitConfig, WhatsappTranscriberConfig,
     };
 
     fn telegram_cfg(token: &str, instance: Option<&str>) -> TelegramPluginConfig {

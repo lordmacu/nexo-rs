@@ -5437,9 +5437,9 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-whatsapp"
-version = "0.1.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5db132d3b07e6729fd481cfddaec2a6f23cb15bbb70c2d3c7cbab93288d19c1c"
+checksum = "7e0d598d70d7d93f6a739c19347b66ff849e0a65ee7f338af4da70adcbb368fa"
 dependencies = [
  "anyhow",
  "async-trait",

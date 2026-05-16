@@ -117,7 +117,7 @@ fn happy_path() {
     let cfg = AppConfig::load(dir.path()).expect("should load");
     assert_eq!(cfg.agents.agents[0].id, "kate");
     assert_eq!(cfg.llm.providers["minimax"].api_key, "test_key");
-    assert_eq!(cfg.plugins.whatsapp.len(), 1);
+    assert!(cfg.plugins.entries.contains_key("whatsapp"));
     assert!(cfg.plugins.entries.contains_key("telegram"));
     assert!(cfg.plugins.entries.contains_key("email"));
 }
@@ -141,15 +141,10 @@ whatsapp:
 "#,
     );
     let cfg = AppConfig::load(dir.path()).expect("should load");
-    assert_eq!(cfg.plugins.whatsapp.len(), 2);
-    assert_eq!(cfg.plugins.whatsapp[0].instance.as_deref(), Some("biz"));
-    assert_eq!(cfg.plugins.whatsapp[1].instance.as_deref(), Some("support"));
-    // Each instance has its own session_dir (the critical per-account
-    // isolation requirement for Signal protocol keys).
-    assert_ne!(
-        cfg.plugins.whatsapp[0].session_dir,
-        cfg.plugins.whatsapp[1].session_dir,
-    );
+    let instances = cfg.plugins.instances_for("whatsapp");
+    assert_eq!(instances.len(), 2);
+    assert_eq!(instances[0], "biz");
+    assert_eq!(instances[1], "support");
 }
 
 #[test]

@@ -551,9 +551,7 @@ fn load_personas(dir: &Path) -> Result<PersonasConfig> {
 
 fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let plugins_dir = dir.join("plugins");
-    let whatsapp = load_optional::<WhatsappPluginConfigFile>(&plugins_dir, "whatsapp.yaml")?
-        .map(|f| f.whatsapp.into_vec())
-        .unwrap_or_default();
+    // Wave 7 — whatsapp loads via opaque `entries["whatsapp"]` map only.
     // Wave 6 — telegram loads via opaque `entries["telegram"]` map only.
     // Wave 5 — email loads via opaque `entries["email"]` map only.
     // No typed `email` field in PluginsConfig anymore.
@@ -569,7 +567,6 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let entries = load_plugin_entries(&plugins_dir);
     Ok(PluginsConfig {
         entries,
-        whatsapp,
         browser,
         discovery,
     })

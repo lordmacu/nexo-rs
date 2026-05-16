@@ -5,8 +5,10 @@ use async_nats::connection::State;
 use async_nats::ConnectOptions;
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use nexo_config::types::broker::BrokerInner;
 use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
@@ -274,23 +276,54 @@ impl BrokerHandle for NatsBroker {
     async fn request(
         &self,
         topic: &str,
-        msg: Message,
+        mut msg: Message,
         timeout: Duration,
     ) -> Result<Message, BrokerError> {
-        let topic_owned = topic.to_string();
-        let payload =
-            serde_json::to_vec(&msg).map_err(|e| BrokerError::SendError(e.to_string()))?;
+        // Mirror the local broker's request shape so subscribers
+        // see the same wire format on either transport: every NATS
+        // message a subscriber consumes is a serialised `Event`
+        // (see `subscribe()` above, which deserialises as Event).
+        // Publishing the raw Message bytes via `client.request()`
+        // produced "missing field `timestamp`" errors on every
+        // request-reply broker.* topic (Phase 81.33.b auto-discovery
+        // HTTP / admin / metrics forwarders) because subscribers
+        // tried to read the Message bytes as an Event.
+        //
+        // New shape:
+        //   1. Generate a reply-inbox subject. Subscribe to it via
+        //      our own `subscribe()` so the reply path also reads
+        //      Event bytes (symmetric with how plugins publish their
+        //      reply via `broker.publish` — already Event-wrapped).
+        //   2. Stamp `msg.reply_to = inbox` so plugin handlers that
+        //      look at `Message.reply_to` (the `auto_discovery`
+        //      pattern shared with the local broker + email plugin)
+        //      know where to send their reply.
+        //   3. Wrap Message in Event and publish via `self.publish`
+        //      so the disk-queue + circuit-breaker fast paths kick
+        //      in like every other event.
+        //   4. Await reply on the inbox subscription. Unwrap the
+        //      reply Event's `payload` back into Message before
+        //      returning to the caller.
+        let inbox = format!("_inbox.req.{}", Uuid::new_v4());
+        msg.reply_to = Some(inbox.clone());
 
-        let reply = tokio::time::timeout(
-            timeout,
-            self.client
-                .request(topic_owned.clone(), Bytes::from(payload)),
-        )
-        .await
-        .map_err(|_| BrokerError::RequestTimeout(topic_owned))?
-        .map_err(|e| BrokerError::SendError(e.to_string()))?;
+        let mut sub = self.subscribe(&inbox).await?;
 
-        serde_json::from_slice(&reply.payload)
-            .map_err(|e| BrokerError::SendError(format!("failed to deserialize reply: {e}")))
+        let event = Event::new(
+            topic,
+            "nats",
+            serde_json::to_value(&msg).map_err(|e| BrokerError::SendError(e.to_string()))?,
+        );
+        self.publish(topic, event).await?;
+
+        match tokio::time::timeout(timeout, sub.next()).await {
+            Ok(Some(reply_event)) => {
+                let reply_msg: Message = serde_json::from_value(reply_event.payload)
+                    .map_err(|e| BrokerError::SendError(format!("failed to deserialize reply: {e}")))?;
+                Ok(reply_msg)
+            }
+            Ok(None) => Err(BrokerError::RequestTimeout(topic.to_string())),
+            Err(_) => Err(BrokerError::RequestTimeout(topic.to_string())),
+        }
     }
 }
