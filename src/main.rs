@@ -1009,7 +1009,7 @@ fn seed_telegram_subprocess_env_for(
 ) -> std::collections::HashMap<String, String> {
     use serde_yaml::Value as V;
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for key in ["PATH", "HOME", "RUST_LOG"] {
+    for key in ["PATH", "HOME", "RUST_LOG", "NEXO_CONFIG_DIR"] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);
         }
@@ -1187,7 +1187,7 @@ fn seed_whatsapp_subprocess_env_for(
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for key in ["PATH", "HOME", "RUST_LOG"] {
+    for key in ["PATH", "HOME", "RUST_LOG", "NEXO_CONFIG_DIR"] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);
         }
@@ -2086,6 +2086,26 @@ async fn main() -> Result<()> {
 
     let config_dir = args.config_dir;
     let override_from = args.override_from;
+
+    // Phase 94 — generic subprocess discoverability: stamp the
+    // absolute config dir into the daemon process env BEFORE any
+    // plugin subprocess is spawned. Children with `spawn_env =
+    // None` (auto-discovered subprocess plugins like email, google)
+    // inherit it; per-plugin seeders that wipe inherited env
+    // (telegram, whatsapp) MUST re-stamp it when relevant. Useful
+    // for any plugin that needs to locate operator-provided YAML
+    // / secrets / data under `<config_dir>/<...>`.
+    let config_dir_abs = std::fs::canonicalize(&config_dir).unwrap_or(config_dir.clone());
+    // SAFETY: set_var is only unsafe in multi-threaded contexts; we
+    // run this BEFORE the tokio runtime spawns workers + before any
+    // plugin subprocess fires.
+    // SAFETY ANNOTATION: Rust 2024 marks env mutators unsafe, but
+    // here we're pre-runtime + pre-spawn so no data race exists.
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("NEXO_CONFIG_DIR", &config_dir_abs);
+    }
+
     tracing::info!(
         config_dir = %config_dir.display(),
         override_from = ?override_from.as_ref().map(|p| p.display().to_string()),

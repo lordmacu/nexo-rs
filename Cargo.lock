@@ -5244,9 +5244,9 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-google"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4f03bba842537fbfc466a88fdce14c96b654b5f26d8c8c604f7b17c02200a9e"
+checksum = "3685c9fa629bdb50973081c0ed5b0f0716191fc6529006bce697bd251790f4d7"
 dependencies = [
  "anyhow",
  "arc-swap",

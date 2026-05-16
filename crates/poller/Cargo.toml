@@ -42,7 +42,7 @@ base64       = { workspace = true }
 # OAuth client in-process, but the lib code now lives in the
 # standalone repo + crates.io. Enables deletion of the in-tree
 # `crates/plugins/google/` directory in this same wave.
-nexo-plugin-google = "0.2.0"
+nexo-plugin-google = "0.2.1"
 
 [features]
 default = []
