@@ -1315,7 +1315,6 @@ fn seed_whatsapp_subprocess_env_for(
 ///     also resolves this on its side; stamping here keeps daemon
 ///     + subprocess agreed on the path.
 ///   * `NEXO_PLUGIN_EMAIL_SECRETS_DIR` — per-tenant secrets root.
-#[allow(dead_code)] // W2-4 wires this into register_instance_subprocess_factories.
 fn seed_email_subprocess_env_for(
     cfg: &nexo_config::EmailPluginConfig,
     broker_kind: &str,
@@ -3647,21 +3646,55 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Email factory wiring. Replaces the legacy
-    // `plugins.register_arc` block dropped earlier. We register a
-    // singleton factory that hands the existing in-process
-    // `Arc<EmailPlugin>` to the init loop. Because the explicit
-    // factory wins over discovery's auto-subprocess fallback
-    // (`init_loop.rs:417`), an email manifest in `search_paths`
-    // does NOT spawn the standalone `nexo-plugin-email` binary —
-    // operators that want subprocess isolation must strip this
-    // block before placing the manifest.
-    //
-    // Unlike telegram / whatsapp this block does NOT touch
-    // `extra_subprocess_plugins` because email runs in-process;
-    // discovery's regular walk picks up the manifest if present
-    // and our factory satisfies it without spawning.
-    if let Some(email_arc) = email_plugin.clone() {
+    // Email factory wiring. Two-mode wave 2:
+    //   - LEGACY single-tenant (Vec.len() <= 1 AND no `instance`
+    //     field): keep the in-process Arc factory so existing tool
+    //     registration paths + `run_mcp_server_autonomous_worker`
+    //     stay functional.
+    //   - MULTI-TENANT (Vec.len() > 1 OR any entry has `instance`):
+    //     drop the in-process factory and register one subprocess
+    //     factory per tenant via `register_instance_subprocess_factories`.
+    //     Each tenant gets its own subprocess for cross-tenant
+    //     process isolation. In-process Arc (`email_plugin`)
+    //     stays available for tool context wiring but does NOT
+    //     register into `factory_registry`.
+    let email_multi_tenant = cfg.plugins.email.len() > 1
+        || cfg.plugins.email.iter().any(|c| c.instance.is_some());
+
+    if email_multi_tenant && cfg.plugins.is_active("email") {
+        let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
+            &discovery_cfg_clone,
+            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        );
+        let broker_url = std::env::var("NEXO_BROKER_URL")
+            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
+        let outcome = register_instance_subprocess_factories(
+            "email",
+            cfg.plugins.email.clone(),
+            &pre_snap,
+            broker_kind,
+            &broker_url,
+            &mut factory_registry,
+            &mut extra_subprocess_plugins,
+            |c| c.instance.clone(),
+            |c| c.enabled,
+            seed_email_subprocess_env_for,
+            "wave2",
+        );
+        if outcome.is_none() {
+            tracing::warn!(
+                "email multi-tenant declared in cfg.plugins.email but no \
+                 `email` manifest was found in `plugins.discovery.search_paths` \
+                 — install the binary via `cargo install nexo-plugin-email` \
+                 (or build from the v0.5.0+ tarball) and add its directory \
+                 to `plugins.discovery.search_paths`. Each tenant will not \
+                 run until the manifest is reachable.",
+            );
+        }
+    } else if let Some(email_arc) = email_plugin.clone() {
+        // Legacy single-tenant in-process Arc factory.
         let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = {
             let p = email_arc.clone();
             Box::new(move |_manifest| {
@@ -3671,30 +3704,17 @@ async fn main() -> Result<()> {
         };
         match factory_registry.register("email".to_string(), factory) {
             Ok(()) => {
-                // Push a synthetic DiscoveredPlugin so
-                // the init_loop sees the email manifest WITHOUT
-                // requiring the operator to place it in
-                // `plugins.discovery.search_paths`. This preserves
-                // the pre-extract default (email always boots when
-                // configured) while still letting the operator opt
-                // into discovery-mode by stripping this block.
                 let synthetic = nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin {
                     manifest: nexo_core::agent::plugin_host::NexoPlugin::manifest(
                         email_arc.as_ref(),
                     )
                     .clone(),
-                    // Synthetic root_dir / manifest_path: the
-                    // config loader only consults `manifest.config
-                    // .schema_path` and the email manifest has no
-                    // schema, so any path works. The loader's
-                    // `<config_dir>/plugins/email/*.yaml` lookup
-                    // is unaffected by these values.
                     root_dir: std::path::PathBuf::from("<synthetic email plugin root>"),
                     manifest_path: std::path::PathBuf::from("<synthetic email manifest>"),
                 };
                 extra_subprocess_plugins.push(synthetic);
                 tracing::info!(
-                    "registered email factory + synthetic discovered plugin (in-process; Phase 81.19.b)"
+                    "registered email factory + synthetic discovered plugin (in-process; legacy single-tenant)"
                 );
             }
             Err(e) => tracing::warn!(error = %e, "email factory registration failed"),
