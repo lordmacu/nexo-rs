@@ -26,7 +26,16 @@ config-self-edit = ["nexo-core/config-self-edit"]
 # `dispatch::TOPIC_OUTBOUND`, `session::pair_once`).
 # Off → those sites disappear and the admin RPC dispatcher
 # is constructed without the `with_wa_bot_handle(...)` call.
-plugin-whatsapp = ["dep:nexo-plugin-whatsapp"]
+# Phase 81.20.x Bucket C2 BC.6 — `plugin-whatsapp` feature is
+# now a bare tag (no `dep:`): setup links zero whatsapp plugin
+# code, but several `#[cfg(feature = "plugin-whatsapp")]` gates
+# in channels_dashboard / admin_adapters / admin_bootstrap still
+# select between the whatsapp dashboard source / translator /
+# bot-handle setups vs absence. Removing those gates is a
+# follow-up tightening; keeping the tag here makes the daemon-
+# bin's `nexo-setup/plugin-whatsapp` forwarder valid without
+# pulling the plugin crate into the setup compile graph.
+plugin-whatsapp = []
 
 [dependencies]
 nexo-config = { version = "0.1.9", path = "../config" }
@@ -76,7 +85,8 @@ webbrowser = "1"
 # Phase 81.19.a — pulled through `[workspace.dependencies]` so the
 # version + path stay synchronised with the proyecto Cargo.toml
 # entry that points at the standalone repo.
-nexo-plugin-whatsapp = { workspace = true, optional = true }
+# Phase 81.20.x Bucket C2 BC.6 — `nexo-plugin-whatsapp` direct
+# dep removed. Pairing spawns the standalone binary instead.
 nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
 nexo-pairing = { version = "0.1.5", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher

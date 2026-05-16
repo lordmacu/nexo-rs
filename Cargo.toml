@@ -219,14 +219,13 @@ plugin-telegram = ["dep:nexo-plugin-telegram"]
 # subprocess. The feature-flag exists for symmetry + so future
 # browser-side helpers can be gated without a churn-PR.
 plugin-browser = []
-# Phase 93.12.c — Cargo feature-gate for whatsapp canonical plugin.
-# Forwards to `nexo-setup/plugin-whatsapp` so the bubble-up reaches
-# the admin RPC dispatcher's `with_wa_bot_handle`, the broker topic
-# constant `dispatch::TOPIC_OUTBOUND`, and the `session::pair_once`
-# command handler. With this feature off, the daemon binary compiles
-# without `nexo-plugin-whatsapp` in its dep graph — proven by
-# `cargo tree --no-default-features -i nexo-plugin-whatsapp`.
-# Runtime path with subprocess discovery unchanged.
+# Phase 81.20.x Bucket C2 — `plugin-whatsapp` forwarder retained
+# for the daemon-bin's remaining `RuntimeHealth.wa_pairing` +
+# hardcoded /whatsapp/* HTTP block (Bucket C2 stage 2 follow-up).
+# `nexo-setup/plugin-whatsapp` is a bare tag now (BC.6 dropped
+# `dep:nexo-plugin-whatsapp` from setup's transitive graph; the
+# setup-side gates select between dashboard sources / translators
+# that the setup crate compiles unconditionally).
 plugin-whatsapp = [
     "dep:nexo-plugin-whatsapp",
     "nexo-setup/plugin-whatsapp",

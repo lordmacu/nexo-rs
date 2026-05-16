@@ -5580,7 +5580,6 @@ dependencies = [
  "nexo-pairing",
  "nexo-plugin-google",
  "nexo-plugin-manifest",
- "nexo-plugin-whatsapp",
  "nexo-tool-meta",
  "rand 0.8.6",
  "regex",

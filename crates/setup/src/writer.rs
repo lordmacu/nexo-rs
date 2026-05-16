@@ -668,25 +668,15 @@ fn run_channel_pairing(
             println!("── Pairing Telegram ────────────────────────────────");
             run_telegram_link_sync(agent_id, secrets_dir, config_dir)?;
         }
-        #[cfg(feature = "plugin-whatsapp")]
         "whatsapp" => {
-            // Inline pairing: wa-agent Client renders the QR, we block
-            // the wizard until `connect()` returns (first real message
-            // implies successful pairing).
+            // Phase 81.20.x Bucket C2 — pairing spawns the standalone
+            // `nexo-plugin-whatsapp --pair-once` subprocess (binary
+            // resolved via $PATH; `cargo install nexo-plugin-whatsapp`
+            // is the expected install path). Setup crate no longer
+            // links the whatsapp plugin lib in-process.
             println!();
             println!("── Pairing WhatsApp ────────────────────────────────");
             run_whatsapp_pairing_sync(agent_id, config_dir)?;
-        }
-        #[cfg(not(feature = "plugin-whatsapp"))]
-        "whatsapp" => {
-            // Phase 93.12.c — daemon built without `plugin-whatsapp`
-            // feature. Pairing is unavailable from this build of the
-            // wizard; the operator must enable the feature (default-on)
-            // or run the whatsapp pairing flow via the standalone
-            // subprocess binary's own admin interface.
-            anyhow::bail!(
-                "this daemon binary was built without the `plugin-whatsapp` feature; whatsapp pairing is unavailable"
-            );
         }
         "email" => {
             println!();
@@ -702,7 +692,6 @@ fn run_channel_pairing(
 /// Blow away the on-disk session for a channel scoped to ONE agent.
 /// Resolves the path from that agent's workspace (`<workspace>/<channel>/default`)
 /// so wiping `ana` never touches `kate`.
-#[cfg(feature = "plugin-whatsapp")]
 fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Result<()> {
     let target = match canal_id {
         "whatsapp" => agent_whatsapp_session_dir(config_dir, agent_id),
@@ -717,8 +706,14 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
     Ok(())
 }
 
-#[cfg(not(feature = "plugin-whatsapp"))]
-fn wipe_channel_session(_canal_id: &str, _agent_id: &str, _config_dir: &Path) -> Result<()> {
+// Phase 81.20.x Bucket C2 BC.6 — feature-gated stub removed.
+// `wipe_channel_session` is now compiled unconditionally (it
+// only manipulates filesystem paths; no whatsapp_rs lib usage).
+// Historical context: this stub returned a "nothing to wipe"
+// fallback when the daemon was built without `plugin-whatsapp`.
+// Setup-side wipe is unaffected.
+#[allow(dead_code)]
+fn _wipe_channel_session_legacy_stub(_canal_id: &str, _agent_id: &str, _config_dir: &Path) -> Result<()> {
     // Phase 93.12.c.1 — feature off: no whatsapp = nothing to wipe.
     // Telegram / email channels do not own a daemon-side session dir
     // (telegram credentials live in the credential store; email in
@@ -738,7 +733,6 @@ fn wipe_channel_session(_canal_id: &str, _agent_id: &str, _config_dir: &Path) ->
 /// Docker-style `/app/` prefixes (from config files authored inside a
 /// container image) are rewritten to host-relative paths so the wizard
 /// running on the host touches the same dir the container agent would.
-#[cfg(feature = "plugin-whatsapp")]
 fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
     let wa_yaml = config_dir.join("plugins").join("whatsapp.yaml");
     if let Ok(Some(existing)) = crate::yaml_patch::get_string(&wa_yaml, "whatsapp.session_dir") {
@@ -758,7 +752,6 @@ fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
 
 /// Rewrite `/app/foo` → `./foo` so YAML authored for a container still
 /// resolves correctly when the wizard runs on the host.
-#[cfg(feature = "plugin-whatsapp")]
 fn resolve_docker_path(raw: &str) -> PathBuf {
     if let Some(rest) = raw.strip_prefix("/app/") {
         PathBuf::from(format!("./{rest}"))
@@ -772,7 +765,6 @@ fn resolve_docker_path(raw: &str) -> PathBuf {
 /// runtime reads this path as the active WhatsApp account; when
 /// pairing for a different agent we switch it. Multi-account is
 /// future work (list shape in the yaml).
-#[cfg(feature = "plugin-whatsapp")]
 fn set_active_whatsapp_session(config_dir: &Path, session_dir: &Path) -> Result<()> {
     let yaml_path = config_dir.join("plugins").join("whatsapp.yaml");
     crate::yaml_patch::upsert(
@@ -784,14 +776,16 @@ fn set_active_whatsapp_session(config_dir: &Path, session_dir: &Path) -> Result<
     Ok(())
 }
 
-/// Inline WhatsApp pairing via wa-agent. Creates the session dir
-/// under the agent's workspace, spawns a Client, renders each QR push
-/// as Unicode blocks on the terminal, then blocks on `connect()`
-/// until the user scans. First message after scan = paired.
-///
-/// Runs on its own thread+runtime (same pattern as the google consent
-/// flow) because `persist` is sync.
-#[cfg(feature = "plugin-whatsapp")]
+/// Inline WhatsApp pairing — Phase 81.20.x Bucket C2 BC.5
+/// spawns the `nexo-plugin-whatsapp --pair-once <session_dir>`
+/// subprocess instead of calling the plugin lib in-process. This
+/// removes the setup crate's compile-time dep on
+/// `nexo-plugin-whatsapp`; operators must install the plugin
+/// binary via `cargo install nexo-plugin-whatsapp` (already the
+/// expected install path for the daemon's runtime use). The
+/// binary's stdout / stderr stream straight through so the
+/// operator sees the ASCII QR + sequencer prompts identically
+/// to the prior in-process flow.
 fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
     // Session dir is scoped to the agent — each agent has its own
     // credentials under <workspace>/whatsapp/default. The plugin
@@ -807,20 +801,26 @@ fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
     println!("y escaneá el QR que aparece aquí abajo. (Ctrl+C cancela)");
     println!();
 
-    std::thread::spawn(move || -> Result<()> {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .context("build tokio runtime for whatsapp pairing")?;
-        rt.block_on(async move {
-            nexo_plugin_whatsapp::session::pair_once(&session_dir).await?;
-            println!();
-            println!("✔ WhatsApp paired — session en {}", session_dir.display());
-            Ok::<(), anyhow::Error>(())
-        })
-    })
-    .join()
-    .map_err(|_| anyhow::anyhow!("whatsapp pairing thread panicked"))?
+    let status = std::process::Command::new("nexo-plugin-whatsapp")
+        .arg("--pair-once")
+        .arg(&session_dir)
+        .status()
+        .context(
+            "failed to spawn `nexo-plugin-whatsapp --pair-once`. Install the plugin binary with \
+             `cargo install nexo-plugin-whatsapp` so this command resolves on $PATH.",
+        )?;
+    if !status.success() {
+        anyhow::bail!(
+            "nexo-plugin-whatsapp --pair-once exited with status {} — pairing failed",
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "<signal>".into())
+        );
+    }
+    println!();
+    println!("✔ WhatsApp paired — session en {}", session_dir.display());
+    Ok(())
 }
 
 /// Bridge to the existing async `telegram_link::run`. Reuses the
