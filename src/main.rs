@@ -14420,14 +14420,44 @@ async fn start_mcp_autonomous_worker(
     }
     let creds_bundle = Arc::new(creds_bundle);
 
-    // 0.5.0: pick the FIRST declared tenant for the autonomous
-    // worker's in-process bootstrap. Multi-tenant fan-out arrives
-    // when the worker itself becomes tenant-aware.
-    let email_cfg = full_cfg.plugins.email.first().cloned().ok_or_else(|| {
-        anyhow::anyhow!(
-            "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
-        )
-    })?;
+    // Wave 3 deferred #2 — tenant-aware autonomous worker. Find
+    // the email tenant matching the worker agent's inbound binding;
+    // fall back to the first declared tenant when the agent has no
+    // email binding (back-compat for single-tenant deployments).
+    let worker_email_instance: Option<&str> = worker_agent_cfg
+        .inbound_bindings
+        .iter()
+        .find(|b| b.plugin == "email")
+        .and_then(|b| b.instance.as_deref());
+
+    let email_cfg = match worker_email_instance {
+        Some(inst) => full_cfg
+            .plugins
+            .email
+            .iter()
+            .find(|c| c.instance.as_deref() == Some(inst))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "mcp_server.autonomous_worker: agent `{}` bound to email \
+                     instance `{}` but no matching tenant in cfg.plugins.email",
+                    worker_agent_cfg.id,
+                    inst
+                )
+            })?,
+        None => full_cfg.plugins.email.first().cloned().ok_or_else(|| {
+            anyhow::anyhow!(
+                "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
+            )
+        })?,
+    };
+    if let Some(inst) = worker_email_instance {
+        tracing::info!(
+            agent = %worker_agent_cfg.id,
+            tenant = %inst,
+            "autonomous worker bootstrapped against email tenant"
+        );
+    }
     if !email_cfg.enabled || email_cfg.accounts.is_empty() {
         anyhow::bail!(
             "mcp_server.autonomous_worker.enabled=true requires email.enabled=true and at least one account"
