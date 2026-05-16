@@ -5149,75 +5149,24 @@ async fn main() -> Result<()> {
         // (registered by `nexo_plugin_registry::init_loop`) routes
         // per-agent `tool.invoke` through the broker. No daemon-side
         // tool fallback required.
-        // Google OAuth tools — gated on either `agents.<id>.google_auth`
-        // (legacy inline) or an entry in `plugins/google-auth.yaml`
-        // resolved via the credential store. The client
-        // holds the refresh_token on disk at
-        // `<workspace>/<token_file>` so consent only runs once.
-        let google_core_cfg = agent_cfg
-            .google_auth
-            .as_ref()
-            .map(|gcfg| {
-                (
-                    nexo_plugin_google::GoogleAuthConfig {
-                        client_id: gcfg.client_id.clone(),
-                        client_secret: gcfg.client_secret.clone(),
-                        scopes: gcfg.scopes.clone(),
-                        token_file: gcfg.token_file.clone(),
-                        redirect_port: gcfg.redirect_port,
-                    },
-                    None::<nexo_plugin_google::SecretSources>,
-                )
-            })
-            .or_else(|| {
-                credentials
-                    .as_ref()
-                    .and_then(|b| b.google_account_for_agent(&agent_cfg.id))
-                    .and_then(|acct| {
-                        let cid = std::fs::read_to_string(&acct.client_id_path).ok()?;
-                        let csec = std::fs::read_to_string(&acct.client_secret_path).ok()?;
-                        let token_file = acct
-                            .token_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("google_tokens.json")
-                            .to_string();
-                        let cfg = nexo_plugin_google::GoogleAuthConfig {
-                            client_id: cid.trim().to_string(),
-                            client_secret: csec.trim().to_string(),
-                            scopes: acct.scopes.clone(),
-                            token_file,
-                            redirect_port: 8765,
-                        };
-                        let sources = nexo_plugin_google::SecretSources {
-                            client_id_path: acct.client_id_path.clone(),
-                            client_secret_path: acct.client_secret_path.clone(),
-                        };
-                        Some((cfg, Some(sources)))
-                    })
-            });
-        if let Some((core_cfg, sources)) = google_core_cfg {
-            let workspace_dir = if agent_cfg.workspace.trim().is_empty() {
-                PathBuf::from("./data/workspace")
-            } else {
-                PathBuf::from(&agent_cfg.workspace)
-            };
-            let client = nexo_plugin_google::GoogleAuthClient::new_with_sources(
-                core_cfg,
-                &workspace_dir,
-                sources,
-            );
-            if let Err(e) = client.load_from_disk().await {
-                tracing::warn!(
-                    agent = %agent_id,
-                    error = %e,
-                    "google_auth: failed to load persisted tokens; agent will need to re-consent"
-                );
-            }
-            nexo_plugin_google::register_tools(&tools, client);
-            tracing::info!(
+        // Phase 94 — google_* tools land via the standalone
+        // `nexo-plugin-google` subprocess plugin
+        // (`../nexo-rs-plugin-google/`). Daemon's discovery walker
+        // auto-spawns it; `RemoteToolHandler` (registered by
+        // `nexo_plugin_registry::init_loop` per
+        // `[plugin.extends].tools`) routes per-agent `tool.invoke`
+        // through the broker. Same canonical path used by telegram /
+        // whatsapp / email.
+        if agent_cfg.google_auth.is_some()
+            || credentials
+                .as_ref()
+                .and_then(|b| b.google_account_for_agent(&agent_cfg.id))
+                .is_some()
+        {
+            tracing::debug!(
                 agent = %agent_id,
-                "registered google_* tools for agent"
+                "agent has google_auth configured — google_* tools \
+                 expected from nexo-plugin-google subprocess"
             );
         }
         // Pollers_* control tools (list, show, run, pause,

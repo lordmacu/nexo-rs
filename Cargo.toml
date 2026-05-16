@@ -428,7 +428,11 @@ nexo-cdp = { version = "0.1.1", path = "crates/cdp" }
 # `plugins.discovery.search_paths`; no compile-time link.
 # Phase 81.20.x F2.1 — daemon-bin `nexo-plugin-email` dep removed
 # (email subprocess discovery via manifest).
-nexo-plugin-google = { version = "0.1.2", path = "crates/plugins/google" }
+# Phase 94 — google plugin extracted to standalone repo at
+# `../nexo-rs-plugin-google/`; daemon-bin `nexo-plugin-google` dep
+# removed. Discovery walker auto-spawns the subprocess via
+# `[plugin.entrypoint]`; per-agent google_* tools register through
+# `RemoteToolHandler` on the canonical `tool.invoke` path.
 nexo-setup = { version = "0.1.2", path = "crates/setup" }
 nexo-tunnel = { version = "0.3", path = "crates/tunnel" }
 nexo-tunnel-quick = { version = "0.1", path = "crates/tunnel-quick" }

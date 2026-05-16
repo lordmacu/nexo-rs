@@ -318,21 +318,26 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
     yaml_patch::patch_agent_credentials(&agent_file, &agent_id, "google", &id)?;
     println!("✔ {}: credentials.google = `{id}`.", agent_file.display());
 
-    // Offer the device-code consent flow inline so headless
-    // setups (servers without a browser) can get a refresh_token
-    // without firing up `google_auth_start` as an LLM tool.
+    // Offer the device-code consent flow inline so headless setups
+    // (servers without a browser) can get a refresh_token without
+    // firing up `google_auth_start` as an LLM tool. Spawns the
+    // standalone `nexo-plugin-google --oauth-once --device`
+    // subprocess (Phase 94 extraction); the daemon and setup crate
+    // no longer link the OAuth machinery directly.
     if crate::prompt::yes_no(
         "¿Autorizar ahora vía device-code OAuth? (sin abrir navegador local)",
         true,
     )? {
-        if let Err(e) = run_google_device_code(
-            client_id.trim(),
-            client_secret.trim(),
+        let tok_path = secrets_dir.join(&tok_name);
+        if let Err(e) = spawn_oauth_once_subprocess(
+            &agent_id,
+            &cid_path,
+            &cs_path,
+            &tok_path,
             &scopes,
-            &secrets_dir.join(&tok_name),
-        )
-        .await
-        {
+            /* device = */ true,
+            secrets_dir,
+        ) {
             println!("⚠  Device-code falló: {e}");
             println!(
                 "   Puedes reintentar más tarde con la tool `google_auth_start` desde el agente."
@@ -347,41 +352,55 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
     Ok(Outcome::Handled)
 }
 
-/// Device-code OAuth runner. Posts to
-/// `oauth2.googleapis.com/device/code`, prints the verification URL +
-/// user code for the operator, polls until approval, then writes the
-/// token JSON at `token_path` with mode 0o600. Headless-friendly.
-async fn run_google_device_code(
-    client_id: &str,
-    client_secret: &str,
+/// Phase 94 — spawn `nexo-plugin-google --oauth-once <agent>` as a
+/// child process so the setup crate doesn't link the OAuth client.
+/// Operator must have run `cargo install nexo-plugin-google` first;
+/// otherwise the spawn fails with a clear hint.
+///
+/// AGNOSTIC by name only: each canonical channel plugin has its own
+/// `--oauth-once` / `--pair-once` subcommand convention. The shape
+/// (binary on PATH + interactive prompts on inherited stdio) is the
+/// same pattern future channel plugins should follow.
+pub(crate) fn spawn_oauth_once_subprocess(
+    agent_id: &str,
+    client_id_file: &Path,
+    client_secret_file: &Path,
+    token_file: &Path,
     scopes: &[String],
-    token_path: &std::path::Path,
+    device: bool,
+    workspace_dir: &Path,
 ) -> anyhow::Result<()> {
-    let cfg = nexo_plugin_google::GoogleAuthConfig {
-        client_id: client_id.to_string(),
-        client_secret: client_secret.to_string(),
-        scopes: scopes.to_vec(),
-        token_file: token_path.to_string_lossy().into_owned(),
-        redirect_port: 0,
-    };
-    let client = nexo_plugin_google::GoogleAuthClient::new(
-        cfg,
-        token_path.parent().unwrap_or(std::path::Path::new(".")),
-    );
-    let challenge = client.request_device_code().await?;
-    println!();
-    println!("╭─ Device-code OAuth ───────────────────────────────────────");
-    println!(
-        "│  Abrí en cualquier navegador:  {}",
-        challenge.verification_url
-    );
-    println!("│  Código a escribir:            {}", challenge.user_code);
-    println!("│  (válido por {}s)", challenge.expires_in);
-    println!("╰───────────────────────────────────────────────────────────");
-    println!();
-    println!("Esperando aprobación…");
-    let _tokens = client.poll_device_token(&challenge).await?;
-    println!("✔ Tokens persistidos en {}.", token_path.display());
+    let scopes_csv = scopes.join(",");
+    let workspace = workspace_dir.to_string_lossy().into_owned();
+    let cid = client_id_file.to_string_lossy().into_owned();
+    let cs = client_secret_file.to_string_lossy().into_owned();
+    let tok = token_file.to_string_lossy().into_owned();
+
+    let mut cmd = std::process::Command::new("nexo-plugin-google");
+    cmd.arg("--oauth-once")
+        .arg(agent_id)
+        .args(["--client-id-file", &cid])
+        .args(["--client-secret-file", &cs])
+        .args(["--token-file", &tok])
+        .args(["--scopes", &scopes_csv])
+        .args(["--workspace-dir", &workspace])
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+    if device {
+        cmd.arg("--device");
+    }
+
+    let status = cmd.status().with_context(|| {
+        "spawning `nexo-plugin-google --oauth-once` — is the binary on PATH? \
+         Run `cargo install nexo-plugin-google` to install it."
+    })?;
+    if !status.success() {
+        anyhow::bail!(
+            "nexo-plugin-google exited with status {}",
+            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+        );
+    }
     Ok(())
 }
 
