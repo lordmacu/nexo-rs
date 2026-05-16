@@ -3658,10 +3658,17 @@ async fn main() -> Result<()> {
     //     process isolation. In-process Arc (`email_plugin`)
     //     stays available for tool context wiring but does NOT
     //     register into `factory_registry`.
-    let email_multi_tenant = cfg.plugins.email.len() > 1
-        || cfg.plugins.email.iter().any(|c| c.instance.is_some());
+    // Wave 3 follow-up D-3: subprocess-only daemon path. Drop the
+    // legacy in-process Arc factory branch — every active email
+    // tenant (single OR multi) now goes through
+    // `register_instance_subprocess_factories`. The `email_plugin`
+    // Arc above is still constructed for in-process consumers
+    // (autonomous worker + per-agent tool ctx) but no longer
+    // registers into `factory_registry`; subprocess wins the wire.
+    let email_subprocess_path = cfg.plugins.is_active("email")
+        && !cfg.plugins.email.is_empty();
 
-    if email_multi_tenant && cfg.plugins.is_active("email") {
+    if email_subprocess_path {
         let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
             &discovery_cfg_clone,
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
@@ -3685,39 +3692,13 @@ async fn main() -> Result<()> {
         );
         if outcome.is_none() {
             tracing::warn!(
-                "email multi-tenant declared in cfg.plugins.email but no \
+                "email is configured in cfg.plugins.email but no \
                  `email` manifest was found in `plugins.discovery.search_paths` \
                  — install the binary via `cargo install nexo-plugin-email` \
-                 (or build from the v0.5.0+ tarball) and add its directory \
-                 to `plugins.discovery.search_paths`. Each tenant will not \
+                 (or build from the v0.5.1+ tarball) and add its directory \
+                 to `plugins.discovery.search_paths`. The plugin will not \
                  run until the manifest is reachable.",
             );
-        }
-    } else if let Some(email_arc) = email_plugin.clone() {
-        // Legacy single-tenant in-process Arc factory.
-        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory = {
-            let p = email_arc.clone();
-            Box::new(move |_manifest| {
-                let plugin: Arc<dyn nexo_core::agent::plugin_host::NexoPlugin> = p.clone();
-                Ok(plugin)
-            })
-        };
-        match factory_registry.register("email".to_string(), factory) {
-            Ok(()) => {
-                let synthetic = nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin {
-                    manifest: nexo_core::agent::plugin_host::NexoPlugin::manifest(
-                        email_arc.as_ref(),
-                    )
-                    .clone(),
-                    root_dir: std::path::PathBuf::from("<synthetic email plugin root>"),
-                    manifest_path: std::path::PathBuf::from("<synthetic email manifest>"),
-                };
-                extra_subprocess_plugins.push(synthetic);
-                tracing::info!(
-                    "registered email factory + synthetic discovered plugin (in-process; legacy single-tenant)"
-                );
-            }
-            Err(e) => tracing::warn!(error = %e, "email factory registration failed"),
         }
     }
 
