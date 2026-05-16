@@ -8,6 +8,24 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed
+
+- **`nexo-tool-meta` 0.1.15 — voice_addenda module added** (Phase
+  voice-plugin-extract Steps 1+2). Per-locale system-prompt
+  addenda + Microsoft Edge voice picker
+  (`voice_mode_addendum`, `language_style_addendum`,
+  `default_voice_for_locale`, `DEFAULT_VOICE_ID`) lifted from
+  `nexo-microapp-sdk::voice::locale_addenda` to
+  `nexo-tool-meta::voice_addenda`. Wizard, personas, and the
+  upcoming out-of-tree `nexo-plugin-voice` crate consume the
+  tables directly instead of pulling the full SDK (sqlx +
+  voice synth pipeline) into their compile graph. The SDK home
+  is now a thin shim `pub use nexo_tool_meta::voice_addenda::*`
+  so existing imports keep compiling unchanged; the shim is
+  slated for removal once Phase Q (SDK voice cleanup) lands.
+  Zero behaviour change — 27 voice_addenda tests pass verbatim
+  in their new crate; 442 SDK tests still green.
+
 ### Added
 
 - **Plugin quickstart docs page (Phase 31.9 follow-up).** New

@@ -58,6 +58,7 @@ pub mod meta;
 pub mod microapp_error;
 pub mod reply_kind;
 pub mod template;
+pub mod voice_addenda;
 pub mod webhook;
 
 pub use admin::audit::{AdminAuditResult, AdminAuditRow, AuditTailFilter, AuditTailPage};

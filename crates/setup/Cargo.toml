@@ -96,7 +96,7 @@ regex = "1"
 tokio-util = { workspace = true }
 toml         = "0.8"
 async-trait = { workspace = true }
-nexo-tool-meta = { version = "0.1.14", path = "../tool-meta" }
+nexo-tool-meta = { version = "0.1.15", path = "../tool-meta" }
 uuid = { workspace = true, features = ["v4"] }
 
 [lints]
