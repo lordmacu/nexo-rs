@@ -1706,31 +1706,13 @@ fn register_instance_subprocess_factories<C>(
     Some(())
 }
 
-/// Phase 93.5.d closure — does this plugin declare outbound
-/// tools in its manifest? When `true`, the daemon-side hardcoded
-/// tool register fallback (`register_whatsapp_tools` /
-/// `register_telegram_tools` / …) SKIPS — the plugin's own
-/// `NexoPlugin::register_outbound_tools()` trait method (driven
-/// off `[[plugin.tools.outbound]]`) handles registration. When
-/// `false` (plugin manifest predates the section), the fallback
-/// keeps running so the plugin stays functional. Result: a
-/// plugin upgrading to a manifest revision with
-/// `[[plugin.tools.outbound]]` auto-switches to the generic
-/// path without operator action; legacy stays additive-safe
-/// for unmigrated plugins.
-#[cfg(any(feature = "plugin-whatsapp", feature = "plugin-telegram"))]
-fn plugin_declares_outbound_tools(
-    handles: &std::collections::BTreeMap<
-        String,
-        std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin>,
-    >,
-    plugin_id: &str,
-) -> bool {
-    handles
-        .get(plugin_id)
-        .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
-        .unwrap_or(false)
-}
+// Phase 81.20.x Stage 7 — `plugin_declares_outbound_tools`
+// removed. With the `register_whatsapp_tools` +
+// `register_telegram_tools` daemon-side fallbacks dropped, no
+// caller needed the "does manifest declare outbound?" check
+// anymore. RemoteToolHandlers (driven off the subprocess's
+// initialize-reply tool list) cover every canonical plugin
+// uniformly.
 
 // Phase 81.20.x F2.1 — `plugin_declares_metrics` removed. The last
 // caller was the daemon-side `render_prometheus` direct call for
@@ -1738,31 +1720,16 @@ fn plugin_declares_outbound_tools(
 // `nexo_pairing::plugin_metrics::scrape_all` like every other
 // plugin.
 
-/// Phase 81.33.b — single source of truth for the in-tree
-/// `PairingChannelAdapter` registrations the daemon ships with.
-///
-/// Boot path + spawner closure + the late dispatcher-hook block
-/// previously open-coded the same 4-line `pairing_registry
-/// .register(Arc::new(XxxPairingAdapter::new(broker.clone())))`
-/// dance three times each. Consolidating into one helper keeps
-/// the hardcoded plugin set in exactly one place — the next
-/// step (81.33.b.real, separate session) replaces this helper
-/// with a loop over `plugin_handles`' `build_pairing_adapter`
-/// trait method once `SubprocessNexoPlugin` ships the
-/// manifest-driven `GenericBrokerPairingAdapter`.
-fn build_known_pairing_registry(broker: &nexo_broker::AnyBroker) -> nexo_pairing::PairingAdapterRegistry {
-    let registry = nexo_pairing::PairingAdapterRegistry::new();
-    let _ = broker;
-    #[cfg(feature = "plugin-whatsapp")]
-    registry.register(std::sync::Arc::new(
-        nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
-    ));
-    #[cfg(feature = "plugin-telegram")]
-    registry.register(std::sync::Arc::new(
-        nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
-    ));
-    registry
-}
+// Phase 81.20.x Stage 7 — `build_known_pairing_registry`
+// removed. With every canonical plugin now declaring
+// `[plugin.pairing.adapter]` in its manifest, the daemon-side
+// hardcoded `WhatsappPairingAdapter::new` +
+// `TelegramPairingAdapter::new` registrations are redundant:
+// the loop over `plugin_handles` (each call site below)
+// asks every loaded plugin for its `build_pairing_adapter()`
+// trait method, which returns a `GenericBrokerPairingAdapter`
+// driven off manifest data. Same end-state, no plugin name
+// baked into the daemon.
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -5272,25 +5239,12 @@ async fn main() -> Result<()> {
         // collision because old plugins declare zero outbound in
         // manifest). Removed in Phase 81.33.a step 6 after the
         // matching plugin patch publishes.
-        // Phase 93.5.d closure — fallback skips when plugin
-        // manifest declares `[[plugin.tools.outbound]]`. The
-        // generic `register_outbound_tools` trait call above
-        // takes over; legacy stays additive-safe for unmigrated
-        // plugins.
-        #[cfg(feature = "plugin-whatsapp")]
-        if agent_cfg.plugins.iter().any(|p| p == "whatsapp")
-            && !plugin_declares_outbound_tools(&wire.plugin_handles, "whatsapp")
-        {
-            nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
-            tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent (fallback)");
-        }
-        #[cfg(feature = "plugin-telegram")]
-        if agent_cfg.plugins.iter().any(|p| p == "telegram")
-            && !plugin_declares_outbound_tools(&wire.plugin_handles, "telegram")
-        {
-            nexo_plugin_telegram::register_telegram_tools(&tools);
-            tracing::info!(agent = %agent_id, "registered telegram_* tools for agent (fallback)");
-        }
+        // Phase 81.20.x Stage 7 — whatsapp + telegram tool register
+        // fallbacks removed. Both plugins' subprocesses advertise their
+        // outbound tool defs in the `initialize` reply; the daemon's
+        // `RemoteToolHandler` (registered by `nexo_plugin_registry::init_loop`
+        // per the declared tools) routes per-agent `tool.invoke` through
+        // the broker. Same end-state every other canonical plugin uses.
         // Phase 81.20.x F2.3 — email tool registration removed.
         // `nexo-plugin-email` v0.6.0+ subprocess advertises its 12
         // tools at `initialize` and the daemon's `RemoteToolHandler`
@@ -6502,14 +6456,10 @@ async fn main() -> Result<()> {
         }
         let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
-        // Phase 81.32 c4 — runtime builder chain extracted to
-        // `nexo_core::agent::spawn::assemble_agent_runtime`. The
-        // pairing-adapter registry is still built here because the
-        // adapter types (`WhatsappPairingAdapter`,
-        // `TelegramPairingAdapter`) live in plugin crates that
-        // depend on nexo-core; constructing them inside core would
-        // create a cycle.
-        let pairing_registry = build_known_pairing_registry(&broker);
+        // Phase 81.20.x Stage 7 — empty registry; the loop below
+        // populates it generically from each plugin's
+        // `build_pairing_adapter()` trait method.
+        let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
         // Phase 81.33.b.real — manifest-driven pairing adapters.
         // After legacy hardcoded registrations (above), iterate
         // every loaded plugin handle and ask it to supply an
@@ -7061,44 +7011,15 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
-                // Fallback to legacy hardcoded calls during the
-                // migration window (Phase 81.33.a step 4 →
-                // step 6 / Phase 93.5.d closure). Skips when the
-                // plugin manifest declares
-                // `[[plugin.tools.outbound]]` — the generic loop
-                // above handled registration already; firing the
-                // fallback would double-register.
-                #[cfg(any(feature = "plugin-whatsapp", feature = "plugin-telegram"))]
-                let (wa_in_manifest, tg_in_manifest) = {
-                    let guard = plugin_handles_cell.read().await;
-                    match guard.as_ref() {
-                        Some(handles) => (
-                            handles
-                                .get("whatsapp")
-                                .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
-                                .unwrap_or(false),
-                            handles
-                                .get("telegram")
-                                .map(|h| !h.manifest().plugin.tools.outbound.is_empty())
-                                .unwrap_or(false),
-                        ),
-                        None => (false, false),
-                    }
-                };
-                #[cfg(feature = "plugin-whatsapp")]
-                if cfg.plugins.iter().any(|p| p == "whatsapp") && !wa_in_manifest {
-                    nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
-                }
-                #[cfg(feature = "plugin-telegram")]
-                if cfg.plugins.iter().any(|p| p == "telegram") && !tg_in_manifest {
-                    nexo_plugin_telegram::register_telegram_tools(&tools);
-                }
-                #[cfg(not(any(feature = "plugin-whatsapp", feature = "plugin-telegram")))]
-                {
-                    // No plugin-* features enabled — no fallback to skip.
-                    // Suppress unused-variable warnings on `wa_in_manifest`
-                    // + `tg_in_manifest` by declaring them as `_`.
-                }
+                // Phase 81.20.x Stage 7 — whatsapp + telegram tool
+                // register fallbacks removed from the hot-spawn path
+                // as well. Both plugins' subprocesses advertise their
+                // outbound tool defs in the `initialize` reply; the
+                // daemon's `RemoteToolHandler` (registered above via
+                // the iterator over `plugin_handles`) routes tool
+                // invocations through the broker. No
+                // `wa_in_manifest` / `tg_in_manifest` gating
+                // required anymore.
                 if cfg.heartbeat.enabled {
                     if let Some(mem) = memory.clone() {
                         tools.register(
@@ -7323,12 +7244,11 @@ async fn main() -> Result<()> {
                 let agent_cfg = cfg.clone();
                 let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
-                // 5. Pairing adapter registry — built per spawn
-                //    via the shared `build_known_pairing_registry`
-                //    helper (Phase 81.33.b) + iterate plugin
-                //    handles for manifest-declared adapters
-                //    (Phase 81.33.b.real).
-                let pairing_registry = build_known_pairing_registry(&broker);
+                // 5. Pairing adapter registry — Phase 81.20.x Stage 7:
+                //    empty registry, populated by the loop below from
+                //    each plugin's `build_pairing_adapter()` trait
+                //    method (Phase 81.33.b.real).
+                let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
                 {
                     let guard = plugin_handles_cell.read().await;
                     if let Some(handles) = guard.as_ref() {
@@ -8264,10 +8184,12 @@ async fn boot_dispatch_ctx_if_enabled(
     // the cell is not threaded into this function. Manifest
     // adapters work for the primary agent runtime path
     // (`src/main.rs:6416-6437` boot + `:7224-...` hot-spawn).
-    // Threading the cell here is a follow-up if dispatch-ctx mode
-    // grows pairing-aware hooks; until then it falls back to the
-    // legacy cfg-gated hardcoded registrations.
-    let pairing_registry = build_known_pairing_registry(_broker);
+    // Phase 81.20.x Stage 7 — dispatch-ctx path also starts with
+    // an empty registry; pairing-aware hooks are a follow-up
+    // (would require plumbing `plugin_handles_cell` through this
+    // helper too).
+    let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
+    let _ = _broker;
     // Hook idempotency store. Lives next to other state sidecars
     // in $NEXO_HOME/state/. On failure the dispatcher degrades to
     // idempotency-less mode (hooks can fire twice on NATS replay) but
