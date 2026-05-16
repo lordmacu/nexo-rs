@@ -1,7 +1,7 @@
 [package]
 name = "nexo-plugin-manifest"
 description = "TOML manifest schema + 4-tier validator for native Rust nexo plugins (Phase 81.1)."
-version = "0.1.5"
+version = "0.1.6"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

@@ -476,7 +476,7 @@ nexo-driver-loop       = { version = "0.1.7", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.7", path = "crates/driver-permission" }
 nexo-driver-types      = { version = "0.1.7", path = "crates/driver-types" }
 nexo-memory-snapshot   = { version = "0.1.4", path = "crates/memory-snapshot" }
-nexo-plugin-manifest   = { version = "0.1.5", path = "crates/plugin-manifest" }
+nexo-plugin-manifest   = { version = "0.1.6", path = "crates/plugin-manifest" }
 nexo-persona-manifest  = { version = "0.1.0", path = "crates/persona-manifest" }
 nexo-persona-installer = { version = "0.1.0", path = "crates/persona-installer" }
 nexo-project-tracker   = { version = "0.1.7", path = "crates/project-tracker" }
