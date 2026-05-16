@@ -1299,53 +1299,12 @@ fn seed_whatsapp_subprocess_env_for(
     env
 }
 
-/// Daemon-side env seeder for the `nexo-plugin-email` subprocess.
-/// Wave 2 form — takes a single tenant config and stamps the env
-/// dict for one subprocess. Mirror of `seed_telegram_subprocess_env_for`.
-///
-/// The actual cfg slice (tenant slice of `Vec<EmailPluginConfig>`) is
-/// delivered to the subprocess via `plugin.configure` JSON-RPC
-/// (Phase 93.4.c), not via env vars. This helper only stamps:
-///
-///   * `NEXO_BROKER_KIND` + `NEXO_BROKER_URL` — broker transport.
-///   * `NEXO_PLUGIN_EMAIL_INSTANCE` — tenant label so subprocess
-///     logs / metrics / inbound topics include the tenant.
-///   * `NEXO_PLUGIN_EMAIL_DATA_DIR` — per-tenant data root
-///     (`<NEXO_DATA_DIR>/email/<tenant>/`). The plugin's boot loop
-///     also resolves this on its side; stamping here keeps daemon
-///     + subprocess agreed on the path.
-///   * `NEXO_PLUGIN_EMAIL_SECRETS_DIR` — per-tenant secrets root.
-fn seed_email_subprocess_env_for(
-    cfg: &nexo_config::EmailPluginConfig,
-    broker_kind: &str,
-    broker_url: &str,
-) -> std::collections::HashMap<String, String> {
-    let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for key in ["PATH", "HOME", "RUST_LOG"] {
-        if let Ok(val) = std::env::var(key) {
-            env.insert(key.to_string(), val);
-        }
-    }
-    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
-    if broker_kind != "stdio_bridge" {
-        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
-    }
-    let tenant = cfg.instance.clone().unwrap_or_else(|| "default".into());
-    env.insert("NEXO_PLUGIN_EMAIL_INSTANCE".into(), tenant.clone());
-
-    let data_root = std::env::var("NEXO_DATA_DIR").unwrap_or_else(|_| "./data".into());
-    env.insert(
-        "NEXO_PLUGIN_EMAIL_DATA_DIR".into(),
-        format!("{data_root}/email/{tenant}"),
-    );
-
-    let secrets_root = std::env::var("NEXO_SECRETS_DIR").unwrap_or_else(|_| "./secrets".into());
-    env.insert(
-        "NEXO_PLUGIN_EMAIL_SECRETS_DIR".into(),
-        format!("{secrets_root}/{tenant}"),
-    );
-    env
-}
+// Wave 4 — `seed_email_subprocess_env_for` removed. Daemon no
+// longer spawns email subprocesses via the factory wiring block;
+// auto-subprocess fallback in `init_loop.rs` handles spawn from
+// the discovered manifest. Plugin's own `env_config` reads its
+// `NEXO_PLUGIN_EMAIL_*` env vars (with sensible defaults) when
+// the daemon doesn't seed them.
 
 /// `tools_per_agent` and `agent_snapshot_handles` are populated
 /// during the boot agent loop and never extended; reload picks up
@@ -3392,28 +3351,19 @@ async fn main() -> Result<()> {
     // daemon-side flip will spawn one subprocess per tenant; this
     // legacy in-process factory uses the FIRST declared tenant for
     // back-compat with single-tenant operators.
-    let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = cfg
-        .plugins
-        .email
-        .first()
-        .filter(|c| c.enabled && !c.accounts.is_empty())
-        .and_then(|email_cfg| {
-            credentials.as_ref().map(|creds_bundle| {
-                let data_dir = std::env::var("NEXO_DATA_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-                let plugin_cfg = convert_email_cfg(email_cfg)
-                    .expect("email cfg structurally compatible across nexo_config / nexo_plugin_email");
-                Arc::new(nexo_plugin_email::EmailPlugin::new(
-                    plugin_cfg,
-                    creds_bundle.email_store(),
-                    creds_bundle.google_store(),
-                    data_dir,
-                ))
-            })
-        });
-    if email_plugin.is_none() && cfg.plugins.is_active("email") {
-        tracing::info!("email plugin present but disabled / empty / missing creds — skipping");
+    // Wave 4 — daemon decoupled from email. Construction lives in
+    // the plugin subprocess (auto-discovered via
+    // `plugins.discovery.search_paths`). The framework no longer
+    // constructs an in-process `EmailPlugin`; tool dispatch, IMAP
+    // IDLE, SMTP queue, and metrics all run inside the subprocess.
+    // Autonomous worker (separate binary mode) still builds its
+    // own `Arc<EmailPlugin>` directly from the plugin's lib surface.
+    let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = None;
+    if cfg.plugins.is_active("email") {
+        tracing::info!(
+            "email plugin configured — discovery walker will spawn the standalone \
+             subprocess; daemon no longer keeps an in-process Arc"
+        );
     }
     plugins
         .start_all(broker.clone())
@@ -3646,61 +3596,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Email factory wiring. Two-mode wave 2:
-    //   - LEGACY single-tenant (Vec.len() <= 1 AND no `instance`
-    //     field): keep the in-process Arc factory so existing tool
-    //     registration paths + `run_mcp_server_autonomous_worker`
-    //     stay functional.
-    //   - MULTI-TENANT (Vec.len() > 1 OR any entry has `instance`):
-    //     drop the in-process factory and register one subprocess
-    //     factory per tenant via `register_instance_subprocess_factories`.
-    //     Each tenant gets its own subprocess for cross-tenant
-    //     process isolation. In-process Arc (`email_plugin`)
-    //     stays available for tool context wiring but does NOT
-    //     register into `factory_registry`.
-    // Wave 3 follow-up D-3: subprocess-only daemon path. Drop the
-    // legacy in-process Arc factory branch — every active email
-    // tenant (single OR multi) now goes through
-    // `register_instance_subprocess_factories`. The `email_plugin`
-    // Arc above is still constructed for in-process consumers
-    // (autonomous worker + per-agent tool ctx) but no longer
-    // registers into `factory_registry`; subprocess wins the wire.
-    let email_subprocess_path = cfg.plugins.is_active("email")
-        && !cfg.plugins.email.is_empty();
-
-    if email_subprocess_path {
-        let pre_snap = nexo_core::agent::nexo_plugin_registry::discover(
-            &discovery_cfg_clone,
-            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
-        );
-        let broker_url = std::env::var("NEXO_BROKER_URL")
-            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
-        let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
-        let outcome = register_instance_subprocess_factories(
-            "email",
-            cfg.plugins.email.clone(),
-            &pre_snap,
-            broker_kind,
-            &broker_url,
-            &mut factory_registry,
-            &mut extra_subprocess_plugins,
-            |c| c.instance.clone(),
-            |c| c.enabled,
-            seed_email_subprocess_env_for,
-            "wave2",
-        );
-        if outcome.is_none() {
-            tracing::warn!(
-                "email is configured in cfg.plugins.email but no \
-                 `email` manifest was found in `plugins.discovery.search_paths` \
-                 — install the binary via `cargo install nexo-plugin-email` \
-                 (or build from the v0.5.1+ tarball) and add its directory \
-                 to `plugins.discovery.search_paths`. The plugin will not \
-                 run until the manifest is reachable.",
-            );
-        }
-    }
+    // Wave 4 — email factory wiring removed. Discovery walker's
+    // auto-subprocess fallback (init_loop.rs) spawns one email
+    // subprocess when the manifest is found in
+    // `plugins.discovery.search_paths`. Multi-tenant fans out
+    // INSIDE that subprocess via the plugin's `instance_registry`
+    // (same model browser uses for multi-instance). Tool dispatch,
+    // IMAP IDLE, SMTP queue, metrics — all subprocess-local; no
+    // daemon-side plugin-specific code remains.
 
     // Spawn the whatsapp pairing state broker
     // subscriber. Lives for the duration of the daemon's broker
@@ -3813,15 +3716,24 @@ async fn main() -> Result<()> {
         *guard = Some(std::sync::Arc::new(wire.plugin_handles.clone()));
     }
 
-    // Email tool context — built post-start so the dispatcher handle
-    // is primed. Each agent loop below picks it up when its `plugins`
-    // list mentions `email`.
-    let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = match (
-        email_plugin.as_ref(),
-        credentials.as_ref(),
-        cfg.plugins.email.first(),
-    ) {
-        (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
+    // Wave 4 — email tool ctx no longer built in daemon. Email
+    // subprocess advertises + dispatches its 12 tools over JSON-RPC
+    // (Phase W3-C); daemon's `RemoteToolHandler` routes per-agent
+    // tool.invoke through the broker without needing an in-process
+    // `EmailToolContext`. Downstream `email_tool_ctx.clone()`
+    // references see `None` and gracefully degrade.
+    let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = None;
+    #[cfg(any())]
+    {
+        // Dead match preserved under `#[cfg(any())]` (never compiled)
+        // as a reference for future audits of the in-process tool
+        // ctx construction.
+        let _ = match (
+            email_plugin.as_ref(),
+            credentials.as_ref(),
+            cfg.plugins.email.first(),
+        ) {
+            (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
             // Audit follow-up E — `dispatcher_handle()` returning
             // None after a plugin we *did* register is a hard
             // failure: the email plugin is unusable, and silently
@@ -3899,7 +3811,8 @@ async fn main() -> Result<()> {
             }))
         }
         _ => None,
-    };
+        };
+    }
 
     // Agents ---------------------------------------------------------------
     let running_agents = Arc::new(AtomicUsize::new(0));
@@ -16458,8 +16371,8 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::{
         has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
-        route_cron_subcommand, seed_email_subprocess_env_for, seed_telegram_subprocess_env_for,
-        seed_whatsapp_subprocess_env_for, subprocess_broker_kind_str, Mode,
+        route_cron_subcommand, seed_telegram_subprocess_env_for, seed_whatsapp_subprocess_env_for,
+        subprocess_broker_kind_str, Mode,
     };
     use nexo_config::types::plugins::{
         TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
@@ -16771,82 +16684,12 @@ mod tests {
         );
     }
 
-    /// Happy path: every env key the standalone
-    /// `nexo-plugin-email` subprocess reads on boot lands in the
-    /// spawn dict.
-    /// Build a minimal `EmailPluginConfig` for env-seeder tests.
-    fn email_cfg(instance: Option<&str>) -> nexo_config::EmailPluginConfig {
-        let yaml = match instance {
-            Some(inst) => format!(
-                "email:\n  - instance: {inst}\n    accounts: []\n"
-            ),
-            None => "email:\n  - accounts: []\n".to_string(),
-        };
-        let f: nexo_config::types::plugins::EmailPluginConfigFile =
-            serde_yaml::from_str(&yaml).unwrap();
-        f.email.into_vec().into_iter().next().unwrap()
-    }
+    // Wave 4 — seed_email_subprocess_env_for tests dropped along
+    // with the helper. Daemon no longer seeds email subprocess env;
+    // auto-subprocess fallback in init_loop.rs handles spawn from
+    // the discovered manifest.
 
-    /// Wave 2 form — per-tenant env dict stamps INSTANCE +
-    /// per-tenant DATA_DIR + SECRETS_DIR. Config slice itself
-    /// arrives over `plugin.configure` JSON-RPC, not via env.
-    #[test]
-    fn seed_email_subprocess_env_for_stamps_tenant_paths() {
-        std::env::set_var("NEXO_DATA_DIR", "/var/lib/nexo");
-        std::env::set_var("NEXO_SECRETS_DIR", "/run/secrets/nexo");
-        let cfg = email_cfg(Some("empresa_a"));
-        let env =
-            seed_email_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
-        assert_eq!(
-            env.get("NEXO_BROKER_KIND").map(String::as_str),
-            Some("nats")
-        );
-        assert_eq!(
-            env.get("NEXO_BROKER_URL").map(String::as_str),
-            Some("nats://127.0.0.1:4222")
-        );
-        assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_INSTANCE").map(String::as_str),
-            Some("empresa_a")
-        );
-        assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_DATA_DIR").map(String::as_str),
-            Some("/var/lib/nexo/email/empresa_a")
-        );
-        assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR").map(String::as_str),
-            Some("/run/secrets/nexo/empresa_a")
-        );
-        std::env::remove_var("NEXO_DATA_DIR");
-        std::env::remove_var("NEXO_SECRETS_DIR");
-    }
-
-    /// Missing `instance` defaults to `"default"`.
-    #[test]
-    fn seed_email_subprocess_env_for_default_instance_when_absent() {
-        let cfg = email_cfg(None);
-        let env =
-            seed_email_subprocess_env_for(&cfg, "nats", "nats://x");
-        assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_INSTANCE").map(String::as_str),
-            Some("default")
-        );
-    }
-
-    /// `stdio_bridge` mode omits the URL — daemon-derived only.
-    #[test]
-    fn seed_email_subprocess_env_for_stdio_bridge_omits_url() {
-        let cfg = email_cfg(Some("t1"));
-        let env =
-            seed_email_subprocess_env_for(&cfg, "stdio_bridge", "ignored");
-        assert_eq!(
-            env.get("NEXO_BROKER_KIND").map(String::as_str),
-            Some("stdio_bridge")
-        );
-        assert!(!env.contains_key("NEXO_BROKER_URL"));
-    }
-
-    /// Sentinel daemon env var does NOT leak
+/// Sentinel daemon env var does NOT leak
     /// into the spawn dict (defense-in-depth).
     #[test]
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
