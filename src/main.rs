@@ -969,19 +969,9 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 ///   the kind is daemon-derived only. Fall back to
 ///   `stdio_bridge` defensively so a misconfiguration doesn't
 ///   crash boot.
-/// Phase 93.4.c → Wave 2 — convert `nexo_config::EmailPluginConfig`
-/// (legacy daemon-side parser) into `nexo_plugin_email::EmailPluginConfig`
-/// (the plugin's owned type after Phase 93.4.c). Structurally
-/// identical fields go through a serde round-trip via serde_yaml
-/// so the two types stay decoupled.
-fn convert_email_cfg(
-    cfg: &nexo_config::EmailPluginConfig,
-) -> anyhow::Result<nexo_plugin_email::EmailPluginConfig> {
-    let yaml = serde_yaml::to_value(cfg)
-        .context("convert_email_cfg: serialize nexo_config::EmailPluginConfig")?;
-    serde_yaml::from_value(yaml)
-        .context("convert_email_cfg: deserialize into nexo_plugin_email::EmailPluginConfig")
-}
+// Wave 5 — `convert_email_cfg` removed. nexo_config no longer
+// carries typed email; daemon-side consumers deserialize directly
+// into `nexo_plugin_email::EmailPluginConfig` from opaque entries.
 
 fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &'static str {
     match kind {
@@ -3723,96 +3713,10 @@ async fn main() -> Result<()> {
     // `EmailToolContext`. Downstream `email_tool_ctx.clone()`
     // references see `None` and gracefully degrade.
     let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = None;
-    #[cfg(any())]
-    {
-        // Dead match preserved under `#[cfg(any())]` (never compiled)
-        // as a reference for future audits of the in-process tool
-        // ctx construction.
-        let _ = match (
-            email_plugin.as_ref(),
-            credentials.as_ref(),
-            cfg.plugins.email.first(),
-        ) {
-            (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
-            // Audit follow-up E — `dispatcher_handle()` returning
-            // None after a plugin we *did* register is a hard
-            // failure: the email plugin is unusable, and silently
-            // proceeding would let agents declare `plugins: [email]`
-            // and discover at first tool-call time that nothing
-            // was registered. Better to refuse boot now.
-            let dispatcher = plugin.dispatcher_handle().await.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "email plugin registered but `dispatcher_handle()` is None — \
-                     OutboundDispatcher::start failed earlier. Check the boot log \
-                     for the underlying error, or set `email.enabled: false` to \
-                     skip the plugin entirely."
-                )
-            })?;
-            // Audit follow-up F — surface accounts that didn't make
-            // it into the dispatcher's live instance set. The
-            // declared list is `email_cfg.accounts`; the live set
-            // is `dispatcher.instance_ids()`. Anything declared but
-            // not live crashed during spawn — log structured WARN
-            // with the full list so the operator sees it once at
-            // boot rather than discovering it in the middle of an
-            // `email_send` failure.
-            // Audit follow-up J — soft connectivity probe. Wait up
-            // to 10 s for every account to land its first
-            // successful connect; anything still pending is logged
-            // as a structured WARN. Doesn't abort boot — auth /
-            // DNS issues should keep the daemon alive while the
-            // operator triages.
-            let pending = plugin
-                .verify_accounts_connected(std::time::Duration::from_secs(10))
-                .await;
-            if !pending.is_empty() {
-                tracing::warn!(
-                    target: "plugin.email",
-                    pending = ?pending,
-                    "email accounts have not completed initial connect within 10s — \
-                     check IMAP credentials, network reachability, or TLS settings. \
-                     The plugin will keep retrying via the per-instance circuit breaker."
-                );
-            }
-            let live: std::collections::HashSet<String> =
-                dispatcher.instance_ids().into_iter().collect();
-            let missing: Vec<&str> = email_cfg
-                .accounts
-                .iter()
-                .map(|a| a.instance.as_str())
-                .filter(|i| !live.contains(*i))
-                .collect();
-            if !missing.is_empty() {
-                tracing::warn!(
-                    target: "plugin.email",
-                    declared = ?email_cfg.accounts.iter().map(|a| a.instance.as_str()).collect::<Vec<_>>(),
-                    live = ?live.iter().collect::<Vec<_>>(),
-                    missing = ?missing,
-                    "some declared email accounts are not live in the dispatcher — \
-                     `email_send` against those instances will fail with `unknown email instance`. \
-                     Inspect the boot log for the per-account spawn error."
-                );
-            }
-            let health = plugin
-                .health_map()
-                .await
-                .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
-            Some(Arc::new(nexo_plugin_email::EmailToolContext {
-                creds: creds_bundle.email_store(),
-                google: creds_bundle.google_store(),
-                config: Arc::new(
-                    convert_email_cfg(email_cfg).expect("email cfg roundtrip"),
-                ),
-                dispatcher,
-                health,
-                bounce_store: plugin.bounce_store_handle(),
-                attachment_store: plugin.attachment_store_handle(),
-                attachments_dir: plugin.attachments_dir(),
-            }))
-        }
-        _ => None,
-        };
-    }
+    // Wave 5 — dead in-process tool ctx construction block removed.
+    // Daemon path is fully decoupled from email; subprocess owns
+    // tool dispatch + dispatcher health checks. Git history retains
+    // the prior in-process implementation for reference.
 
     // Agents ---------------------------------------------------------------
     let running_agents = Arc::new(AtomicUsize::new(0));
@@ -14333,34 +14237,44 @@ async fn start_mcp_autonomous_worker(
     }
     let creds_bundle = Arc::new(creds_bundle);
 
-    // Wave 3 deferred #2 — tenant-aware autonomous worker. Find
-    // the email tenant matching the worker agent's inbound binding;
-    // fall back to the first declared tenant when the agent has no
-    // email binding (back-compat for single-tenant deployments).
+    // Wave 5 — read email cfg directly from `plugins.entries["email"]`
+    // (opaque YAML map). Daemon no longer carries a typed email field;
+    // deserialize directly into the plugin's `EmailPluginShape` so
+    // worker bootstrap doesn't need `convert_email_cfg`.
     let worker_email_instance: Option<&str> = worker_agent_cfg
         .inbound_bindings
         .iter()
         .find(|b| b.plugin == "email")
         .and_then(|b| b.instance.as_deref());
 
+    let email_entries_value = full_cfg.plugins.entries.get("email").ok_or_else(|| {
+        anyhow::anyhow!(
+            "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
+        )
+    })?;
+    let email_shape: nexo_plugin_email::EmailPluginShape =
+        serde_yaml::from_value(email_entries_value.clone()).map_err(|e| {
+            anyhow::anyhow!(
+                "mcp_server.autonomous_worker: invalid email cfg in cfg.plugins.entries[\"email\"]: {e}"
+            )
+        })?;
+    let tenants: Vec<nexo_plugin_email::EmailPluginConfig> = email_shape.into_vec();
     let email_cfg = match worker_email_instance {
-        Some(inst) => full_cfg
-            .plugins
-            .email
-            .iter()
+        Some(inst) => tenants
+            .into_iter()
             .find(|c| c.instance.as_deref() == Some(inst))
-            .cloned()
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "mcp_server.autonomous_worker: agent `{}` bound to email \
-                     instance `{}` but no matching tenant in cfg.plugins.email",
+                     instance `{}` but no matching tenant in cfg.plugins.entries[\"email\"]",
                     worker_agent_cfg.id,
                     inst
                 )
             })?,
-        None => full_cfg.plugins.email.first().cloned().ok_or_else(|| {
+        None => tenants.into_iter().next().ok_or_else(|| {
             anyhow::anyhow!(
-                "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
+                "mcp_server.autonomous_worker.enabled=true requires at least one \
+                 email tenant in cfg.plugins.entries[\"email\"]"
             )
         })?,
     };
@@ -14380,10 +14294,10 @@ async fn start_mcp_autonomous_worker(
     let data_dir = std::env::var("NEXO_DATA_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-    let plugin_email_cfg = convert_email_cfg(&email_cfg)
-        .context("convert nexo_config::EmailPluginConfig to nexo_plugin_email::EmailPluginConfig")?;
+    // Wave 5 — email_cfg is already `nexo_plugin_email::EmailPluginConfig`
+    // (deserialized from opaque entries). No conversion helper needed.
     let email_plugin = Arc::new(nexo_plugin_email::EmailPlugin::new(
-        plugin_email_cfg,
+        email_cfg.clone(),
         creds_bundle.email_store(),
         creds_bundle.google_store(),
         data_dir,
@@ -14410,10 +14324,7 @@ async fn start_mcp_autonomous_worker(
     let email_tool_ctx = Arc::new(nexo_plugin_email::EmailToolContext {
         creds: creds_bundle.email_store(),
         google: creds_bundle.google_store(),
-        config: Arc::new(
-            convert_email_cfg(&email_cfg)
-                .context("convert email cfg for autonomous worker tool context")?,
-        ),
+        config: Arc::new(email_cfg.clone()),
         dispatcher,
         health: email_health,
         bounce_store: email_plugin.bounce_store_handle(),

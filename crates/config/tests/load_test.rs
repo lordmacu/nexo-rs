@@ -119,7 +119,7 @@ fn happy_path() {
     assert_eq!(cfg.llm.providers["minimax"].api_key, "test_key");
     assert_eq!(cfg.plugins.whatsapp.len(), 1);
     assert_eq!(cfg.plugins.telegram.len(), 1);
-    assert!(!cfg.plugins.email.is_empty());
+    assert!(cfg.plugins.entries.contains_key("email"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn optional_plugin_absent() {
     write_fixtures(dir.path());
     fs::remove_file(dir.path().join("plugins/email.yaml")).unwrap();
     let cfg = AppConfig::load(dir.path()).unwrap();
-    assert!(cfg.plugins.email.is_empty());
+    assert!(!cfg.plugins.entries.contains_key("email"));
 }
 
 #[test]

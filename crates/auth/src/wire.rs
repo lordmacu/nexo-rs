@@ -17,6 +17,70 @@ use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, Goo
 use nexo_config::types::plugins::PluginsConfig;
 
 use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
+
+// Wave 5 — opaque email cfg slice. nexo_config no longer carries
+// typed `EmailPluginConfig` (Phase 93 framework decoupling); we
+// deserialize a minimal account-only shape from
+// `cfg.plugins.entries["email"]` here. Plugin crate retains the
+// full typed config; this auth path only needs (instance, address)
+// for credential file loading.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct EmailCredAccount {
+    pub instance: String,
+    pub address: String,
+    // Catch-all so plugin-specific account fields (imap/smtp/folders/
+    // filters/provider/bootstrap_limit) don't fail the deserialize.
+    #[serde(flatten)]
+    _rest: std::collections::BTreeMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct EmailCredTenant {
+    #[serde(default)]
+    pub accounts: Vec<EmailCredAccount>,
+    #[serde(flatten)]
+    _rest: std::collections::BTreeMap<String, serde_yaml::Value>,
+}
+
+/// `cfg.plugins.entries["email"]` can be either a single map (legacy
+/// 0.4.x) or a sequence of tenant maps (0.5.0+). Same untagged shape
+/// the plugin's `EmailPluginShape` uses — duplicated here so nexo-auth
+/// stays decoupled from `nexo-plugin-email`.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum EmailCredShape {
+    Single(EmailCredTenant),
+    Many(Vec<EmailCredTenant>),
+}
+
+impl EmailCredShape {
+    fn flat_accounts(self) -> Vec<EmailCredAccount> {
+        let tenants = match self {
+            Self::Single(t) => vec![t],
+            Self::Many(v) => v,
+        };
+        tenants.into_iter().flat_map(|t| t.accounts).collect()
+    }
+}
+
+fn email_accounts_from_entries(plugins: &PluginsConfig) -> Vec<EmailCredAccount> {
+    let Some(value) = plugins.entries.get("email") else {
+        return Vec::new();
+    };
+    match serde_yaml::from_value::<EmailCredShape>(value.clone()) {
+        Ok(shape) => shape.flat_accounts(),
+        Err(e) => {
+            tracing::warn!(
+                target: "credentials.wire",
+                error = %e,
+                "failed to deserialize cfg.plugins.entries[\"email\"] for credential wiring; \
+                 falling back to no email accounts. Plugin will still receive raw entries \
+                 via plugin.configure."
+            );
+            Vec::new()
+        }
+    }
+}
 use crate::error::BuildError;
 use crate::generic_store::GenericCredentialStore;
 use crate::gauntlet::{
@@ -231,11 +295,11 @@ pub fn build_credentials(
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
     let whatsapp = plugins.whatsapp.as_slice();
     let telegram = plugins.telegram.as_slice();
-    // 0.5.0: plugins.email is `Vec<EmailPluginConfig>` (multi-tenant).
-    // Auth wiring still operates per-tenant; use the first declared
-    // tenant for now (back-compat with single-tenant). Multi-tenant
-    // credential aggregation lands in Wave 2 follow-up.
-    let email = plugins.email.first();
+    // Wave 5 — opaque email cfg. Flatten across all declared tenants
+    // (multi-tenant credential aggregation). The full plugin config
+    // stays inside `nexo-plugin-email`; we only need account-level
+    // (instance, address) here for secrets loading.
+    let email_accounts_decl = email_accounts_from_entries(plugins);
     let mut errors: Vec<BuildError> = Vec::new();
 
     // ── 1. Path claims (session_dir WA + credential files Google) ──
@@ -362,23 +426,21 @@ pub fn build_credentials(
     // ── Email accounts: load secrets/email/<inst>.toml for every
     //    declared instance. Missing files / malformed TOML accumulate
     //    into `errors` like every other gauntlet branch.
-    let (email_accounts, email_warnings, email_errors) = match email {
-        Some(cfg) => {
-            let declared: Vec<(String, String)> = cfg
-                .accounts
-                .iter()
-                .map(|a| (a.instance.clone(), a.address.clone()))
-                .collect();
-            load_email_secrets(secrets_dir, &declared)
-        }
-        None => (Vec::<EmailAccount>::new(), Vec::new(), Vec::new()),
+    let (email_accounts, email_warnings, email_errors) = if email_accounts_decl.is_empty() {
+        (Vec::<EmailAccount>::new(), Vec::new(), Vec::new())
+    } else {
+        let declared: Vec<(String, String)> = email_accounts_decl
+            .iter()
+            .map(|a| (a.instance.clone(), a.address.clone()))
+            .collect();
+        load_email_secrets(secrets_dir, &declared)
     };
     errors.extend(email_errors);
 
     // Cross-store check: every `OAuth2Google` email account must point
     // at an existing google_account_id. Strict in both modes — a typo
     // here would silently fall through to a runtime NotFound.
-    if let Some(cfg) = email {
+    if !email_accounts_decl.is_empty() {
         let google_ids: std::collections::HashSet<&str> =
             goog_accounts.iter().map(|a| a.id.as_str()).collect();
         for acct in &email_accounts {
@@ -400,7 +462,7 @@ pub fn build_credentials(
         }
         // Permission check on TOML files (mode 0o600).
         let mut email_perm_paths: Vec<(Channel, String, std::path::PathBuf)> = Vec::new();
-        for acct in &cfg.accounts {
+        for acct in &email_accounts_decl {
             let p = secrets_dir
                 .join("email")
                 .join(format!("{}.toml", acct.instance));
