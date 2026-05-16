@@ -131,9 +131,16 @@
             <span class="text-ink-500"># Linux / macOS — auto-detects OS+arch, verifies sha256, no toolchain needed</span><br/>
             <span class="text-accent-400">curl</span> -fsSL https://lordmacu.github.io/nexo-rs/install.sh <span class="text-ink-500">|</span> <span class="text-accent-400">bash</span><br/>
             <br/>
+            <!--
+            Windows PowerShell installer temporarily hidden while
+            the script catches up with the multi-binary plugin layout
+            (Phase 81.20.x Stage 7 Phase 2). Windows operators can
+            still install via `cargo install nexo-rs` below or grab
+            the zip directly from GitHub Releases.
             <span class="text-ink-500"># Windows (PowerShell)</span><br/>
             <span class="text-accent-400">irm</span> https://lordmacu.github.io/nexo-rs/install.ps1 <span class="text-ink-500">|</span> <span class="text-accent-400">iex</span><br/>
             <br/>
+            -->
             <span class="text-ink-500"># From crates.io (Rust toolchain required)</span><br/>
             <span class="text-accent-400">cargo install</span> nexo-rs<br/>
             <br/>
@@ -142,8 +149,9 @@
           </div>
           <p class="mt-3 text-xs text-ink-500">
             Native binaries: Linux x86_64 + aarch64 (musl static), macOS
-            Intel + Apple Silicon, Windows x86_64. Some optional features
-            (STT) need extra build tools per OS — see
+            Intel + Apple Silicon, Windows x86_64 (cargo install or
+            zip from Releases). Some optional features (STT) need
+            extra build tools per OS — see
             <a href="docs/getting-started/platform-support.html"
                class="underline hover:text-ink-300">Platform support</a>
             for the per-OS prerequisites + feature matrix.

@@ -1,11 +1,32 @@
 # Phase 93.11 — Compile-Time Plugin Decoupling Audit
 
-Status: **audit memo** (no code change). Produced 2026-05-15
-to answer "is Phase 93 self-describing goal achieved at
-compile-time?" before deciding to ship `--features <channel>`
-gating vs full dynamic-loading.
+Status: **closed 2026-05-16**. All 47 anchor sites cleared.
 
-## TL;DR
+## Result
+
+`cargo tree -i nexo-plugin-{whatsapp,telegram,email,browser}`
+returns "did not match any packages" against either the
+default daemon build or `--no-default-features`. The daemon
+binary compiles with zero direct or transitive dependency on
+any canonical channel-plugin crate; pairing, outbound
+dispatch, HTTP routes, admin RPC, metrics scrape, dashboard
+sources, and pairing triggers all flow through
+manifest-declared broker contracts:
+
+- `[plugin.pairing.adapter]` (Phase 81.33.b.real Stage 1)
+- `[plugin.http]` (Stage 2)
+- `[plugin.admin]` (Stage 4)
+- `[plugin.metrics]` (Stage 5)
+- `[plugin.dashboard]` (Stage 6)
+- `[plugin.pairing.trigger]` (Phase 81.20.x Stage 7 Phase 2)
+- `[plugin.public_tunnel]` (Phase 81.20.x Stage 7 Phase 2)
+
+Operators wanting an embedded in-process build link the
+canonical plugin crate directly from a custom binary — the
+daemon's published default ships with zero hardcoded plugin
+imports.
+
+## Historical TL;DR (pre-close)
 
 Daemon binary (`nexo-daemon`) cannot build without the four
 canonical plugin crates as Cargo dependencies. Phase 93's
@@ -16,14 +37,12 @@ Cargo) anchor the daemon to `nexo-plugin-whatsapp`,
 `nexo-plugin-telegram`, `nexo-plugin-email`,
 `nexo-plugin-browser`.
 
-**Recommendation:** Hybrid path. Adopt Cargo feature-gates
-for the three already-subprocess-flipped plugins
-(`whatsapp`, `telegram`, `browser`) NOW (low cost, ~6h,
-unlocks slim daemon binary for embedded/Android targets).
-Defer dynamic-loading + email decoupling until the
-trigger landed: (a) 3rd-party plugin demands compile-time
-independence OR (b) email subprocess-extraction
-(Phase 81.20 follow-up).
+**Recommendation (closed via Phase 81.20.x Stage 7 Phase 2):**
+Hybrid path adopted. Cargo feature-gates landed first
+(`whatsapp`/`telegram`/`browser` ~Stage 7 Phase 1) and then
+the gates themselves were deleted once each plugin shipped
+its manifest sections — `cargo tree` returns unmatched for
+all four canonical plugins as of 2026-05-16.
 
 ## Inventory: 47 sites
 

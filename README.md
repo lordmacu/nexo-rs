@@ -36,7 +36,7 @@ Gmail for leads — all sharing one broker, one tool registry, one
 memory layer.
 
 Install the pre-built binary (`curl … install.sh | bash` on Linux/macOS,
-`irm … install.ps1 | iex` on Windows, `cargo install nexo-rs`, or a
+`cargo install nexo-rs` on Windows, or a
 `.deb` / `.rpm` / Termux `.deb` from
 [GitHub Releases](https://github.com/lordmacu/nexo-rs/releases/latest)),
 then `nexo` — the daemon boots against documented defaults with no
@@ -59,7 +59,13 @@ how it lands on your machine. The one-liner needs no Rust toolchain.
 | Method | Command | Notes |
 |--------|---------|-------|
 | **Pre-built binary (Linux / macOS)** | `curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh \| bash` | Linux x86_64 / aarch64 (static musl), macOS Intel / Apple Silicon. Detects OS+arch, verifies sha256, drops `nexo` on PATH, then installs the bundled plugins + a persona. Falls back to `cargo install nexo-rs`. Works on Windows too when run from Git Bash. |
+<!-- Windows PowerShell installer temporarily hidden while the
+     script catches up with the multi-binary plugin layout
+     (Phase 81.20.x Stage 7 Phase 2). Use `cargo install nexo-rs`
+     below or grab the zip from GitHub Releases.
 | **Pre-built binary (Windows, PowerShell)** | `irm https://lordmacu.github.io/nexo-rs/install.ps1 \| iex` | Downloads `nexo-rs-x86_64-pc-windows-msvc.zip`, verifies sha256, adds `nexo.exe` to your user PATH, then installs the bundled plugins + a persona. |
+-->
+| **Windows (zip from Releases)** | Download `nexo-rs-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest) and extract `nexo.exe` to a folder on PATH. | Verify the bundled `*.sha256` manually before extracting. Or just use the `cargo install` row below. |
 | **crates.io** | `cargo install nexo-rs` | Needs a Rust toolchain (1.80+). Compiles the daemon from the published workspace. Works on every platform Rust supports. |
 | **Debian / Ubuntu** | `sudo apt install ./nexo-rs_<ver>_amd64.deb` | Download the `.deb` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Ships a systemd unit; postinst seeds `/etc/nexo-rs/`. |
 | **Fedora / RHEL / Rocky** | `sudo dnf install ./nexo-rs-<ver>-1.x86_64.rpm` | `.rpm` from [Releases](https://github.com/lordmacu/nexo-rs/releases/latest). Same systemd unit. |
