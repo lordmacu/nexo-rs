@@ -7,11 +7,35 @@ exposes six tools (`email_send`, `email_reply`, `email_archive`,
 `email_move_to`, `email_label`, `email_search`) so an agent can read
 and act on a mailbox.
 
-> **Status (Phase 48 + follow-ups #1, #2, #6 shipped).** IMAP
-> `ImplicitTls` (993) and `Starttls` (143 / 587) are both supported;
-> `Plain` still rejects at connect. Persistent bounce history and
-> the interactive setup wizard are tracked in
-> `proyecto/FOLLOWUPS.md` for follow-up phases.
+> **Status (Phase 81.20.x shipped 2026-05-16).** Email is now a
+> standalone subprocess plugin distributed via crates.io. Install
+> with `cargo install nexo-plugin-email`; the daemon's binary-mode
+> discovery walker auto-detects the binary, probes
+> `--print-manifest`, and wires all five auto-discovery stages
+> (pairing adapter, HTTP routes, admin RPC, Prometheus metrics,
+> dashboard) without any daemon-side code change. The daemon
+> binary no longer compiles `nexo-plugin-email` in-tree (`cargo tree
+> -i nexo-plugin-email` returns "did not match any packages").
+
+## Install
+
+```bash
+cargo install nexo-plugin-email          # latest crates.io release
+```
+
+The binary lands in `$HOME/.cargo/bin/nexo-plugin-email`. The
+daemon's `PluginDiscoveryConfig::default()` already includes that
+directory in its `search_paths`, so a fresh nexo daemon boot
+finds the plugin without manifest editing. The walker spawns
+`nexo-plugin-email --print-manifest`, captures the bundled TOML,
+and registers the plugin's 12 tools + 5 manifest sections via the
+generic auto-discovery contract.
+
+If your environment hardens against arbitrary binary execution
+during boot, set
+`plugins.discovery.auto_detect_binaries: false` in
+`config/discovery.yaml` and add an explicit
+`nexo-plugin.toml` reference under `search_paths` instead.
 
 ## Configuration
 

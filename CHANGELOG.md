@@ -8,6 +8,27 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Email plugin now runs as a standalone subprocess** (Phase
+  81.20.x, closes Bucket D of the Phase 93 decoupling audit).
+  The daemon binary no longer compiles `nexo-plugin-email`
+  in-tree (`cargo tree -i nexo-plugin-email` returns "did not
+  match any packages"); the framework is now fully agnostic
+  to email-specific types, handles, and HTTP routes. Operators
+  must `cargo install nexo-plugin-email` to keep email features
+  available. The daemon's plugin discovery walker auto-detects
+  the binary in `$HOME/.cargo/bin/`, probes `--print-manifest`,
+  and wires all five auto-discovery stages (pairing adapter,
+  HTTP, admin, metrics, dashboard) via the generic contract.
+  Operator-facing config (`config/plugins/email.yaml`, secrets
+  TOML, etc.) is unchanged. One regression during the
+  transition: `mcp_server.autonomous_worker.enabled` mode loses
+  automatic email follow-up sending until the
+  `RemoteToolHandler` bridge ships (tracked in `FOLLOWUPS.md`).
+  `nexo-email-probe v0.1.0` is the new framework-agnostic crate
+  the setup wizard uses to validate IMAP/SMTP credentials.
+
 ### Added
 
 - **Plugin auto-detection on `cargo install`** (Phase 81.33 Stage 8).
