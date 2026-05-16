@@ -2461,36 +2461,13 @@ async fn main() -> Result<()> {
         // (declared before this block so the post-snapshotter
         // population can also write into it). Cloned here so the
         // adapter outlives the bootstrap match.
-        // `pairing_triggers` is declared at the outer scope
-        // (above this block) so the post-`wire_plugin_registry`
-        // BrokerPairingTrigger registration loop can mutate the
-        // SAME registry the dispatcher consumed at bootstrap.
-        // Legacy hardcoded `WhatsappPairingTrigger` registration
-        // below is cfg-gated; the registry overwrites by
-        // `channel_id` when the canonical plugin ships v0.4.4
-        // with `[plugin.pairing.trigger]`, so this entry is
-        // harmless coexistence during the migration window.
-        #[cfg(feature = "plugin-whatsapp")]
-        if cfg.plugins.is_active("whatsapp") {
-            // Wave 7 — deserialize opaque entries directly into the
-            // plugin's own typed config; nexo_config no longer
-            // carries whatsapp types.
-            let plugin_cfgs: Vec<nexo_plugin_whatsapp::WhatsappPluginConfig> =
-                opaque_plugin_entries(&cfg.plugins, "whatsapp")
-                    .into_iter()
-                    .filter_map(|v| serde_yaml::from_value(v).ok())
-                    .collect();
-            if !plugin_cfgs.is_empty() {
-                pairing_triggers.insert(
-                    nexo_plugin_whatsapp::pairing_trigger::CHANNEL_ID.to_string(),
-                    std::sync::Arc::new(
-                        nexo_plugin_whatsapp::pairing_trigger::WhatsappPairingTrigger::from_configs(
-                            &plugin_cfgs,
-                        ),
-                    ),
-                );
-            }
-        }
+        // `pairing_triggers` is declared at the outer scope above.
+        // Phase 81.20.x Stage 7 Phase 2 — legacy hardcoded
+        // `WhatsappPairingTrigger::from_configs` registration
+        // removed; the manifest-driven `BrokerPairingTrigger`
+        // loop in the post-`wire_plugin_registry` block populates
+        // the registry from `nexo-plugin-whatsapp` v0.4.4+'s
+        // `[plugin.pairing.trigger]` section instead.
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
                 config_dir: &config_dir,
@@ -16020,6 +15997,12 @@ mod tests {
         TelegramPollingConfig,
     };
     // Wave 7 — whatsapp types live in the plugin crate.
+    // Phase 81.20.x Stage 7 Phase 2 — `plugin-whatsapp` dropped
+    // from default features; the import + helper + tests below
+    // only compile when the operator opts in. Coverage of the
+    // opaque-YAML seeder path stays via the always-on telegram
+    // tests above.
+    #[cfg(feature = "plugin-whatsapp")]
     use nexo_plugin_whatsapp::{
         WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
         WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
@@ -16217,6 +16200,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "plugin-whatsapp")]
     fn whatsapp_cfg(session_dir: &str, instance: Option<&str>) -> WhatsappPluginConfig {
         WhatsappPluginConfig {
             enabled: true,
@@ -16251,6 +16235,7 @@ mod tests {
     /// of `WhatsappPluginConfig` lands in the spawn env dict
     /// under the `NEXO_PLUGIN_WHATSAPP_*` namespace plus the
     /// inherited daemon whitelist.
+    #[cfg(feature = "plugin-whatsapp")]
     #[test]
     fn seed_whatsapp_subprocess_env_for_happy_path() {
         let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
@@ -16290,6 +16275,7 @@ mod tests {
     /// Empty / `None` instance is omitted (not
     /// emitted as empty string) so the subprocess's
     /// `whatsapp_config_from_env` reads `instance = None`.
+    #[cfg(feature = "plugin-whatsapp")]
     #[test]
     fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
         let cfg = whatsapp_cfg("/tmp/x", None);
@@ -16303,6 +16289,7 @@ mod tests {
 
     /// Transcriber disabled drops whisper env;
     /// enabled lights it up.
+    #[cfg(feature = "plugin-whatsapp")]
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
         let mut cfg = whatsapp_cfg("/tmp/x", None);
@@ -16336,6 +16323,7 @@ mod tests {
 
 /// Sentinel daemon env var does NOT leak
     /// into the spawn dict (defense-in-depth).
+    #[cfg(feature = "plugin-whatsapp")]
     #[test]
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");

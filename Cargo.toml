@@ -202,7 +202,13 @@ include = [
 workspace = true
 
 [features]
-default = ["plugin-telegram", "plugin-whatsapp"]
+# Phase 81.20.x Stage 7 Phase 2 — `plugin-whatsapp` dropped from
+# default features. Daemon no longer links `nexo-plugin-whatsapp`
+# in the default build; the canonical plugin discovers + spawns
+# via manifest like any other subprocess plugin. Operators can
+# still opt in with `--features plugin-whatsapp` if a legacy
+# embedded-only use case turns up.
+default = ["plugin-telegram"]
 # Phase 93.12.a — Cargo feature-gate for telegram canonical plugin.
 # Enabled by default so existing deployments keep the same binary
 # surface; operators targeting Android / slim embedded daemons can
