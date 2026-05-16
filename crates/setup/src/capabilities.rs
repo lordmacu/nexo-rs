@@ -1091,6 +1091,16 @@ mod drift_tests {
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
+        // Phase 81.20.x F2 — email subprocess e2e fixture override:
+        // `crates/core/tests/email_plugin_crates_io_e2e.rs` reads
+        // this to pick an alternate binary location. Non-destructive
+        // path pin; test self-skips when unset.
+        "NEXO_PLUGIN_EMAIL_BIN",
+        // Phase 81.17.c follow-up — browser plugin e2e fixture
+        // overrides for chrome binary + plugin binary location.
+        // Pure test path pins.
+        "CHROMIUM_BIN",
+        "NEXO_PLUGIN_BROWSER_BIN",
         // STT parity harness — directory pins for the reference
         // fixtures / safetensors weights / whisper.cpp GGML model the
         // parity test loads. Pure test-fixture path overrides; no

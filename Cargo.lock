@@ -1085,17 +1085,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chardetng"
-version = "0.1.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14b8f0b65b7b08ae3c8187e8d77174de20cb6777864c6b832d8ad365999cf1ea"
-dependencies = [
- "cfg-if",
- "encoding_rs",
- "memchr",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1634,7 +1623,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1911,7 +1900,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2124,7 +2113,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3194,20 +3183,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "html2text"
-version = "0.13.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf7722c2ffdd62628b6e13065b6ab6cf154a236bd476c6e89af1352d745b83e"
-dependencies = [
- "html5ever 0.29.1",
- "markup5ever 0.14.1",
- "nom 7.1.3",
- "tendril",
- "thiserror 2.0.18",
- "unicode-width",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3215,22 +3190,10 @@ checksum = "c13771afe0e6e846f1e67d038d4cb29998a6779f93c809212e4e9c32efd244d4"
 dependencies = [
  "log",
  "mac",
- "markup5ever 0.12.1",
+ "markup5ever",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "html5ever"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b7410cae13cbc75623c98ac4cbfd1f0bedddf3227afc24f370cf0f50a44a11c"
-dependencies = [
- "log",
- "mac",
- "markup5ever 0.14.1",
- "match_token",
 ]
 
 [[package]]
@@ -3366,7 +3329,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3773,7 +3736,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4224,24 +4187,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "670fdfda89751bc4a84ac13eaa63e205cf0fd22b4c9a5fbfa085b63c1f1d3a30"
 
 [[package]]
-name = "mail-builder"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900998f307338c4013a28ab14d760b784067324b164448c6d98a89e44810473b"
-dependencies = [
- "gethostname",
-]
-
-[[package]]
-name = "mail-parser"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93c3b9e5d8b17faf573330bbc43b37d6e918c0a3bf8a88e7d0a220ebc84af9fc"
-dependencies = [
- "encoding_rs",
-]
-
-[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4262,31 +4207,6 @@ dependencies = [
  "string_cache",
  "string_cache_codegen",
  "tendril",
-]
-
-[[package]]
-name = "markup5ever"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7a7213d12e1864c0f002f52c2923d4556935a43dec5e71355c2760e0f6e7a18"
-dependencies = [
- "log",
- "phf 0.11.3",
- "phf_codegen 0.11.3",
- "string_cache",
- "string_cache_codegen",
- "tendril",
-]
-
-[[package]]
-name = "match_token"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88a9689d8d44bf9964484516275f5cd4c9b59457a6940c1d5d0ecbb94510a36b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -4870,6 +4790,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-email-probe"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b09ce41c3f2046f88e2ca04b74829b2266cad418e7979a2f06a03c8d39f7a55d"
+dependencies = [
+ "anyhow",
+ "async-imap",
+ "futures",
+ "hickory-resolver",
+ "lettre",
+ "nexo-auth",
+ "once_cell",
+ "rustls 0.23.38",
+ "rustls-native-certs",
+ "secrecy",
+ "serde",
+ "serde_bytes",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "nexo-ext-installer"
 version = "0.1.1"
 dependencies = [
@@ -5313,58 +5258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexo-plugin-email"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0cf9dd5d6c5cc8e128a50fedcd2a0d030602b5ca4dc25e3b839f15da27dc328"
-dependencies = [
- "anyhow",
- "async-imap",
- "async-trait",
- "base64 0.22.1",
- "chardetng",
- "chrono",
- "dashmap 6.1.0",
- "encoding_rs",
- "futures",
- "hex",
- "hickory-resolver",
- "html2text",
- "lettre",
- "mail-builder",
- "mail-parser",
- "mime_guess",
- "nexo-auth",
- "nexo-broker",
- "nexo-config",
- "nexo-core",
- "nexo-llm",
- "nexo-microapp-sdk",
- "nexo-plugin-manifest",
- "nexo-resilience",
- "once_cell",
- "rand 0.8.6",
- "rustls 0.23.38",
- "rustls-native-certs",
- "secrecy",
- "serde",
- "serde_bytes",
- "serde_json",
- "serde_yaml",
- "sha2",
- "socket2 0.5.10",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tokio-rustls 0.26.4",
- "tokio-util",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "nexo-plugin-google"
 version = "0.1.2"
 dependencies = [
@@ -5619,7 +5512,6 @@ dependencies = [
  "nexo-pairing",
  "nexo-persona-installer",
  "nexo-persona-manifest",
- "nexo-plugin-email",
  "nexo-plugin-google",
  "nexo-plugin-manifest",
  "nexo-plugin-telegram",
@@ -5679,13 +5571,13 @@ dependencies = [
  "nexo-broker",
  "nexo-config",
  "nexo-core",
+ "nexo-email-probe",
  "nexo-extensions",
  "nexo-llm",
  "nexo-llm-auth",
  "nexo-memory",
  "nexo-memory-snapshot",
  "nexo-pairing",
- "nexo-plugin-email",
  "nexo-plugin-google",
  "nexo-plugin-manifest",
  "nexo-plugin-whatsapp",
@@ -5939,7 +5831,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6903,7 +6795,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.38",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6940,9 +6832,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7398,7 +7290,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7637,7 +7529,7 @@ dependencies = [
  "cssparser",
  "ego-tree",
  "getopts",
- "html5ever 0.27.0",
+ "html5ever",
  "once_cell",
  "selectors",
  "tendril",
@@ -8202,7 +8094,6 @@ checksum = "ee6798b1838b6a0f69c007c133b8df5866302197e404e8b6ee8ed3e3a5e68dc6"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "chrono",
  "crc",
  "crossbeam-queue",
  "either",
@@ -8218,7 +8109,6 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
- "rustls 0.23.38",
  "serde",
  "serde_json",
  "sha2",
@@ -8228,8 +8118,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "uuid",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -8281,7 +8169,6 @@ dependencies = [
  "bitflags 2.11.1",
  "byteorder",
  "bytes",
- "chrono",
  "crc",
  "digest",
  "dotenvy",
@@ -8310,7 +8197,6 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -8324,7 +8210,6 @@ dependencies = [
  "base64 0.22.1",
  "bitflags 2.11.1",
  "byteorder",
- "chrono",
  "crc",
  "dotenvy",
  "etcetera",
@@ -8349,7 +8234,6 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -8360,7 +8244,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea"
 dependencies = [
  "atoi",
- "chrono",
  "flume",
  "futures-channel",
  "futures-core",
@@ -8376,7 +8259,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -8617,7 +8499,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9894,7 +9776,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

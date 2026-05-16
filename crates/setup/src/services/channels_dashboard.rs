@@ -156,20 +156,9 @@ impl ChannelDashboardSource for WhatsappDashboardSource {
     }
 }
 
-pub struct EmailDashboardSource;
-impl ChannelDashboardSource for EmailDashboardSource {
-    fn channel_id(&self) -> &'static str {
-        "email"
-    }
-    fn discover(&self, config_dir: &Path, secrets_dir: &Path) -> Result<Vec<ChannelEntry>> {
-        Ok(vec![ChannelEntry {
-            channel: "email".into(),
-            instance: "default".into(),
-            auth: email_auth_state(secrets_dir),
-            bound_agents: list_agents_with_plugin(config_dir, "email")?,
-        }])
-    }
-}
+// Phase 81.20.x F2.7 — `EmailDashboardSource` removed.
+// `ManifestDashboardSource` reads email's `[plugin.dashboard]`
+// section directly; no daemon-side hardcoded impl needed.
 
 /// Phase 81.33.b.real Stage 6 — manifest-driven dashboard
 /// source. Consumes a parsed
@@ -332,11 +321,16 @@ fn intern_static_str(s: &str) -> &'static str {
 /// slim daemon binary (Phase 93.12.c) does NOT surface whatsapp
 /// in the dashboard.
 pub fn default_dashboard_sources() -> Vec<Box<dyn ChannelDashboardSource>> {
+    // Phase 81.20.x F2.7 — EmailDashboardSource removed from the
+    // fallback list. Email v0.6.0+ declares `[plugin.dashboard]`
+    // in its manifest; `ManifestDashboardSource` (built from
+    // `dashboard_sources_from_manifests`) surfaces email
+    // generically, with no daemon-side hardcoded impl.
+    #[allow(unused_mut)]
     let mut out: Vec<Box<dyn ChannelDashboardSource>> =
         vec![Box::new(TelegramDashboardSource)];
     #[cfg(feature = "plugin-whatsapp")]
     out.push(Box::new(WhatsappDashboardSource));
-    out.push(Box::new(EmailDashboardSource));
     out
 }
 
@@ -382,9 +376,9 @@ fn telegram_auth_state(secrets_dir: &Path) -> AuthState {
     file_state(&secrets_dir.join("telegram_bot_token.txt"))
 }
 
-fn email_auth_state(secrets_dir: &Path) -> AuthState {
-    file_state(&secrets_dir.join("email_password.txt"))
-}
+// Phase 81.20.x F2.7 — `email_auth_state` removed alongside
+// `EmailDashboardSource`. Manifest-driven `auth_check_kind =
+// "session_dir_files"` covers email auth detection.
 
 fn file_state(path: &Path) -> AuthState {
     match std::fs::read_to_string(path) {

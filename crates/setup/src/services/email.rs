@@ -25,18 +25,17 @@ use anyhow::{anyhow, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use nexo_auth::email::{EmailAccount, EmailAuth};
 use nexo_auth::google::GoogleCredentialStore;
-use nexo_plugin_email::imap_conn::ImapConnection;
-use nexo_plugin_email::provider_hint;
-use nexo_plugin_email::smtp_conn::SmtpClient;
-use nexo_plugin_email::spf_dkim::{check_alignment, decide_warns};
+// Phase 81.20.x F2 — wizard validators now consume the
+// framework-agnostic `nexo-email-probe` crate. The setup crate no
+// longer depends on the full `nexo-plugin-email` lib; the probe
+// crate ships the same `ImapConnection`, `SmtpClient`,
+// `provider_hint`, `check_alignment`, `decide_warns` surface.
+use nexo_email_probe::imap_conn::ImapConnection;
+use nexo_email_probe::provider_hint;
+use nexo_email_probe::smtp_conn::SmtpClient;
+use nexo_email_probe::spf_dkim::{check_alignment, decide_warns};
+use nexo_email_probe::types::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
 use secrecy::SecretString;
-
-// Phase 93.4.c — email types live in `nexo_plugin_email::config`
-// (plugin owns its config contract). nexo-config retains parallel
-// definitions for legacy daemon-side YAML decoding; this file uses
-// the plugin types directly so ImapConnection / SmtpClient calls
-// type-check.
-use nexo_plugin_email::config::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
 
 /// In-memory snapshot the wizard hands to the writers. Decoupled
 /// from the YAML/TOML serialisers so tests can drive them directly.

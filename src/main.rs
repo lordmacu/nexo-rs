@@ -713,11 +713,11 @@ struct RuntimeHealth {
     #[cfg(feature = "plugin-whatsapp")]
     wa_pairing:
         std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
-    /// `/email/health` exposes the per-account
-    /// `AccountHealth` map (state, IDLE alive ts, queue / DLQ depths,
-    /// sent / failed totals). `None` when the email plugin isn't
-    /// configured.
-    email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>>,
+    // Phase 81.20.x F2.2 — `email_plugin` handle removed.
+    // `/email/health` + `/metrics` email rows now live in the
+    // subprocess plugin (Phase 81.33.b.real Stages 2+5 broker
+    // handlers); the daemon never holds a typed `EmailPlugin`
+    // reference.
     /// Companion WS handshake context — populated after pairing init.
     /// `None` until the daemon's pairing block completes.
     pairing_handshake: Arc<std::sync::OnceLock<PairingHandshakeCtx>>,
@@ -1732,18 +1732,11 @@ fn plugin_declares_outbound_tools(
         .unwrap_or(false)
 }
 
-/// Phase 93.5.d closure — does this plugin declare a Prometheus
-/// metrics scrape descriptor in its manifest? When `true`, the
-/// daemon-side hardcoded metrics call (e.g.
-/// `nexo_plugin_email::metrics::render_prometheus`) SKIPS — the
-/// `nexo_pairing::plugin_metrics::scrape_all` path picks the
-/// plugin up via broker RPC.
-fn plugin_declares_metrics(
-    descriptors: &[nexo_pairing::plugin_metrics::PluginMetricsDescriptor],
-    plugin_id: &str,
-) -> bool {
-    descriptors.iter().any(|d| d.plugin_id == plugin_id)
-}
+// Phase 81.20.x F2.1 — `plugin_declares_metrics` removed. The last
+// caller was the daemon-side `render_prometheus` direct call for
+// email, which is gone now that email v0.6.0+ scrapes via
+// `nexo_pairing::plugin_metrics::scrape_all` like every other
+// plugin.
 
 /// Phase 81.33.b — single source of truth for the in-tree
 /// `PairingChannelAdapter` registrations the daemon ships with.
@@ -3447,12 +3440,11 @@ async fn main() -> Result<()> {
     // back-compat with single-tenant operators.
     // Wave 4 — daemon decoupled from email. Construction lives in
     // the plugin subprocess (auto-discovered via
-    // `plugins.discovery.search_paths`). The framework no longer
-    // constructs an in-process `EmailPlugin`; tool dispatch, IMAP
-    // IDLE, SMTP queue, and metrics all run inside the subprocess.
-    // Autonomous worker (separate binary mode) still builds its
-    // own `Arc<EmailPlugin>` directly from the plugin's lib surface.
-    let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = None;
+    // Phase 81.20.x F2.1 — email plugin construction removed.
+    // Discovery walker spawns the standalone `nexo-plugin-email`
+    // subprocess via `[plugin.entrypoint]`; tool dispatch, IMAP
+    // IDLE, SMTP queue, metrics, and pairing all run inside the
+    // subprocess.
     if cfg.plugins.is_active("email") {
         tracing::info!(
             "email plugin configured — discovery walker will spawn the standalone \
@@ -3822,17 +3814,11 @@ async fn main() -> Result<()> {
         *guard = Some(std::sync::Arc::new(wire.plugin_handles.clone()));
     }
 
-    // Wave 4 — email tool ctx no longer built in daemon. Email
-    // subprocess advertises + dispatches its 12 tools over JSON-RPC
-    // (Phase W3-C); daemon's `RemoteToolHandler` routes per-agent
-    // tool.invoke through the broker without needing an in-process
-    // `EmailToolContext`. Downstream `email_tool_ctx.clone()`
-    // references see `None` and gracefully degrade.
-    let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = None;
-    // Wave 5 — dead in-process tool ctx construction block removed.
-    // Daemon path is fully decoupled from email; subprocess owns
-    // tool dispatch + dispatcher health checks. Git history retains
-    // the prior in-process implementation for reference.
+    // Phase 81.20.x F2.3 — email_tool_ctx dropped entirely. Email
+    // subprocess owns its 12 tools via RemoteToolHandler routing
+    // through the broker; the daemon no longer constructs or
+    // forwards any email-specific tool context. See git history
+    // (commit pre-81.20.x) for the prior in-process implementation.
 
     // Agents ---------------------------------------------------------------
     let running_agents = Arc::new(AtomicUsize::new(0));
@@ -3938,7 +3924,6 @@ async fn main() -> Result<()> {
         running_agents: Arc::clone(&running_agents),
         #[cfg(feature = "plugin-whatsapp")]
         wa_pairing: wa_pairing.clone(),
-        email_plugin: email_plugin.clone(),
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
         tunnel_registry: Arc::clone(&tunnel_registry),
         http_router: Arc::clone(&http_router),
@@ -5306,34 +5291,12 @@ async fn main() -> Result<()> {
             nexo_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent (fallback)");
         }
-        // Email tools — gated on `plugins: [email]` + dispatcher
-        // primed (the post-`start_all` ctx above). Six handlers:
-        // send / reply / archive / move_to / label / search.
-        if agent_cfg.plugins.iter().any(|p| p == "email") {
-            if let Some(ctx) = email_tool_ctx.clone() {
-                // Surface-level filter. If
-                // `agent.allowed_tools` lists explicit names, only
-                // register the email handlers that actually appear.
-                // `*` / `email_*` / empty list = register all six.
-                let filter =
-                    nexo_plugin_email::filter_from_allowed_patterns(&agent_cfg.allowed_tools);
-                nexo_plugin_email::register_email_tools_filtered(&tools, ctx, filter.as_deref());
-                let kept = filter
-                    .as_ref()
-                    .map(|f| f.len())
-                    .unwrap_or(nexo_plugin_email::EMAIL_TOOL_NAMES.len());
-                tracing::info!(
-                    agent = %agent_id,
-                    kept,
-                    "registered email_* tools for agent"
-                );
-            } else {
-                tracing::warn!(
-                    agent = %agent_id,
-                    "agent declares `email` plugin but the email plugin isn't armed — skipping tool registration"
-                );
-            }
-        }
+        // Phase 81.20.x F2.3 — email tool registration removed.
+        // `nexo-plugin-email` v0.6.0+ subprocess advertises its 12
+        // tools at `initialize` and the daemon's `RemoteToolHandler`
+        // (registered by `nexo_plugin_registry::init_loop`) routes
+        // per-agent `tool.invoke` through the broker. No daemon-side
+        // tool fallback required.
         // Google OAuth tools — gated on either `agents.<id>.google_auth`
         // (legacy inline) or an entry in `plugins/google-auth.yaml`
         // resolved via the credential store. The client
@@ -7011,7 +6974,6 @@ async fn main() -> Result<()> {
         // tools, extension tools). google_* stays deferred to
         // c7.c.3 (requires async load_from_disk + workspace
         // handling).
-        let email_tool_ctx_c = email_tool_ctx.clone();
         let pollers_runner_c = pollers_runner.clone();
         let channel_boot_c = channel_boot.clone();
         let mcp_manager_c = mcp_manager.clone();
@@ -7043,7 +7005,6 @@ async fn main() -> Result<()> {
             let event_emitter = event_emitter_c.clone();
             let default_recall_mode = default_recall_mode_c.clone();
             let plugin_handles_cell = plugin_handles_cell_c.clone();
-            let email_tool_ctx = email_tool_ctx_c.clone();
             let pollers_runner = pollers_runner_c.clone();
             let channel_boot = channel_boot_c.clone();
             let mcp_manager = mcp_manager_c.clone();
@@ -7234,21 +7195,11 @@ async fn main() -> Result<()> {
                         nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
                     );
                 }
-                // Phase 81.32 c7.c.2 — email outbound tools.
-                // Same gate as boot: plugins:[email] + email
-                // plugin armed (email_tool_ctx populated post
-                // start_all).
-                if cfg.plugins.iter().any(|p| p == "email") {
-                    if let Some(ctx) = email_tool_ctx.clone() {
-                        let filter =
-                            nexo_plugin_email::filter_from_allowed_patterns(&cfg.allowed_tools);
-                        nexo_plugin_email::register_email_tools_filtered(
-                            &tools,
-                            ctx,
-                            filter.as_deref(),
-                        );
-                    }
-                }
+                // Phase 81.20.x F2.3 — email outbound tools register
+                // path removed. Email v0.6.0+ subprocess advertises
+                // its 12 tools via JSON-RPC; daemon's RemoteToolHandler
+                // routes per-agent invocations through the broker
+                // without daemon-side fallback.
                 // Phase 81.32 c7.c.2 — pollers control tools.
                 if let Some(runner) = pollers_runner.as_ref() {
                     nexo_poller_tools::register_all(&tools, Arc::clone(runner));
@@ -7829,17 +7780,9 @@ async fn main() -> Result<()> {
         tracing::error!(error = %e, "plugin shutdown error");
     }
 
-    // Email plugin no longer lives in `plugins`
-    // after the factory_registry flip; stop it explicitly so IMAP
-    // IDLE workers + SMTP outbound queue drain before the runtime
-    // terminates. Idempotent — `EmailPlugin::stop` returns Ok if
-    // already stopped (e.g., autonomous worker shutdown path at
-    // line ~14848 already touched it).
-    if let Some(p) = email_plugin.as_ref() {
-        if let Err(e) = nexo_core::agent::plugin::Plugin::stop(p.as_ref()).await {
-            tracing::error!(error = %e, "email plugin shutdown error");
-        }
-    }
+    // Phase 81.20.x F2.1 — email plugin shutdown moved to the
+    // subprocess supervisor (Phase 81.21.b.b); daemon no longer
+    // calls `EmailPlugin::stop` on its own.
 
     // Shut down the MCP runtime before draining agents: in-flight tool calls
     // that are routed through MCP will cancel cleanly and the agents get
@@ -14319,12 +14262,10 @@ async fn start_mcp_autonomous_worker(
     shutdown: tokio_util::sync::CancellationToken,
     tick_secs: u64,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    use nexo_auth::StrictLevel;
     use nexo_core::agent::{
         AgentBehavior, AgentContext, CancelFollowupTool, CheckFollowupTool, LlmAgentBehavior,
         ToolRegistry,
     };
-    use nexo_core::Plugin;
 
     let memory = long_term_memory.ok_or_else(|| {
         anyhow::anyhow!(
@@ -14349,123 +14290,13 @@ async fn start_mcp_autonomous_worker(
         worker_agent_cfg.allowed_tools.clear();
     }
 
-    let google_auth = nexo_auth::load_google_auth(config_dir)
-        .context("failed to load plugins/google-auth.yaml")?;
-    let secrets_dir = secrets_dir_for(config_dir);
-    let creds_bundle = nexo_auth::build_credentials(
-        &full_cfg.agents.agents,
-        &full_cfg.plugins,
-        &google_auth,
-        &secrets_dir,
-        StrictLevel::Lenient,
-    )
-    .map_err(|errs| {
-        let joined = errs
-            .into_iter()
-            .map(|e| format!("  - {e}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        anyhow::anyhow!("failed to bootstrap credentials for mcp autonomous worker:\n{joined}")
-    })?;
-    for w in &creds_bundle.warnings {
-        tracing::warn!(target: "credentials", "{w}");
-    }
-    let creds_bundle = Arc::new(creds_bundle);
-
-    // Wave 5 — read email cfg directly from `plugins.entries["email"]`
-    // (opaque YAML map). Daemon no longer carries a typed email field;
-    // deserialize directly into the plugin's `EmailPluginShape` so
-    // worker bootstrap doesn't need `convert_email_cfg`.
-    let worker_email_instance: Option<&str> = worker_agent_cfg
-        .inbound_bindings
-        .iter()
-        .find(|b| b.plugin == "email")
-        .and_then(|b| b.instance.as_deref());
-
-    let email_entries_value = full_cfg.plugins.entries.get("email").ok_or_else(|| {
-        anyhow::anyhow!(
-            "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
-        )
-    })?;
-    let email_shape: nexo_plugin_email::EmailPluginShape =
-        serde_yaml::from_value(email_entries_value.clone()).map_err(|e| {
-            anyhow::anyhow!(
-                "mcp_server.autonomous_worker: invalid email cfg in cfg.plugins.entries[\"email\"]: {e}"
-            )
-        })?;
-    let tenants: Vec<nexo_plugin_email::EmailPluginConfig> = email_shape.into_vec();
-    let email_cfg = match worker_email_instance {
-        Some(inst) => tenants
-            .into_iter()
-            .find(|c| c.instance.as_deref() == Some(inst))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "mcp_server.autonomous_worker: agent `{}` bound to email \
-                     instance `{}` but no matching tenant in cfg.plugins.entries[\"email\"]",
-                    worker_agent_cfg.id,
-                    inst
-                )
-            })?,
-        None => tenants.into_iter().next().ok_or_else(|| {
-            anyhow::anyhow!(
-                "mcp_server.autonomous_worker.enabled=true requires at least one \
-                 email tenant in cfg.plugins.entries[\"email\"]"
-            )
-        })?,
-    };
-    if let Some(inst) = worker_email_instance {
-        tracing::info!(
-            agent = %worker_agent_cfg.id,
-            tenant = %inst,
-            "autonomous worker bootstrapped against email tenant"
-        );
-    }
-    if !email_cfg.enabled || email_cfg.accounts.is_empty() {
-        anyhow::bail!(
-            "mcp_server.autonomous_worker.enabled=true requires email.enabled=true and at least one account"
-        );
-    }
-
-    let data_dir = std::env::var("NEXO_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-    // Wave 5 — email_cfg is already `nexo_plugin_email::EmailPluginConfig`
-    // (deserialized from opaque entries). No conversion helper needed.
-    let email_plugin = Arc::new(nexo_plugin_email::EmailPlugin::new(
-        email_cfg.clone(),
-        creds_bundle.email_store(),
-        creds_bundle.google_store(),
-        data_dir,
-    ));
-    email_plugin
-        .start(broker.clone())
-        .await
-        .context("failed to start email plugin for mcp autonomous worker")?;
-
-    let dispatcher = match email_plugin.dispatcher_handle().await {
-        Some(h) => h,
-        None => {
-            let _ = email_plugin.stop().await;
-            anyhow::bail!(
-                "email plugin started without dispatcher handle; autonomous follow-up worker cannot send replies"
-            );
-        }
-    };
-
-    let email_health = email_plugin
-        .health_map()
-        .await
-        .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
-    let email_tool_ctx = Arc::new(nexo_plugin_email::EmailToolContext {
-        creds: creds_bundle.email_store(),
-        google: creds_bundle.google_store(),
-        config: Arc::new(email_cfg.clone()),
-        dispatcher,
-        health: email_health,
-        bounce_store: email_plugin.bounce_store_handle(),
-        attachment_store: email_plugin.attachment_store_handle(),
-        attachments_dir: email_plugin.attachments_dir(),
-    });
+    // Phase 81.20.x F3 — email plugin bootstrap removed. Email is
+    // now a subprocess plugin discovered via manifest; the worker
+    // can dispatch email tools through the broker via
+    // `RemoteToolHandler` once that's wired in (FOLLOWUPS entry).
+    // For now the worker keeps only the memory-side follow-up tools
+    // — operators relying on autonomous email send during this
+    // transition should use the regular agent path.
 
     let worker_tools = Arc::new(ToolRegistry::new());
     worker_tools.register(
@@ -14476,25 +14307,22 @@ async fn start_mcp_autonomous_worker(
         CheckFollowupTool::tool_def(),
         CheckFollowupTool::new(Arc::clone(&memory)),
     );
-    nexo_plugin_email::register_email_tools(&worker_tools, email_tool_ctx);
 
     let llm_registry = LlmRegistry::with_builtins();
     // Tenant-aware build; falls back to
     // global providers when the worker agent has no `tenant_id`.
-    let llm = match llm_registry.build_for_tenant(
-        &full_cfg.llm,
-        &worker_agent_cfg.model,
-        worker_agent_cfg.tenant_id.as_deref(),
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = email_plugin.stop().await;
-            return Err(anyhow::anyhow!(
+    let llm = llm_registry
+        .build_for_tenant(
+            &full_cfg.llm,
+            &worker_agent_cfg.model,
+            worker_agent_cfg.tenant_id.as_deref(),
+        )
+        .map_err(|e| {
+            anyhow::anyhow!(
                 "failed to build LLM for mcp autonomous worker agent `{}`: {e}",
                 worker_agent_cfg.id
-            ));
-        }
-    };
+            )
+        })?;
     let behavior = LlmAgentBehavior::new(llm, Arc::clone(&worker_tools));
 
     let mut worker_ctx = AgentContext::new(
@@ -14503,9 +14331,7 @@ async fn start_mcp_autonomous_worker(
         broker,
         Arc::clone(&mcp_bridge_ctx.sessions),
     )
-    .with_memory(memory)
-    .with_credentials(Arc::clone(&creds_bundle.resolver))
-    .with_breakers(Arc::clone(&creds_bundle.breakers));
+    .with_memory(memory);
     if let Some(ext) = mcp_bridge_ctx.link_extractor.clone() {
         worker_ctx = worker_ctx.with_link_extractor(ext);
     }
@@ -14543,12 +14369,9 @@ async fn start_mcp_autonomous_worker(
                 }
             }
         }
-        if let Err(e) = email_plugin.stop().await {
-            tracing::warn!(
-                error = %e,
-                "mcp-server autonomous worker failed to stop email plugin cleanly"
-            );
-        }
+        // Phase 81.20.x F3 — email plugin subprocess lifecycle is
+        // owned by the daemon's plugin supervisor (Phase 81.21.b.b);
+        // no email_plugin.stop() needed here.
         tracing::info!(agent = %worker_ctx.agent_id, "mcp-server autonomous worker stopped");
     });
     Ok(join)
@@ -15411,21 +15234,12 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     // `mcp_in_flight`, `mcp_rate_limit_hits_total`, etc.).
     body.push_str(&nexo_mcp::server::telemetry::render_prometheus());
     body.push_str(&nexo_poller::telemetry::render_prometheus());
-    // Append email metrics. Counters live in
-    // `nexo_plugin_email::metrics`; gauges (`imap_state`, queue
-    // depths) sample the live `health_map()` so the values are
-    // authoritative at scrape time.
-    let email_health = match health.email_plugin.as_ref() {
-        Some(p) => p.health_map().await,
-        None => None,
-    };
-    // Phase 93.5.d closure — email metrics direct call skips
-    // when email plugin manifest declares `[plugin.metrics]`.
-    // The broker scrape path (below) takes over for migrated
-    // plugins; legacy call stays for unmigrated email crates.
-    if !plugin_declares_metrics(&health.plugin_metrics, "email") {
-        body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
-    }
+    // Phase 81.20.x F2.5 — email metrics direct call removed.
+    // Email v0.6.0+ declares `[plugin.metrics]` and the broker
+    // scrape below covers it. Earlier plugin versions that lack
+    // the manifest section will simply contribute nothing to
+    // `/metrics`; operators must upgrade to v0.6.0 to keep
+    // observability.
     // Phase 81.33.b.real Stage 5 — scrape every plugin that
     // declared `[plugin.metrics] prometheus = true`. Sequential
     // dispatch with per-plugin timeout; one slow / unresponsive
@@ -15620,17 +15434,12 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
             )
             .await?;
         }
-        "/email/health" => {
-            // Snapshot every account's
-            // `AccountHealth` row. Returns `[]` when the plugin
-            // isn't configured (vs 404), so monitoring scripts
-            // can hit the route unconditionally.
-            let body = match health.email_plugin.as_ref() {
-                Some(plugin) => render_email_health(plugin.as_ref()).await,
-                None => "[]".to_string(),
-            };
-            write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body).await?;
-        }
+        // Phase 81.20.x F2.4 — `/email/health` route removed.
+        // Email v0.6.0+ owns `/email/*` via `[plugin.http]` manifest
+        // (mount_prefix = "/email"); the daemon's PluginHttpRouter
+        // forwards requests over broker to the subprocess, which
+        // renders the same JSON snapshot shape this route used to
+        // produce (see `nexo-plugin-email/src/auto_discovery.rs::http_request`).
         "/ready" => {
             let broker_ready = health.broker.is_ready();
             let agents = health.running_agents.load(Ordering::Relaxed);
@@ -15654,42 +15463,10 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
     Ok(())
 }
 
-/// Render the per-account email health snapshot as a stable JSON
-/// array. Sorted by instance for
-/// deterministic output that monitoring agents can diff.
-async fn render_email_health(plugin: &nexo_plugin_email::EmailPlugin) -> String {
-    let Some(map) = plugin.health_map().await else {
-        return "[]".to_string();
-    };
-    let mut keys: Vec<String> = map.iter().map(|e| e.key().clone()).collect();
-    keys.sort();
-    let mut rows = Vec::with_capacity(keys.len());
-    for k in keys {
-        if let Some(arc) = map.get(&k).map(|v| v.value().clone()) {
-            let h = arc.read().await;
-            rows.push(serde_json::json!({
-                "instance": k,
-                "state": match h.state {
-                    nexo_plugin_email::WorkerState::Connecting => "connecting",
-                    nexo_plugin_email::WorkerState::Idle => "idle",
-                    nexo_plugin_email::WorkerState::Polling => "polling",
-                    nexo_plugin_email::WorkerState::Down => "down",
-                },
-                "last_idle_alive_ts": h.last_idle_alive_ts,
-                "last_poll_ts": h.last_poll_ts,
-                "last_connect_ok_ts": h.last_connect_ok_ts,
-                "consecutive_failures": h.consecutive_failures,
-                "messages_seen_total": h.messages_seen_total,
-                "last_error": h.last_error,
-                "outbound_queue_depth": h.outbound_queue_depth,
-                "outbound_dlq_depth": h.outbound_dlq_depth,
-                "outbound_sent_total": h.outbound_sent_total,
-                "outbound_failed_total": h.outbound_failed_total,
-            }));
-        }
-    }
-    serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
-}
+// Phase 81.20.x F2.4 — `render_email_health` removed. Migrated
+// verbatim to `nexo-plugin-email/src/auto_discovery.rs::http_request`
+// where it now lives inside the subprocess; the daemon's
+// PluginHttpRouter forwards `/email/health` requests there.
 
 /// Companion WS pairing handshake:
 /// 1. tokio_tungstenite upgrades the raw TCP stream.
