@@ -554,9 +554,7 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let whatsapp = load_optional::<WhatsappPluginConfigFile>(&plugins_dir, "whatsapp.yaml")?
         .map(|f| f.whatsapp.into_vec())
         .unwrap_or_default();
-    let telegram = load_optional::<TelegramPluginConfigFile>(&plugins_dir, "telegram.yaml")?
-        .map(|f| f.telegram.into_vec())
-        .unwrap_or_default();
+    // Wave 6 — telegram loads via opaque `entries["telegram"]` map only.
     // Wave 5 — email loads via opaque `entries["email"]` map only.
     // No typed `email` field in PluginsConfig anymore.
     let browser =
@@ -572,7 +570,6 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     Ok(PluginsConfig {
         entries,
         whatsapp,
-        telegram,
         browser,
         discovery,
     })

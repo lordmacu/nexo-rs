@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 #[derive(Debug, Default, Clone)]
@@ -22,11 +22,9 @@ pub struct PluginsConfig {
     /// distinct `session_dir` and (optionally) an `instance` label
     /// driving the `plugin.inbound.whatsapp.<instance>` topic.
     pub whatsapp: Vec<WhatsappPluginConfig>,
-    /// Zero, one, or many Telegram bot instances. Each instance has its
-    /// own token and (optionally) an `instance` label that threads into
-    /// the inbound topic (`plugin.inbound.telegram.<instance>`) so agent
-    /// bindings can target a specific bot.
-    pub telegram: Vec<TelegramPluginConfig>,
+    // Wave 6 — typed telegram field dropped. Cfg lives in
+    // `entries["telegram"]` opaque map; consumers deserialize the
+    // slice locally (nexo-auth wire.rs, factory wiring in main.rs).
     // Wave 5 — typed email field dropped. Email cfg lives in the
     // opaque `entries["email"]` map (Phase 93.3). Consumers
     // (nexo-auth, autonomous worker) deserialize the slice locally.
@@ -290,7 +288,7 @@ fn default_command_timeout_ms() -> u64 {
     15_000
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappPluginConfigFile {
     pub whatsapp: WhatsappPluginShape,
@@ -305,7 +303,7 @@ pub struct WhatsappPluginConfigFile {
 // boxing `Single` here would force an allocation on every minimal
 // config load, which is the common path — accepted trade-off.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum WhatsappPluginShape {
     Single(WhatsappPluginConfig),
@@ -326,7 +324,7 @@ impl WhatsappPluginShape {
 /// Every section ships defaults so minimal config files stay valid; the
 /// plugin reads this struct and drives `wa-agent` accordingly. See
 /// `docs/wa-agent-integration.md` for the ADR behind these knobs.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappPluginConfig {
     #[serde(default = "default_enabled")]
@@ -384,7 +382,7 @@ pub struct WhatsappPluginConfig {
     pub typing_mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappPublicTunnelConfig {
     #[serde(default)]
@@ -407,7 +405,7 @@ impl Default for WhatsappPublicTunnelConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappAclConfig {
     /// Bare JIDs (device suffix stripped) allowed to reach the agent.
@@ -429,7 +427,7 @@ impl Default for WhatsappAclConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappBehaviorConfig {
     /// When true (default), honor the user's phone-side mute / archive /
@@ -471,7 +469,7 @@ impl Default for WhatsappBehaviorConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappRateLimitConfig {
     #[serde(default = "default_rate_global")]
@@ -492,7 +490,7 @@ impl Default for WhatsappRateLimitConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappBridgeConfig {
     /// How long the inbound handler waits for the LLM's outbound reply
@@ -517,7 +515,7 @@ impl Default for WhatsappBridgeConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappTranscriberConfig {
     #[serde(default)]
@@ -529,7 +527,7 @@ pub struct WhatsappTranscriberConfig {
     pub timeout_ms: u64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WhatsappDaemonConfig {
     /// When true (default), plugin boot aborts if a `wa-agent` daemon
@@ -595,123 +593,5 @@ fn default_transcriber_skill() -> String {
 }
 fn default_transcriber_timeout_ms() -> u64 {
     30_000
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramPluginConfigFile {
-    pub telegram: TelegramPluginShape,
-}
-
-/// YAML shape for the `telegram:` key. Accepts either a single map
-/// (legacy single-bot) or a sequence of maps (multi-bot). serde's
-/// untagged enum picks whichever matches the input — no migration
-/// needed for existing configs.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum TelegramPluginShape {
-    Single(TelegramPluginConfig),
-    Many(Vec<TelegramPluginConfig>),
-}
-
-impl TelegramPluginShape {
-    pub fn into_vec(self) -> Vec<TelegramPluginConfig> {
-        match self {
-            TelegramPluginShape::Single(c) => vec![c],
-            TelegramPluginShape::Many(v) => v,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramPluginConfig {
-    pub token: String,
-    #[serde(default)]
-    pub polling: TelegramPollingConfig,
-    #[serde(default)]
-    pub allowlist: TelegramAllowlistConfig,
-    #[serde(default)]
-    pub auto_transcribe: TelegramAutoTranscribeConfig,
-    /// How long the bridge waits for the agent's reply before firing
-    /// a BridgeTimeout event. Agents with long tool chains (multi-step
-    /// LLM + external APIs) can breach the old 30s default — bump this
-    /// to cover the slowest realistic turn.
-    #[serde(default = "default_bridge_timeout_ms")]
-    pub bridge_timeout_ms: u64,
-    /// Optional instance label for multi-bot routing. When set, events
-    /// publish to `plugin.inbound.telegram.<instance>` instead of the
-    /// default `plugin.inbound.telegram`. Agents can target this bot
-    /// specifically via `inbound_bindings: [{plugin: telegram, instance: X}]`.
-    /// Empty / absent = legacy single-bot topic.
-    #[serde(default)]
-    pub instance: Option<String>,
-    /// Agents permitted to publish from this bot.
-    /// Enforced by the plugin before broker dispatch on top of the
-    /// resolver's `credentials.telegram` binding. Empty = accept any
-    /// agent holding a valid resolver handle (back-compat).
-    #[serde(default)]
-    pub allow_agents: Vec<String>,
-}
-
-fn default_bridge_timeout_ms() -> u64 {
-    120_000
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramAutoTranscribeConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    /// Path to the whisper extension binary (stdio JSON-RPC). Default is
-    /// `./extensions/openai-whisper/target/release/openai-whisper` — the
-    /// layout produced by the standard workspace build.
-    #[serde(default = "default_whisper_command")]
-    pub command: String,
-    /// Hard cap on how long to wait for a transcription before giving up
-    /// and publishing the message without text.
-    #[serde(default = "default_whisper_timeout")]
-    pub timeout_ms: u64,
-    /// Forwarded verbatim to the whisper tool call (`language`, `prompt`).
-    #[serde(default)]
-    pub language: Option<String>,
-}
-
-fn default_whisper_command() -> String {
-    "./extensions/openai-whisper/target/release/openai-whisper".to_string()
-}
-fn default_whisper_timeout() -> u64 {
-    60_000
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramPollingConfig {
-    #[serde(default = "default_polling_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_polling_interval")]
-    pub interval_ms: u64,
-    /// Path where the poller persists its `offset` between restarts so
-    /// a restart doesn't replay the last 24h of updates. Default is
-    /// `$TELEGRAM_MEDIA_DIR/offset` (alongside the media cache).
-    #[serde(default)]
-    pub offset_path: Option<String>,
-}
-
-fn default_polling_enabled() -> bool {
-    true
-}
-/// Long-poll timeout hint in milliseconds. Telegram's own cap is 50s;
-/// we clamp to [1, 50] seconds in the plugin. 25s keeps server round-
-/// trips minimal without starving the connection of keepalives.
-fn default_polling_interval() -> u64 {
-    25_000
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TelegramAllowlistConfig {
-    #[serde(default)]
-    pub chat_ids: Vec<i64>,
 }
 

@@ -441,7 +441,7 @@ nexo-plugin-whatsapp = { workspace = true, optional = true }
 # crates.io-only dep wire (no `path =`); see the
 # nexo-plugin-whatsapp comment in [workspace.dependencies] for
 # why path-deps were dropped in Phase 81.19.b cleanup.
-nexo-plugin-telegram = { version = "0.1.1", optional = true }
+nexo-plugin-telegram = { version = "0.4.0", optional = true }
 nexo-plugin-email = { workspace = true }
 nexo-plugin-google = { version = "0.1.2", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.2", path = "crates/setup" }

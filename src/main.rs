@@ -973,6 +973,25 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 // carries typed email; daemon-side consumers deserialize directly
 // into `nexo_plugin_email::EmailPluginConfig` from opaque entries.
 
+/// Wave 6 — flatten `cfg.plugins.entries[<plugin_id>]` opaque YAML
+/// into a `Vec<serde_yaml::Value>` of per-tenant slices. Accepts
+/// both shapes (single Mapping → 1-element vec; Sequence → as-is).
+/// Used by daemon's generic subprocess factory wiring so it doesn't
+/// need typed access to telegram / whatsapp config.
+fn opaque_plugin_entries(
+    plugins: &nexo_config::PluginsConfig,
+    plugin_id: &str,
+) -> Vec<serde_yaml::Value> {
+    let Some(value) = plugins.entries.get(plugin_id) else {
+        return Vec::new();
+    };
+    match value {
+        serde_yaml::Value::Sequence(seq) => seq.clone(),
+        serde_yaml::Value::Mapping(_) => vec![value.clone()],
+        _ => Vec::new(),
+    }
+}
+
 fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &'static str {
     match kind {
         nexo_config::types::broker::BrokerKind::Nats => "nats",
@@ -981,65 +1000,102 @@ fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &
     }
 }
 
+/// Wave 6 — opaque telegram env seeder. Takes the raw YAML
+/// `serde_yaml::Value` slice for ONE tenant (single map shape)
+/// and stamps the env dict for one subprocess. nexo-config no
+/// longer carries telegram-specific types; this helper reads the
+/// fields it needs straight from the Value.
 fn seed_telegram_subprocess_env_for(
-    cfg: &nexo_config::types::plugins::TelegramPluginConfig,
+    cfg: &serde_yaml::Value,
     broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
+    use serde_yaml::Value as V;
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    // Whitelist of inherited daemon envs the subprocess legitimately
-    // needs. PATH for binary lookup; HOME for cargo/git tooling
-    // some plugins shell out to; RUST_LOG so operators can crank
-    // tracing at the daemon level and see it in plugins too.
     for key in ["PATH", "HOME", "RUST_LOG"] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);
         }
     }
-    // Explicit broker transport selector. `nats` keeps
-    // the historical NATS connect path; `local` is logically the
-    // same on the subprocess side (treated as a fallback URL);
-    // `stdio_bridge` tells the plugin to construct a
-    // `nexo_broker::StdioBridgeBroker` and skip the network. The
-    // URL is omitted for `stdio_bridge` because the transport is
-    // the parent process's stdin/stdout.
     env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
     if broker_kind != "stdio_bridge" {
         env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
     }
-    env.insert("NEXO_PLUGIN_TELEGRAM_TOKEN".into(), cfg.token.clone());
-    if let Some(ref instance) = cfg.instance {
+
+    // Helpers for opaque field extraction.
+    let get_str = |key: &str| -> Option<String> {
+        cfg.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+    let get_u64 = |key: &str| -> Option<u64> {
+        cfg.get(key).and_then(|v| v.as_u64())
+    };
+    let get_obj = |key: &str| -> Option<&V> { cfg.get(key) };
+
+    if let Some(token) = get_str("token") {
+        env.insert("NEXO_PLUGIN_TELEGRAM_TOKEN".into(), token);
+    }
+    if let Some(instance) = get_str("instance") {
         if !instance.trim().is_empty() {
-            env.insert("NEXO_PLUGIN_TELEGRAM_INSTANCE".into(), instance.clone());
+            env.insert("NEXO_PLUGIN_TELEGRAM_INSTANCE".into(), instance);
         }
     }
-    if let Some(ref offset) = cfg.polling.offset_path {
-        env.insert("NEXO_PLUGIN_TELEGRAM_OFFSET_PATH".into(), offset.clone());
+    if let Some(bridge_ms) = get_u64("bridge_timeout_ms") {
+        env.insert(
+            "NEXO_PLUGIN_TELEGRAM_BRIDGE_TIMEOUT_MS".into(),
+            bridge_ms.to_string(),
+        );
     }
-    env.insert(
-        "NEXO_PLUGIN_TELEGRAM_INTERVAL_MS".into(),
-        cfg.polling.interval_ms.to_string(),
-    );
-    env.insert(
-        "NEXO_PLUGIN_TELEGRAM_BRIDGE_TIMEOUT_MS".into(),
-        cfg.bridge_timeout_ms.to_string(),
-    );
+
+    // polling: { interval_ms, offset_path }
+    if let Some(polling) = get_obj("polling") {
+        if let Some(interval_ms) = polling.get("interval_ms").and_then(|v| v.as_u64()) {
+            env.insert(
+                "NEXO_PLUGIN_TELEGRAM_INTERVAL_MS".into(),
+                interval_ms.to_string(),
+            );
+        }
+        if let Some(offset_path) =
+            polling.get("offset_path").and_then(|v| v.as_str())
+        {
+            env.insert(
+                "NEXO_PLUGIN_TELEGRAM_OFFSET_PATH".into(),
+                offset_path.to_string(),
+            );
+        }
+    }
+
+    // allowlist: { chat_ids: [..] }
+    let chat_ids: Vec<i64> = cfg
+        .get("allowlist")
+        .and_then(|a| a.get("chat_ids"))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| seq.iter().filter_map(|x| x.as_i64()).collect())
+        .unwrap_or_default();
     env.insert(
         "NEXO_PLUGIN_TELEGRAM_ALLOWLIST".into(),
-        serde_json::to_string(&cfg.allowlist.chat_ids).unwrap_or_else(|_| "[]".into()),
+        serde_json::to_string(&chat_ids).unwrap_or_else(|_| "[]".into()),
     );
-    if cfg.auto_transcribe.enabled {
-        env.insert("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE".into(), "true".into());
-        env.insert(
-            "NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND".into(),
-            cfg.auto_transcribe.command.clone(),
-        );
-        env.insert(
-            "NEXO_PLUGIN_TELEGRAM_WHISPER_TIMEOUT_MS".into(),
-            cfg.auto_transcribe.timeout_ms.to_string(),
-        );
-        if let Some(ref lang) = cfg.auto_transcribe.language {
-            env.insert("NEXO_PLUGIN_TELEGRAM_WHISPER_LANGUAGE".into(), lang.clone());
+
+    // auto_transcribe block
+    if let Some(at) = get_obj("auto_transcribe") {
+        let enabled = at.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        if enabled {
+            env.insert("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE".into(), "true".into());
+            if let Some(cmd) = at.get("command").and_then(|v| v.as_str()) {
+                env.insert("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND".into(), cmd.to_string());
+            }
+            if let Some(timeout_ms) = at.get("timeout_ms").and_then(|v| v.as_u64()) {
+                env.insert(
+                    "NEXO_PLUGIN_TELEGRAM_WHISPER_TIMEOUT_MS".into(),
+                    timeout_ms.to_string(),
+                );
+            }
+            if let Some(lang) = at.get("language").and_then(|v| v.as_str()) {
+                env.insert(
+                    "NEXO_PLUGIN_TELEGRAM_WHISPER_LANGUAGE".into(),
+                    lang.to_string(),
+                );
+            }
         }
     }
     env
@@ -1237,9 +1293,12 @@ fn spawn_whatsapp_typing_presence_subscriber(
 /// only PATH/HOME/RUST_LOG from the daemon's process env so
 /// secrets unrelated to the whatsapp plugin never leak into the
 /// child.
+/// Wave 6 — opaque whatsapp env seeder. Same pattern as
+/// `seed_telegram_subprocess_env_for`: reads raw YAML Value for
+/// ONE tenant; nexo-config no longer carries WA-specific types.
 #[allow(dead_code)] // Wired in the whatsapp-loop flip below.
 fn seed_whatsapp_subprocess_env_for(
-    cfg: &nexo_config::WhatsappPluginConfig,
+    cfg: &serde_yaml::Value,
     broker_kind: &str,
     broker_url: &str,
 ) -> std::collections::HashMap<String, String> {
@@ -1249,42 +1308,72 @@ fn seed_whatsapp_subprocess_env_for(
             env.insert(key.to_string(), val);
         }
     }
-    // Explicit broker transport selector. See the
-    // matching comment block in `seed_telegram_subprocess_env_for`.
     env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
     if broker_kind != "stdio_bridge" {
         env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
     }
-    env.insert(
-        "NEXO_PLUGIN_WHATSAPP_SESSION_DIR".into(),
-        cfg.session_dir.clone(),
-    );
-    env.insert(
-        "NEXO_PLUGIN_WHATSAPP_MEDIA_DIR".into(),
-        cfg.media_dir.clone(),
-    );
-    if let Some(ref instance) = cfg.instance {
+
+    let get_str = |key: &str| -> Option<String> {
+        cfg.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    };
+
+    if let Some(session_dir) = get_str("session_dir") {
+        env.insert("NEXO_PLUGIN_WHATSAPP_SESSION_DIR".into(), session_dir);
+    }
+    if let Some(media_dir) = get_str("media_dir") {
+        env.insert("NEXO_PLUGIN_WHATSAPP_MEDIA_DIR".into(), media_dir);
+    }
+    if let Some(instance) = get_str("instance") {
         if !instance.trim().is_empty() {
-            env.insert("NEXO_PLUGIN_WHATSAPP_INSTANCE".into(), instance.clone());
+            env.insert("NEXO_PLUGIN_WHATSAPP_INSTANCE".into(), instance);
         }
     }
-    env.insert(
-        "NEXO_PLUGIN_WHATSAPP_BRIDGE_TIMEOUT_MS".into(),
-        cfg.bridge.response_timeout_ms.to_string(),
-    );
+
+    if let Some(bridge_ms) = cfg
+        .get("bridge")
+        .and_then(|b| b.get("response_timeout_ms"))
+        .and_then(|v| v.as_u64())
+    {
+        env.insert(
+            "NEXO_PLUGIN_WHATSAPP_BRIDGE_TIMEOUT_MS".into(),
+            bridge_ms.to_string(),
+        );
+    }
+
+    let allow_list: Vec<String> = cfg
+        .get("acl")
+        .and_then(|a| a.get("allow_list"))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     env.insert(
         "NEXO_PLUGIN_WHATSAPP_ALLOWLIST".into(),
-        serde_json::to_string(&cfg.acl.allow_list).unwrap_or_else(|_| "[]".into()),
+        serde_json::to_string(&allow_list).unwrap_or_else(|_| "[]".into()),
     );
-    if cfg.transcriber.enabled {
-        env.insert(
-            "NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED".into(),
-            "true".into(),
-        );
-        env.insert(
-            "NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS".into(),
-            cfg.transcriber.timeout_ms.to_string(),
-        );
+
+    if let Some(transcriber) = cfg.get("transcriber") {
+        let enabled = transcriber
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if enabled {
+            env.insert(
+                "NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED".into(),
+                "true".into(),
+            );
+            if let Some(timeout_ms) =
+                transcriber.get("timeout_ms").and_then(|v| v.as_u64())
+            {
+                env.insert(
+                    "NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS".into(),
+                    timeout_ms.to_string(),
+                );
+            }
+        }
     }
     env
 }
@@ -3521,13 +3610,17 @@ async fn main() -> Result<()> {
         let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
         let outcome = register_instance_subprocess_factories(
             "telegram",
-            cfg.plugins.telegram.clone(),
+            opaque_plugin_entries(&cfg.plugins, "telegram"),
             &pre_snap,
             broker_kind,
             &broker_url,
             &mut factory_registry,
             &mut extra_subprocess_plugins,
-            |c| c.instance.clone(),
+            |c| {
+                c.get("instance")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            },
             |_| true, // telegram has no `enabled` flag
             seed_telegram_subprocess_env_for,
             "81.18.b.1",
@@ -3563,14 +3656,22 @@ async fn main() -> Result<()> {
         let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
         let outcome = register_instance_subprocess_factories(
             "whatsapp",
-            cfg.plugins.whatsapp.clone(),
+            opaque_plugin_entries(&cfg.plugins, "whatsapp"),
             &pre_snap,
             broker_kind,
             &broker_url,
             &mut factory_registry,
             &mut extra_subprocess_plugins,
-            |c| c.instance.clone(),
-            |c| c.enabled,
+            |c| {
+                c.get("instance")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            },
+            |c| {
+                c.get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true)
+            },
             seed_whatsapp_subprocess_env_for,
             "81.18.b.2",
         );
@@ -9242,11 +9343,18 @@ fn print_loopback_seed_hint(config_dir: &std::path::Path) {
     let plugins_dir = config_dir.join("plugins");
     let mut suggested = false;
     if let Ok(text) = std::fs::read_to_string(plugins_dir.join("telegram.yaml")) {
-        if let Ok(file) = serde_yaml::from_str::<nexo_config::TelegramPluginConfigFile>(&text) {
-            for tg in file.telegram.into_vec() {
-                let account = tg.instance.as_deref().unwrap_or("default");
-                eprintln!("  nexo pair seed telegram {account} <YOUR_TELEGRAM_USER_ID>");
-                suggested = true;
+        // Wave 6 — read opaque YAML; nexo-config no longer carries
+        // typed telegram. Pull `telegram: [{instance: ...}]` directly.
+        if let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+            if let Some(seq) = v.get("telegram").and_then(|x| x.as_sequence()) {
+                for entry in seq {
+                    let account = entry
+                        .get("instance")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+                    eprintln!("  nexo pair seed telegram {account} <YOUR_TELEGRAM_USER_ID>");
+                    suggested = true;
+                }
             }
         }
     }
@@ -16203,9 +16311,10 @@ fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
                 }
             }
             "telegram" => {
-                for (i, tg) in cfg.plugins.telegram.iter().enumerate() {
-                    let label = tg.instance.as_deref().unwrap_or("<default>");
-                    println!("  • telegram[{i}] (instance={label})");
+                // Wave 6 — read from opaque entries; nexo-config no
+                // longer carries typed telegram.
+                for (i, inst) in cfg.plugins.instances_for("telegram").iter().enumerate() {
+                    println!("  • telegram[{i}] (instance={inst})");
                 }
             }
             other if cfg.plugins.is_active(other) => {
@@ -16286,10 +16395,14 @@ mod tests {
         subprocess_broker_kind_str, Mode,
     };
     use nexo_config::types::plugins::{
-        TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
-        TelegramPollingConfig, WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
+        WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
         WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
         WhatsappRateLimitConfig, WhatsappTranscriberConfig,
+    };
+    // Wave 6 — telegram types now live in the plugin crate.
+    use nexo_plugin_telegram::{
+        TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
+        TelegramPollingConfig,
     };
 
     fn telegram_cfg(token: &str, instance: Option<&str>) -> TelegramPluginConfig {
@@ -16322,7 +16435,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_happy_path() {
         let cfg = telegram_cfg("123:abcdef", Some("bot1"));
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
+        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_TELEGRAM_TOKEN").map(String::as_str),
@@ -16366,12 +16479,12 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_omits_empty_instance() {
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
 
         let mut cfg2 = telegram_cfg("tok", Some(""));
         cfg2.instance = Some("   ".into());
-        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats", "nats://x");
+        let env2 = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg2).unwrap(), "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
     }
 
@@ -16380,7 +16493,7 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_transcribe_toggle() {
         let mut cfg = telegram_cfg("tok", None);
-        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env_off = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE"));
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND"));
 
@@ -16390,7 +16503,7 @@ mod tests {
             timeout_ms: 45_000,
             language: Some("es".into()),
         };
-        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env_on = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE")
@@ -16426,7 +16539,7 @@ mod tests {
     fn seed_telegram_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_TG_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
     }
@@ -16439,7 +16552,7 @@ mod tests {
     #[test]
     fn seed_telegram_env_stdio_bridge_omits_url() {
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "stdio_bridge", "nats://ignored");
+        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "stdio_bridge", "nats://ignored");
         assert_eq!(
             env.get("NEXO_BROKER_KIND").map(String::as_str),
             Some("stdio_bridge")
@@ -16453,7 +16566,7 @@ mod tests {
     #[test]
     fn seed_telegram_env_nats_keeps_url() {
         let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://central:4222");
+        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://central:4222");
         assert_eq!(
             env.get("NEXO_BROKER_KIND").map(String::as_str),
             Some("nats")
@@ -16520,7 +16633,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_happy_path() {
         let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
+        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_WHATSAPP_SESSION_DIR")
@@ -16559,11 +16672,11 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
 
         let cfg2 = whatsapp_cfg("/tmp/x", Some("   "));
-        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats", "nats://x");
+        let env2 = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg2).unwrap(), "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
     }
 
@@ -16572,7 +16685,7 @@ mod tests {
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
         let mut cfg = whatsapp_cfg("/tmp/x", None);
-        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env_off = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
 
         cfg.transcriber = WhatsappTranscriberConfig {
@@ -16580,7 +16693,7 @@ mod tests {
             skill: "whisper".into(),
             timeout_ms: 30_000,
         };
-        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env_on = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED")
@@ -16606,7 +16719,7 @@ mod tests {
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");
         let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
+        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_WA_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_WA_TEST_LEAK_SENTINEL__");
     }

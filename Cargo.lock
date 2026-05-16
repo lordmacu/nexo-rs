@@ -5402,12 +5402,13 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-telegram"
-version = "0.1.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04730bc5cee9e33d89a31940562c51a1133a40fc53894142f26a1c2e77fe4a9f"
+checksum = "13a8723a04c32474b174f326067e57fcda7437a24bfd84d816127542a3168a86"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "dashmap 6.1.0",
  "futures-util",
@@ -5416,13 +5417,21 @@ dependencies = [
  "nexo-config",
  "nexo-core",
  "nexo-llm",
+ "nexo-microapp-sdk",
  "nexo-pairing",
+ "nexo-plugin-manifest",
+ "nexo-resilience",
+ "once_cell",
  "reqwest",
+ "rustls 0.23.38",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tokio-util",
+ "toml 0.8.23",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

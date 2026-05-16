@@ -118,7 +118,7 @@ fn happy_path() {
     assert_eq!(cfg.agents.agents[0].id, "kate");
     assert_eq!(cfg.llm.providers["minimax"].api_key, "test_key");
     assert_eq!(cfg.plugins.whatsapp.len(), 1);
-    assert_eq!(cfg.plugins.telegram.len(), 1);
+    assert!(cfg.plugins.entries.contains_key("telegram"));
     assert!(cfg.plugins.entries.contains_key("email"));
 }
 
@@ -170,15 +170,10 @@ telegram:
 "#,
     );
     let cfg = AppConfig::load(dir.path()).expect("should load");
-    assert_eq!(cfg.plugins.telegram.len(), 2);
-    assert_eq!(
-        cfg.plugins.telegram[0].instance.as_deref(),
-        Some("bot_boss")
-    );
-    assert_eq!(
-        cfg.plugins.telegram[1].instance.as_deref(),
-        Some("bot_sales")
-    );
+    let instances = cfg.plugins.instances_for("telegram");
+    assert_eq!(instances.len(), 2);
+    assert_eq!(instances[0], "bot_boss");
+    assert_eq!(instances[1], "bot_sales");
 }
 
 #[test]
