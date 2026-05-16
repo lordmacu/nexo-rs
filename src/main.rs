@@ -2277,6 +2277,19 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
+    // Phase 81.20.x Stage 7 Phase 2 — pairing trigger registry.
+    // Cloned into the admin bootstrap (the dispatcher reads
+    // through the same `Arc<DashMap>` for `pairing/start` lookups)
+    // AND held here so the post-`wire_plugin_registry` block
+    // below can `insert()` `BrokerPairingTrigger` entries for
+    // every plugin declaring `[plugin.pairing.trigger]` once
+    // manifests are loaded. Empty at this scope; the legacy
+    // pre-bootstrap hardcoded `WhatsappPairingTrigger` (cfg-gated
+    // on `plugin-whatsapp`) still inserts here until the
+    // canonical plugin ships v0.4.4 with the manifest section.
+    let pairing_triggers =
+        nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers::new();
+
     // Pre-discover persona install roots so the admin RPC's
     // `AgentsYamlPatcher` sees persona-shipped `agents.d/*.yaml`
     // entries in `nexo/admin/agents/list`. The full persona
@@ -2448,13 +2461,15 @@ async fn main() -> Result<()> {
         // (declared before this block so the post-snapshotter
         // population can also write into it). Cloned here so the
         // adapter outlives the bootstrap match.
-        // Build the per-channel pairing trigger
-        // map. Empty when no whatsapp instance is configured;
-        // admin pairing/start then returns
-        // `channel not supported` instead of stalling Pending.
-        #[allow(unused_mut)]
-        let mut pairing_triggers =
-            nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers::new();
+        // `pairing_triggers` is declared at the outer scope
+        // (above this block) so the post-`wire_plugin_registry`
+        // BrokerPairingTrigger registration loop can mutate the
+        // SAME registry the dispatcher consumed at bootstrap.
+        // Legacy hardcoded `WhatsappPairingTrigger` registration
+        // below is cfg-gated; the registry overwrites by
+        // `channel_id` when the canonical plugin ships v0.4.4
+        // with `[plugin.pairing.trigger]`, so this entry is
+        // harmless coexistence during the migration window.
         #[cfg(feature = "plugin-whatsapp")]
         if cfg.plugins.is_active("whatsapp") {
             // Wave 7 — deserialize opaque entries directly into the
@@ -2674,7 +2689,7 @@ async fn main() -> Result<()> {
                     ),
                     nexo_setup::persisters::WhatsappPersister::new(),
                 ],
-                pairing_triggers,
+                pairing_triggers: pairing_triggers.clone(),
                 // Phase 81.33.b.real Stage 4 — manifest-driven
                 // plugin admin router. Shared Arc — the dispatcher
                 // holds a clone and the daemon populates entries
@@ -3208,23 +3223,16 @@ async fn main() -> Result<()> {
     // broker bridge, so subprocess instances don't surface
     // `AgentEventKind::PeerTyping` events on the firehose until
     // a follow-up ships the RPC callback.
-    // Phase 81.20.x Bucket C2 Stage 2 — whatsapp pairing state
-    // map removed. Subprocess owns its own `SharedPairingState`
-    // via the plugin's `WhatsappPlugin::pairing` field; the
-    // daemon no longer mirrors it. Only `wa_tunnel_cfg` is
-    // still extracted from the first declared tenant's YAML —
-    // the auto-tunnel block downstream needs the opaque
-    // `public_tunnel` Value for the cloudflare-quick-tunnel
-    // spawn. That's the last whatsapp-specific orchestration
-    // site daemon-side (deferred to a `[plugin.public_tunnel]`
-    // manifest section follow-up).
+    // Phase 81.20.x Bucket C2 Stage 2 + Stage 7 Phase 2 — the
+    // whatsapp pairing state map AND the per-plugin
+    // `wa_tunnel_cfg` extraction are gone. Subprocess owns its
+    // own `SharedPairingState` via the plugin's
+    // `WhatsappPlugin::pairing` field; the daemon no longer
+    // mirrors it. Public-tunnel orchestration moves to the
+    // generic `[plugin.public_tunnel]` manifest section + daemon
+    // iterator below (post-`wire_plugin_registry`).
     #[cfg(feature = "plugin-whatsapp")]
-    let mut wa_tunnel_cfg: Option<serde_yaml::Value> = None;
-    #[cfg(feature = "plugin-whatsapp")]
-    for (idx, wa_cfg) in opaque_plugin_entries(&cfg.plugins, "whatsapp")
-        .into_iter()
-        .enumerate()
-    {
+    for wa_cfg in opaque_plugin_entries(&cfg.plugins, "whatsapp") {
         let enabled = wa_cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
         let instance_label = wa_cfg
             .get("instance")
@@ -3234,9 +3242,6 @@ async fn main() -> Result<()> {
         if !enabled {
             tracing::info!(instance = %instance_label, "whatsapp plugin configured but disabled — skipping");
             continue;
-        }
-        if idx == 0 {
-            wa_tunnel_cfg = wa_cfg.get("public_tunnel").cloned();
         }
         tracing::info!(
             instance = %instance_label,
@@ -3735,6 +3740,77 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Phase 81.20.x Stage 7 Phase 2 — populate the pairing trigger
+    // registry from plugin manifests. Plugins that declare BOTH
+    // `[plugin.pairing.adapter]` (channel_id) and `[plugin.pairing.trigger]`
+    // (start_method, cancel_method) AND `[plugin.admin]` (the routing
+    // info we forward through) get a `BrokerPairingTrigger` registered
+    // under `adapter.channel_id`. Same loop also spawns one
+    // pairing-inbound subscriber per channel so plugin-published QR +
+    // state frames update the shared pairing store the dispatcher
+    // reads on `pairing/status`.
+    //
+    // Coexists with any legacy hardcoded `pairing_triggers.insert()`
+    // calls in the pre-bootstrap block — the registry overwrites by
+    // `channel_id`, so the broker trigger replaces the legacy entry
+    // for any plugin that ships the manifest section. Plugins that
+    // skip the section keep the legacy hardcoded path.
+    if let Some(bootstrap_ref) = admin_bootstrap.as_ref() {
+        let pairing_store = bootstrap_ref.pairing_store();
+        for (plugin_id, handle) in wire.plugin_handles.iter() {
+            let manifest = handle.manifest();
+            let adapter = match manifest.plugin.pairing.adapter.as_ref() {
+                Some(a) => a,
+                None => continue,
+            };
+            let trigger_section = match manifest.plugin.pairing.trigger.as_ref() {
+                Some(t) => t,
+                None => continue,
+            };
+            let admin_section = match manifest.plugin.admin.as_ref() {
+                Some(a) => a,
+                None => {
+                    tracing::warn!(
+                        plugin = %plugin_id,
+                        channel = %adapter.channel_id,
+                        "[plugin.pairing.trigger] declared without [plugin.admin] — \
+                         skipping BrokerPairingTrigger registration"
+                    );
+                    continue;
+                }
+            };
+            let broker_trigger =
+                nexo_core::agent::admin_rpc::BrokerPairingTrigger::new(
+                    adapter.channel_id.clone(),
+                    broker.clone(),
+                    trigger_section,
+                    &admin_section.method_prefix,
+                    &admin_section.broker_topic_prefix,
+                );
+            pairing_triggers.insert(
+                adapter.channel_id.clone(),
+                Arc::new(broker_trigger),
+            );
+            tracing::info!(
+                plugin = %plugin_id,
+                channel = %adapter.channel_id,
+                start_method = %trigger_section.start_method,
+                "registered broker pairing trigger (Phase 81.20.x Stage 7 Phase 2)",
+            );
+            // Detached subscriber. JoinHandle drops at end of scope;
+            // tokio keeps the task running until the broker drops.
+            // Process-lifecycle daemon never tears these down — the
+            // subscriber loops until the broker channel closes at
+            // shutdown.
+            let _ = nexo_core::agent::admin_rpc::spawn_pairing_inbound_subscriber(
+                broker.clone(),
+                adapter.channel_id.clone(),
+                pairing_store.clone(),
+                None,
+            );
+        }
+    }
+
     // Phase 81.33.b.real Stage 2 — build the plugin HTTP router
     // from every loaded plugin's `[plugin.http]` manifest section.
     // Plugins that don't declare the section contribute nothing
@@ -3776,24 +3852,86 @@ async fn main() -> Result<()> {
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
 
-    // Phase 81.20.x Bucket C2 Stage 2 — whatsapp auto-tunnel
-    // block removed. The block exposed the daemon's hardcoded
-    // `/whatsapp/pair` HTML page via a Cloudflare quick tunnel +
-    // polled the daemon-mirrored `SharedPairingState` to close
-    // the tunnel post-pairing. Both the HTML page and the
-    // mirrored state are gone now (block above + subscriber
-    // drop), so this orchestration was dead UX. Operators
-    // wanting a public pairing URL now use either:
-    //   - admin RPC `pairing/start` + the admin-ui plugin's
-    //     pairing wizard (uses SSE for live QR, no tunnel
-    //     needed); or
-    //   - `nexo admin --tunnel` (Phase 92 standalone CLI
-    //     wraps a Cloudflare quick tunnel).
-    // Generic `[plugin.public_tunnel]` manifest section that
-    // any pairing-capable plugin could declare is the proper
-    // long-term solution (FOLLOWUPS).
-    #[cfg(feature = "plugin-whatsapp")]
-    let _ = wa_tunnel_cfg;
+    // Phase 81.20.x Stage 7 Phase 2 — generic
+    // `[plugin.public_tunnel]` iterator. For every plugin whose
+    // manifest declares `enabled = true`, AND the operator has
+    // set `NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW=1`, spawn a Cloudflare
+    // quick tunnel pointed at the daemon's HTTP port (`:8080`).
+    // Plugin HTTP routes (Phase 81.33.b.real Stage 2
+    // `PluginHttpRouter`) become reachable at the public URL.
+    //
+    // When the manifest also sets `close_on_event = "<subject>"`,
+    // spawn a one-shot subscriber that aborts the tunnel after
+    // the plugin publishes any message there (e.g.
+    // `plugin.lifecycle.whatsapp.tunnel_done` once pairing
+    // completes).
+    //
+    // Capability env OFF (default) → block is a no-op even when
+    // a plugin declares the section. Operators flip on with full
+    // awareness of the public exposure surface.
+    let public_tunnel_allow = std::env::var("NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if public_tunnel_allow {
+        for (plugin_id, handle) in wire.plugin_handles.iter() {
+            let section = &handle.manifest().plugin.public_tunnel;
+            if !section.enabled {
+                continue;
+            }
+            let plugin_id = plugin_id.clone();
+            let close_on_event = section.close_on_event.clone();
+            let broker_for_tunnel = broker.clone();
+            tokio::spawn(async move {
+                let manager = nexo_tunnel_quick::TunnelManager::new(8080);
+                match manager.start().await {
+                    Ok(tunnel) => {
+                        tracing::info!(
+                            plugin = %plugin_id,
+                            url = %tunnel.url,
+                            close_on_event = ?close_on_event,
+                            "public tunnel up (Phase 81.20.x Stage 7 Phase 2)"
+                        );
+                        let _ = nexo_tunnel_quick::write_url_file(&tunnel.url);
+                        if let Some(subject) = close_on_event {
+                            match broker_for_tunnel.subscribe(&subject).await {
+                                Ok(mut sub) => {
+                                    if sub.next().await.is_some() {
+                                        tracing::info!(
+                                            plugin = %plugin_id,
+                                            %subject,
+                                            "public tunnel close event received — shutting down tunnel"
+                                        );
+                                        tunnel.shutdown().await;
+                                        let _ = nexo_tunnel_quick::clear_url_file();
+                                    }
+                                }
+                                Err(err) => tracing::warn!(
+                                    plugin = %plugin_id,
+                                    %subject,
+                                    error = %err,
+                                    "public tunnel close-event subscribe failed; tunnel stays up for daemon lifetime"
+                                ),
+                            }
+                        }
+                    }
+                    Err(err) => tracing::error!(
+                        plugin = %plugin_id,
+                        error = %err,
+                        "public tunnel start failed"
+                    ),
+                }
+            });
+        }
+    } else if wire
+        .plugin_handles
+        .iter()
+        .any(|(_, h)| h.manifest().plugin.public_tunnel.enabled)
+    {
+        tracing::info!(
+            "[plugin.public_tunnel] declared by at least one plugin but \
+             NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW is not set — skipping tunnel spawn"
+        );
+    }
 
     // Gmail poller — background task that polls Gmail on a fixed
     // interval and routes matching emails to channel plugins. No LLM

@@ -26,6 +26,7 @@ use std::time::Duration;
 use nexo_config::types::extensions::ExtensionsConfig;
 use nexo_core::agent::admin_rpc::dispatcher::ReloadSignal;
 use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
+use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
 use nexo_core::agent::admin_rpc::{
     validate_capabilities_at_boot, AdminAuditWriter, AdminCapabilityDecl, AdminRpcDispatcher,
     CapabilitySet, DispatcherAdminRouter, InMemoryAuditWriter, SqliteAdminAuditWriter,
@@ -171,6 +172,12 @@ pub struct AdminRpcBootstrap {
     /// counts + spec callers can clone into the
     /// `TranscriptWriter::with_emitter` builder.
     event_emitter: Arc<dyn AgentEventEmitter>,
+    /// Phase 81.20.x Stage 7 Phase 2 — shared pairing store
+    /// clone. Daemon's post-`wire_plugin_registry` pairing-inbound
+    /// subscribers consume this so plugin-published QR + state
+    /// frames land in the same in-memory store the dispatcher
+    /// reads when it handles `pairing/status`.
+    pairing_store: Arc<dyn PairingChallengeStore>,
 }
 
 impl std::fmt::Debug for AdminRpcBootstrap {
@@ -1023,7 +1030,18 @@ impl AdminRpcBootstrap {
             prune_handle: Some(prune_handle),
             subscribe_handles,
             event_emitter,
+            pairing_store: pairing_store.clone(),
         }))
+    }
+
+    /// Shared in-memory pairing challenge store.
+    ///
+    /// Phase 81.20.x Stage 7 Phase 2 — daemon's
+    /// post-`wire_plugin_registry` pairing-inbound subscribers use
+    /// this Arc to push plugin-published QR + state frames into
+    /// the same store the dispatcher reads on `pairing/status`.
+    pub fn pairing_store(&self) -> Arc<dyn PairingChallengeStore> {
+        self.pairing_store.clone()
     }
 
     /// Clone of the shared firehose emitter.

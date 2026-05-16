@@ -29,6 +29,8 @@
 - [Authoring overview](./plugins/authoring.md)
 - [Manifest (Phase 81.13 unified)](./plugins/manifest-unified.md)
 - [Manifest `[plugin.pairing.adapter]`](./plugins/manifest-pairing-adapter.md)
+- [Manifest `[plugin.pairing.trigger]`](./plugins/manifest-pairing-trigger.md)
+- [Manifest `[plugin.public_tunnel]`](./plugins/manifest-public-tunnel.md)
 - [Manifest `[plugin.http]`](./plugins/manifest-http.md)
 - [Manifest `[plugin.admin]`](./plugins/manifest-admin.md)
 - [Manifest `[plugin.metrics]`](./plugins/manifest-metrics.md)

@@ -123,6 +123,29 @@ pub fn run_all_with_sandbox_env(
     validate_supervisor(&manifest.plugin.supervisor, errors);
     validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
     validate_pairing(&manifest.plugin.pairing, errors);
+    validate_public_tunnel(&manifest.plugin.public_tunnel, errors);
+}
+
+/// `[plugin.public_tunnel]` validator. `close_on_event` must be
+/// a literal broker subject — wildcards would let a stray
+/// plugin event race-close a healthy tunnel.
+fn validate_public_tunnel(
+    section: &crate::public_tunnel::PluginPublicTunnelSection,
+    errors: &mut Vec<ManifestError>,
+) {
+    let Some(subject) = section.close_on_event.as_deref() else {
+        return;
+    };
+    let trimmed = subject.trim();
+    if trimmed.is_empty() {
+        errors.push(ManifestError::PublicTunnelCloseEventEmpty);
+        return;
+    }
+    if trimmed.split('.').any(|seg| seg == "*" || seg == ">") {
+        errors.push(ManifestError::PublicTunnelCloseEventWildcard {
+            subject: subject.to_string(),
+        });
+    }
 }
 
 /// Guard against a manifest requesting an
@@ -214,6 +237,24 @@ fn validate_pairing(
                     kind: kind_str.into(),
                 });
             }
+        }
+    }
+
+    if let Some(trigger) = &pairing.trigger {
+        if trigger.start_method.trim().is_empty() {
+            errors.push(ManifestError::PairingTriggerEmptyMethod {
+                field: "start_method",
+            });
+        }
+        if trigger.cancel_method.trim().is_empty() {
+            errors.push(ManifestError::PairingTriggerEmptyMethod {
+                field: "cancel_method",
+            });
+        }
+        if !matches!(kind, PairingKind::Qr) {
+            errors.push(ManifestError::PairingTriggerOnlyWithQr {
+                kind: format!("{kind:?}").to_lowercase(),
+            });
         }
     }
 }
@@ -1455,6 +1496,140 @@ expose = ["wrong_prefix"]
         // a pair-able channel).
         let m = parse(&base_manifest_toml());
         m.validate(&current()).unwrap();
+    }
+
+    // ── Phase 81.20.x Stage 7 Phase 2 — [plugin.pairing.trigger] ───
+
+    #[test]
+    fn pairing_trigger_with_qr_accepted() {
+        let m = manifest_with_pairing(
+            "kind = \"qr\"\nlabel = \"WhatsApp\"\n\
+             [plugin.pairing.trigger]\n\
+             start_method = \"nexo/admin/whatsapp/pairing/start\"\n\
+             cancel_method = \"nexo/admin/whatsapp/pairing/cancel\"\n",
+        );
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn pairing_trigger_with_form_kind_rejected() {
+        let m = manifest_with_pairing(
+            "kind = \"form\"\n\
+             [[plugin.pairing.fields]]\n\
+             name = \"token\"\n\
+             label = \"Bot token\"\n\
+             [plugin.pairing.trigger]\n\
+             start_method = \"a\"\n\
+             cancel_method = \"b\"\n",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PairingTriggerOnlyWithQr { .. }
+            )),
+            "expected PairingTriggerOnlyWithQr, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_trigger_blank_start_method_rejected() {
+        let m = manifest_with_pairing(
+            "kind = \"qr\"\n\
+             [plugin.pairing.trigger]\n\
+             start_method = \"   \"\n\
+             cancel_method = \"nexo/admin/whatsapp/pairing/cancel\"\n",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PairingTriggerEmptyMethod { field } if *field == "start_method"
+            )),
+            "expected PairingTriggerEmptyMethod{{start_method}}, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn pairing_trigger_blank_cancel_method_rejected() {
+        let m = manifest_with_pairing(
+            "kind = \"qr\"\n\
+             [plugin.pairing.trigger]\n\
+             start_method = \"nexo/admin/whatsapp/pairing/start\"\n\
+             cancel_method = \"\"\n",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PairingTriggerEmptyMethod { field } if *field == "cancel_method"
+            )),
+            "expected PairingTriggerEmptyMethod{{cancel_method}}, got: {errs:?}"
+        );
+    }
+
+    // ── Phase 81.20.x Stage 7 Phase 2 — [plugin.public_tunnel] ───
+
+    fn manifest_with_public_tunnel(body: &str) -> PluginManifest {
+        let toml = format!("{}\n[plugin.public_tunnel]\n{}\n", base_manifest_toml(), body);
+        parse(&toml)
+    }
+
+    #[test]
+    fn public_tunnel_enabled_alone_accepted() {
+        let m = manifest_with_public_tunnel("enabled = true");
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn public_tunnel_with_literal_close_event_accepted() {
+        let m = manifest_with_public_tunnel(
+            "enabled = true\nclose_on_event = \"plugin.lifecycle.whatsapp.tunnel_done\"",
+        );
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn public_tunnel_close_event_empty_rejected() {
+        let m = manifest_with_public_tunnel("close_on_event = \"   \"");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PublicTunnelCloseEventEmpty
+            )),
+            "expected PublicTunnelCloseEventEmpty, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn public_tunnel_close_event_with_wildcard_rejected() {
+        let m = manifest_with_public_tunnel(
+            "close_on_event = \"plugin.lifecycle.*.tunnel_done\"",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PublicTunnelCloseEventWildcard { .. }
+            )),
+            "expected PublicTunnelCloseEventWildcard, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn public_tunnel_close_event_with_rest_wildcard_rejected() {
+        let m = manifest_with_public_tunnel(
+            "close_on_event = \"plugin.lifecycle.whatsapp.>\"",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::PublicTunnelCloseEventWildcard { .. }
+            )),
+            "expected PublicTunnelCloseEventWildcard (>), got: {errs:?}"
+        );
     }
 
     // ── Phase 93.1: [plugin.config_schema] ───────────────────────

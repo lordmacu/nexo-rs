@@ -76,6 +76,51 @@ pub struct PairingSection {
     /// reason to declare an adapter).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<PairingAdapterSection>,
+
+    /// Phase 81.20.x Stage 7 Phase 2 — pairing-trigger broker
+    /// dispatch descriptor. When present, daemon constructs a
+    /// `BrokerPairingTrigger` (in `nexo-pairing`) keyed by
+    /// `adapter.channel_id` (or the plugin id if no adapter is
+    /// declared) and inserts it into the dispatcher's
+    /// `PairingChannelTriggers` map. The trigger forwards
+    /// `pairing/start` to `start_method` via [`PluginAdminRouter`]
+    /// — the plugin subprocess owns the QR pump.
+    ///
+    /// Without this section, daemon falls back to a hardcoded
+    /// trigger registration (legacy `WhatsappPairingTrigger` import
+    /// path). Plugins that adopt the section drop the daemon-side
+    /// coupling entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<PairingTriggerSection>,
+}
+
+/// Pairing-trigger broker dispatch descriptor. Daemon-side
+/// `BrokerPairingTrigger` reads these to know which
+/// [`plugin.admin`] methods to forward `pairing/start` and
+/// `pairing/cancel` to. The plugin subprocess owns the QR pump
+/// — daemon only orchestrates start/cancel and subscribes to
+/// inbound QR/state updates published by the plugin on
+/// `plugin.inbound.<channel>.<instance>.pairing.{qr,state}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PairingTriggerSection {
+    /// Admin RPC method the daemon invokes to start a pairing
+    /// pump (e.g. `"nexo/admin/whatsapp/pairing/start"`). Routed
+    /// through [`PluginAdminRouter`] so the plugin's existing
+    /// admin handler subsystem serves it. MUST live under the
+    /// plugin's own `[plugin.admin] method_prefix`.
+    pub start_method: String,
+
+    /// Admin RPC method the daemon invokes to cancel an
+    /// in-flight pairing (e.g.
+    /// `"nexo/admin/whatsapp/pairing/cancel"`). Same routing rules
+    /// as [`Self::start_method`].
+    pub cancel_method: String,
+
+    /// Per-call timeout in seconds. `None` = inherit
+    /// `PAIRING_DEFAULT_TIMEOUT` (180s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
 }
 
 /// Pairing adapter broker dispatch descriptor. Daemon-side
@@ -129,6 +174,7 @@ impl PairingSection {
             && self.rpc_namespace.is_none()
             && self.instance_field.is_none()
             && self.adapter.is_none()
+            && self.trigger.is_none()
     }
 }
 
@@ -301,5 +347,61 @@ laybel = "WhatsApp"
         let s = PairingSection::default();
         let out = toml::to_string(&s).unwrap();
         assert!(out.trim().is_empty(), "expected empty TOML, got: {out:?}");
+    }
+
+    #[test]
+    fn trigger_section_round_trips() {
+        let toml_src = r#"
+kind = "qr"
+
+[trigger]
+start_method = "nexo/admin/whatsapp/pairing/start"
+cancel_method = "nexo/admin/whatsapp/pairing/cancel"
+timeout_seconds = 120
+"#;
+        let parsed: PairingSection = toml::from_str(toml_src).unwrap();
+        let trigger = parsed.trigger.expect("trigger present");
+        assert_eq!(trigger.start_method, "nexo/admin/whatsapp/pairing/start");
+        assert_eq!(trigger.cancel_method, "nexo/admin/whatsapp/pairing/cancel");
+        assert_eq!(trigger.timeout_seconds, Some(120));
+    }
+
+    #[test]
+    fn trigger_section_timeout_optional() {
+        let toml_src = r#"
+kind = "qr"
+
+[trigger]
+start_method = "nexo/admin/foo/pair/start"
+cancel_method = "nexo/admin/foo/pair/cancel"
+"#;
+        let parsed: PairingSection = toml::from_str(toml_src).unwrap();
+        let trigger = parsed.trigger.expect("trigger present");
+        assert!(trigger.timeout_seconds.is_none());
+    }
+
+    #[test]
+    fn trigger_section_deny_unknown_fields() {
+        let toml_src = r#"
+[trigger]
+start_method = "a"
+cancel_method = "b"
+woops = true
+"#;
+        let err = toml::from_str::<PairingSection>(toml_src).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn pairing_section_unset_includes_trigger() {
+        let s = PairingSection {
+            trigger: Some(PairingTriggerSection {
+                start_method: "x".into(),
+                cancel_method: "y".into(),
+                timeout_seconds: None,
+            }),
+            ..PairingSection::default()
+        };
+        assert!(!s.is_unset());
     }
 }

@@ -490,6 +490,23 @@ const INVENTORY: &[CapabilityToggle] = &[
                  unless this flag is set.",
         hint: "export NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1",
     },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Phase 81.20.x Stage 7 Phase 2 — permit the daemon \
+                 to spawn Cloudflare quick tunnels for plugins \
+                 declaring `[plugin.public_tunnel] enabled = true`. \
+                 OFF by default (manifests are ignored even when \
+                 declared); flip ON to expose plugin HTTP routes \
+                 over `https://*.trycloudflare.com`. Used during \
+                 WhatsApp pairing so the operator's phone can hit \
+                 the daemon from outside the LAN. Off-LAN exposure \
+                 means anyone with the URL can hit those routes — \
+                 audit which plugins declare it before enabling.",
+        hint: "export NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW=1",
+    },
     // ── Persona discovery kill switch.
     // Default OFF: persona discovery runs at boot and registers any
     // persona pack found under cfg.personas.discovery.search_paths.

@@ -615,7 +615,6 @@ mod tests {
     };
     use async_trait::async_trait;
     use dashmap::DashMap;
-    use std::collections::HashMap;
     use std::sync::atomic::AtomicBool;
     use tokio_util::sync::CancellationToken;
 
@@ -688,9 +687,9 @@ mod tests {
     #[tokio::test]
     async fn start_with_trigger_inserts_handle_on_happy_path() {
         let store: Arc<dyn PairingChallengeStore> = MockStore::new();
-        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let triggers = PairingChannelTriggers::new();
         let trigger = MockTrigger::happy("whatsapp");
-        triggers.insert("whatsapp".into(), trigger.clone());
+        triggers.insert("whatsapp", trigger.clone());
         let handles = empty_handles();
         let root = CancellationToken::new();
         let result = start_with_trigger(
@@ -715,7 +714,7 @@ mod tests {
     async fn start_with_trigger_unknown_channel_returns_invalid_params_no_row() {
         let store = MockStore::new();
         let store_dyn: Arc<dyn PairingChallengeStore> = store.clone();
-        let triggers: PairingChannelTriggers = HashMap::new();
+        let triggers = PairingChannelTriggers::new();
         let handles = empty_handles();
         let root = CancellationToken::new();
         let result = start_with_trigger(
@@ -743,10 +742,10 @@ mod tests {
     async fn start_with_trigger_rolls_back_row_when_trigger_rejects() {
         let store = MockStore::new();
         let store_dyn: Arc<dyn PairingChallengeStore> = store.clone();
-        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let triggers = PairingChannelTriggers::new();
         let trigger =
             MockTrigger::rejects("whatsapp", PairingTriggerError::AlreadyPaired("ana".into()));
-        triggers.insert("whatsapp".into(), trigger.clone());
+        triggers.insert("whatsapp", trigger.clone());
         let handles = empty_handles();
         let root = CancellationToken::new();
         let result = start_with_trigger(
@@ -775,9 +774,9 @@ mod tests {
     #[tokio::test]
     async fn cancel_with_handles_aborts_trigger_then_cancels_store() {
         let store: Arc<dyn PairingChallengeStore> = MockStore::new();
-        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let triggers = PairingChannelTriggers::new();
         let trigger = MockTrigger::happy("whatsapp");
-        triggers.insert("whatsapp".into(), trigger.clone());
+        triggers.insert("whatsapp", trigger.clone());
         let handles = empty_handles();
         let root = CancellationToken::new();
         // Start a pairing so a handle exists.

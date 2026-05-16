@@ -253,6 +253,52 @@ pub enum ManifestError {
         /// Kind that was declared instead of `form`.
         kind: String,
     },
+
+    /// `[plugin.pairing.trigger]` shipped a blank `start_method`
+    /// or `cancel_method`. Daemon would forward a JSON-RPC to an
+    /// empty method name — refuse at boot. Phase 81.20.x Stage 7
+    /// Phase 2.
+    #[error(
+        "[plugin.pairing.trigger].{field} must not be empty — daemon needs a real admin method name to forward to."
+    )]
+    PairingTriggerEmptyMethod {
+        /// Field name that was blank (`start_method` or `cancel_method`).
+        field: &'static str,
+    },
+
+    /// `[plugin.pairing.trigger]` declared on a non-QR pairing.
+    /// Trigger forwarding only makes sense for kinds whose flow
+    /// the daemon orchestrates with start/cancel (QR pump). Form
+    /// and Info kinds are operator-driven and need no remote
+    /// pump. Phase 81.20.x Stage 7 Phase 2.
+    #[error(
+        "[plugin.pairing.trigger] only valid with kind = \"qr\" (got kind = {kind:?}) — form and info kinds have no remote pump to start/cancel."
+    )]
+    PairingTriggerOnlyWithQr {
+        /// Kind that was declared instead of `qr`.
+        kind: String,
+    },
+
+    /// `[plugin.public_tunnel]` shipped a blank `close_on_event`
+    /// subject. Daemon would subscribe to an empty subject and
+    /// either reject (broker validation) or match nothing —
+    /// refuse at boot. Phase 81.20.x Stage 7 Phase 2.
+    #[error(
+        "[plugin.public_tunnel].close_on_event must not be empty — daemon needs a real broker subject to subscribe to."
+    )]
+    PublicTunnelCloseEventEmpty,
+
+    /// `[plugin.public_tunnel].close_on_event` contained a NATS
+    /// wildcard (`*` or `>`). Wildcards would let a stray plugin
+    /// event race-close a healthy tunnel; only literal subjects
+    /// are accepted. Phase 81.20.x Stage 7 Phase 2.
+    #[error(
+        "[plugin.public_tunnel].close_on_event = `{subject}` contains a wildcard (`*` or `>`) — only literal broker subjects are accepted."
+    )]
+    PublicTunnelCloseEventWildcard {
+        /// Offending subject.
+        subject: String,
+    },
 }
 
 #[cfg(test)]

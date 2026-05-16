@@ -106,8 +106,8 @@ fn build_dispatcher(triggers: PairingChannelTriggers) -> AdminRpcDispatcher {
 #[tokio::test]
 async fn pairing_start_registers_handle_when_trigger_succeeds() {
     let trigger = MockTrigger::happy("whatsapp");
-    let mut triggers: PairingChannelTriggers = HashMap::new();
-    triggers.insert("whatsapp".into(), trigger.clone());
+    let triggers = PairingChannelTriggers::new();
+    triggers.insert("whatsapp", trigger.clone());
     let dispatcher = build_dispatcher(triggers);
 
     let result = dispatcher
@@ -132,7 +132,7 @@ async fn pairing_start_registers_handle_when_trigger_succeeds() {
 
 #[tokio::test]
 async fn pairing_start_unsupported_channel_returns_invalid_params_no_handle() {
-    let triggers: PairingChannelTriggers = HashMap::new();
+    let triggers = PairingChannelTriggers::new();
     let dispatcher = build_dispatcher(triggers);
 
     let result = dispatcher
@@ -156,8 +156,8 @@ async fn pairing_start_unsupported_channel_returns_invalid_params_no_handle() {
 #[tokio::test]
 async fn pairing_start_rolls_back_when_trigger_rejects() {
     let trigger = MockTrigger::rejects("whatsapp", "already_paired");
-    let mut triggers: PairingChannelTriggers = HashMap::new();
-    triggers.insert("whatsapp".into(), trigger.clone());
+    let triggers = PairingChannelTriggers::new();
+    triggers.insert("whatsapp", trigger.clone());
     let dispatcher = build_dispatcher(triggers);
 
     let result = dispatcher
@@ -179,8 +179,8 @@ async fn pairing_start_rolls_back_when_trigger_rejects() {
 #[tokio::test]
 async fn pairing_cancel_aborts_handle_and_flips_store_to_cancelled() {
     let trigger = MockTrigger::happy("whatsapp");
-    let mut triggers: PairingChannelTriggers = HashMap::new();
-    triggers.insert("whatsapp".into(), trigger.clone());
+    let triggers = PairingChannelTriggers::new();
+    triggers.insert("whatsapp", trigger.clone());
     let dispatcher = build_dispatcher(triggers);
 
     // Start a pairing.

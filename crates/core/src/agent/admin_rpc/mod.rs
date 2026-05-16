@@ -16,6 +16,7 @@
 pub mod agent_events_sqlite;
 pub mod audit;
 pub mod audit_sqlite;
+pub mod broker_pairing_trigger;
 pub mod capabilities;
 pub mod channel_outbound;
 pub mod dispatcher;
@@ -43,6 +44,7 @@ pub use capabilities::{
 pub use channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
 };
+pub use broker_pairing_trigger::{spawn_pairing_inbound_subscriber, BrokerPairingTrigger};
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};
 pub use pairing_trigger::{
     PairingChannelTrigger, PairingChannelTriggers, PairingContext, PairingHandle,

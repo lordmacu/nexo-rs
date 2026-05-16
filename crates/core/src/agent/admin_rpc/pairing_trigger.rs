@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -182,9 +183,84 @@ pub enum PairingTriggerError {
     Internal(#[from] anyhow::Error),
 }
 
-/// Type alias the dispatcher accepts. Operators inject one
-/// `Arc<dyn PairingChannelTrigger>` per channel id.
-pub type PairingChannelTriggers = HashMap<String, Arc<dyn PairingChannelTrigger>>;
+/// Per-channel trigger registry. Backed by an `Arc<DashMap>` so
+/// the daemon's boot loop can insert manifest-driven
+/// `BrokerPairingTrigger` entries AFTER `wire_plugin_registry`
+/// returns, even though the dispatcher already owns a clone
+/// passed in at admin-bootstrap time. Cloning the registry is
+/// cheap (Arc bump); both clones see the same underlying map.
+#[derive(Clone, Default)]
+pub struct PairingChannelTriggers {
+    inner: Arc<DashMap<String, Arc<dyn PairingChannelTrigger>>>,
+}
+
+impl PairingChannelTriggers {
+    /// Empty registry. `nexo/admin/pairing/start` rejects every
+    /// channel until at least one trigger is inserted.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert (or overwrite) a trigger for `channel_id`.
+    /// Overwrite is safe — production wires registrations at a
+    /// single boot stage, and hot-spawn flows re-register on
+    /// plugin restart.
+    pub fn insert(
+        &self,
+        channel_id: impl Into<String>,
+        trigger: Arc<dyn PairingChannelTrigger>,
+    ) -> Option<Arc<dyn PairingChannelTrigger>> {
+        self.inner.insert(channel_id.into(), trigger)
+    }
+
+    /// Look up by channel id. Returns an owned `Arc` clone so the
+    /// caller can drop the registry borrow before awaiting the
+    /// trigger's `start`.
+    pub fn get(&self, channel_id: &str) -> Option<Arc<dyn PairingChannelTrigger>> {
+        self.inner.get(channel_id).map(|e| e.value().clone())
+    }
+
+    /// `true` when a trigger is registered for `channel_id`.
+    pub fn contains_key(&self, channel_id: &str) -> bool {
+        self.inner.contains_key(channel_id)
+    }
+
+    /// Number of registered channels.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// `true` when no triggers are registered.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+impl std::fmt::Debug for PairingChannelTriggers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("PairingChannelTriggers");
+        let channels: Vec<String> =
+            self.inner.iter().map(|e| e.key().clone()).collect();
+        d.field("channels", &channels).finish()
+    }
+}
+
+impl FromIterator<(String, Arc<dyn PairingChannelTrigger>)> for PairingChannelTriggers {
+    fn from_iter<I: IntoIterator<Item = (String, Arc<dyn PairingChannelTrigger>)>>(
+        iter: I,
+    ) -> Self {
+        let map: DashMap<String, Arc<dyn PairingChannelTrigger>> = iter.into_iter().collect();
+        Self {
+            inner: Arc::new(map),
+        }
+    }
+}
+
+impl From<HashMap<String, Arc<dyn PairingChannelTrigger>>> for PairingChannelTriggers {
+    fn from(map: HashMap<String, Arc<dyn PairingChannelTrigger>>) -> Self {
+        map.into_iter().collect()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -245,10 +321,10 @@ mod tests {
     }
 
     #[test]
-    fn pairing_triggers_alias_is_hashmap() {
-        let mut triggers: PairingChannelTriggers = HashMap::new();
+    fn pairing_triggers_registry_insert_and_get() {
+        let triggers = PairingChannelTriggers::new();
         triggers.insert(
-            "whatsapp".into(),
+            "whatsapp",
             Arc::new(FixedChannelTrigger {
                 channel: "whatsapp",
             }),
@@ -256,5 +332,35 @@ mod tests {
         assert_eq!(triggers.len(), 1);
         assert!(triggers.contains_key("whatsapp"));
         assert!(!triggers.contains_key("telegram"));
+        let fetched = triggers.get("whatsapp").expect("trigger present");
+        assert_eq!(fetched.channel_id(), "whatsapp");
+    }
+
+    #[test]
+    fn pairing_triggers_clone_shares_underlying_map() {
+        let a = PairingChannelTriggers::new();
+        let b = a.clone();
+        a.insert(
+            "whatsapp",
+            Arc::new(FixedChannelTrigger {
+                channel: "whatsapp",
+            }),
+        );
+        // Mutation through `a` visible through `b` — same Arc<DashMap>.
+        assert!(b.contains_key("whatsapp"));
+        assert_eq!(b.len(), 1);
+    }
+
+    #[test]
+    fn pairing_triggers_from_hashmap_round_trip() {
+        let mut legacy: HashMap<String, Arc<dyn PairingChannelTrigger>> = HashMap::new();
+        legacy.insert(
+            "whatsapp".into(),
+            Arc::new(FixedChannelTrigger {
+                channel: "whatsapp",
+            }),
+        );
+        let triggers: PairingChannelTriggers = legacy.into();
+        assert!(triggers.contains_key("whatsapp"));
     }
 }

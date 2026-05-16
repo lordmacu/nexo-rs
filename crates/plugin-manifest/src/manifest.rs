@@ -195,6 +195,21 @@ pub struct PluginSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<crate::http::PluginHttpSection>,
 
+    /// Phase 81.20.x Stage 7 Phase 2 — public-internet tunnel
+    /// declaration. When the plugin sets
+    /// `[plugin.public_tunnel] enabled = true` AND the operator
+    /// sets `NEXO_PLUGIN_PUBLIC_TUNNEL_ALLOW=1`, the daemon
+    /// spawns a Cloudflare quick tunnel pointed at its HTTP port
+    /// so the plugin's `[plugin.http]` routes become reachable
+    /// from outside the LAN. Replaces the deprecated per-plugin
+    /// `wa_tunnel_cfg` orchestration with a manifest-driven
+    /// contract.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::public_tunnel::PluginPublicTunnelSection::is_unset"
+    )]
+    pub public_tunnel: crate::public_tunnel::PluginPublicTunnelSection,
+
     /// Optional subprocess entrypoint. When `command`
     /// is `Some`, the daemon spawns this binary as a child process
     /// and drives the plugin via newline-delimited JSON-RPC over

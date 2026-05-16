@@ -21,6 +21,7 @@ pub mod id_regex;
 pub mod manifest;
 pub mod metrics;
 pub mod pairing;
+pub mod public_tunnel;
 pub mod sandbox;
 pub mod validate;
 
@@ -31,6 +32,7 @@ pub use config_schema::{
 };
 pub use error::ManifestError;
 pub use pairing::{PairingFieldDescriptor, PairingKind, PairingSection};
+pub use public_tunnel::PluginPublicTunnelSection;
 pub use manifest::{
     AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
     CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection,
