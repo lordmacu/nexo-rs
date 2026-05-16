@@ -969,6 +969,20 @@ fn seed_browser_subprocess_env(cfg: &nexo_config::BrowserConfig) {
 ///   the kind is daemon-derived only. Fall back to
 ///   `stdio_bridge` defensively so a misconfiguration doesn't
 ///   crash boot.
+/// Phase 93.4.c → Wave 2 — convert `nexo_config::EmailPluginConfig`
+/// (legacy daemon-side parser) into `nexo_plugin_email::EmailPluginConfig`
+/// (the plugin's owned type after Phase 93.4.c). Structurally
+/// identical fields go through a serde round-trip via serde_yaml
+/// so the two types stay decoupled.
+fn convert_email_cfg(
+    cfg: &nexo_config::EmailPluginConfig,
+) -> anyhow::Result<nexo_plugin_email::EmailPluginConfig> {
+    let yaml = serde_yaml::to_value(cfg)
+        .context("convert_email_cfg: serialize nexo_config::EmailPluginConfig")?;
+    serde_yaml::from_value(yaml)
+        .context("convert_email_cfg: deserialize into nexo_plugin_email::EmailPluginConfig")
+}
+
 fn subprocess_broker_kind_str(kind: nexo_config::types::broker::BrokerKind) -> &'static str {
     match kind {
         nexo_config::types::broker::BrokerKind::Nats => "nats",
@@ -3391,8 +3405,10 @@ async fn main() -> Result<()> {
                 let data_dir = std::env::var("NEXO_DATA_DIR")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|_| std::path::PathBuf::from("data"));
+                let plugin_cfg = convert_email_cfg(email_cfg)
+                    .expect("email cfg structurally compatible across nexo_config / nexo_plugin_email");
                 Arc::new(nexo_plugin_email::EmailPlugin::new(
-                    email_cfg.clone(),
+                    plugin_cfg,
                     creds_bundle.email_store(),
                     creds_bundle.google_store(),
                     data_dir,
@@ -3873,7 +3889,9 @@ async fn main() -> Result<()> {
             Some(Arc::new(nexo_plugin_email::EmailToolContext {
                 creds: creds_bundle.email_store(),
                 google: creds_bundle.google_store(),
-                config: Arc::new(email_cfg.clone()),
+                config: Arc::new(
+                    convert_email_cfg(email_cfg).expect("email cfg roundtrip"),
+                ),
                 dispatcher,
                 health,
                 bounce_store: plugin.bounce_store_handle(),
@@ -14417,8 +14435,10 @@ async fn start_mcp_autonomous_worker(
     let data_dir = std::env::var("NEXO_DATA_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("data"));
+    let plugin_email_cfg = convert_email_cfg(&email_cfg)
+        .context("convert nexo_config::EmailPluginConfig to nexo_plugin_email::EmailPluginConfig")?;
     let email_plugin = Arc::new(nexo_plugin_email::EmailPlugin::new(
-        email_cfg.clone(),
+        plugin_email_cfg,
         creds_bundle.email_store(),
         creds_bundle.google_store(),
         data_dir,
@@ -14445,7 +14465,10 @@ async fn start_mcp_autonomous_worker(
     let email_tool_ctx = Arc::new(nexo_plugin_email::EmailToolContext {
         creds: creds_bundle.email_store(),
         google: creds_bundle.google_store(),
-        config: Arc::new(email_cfg),
+        config: Arc::new(
+            convert_email_cfg(&email_cfg)
+                .context("convert email cfg for autonomous worker tool context")?,
+        ),
         dispatcher,
         health: email_health,
         bounce_store: email_plugin.bounce_store_handle(),

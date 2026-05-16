@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 
 #[derive(Debug, Default, Clone)]
@@ -726,7 +726,7 @@ pub struct EmailPluginConfigFile {
     pub email: EmailPluginConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EmailPluginConfig {
     #[serde(default = "default_email_enabled")]
@@ -774,7 +774,7 @@ pub struct EmailPluginConfig {
     pub accounts: Vec<EmailAccountConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LoopPreventionCfg {
     #[serde(default = "default_true")]
@@ -812,7 +812,7 @@ impl Default for LoopPreventionCfg {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EmailAccountConfig {
     /// Stable instance id — threads into `plugin.inbound.email.<instance>`
@@ -838,7 +838,7 @@ pub struct EmailAccountConfig {
     pub bootstrap_limit: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EmailProvider {
     Gmail,
@@ -848,7 +848,7 @@ pub enum EmailProvider {
     Custom,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ImapEndpoint {
     pub host: String,
@@ -857,7 +857,7 @@ pub struct ImapEndpoint {
     pub tls: TlsMode,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct SmtpEndpoint {
     pub host: String,
@@ -866,7 +866,7 @@ pub struct SmtpEndpoint {
     pub tls: TlsMode,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TlsMode {
     /// No TLS at all — only safe on localhost / loopback.
@@ -877,7 +877,7 @@ pub enum TlsMode {
     ImplicitTls,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EmailFolders {
     #[serde(default = "default_folder_inbox")]
@@ -898,7 +898,7 @@ impl Default for EmailFolders {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct EmailFilters {
     /// If non-empty, only addresses matching this allowlist produce

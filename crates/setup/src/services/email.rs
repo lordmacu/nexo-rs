@@ -31,7 +31,12 @@ use nexo_plugin_email::smtp_conn::SmtpClient;
 use nexo_plugin_email::spf_dkim::{check_alignment, decide_warns};
 use secrecy::SecretString;
 
-use nexo_config::types::plugins::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
+// Phase 93.4.c — email types live in `nexo_plugin_email::config`
+// (plugin owns its config contract). nexo-config retains parallel
+// definitions for legacy daemon-side YAML decoding; this file uses
+// the plugin types directly so ImapConnection / SmtpClient calls
+// type-check.
+use nexo_plugin_email::config::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
 
 /// In-memory snapshot the wizard hands to the writers. Decoupled
 /// from the YAML/TOML serialisers so tests can drive them directly.
