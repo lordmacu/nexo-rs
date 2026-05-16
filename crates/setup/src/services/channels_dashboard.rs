@@ -100,9 +100,7 @@ impl ChannelDashboardSource for TelegramDashboardSource {
     }
 }
 
-#[cfg(feature = "plugin-whatsapp")]
 pub struct WhatsappDashboardSource;
-#[cfg(feature = "plugin-whatsapp")]
 impl ChannelDashboardSource for WhatsappDashboardSource {
     fn channel_id(&self) -> &'static str {
         "whatsapp"
@@ -316,22 +314,21 @@ fn intern_static_str(s: &str) -> &'static str {
     leaked
 }
 
-/// Default registry of canonical dashboard sources. Whatsapp
-/// source is `#[cfg(feature = "plugin-whatsapp")]`-gated so a
-/// slim daemon binary (Phase 93.12.c) does NOT surface whatsapp
-/// in the dashboard.
+/// Default registry of canonical dashboard sources.
 pub fn default_dashboard_sources() -> Vec<Box<dyn ChannelDashboardSource>> {
     // Phase 81.20.x F2.7 — EmailDashboardSource removed from the
     // fallback list. Email v0.6.0+ declares `[plugin.dashboard]`
     // in its manifest; `ManifestDashboardSource` (built from
     // `dashboard_sources_from_manifests`) surfaces email
-    // generically, with no daemon-side hardcoded impl.
-    #[allow(unused_mut)]
-    let mut out: Vec<Box<dyn ChannelDashboardSource>> =
-        vec![Box::new(TelegramDashboardSource)];
-    #[cfg(feature = "plugin-whatsapp")]
-    out.push(Box::new(WhatsappDashboardSource));
-    out
+    // generically, with no daemon-side hardcoded impl. Whatsapp
+    // dashboard stays as a hardcoded `WhatsappDashboardSource`
+    // until the canonical plugin's `[plugin.dashboard]` section
+    // (already declared in `nexo-plugin.toml`) routes through
+    // `dashboard_sources_from_manifests` at boot.
+    vec![
+        Box::new(TelegramDashboardSource),
+        Box::new(WhatsappDashboardSource),
+    ]
 }
 
 /// Phase 81.33.b.real Stage 6 — build dashboard sources from a
@@ -388,7 +385,6 @@ fn file_state(path: &Path) -> AuthState {
     }
 }
 
-#[cfg(feature = "plugin-whatsapp")]
 fn whatsapp_auth_state(session_dir: &Path) -> AuthState {
     if !session_dir.is_dir() {
         return AuthState::NotAuthenticated;

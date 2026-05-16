@@ -799,18 +799,8 @@ impl AdminRpcBootstrap {
                 // against any of them.
                 outbound = outbound
                     .with_translator(Box::new(crate::admin_adapters::EmailTranslator))
-                    .with_translator(Box::new(crate::admin_adapters::TelegramTranslator));
-                // Phase 93.12.c — `WhatsAppTranslator` lives behind
-                // `plugin-whatsapp`. Skip when the feature is off; the
-                // outbound dispatcher then routes whatsapp messages to
-                // the "no translator" path, which surfaces as a typed
-                // `TranslationError::UnsupportedChannel` to callers.
-                #[cfg(feature = "plugin-whatsapp")]
-                {
-                    outbound = outbound.with_translator(Box::new(
-                        crate::admin_adapters::WhatsAppTranslator,
-                    ));
-                }
+                    .with_translator(Box::new(crate::admin_adapters::TelegramTranslator))
+                    .with_translator(Box::new(crate::admin_adapters::WhatsAppTranslator));
                 dispatcher = dispatcher.with_channel_outbound(Arc::new(outbound));
             }
             // Wire the production transcript

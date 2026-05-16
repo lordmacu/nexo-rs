@@ -3714,15 +3714,14 @@ impl ChannelPayloadTranslator for EmailTranslator {
 /// existing convention. Payload mirrors the plugin's
 /// `OutboundPayload` (text, reply, media variants).
 ///
-/// Phase 93.12.c — gated behind `plugin-whatsapp`. When the
-/// feature is off, the daemon ships without the whatsapp plugin
-/// crate; this translator (and the broker dispatcher registration
-/// that consumes it in `admin_bootstrap`) disappears with it.
-#[cfg(feature = "plugin-whatsapp")]
+/// Phase 81.20.x Stage 7 Phase 2 close-out — `plugin-whatsapp`
+/// feature deleted; translator is always compiled. The literal
+/// broker topic (`plugin.outbound.whatsapp[.<account>]`) is part
+/// of the whatsapp plugin's stable broker contract — daemon
+/// holds a string copy, no Cargo dep on the plugin crate.
 #[derive(Debug, Default)]
 pub struct WhatsAppTranslator;
 
-#[cfg(feature = "plugin-whatsapp")]
 impl ChannelPayloadTranslator for WhatsAppTranslator {
     fn channel(&self) -> &str {
         "whatsapp"
@@ -3785,7 +3784,7 @@ impl ChannelPayloadTranslator for WhatsAppTranslator {
     }
 }
 
-#[cfg(all(test, feature = "plugin-whatsapp"))]
+#[cfg(test)]
 mod broker_outbound_tests {
     use super::*;
     use nexo_broker::LocalBroker;

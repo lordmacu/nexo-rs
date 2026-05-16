@@ -1116,7 +1116,6 @@ fn seed_telegram_subprocess_env_for(
 /// `WhatsappPlugin::with_emitter` used to wire the emitter
 /// directly; after the subprocess flip the emitter Arc doesn't
 /// cross the process boundary, so the broker hop closes the loop.
-#[cfg(feature = "plugin-whatsapp")]
 #[allow(dead_code)] // Wired in the whatsapp-loop block below.
 fn spawn_whatsapp_typing_presence_subscriber(
     broker: nexo_broker::AnyBroker,
@@ -3208,7 +3207,6 @@ async fn main() -> Result<()> {
     // mirrors it. Public-tunnel orchestration moves to the
     // generic `[plugin.public_tunnel]` manifest section + daemon
     // iterator below (post-`wire_plugin_registry`).
-    #[cfg(feature = "plugin-whatsapp")]
     for wa_cfg in opaque_plugin_entries(&cfg.plugins, "whatsapp") {
         let enabled = wa_cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
         let instance_label = wa_cfg
@@ -3563,7 +3561,6 @@ async fn main() -> Result<()> {
     // configured + the emitter is ready. Previously gated on
     // `!wa_pairing.is_empty()`; we now check the YAML directly
     // since the daemon-side state map is gone.
-    #[cfg(feature = "plugin-whatsapp")]
     let _wa_typing_subscriber_handle = {
         let whatsapp_configured = !opaque_plugin_entries(&cfg.plugins, "whatsapp").is_empty();
         let typing_shutdown = tokio_util::sync::CancellationToken::new();
@@ -14129,12 +14126,9 @@ async fn start_mcp_autonomous_worker(
     outbound = outbound
         .with_translator(Box::new(EmailTranslator))
         .with_translator(Box::new(TelegramTranslator));
-    #[cfg(feature = "plugin-whatsapp")]
-    {
-        outbound = outbound.with_translator(Box::new(
-            nexo_setup::admin_adapters::WhatsAppTranslator,
-        ));
-    }
+    outbound = outbound.with_translator(Box::new(
+        nexo_setup::admin_adapters::WhatsAppTranslator,
+    ));
     let outbound: Arc<dyn nexo_core::agent::admin_rpc::channel_outbound::ChannelOutboundDispatcher> =
         Arc::new(outbound);
 
@@ -15991,45 +15985,27 @@ mod tests {
         route_cron_subcommand, seed_telegram_subprocess_env_for, seed_whatsapp_subprocess_env_for,
         subprocess_broker_kind_str, Mode,
     };
-    // Wave 6 — telegram types live in the plugin crate.
-    use nexo_plugin_telegram::{
-        TelegramAllowlistConfig, TelegramAutoTranscribeConfig, TelegramPluginConfig,
-        TelegramPollingConfig,
-    };
-    // Wave 7 — whatsapp types live in the plugin crate.
-    // Phase 81.20.x Stage 7 Phase 2 — `plugin-whatsapp` dropped
-    // from default features; the import + helper + tests below
-    // only compile when the operator opts in. Coverage of the
-    // opaque-YAML seeder path stays via the always-on telegram
-    // tests above.
-    #[cfg(feature = "plugin-whatsapp")]
-    use nexo_plugin_whatsapp::{
-        WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig,
-        WhatsappDaemonConfig, WhatsappPluginConfig, WhatsappPublicTunnelConfig,
-        WhatsappRateLimitConfig, WhatsappTranscriberConfig,
-    };
+    // Phase 81.20.x Stage 7 Phase 2 close-out — test helpers
+    // build their fixture YAML inline via `serde_yaml::Value` so
+    // the daemon binary depends on neither `nexo-plugin-telegram`
+    // nor `nexo-plugin-whatsapp` at compile time. Coverage of the
+    // opaque-YAML `seed_{telegram,whatsapp}_subprocess_env_for`
+    // paths is unchanged.
 
-    fn telegram_cfg(token: &str, instance: Option<&str>) -> TelegramPluginConfig {
-        TelegramPluginConfig {
-            token: token.to_string(),
-            polling: TelegramPollingConfig {
-                enabled: true,
-                interval_ms: 1500,
-                offset_path: Some("/tmp/tg.offset".to_string()),
-            },
-            allowlist: TelegramAllowlistConfig {
-                chat_ids: vec![100, 200],
-            },
-            auto_transcribe: TelegramAutoTranscribeConfig {
-                enabled: false,
-                command: String::new(),
-                timeout_ms: 60_000,
-                language: None,
-            },
-            bridge_timeout_ms: 30_000,
-            instance: instance.map(String::from),
-            allow_agents: Vec::new(),
-        }
+    fn telegram_cfg_yaml(token: &str, instance: Option<&str>) -> serde_yaml::Value {
+        let instance_field = match instance {
+            Some(s) => format!("\ninstance: \"{s}\""),
+            None => String::new(),
+        };
+        let yaml = format!(
+            "token: \"{token}\"\n\
+             polling:\n  enabled: true\n  interval_ms: 1500\n  offset_path: \"/tmp/tg.offset\"\n\
+             allowlist:\n  chat_ids:\n    - 100\n    - 200\n\
+             auto_transcribe:\n  enabled: false\n  command: \"\"\n  timeout_ms: 60000\n\
+             bridge_timeout_ms: 30000\n\
+             {instance_field}",
+        );
+        serde_yaml::from_str(&yaml).expect("telegram test yaml parses")
     }
 
     /// Happy path: every operator-facing field
@@ -16038,8 +16014,8 @@ mod tests {
     /// inherited daemon whitelist (PATH/HOME/RUST_LOG/broker URL).
     #[test]
     fn seed_telegram_subprocess_env_for_happy_path() {
-        let cfg = telegram_cfg("123:abcdef", Some("bot1"));
-        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://127.0.0.1:4222");
+        let cfg = telegram_cfg_yaml("123:abcdef", Some("bot1"));
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_TELEGRAM_TOKEN").map(String::as_str),
@@ -16082,13 +16058,12 @@ mod tests {
     /// "absent = default single bot" semantics.
     #[test]
     fn seed_telegram_subprocess_env_for_omits_empty_instance() {
-        let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg = telegram_cfg_yaml("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
 
-        let mut cfg2 = telegram_cfg("tok", Some(""));
-        cfg2.instance = Some("   ".into());
-        let env2 = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg2).unwrap(), "nats", "nats://x");
+        let cfg2 = telegram_cfg_yaml("tok", Some("   "));
+        let env2 = seed_telegram_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_TELEGRAM_INSTANCE"));
     }
 
@@ -16096,18 +16071,23 @@ mod tests {
     /// every whisper-related env var; enabled lights them up.
     #[test]
     fn seed_telegram_subprocess_env_for_transcribe_toggle() {
-        let mut cfg = telegram_cfg("tok", None);
-        let env_off = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let mut cfg = telegram_cfg_yaml("tok", None);
+        let env_off = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE"));
         assert!(!env_off.contains_key("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND"));
 
-        cfg.auto_transcribe = TelegramAutoTranscribeConfig {
-            enabled: true,
-            command: "/usr/bin/whisper".into(),
-            timeout_ms: 45_000,
-            language: Some("es".into()),
-        };
-        let env_on = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg_map = cfg.as_mapping_mut().expect("mapping root");
+        cfg_map.insert(
+            serde_yaml::Value::String("auto_transcribe".into()),
+            serde_yaml::from_str(
+                "enabled: true\n\
+                 command: \"/usr/bin/whisper\"\n\
+                 timeout_ms: 45000\n\
+                 language: \"es\"\n",
+            )
+            .unwrap(),
+        );
+        let env_on = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE")
@@ -16142,8 +16122,8 @@ mod tests {
     #[test]
     fn seed_telegram_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_TG_TEST_LEAK_SENTINEL__", "do-not-leak");
-        let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg = telegram_cfg_yaml("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_TG_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_TG_TEST_LEAK_SENTINEL__");
     }
@@ -16155,8 +16135,8 @@ mod tests {
     // endpoint.
     #[test]
     fn seed_telegram_env_stdio_bridge_omits_url() {
-        let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "stdio_bridge", "nats://ignored");
+        let cfg = telegram_cfg_yaml("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "stdio_bridge", "nats://ignored");
         assert_eq!(
             env.get("NEXO_BROKER_KIND").map(String::as_str),
             Some("stdio_bridge")
@@ -16169,8 +16149,8 @@ mod tests {
 
     #[test]
     fn seed_telegram_env_nats_keeps_url() {
-        let cfg = telegram_cfg("tok", None);
-        let env = seed_telegram_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://central:4222");
+        let cfg = telegram_cfg_yaml("tok", None);
+        let env = seed_telegram_subprocess_env_for(&cfg, "nats", "nats://central:4222");
         assert_eq!(
             env.get("NEXO_BROKER_KIND").map(String::as_str),
             Some("nats")
@@ -16200,46 +16180,36 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "plugin-whatsapp")]
-    fn whatsapp_cfg(session_dir: &str, instance: Option<&str>) -> WhatsappPluginConfig {
-        WhatsappPluginConfig {
-            enabled: true,
-            session_dir: session_dir.to_string(),
-            media_dir: "/tmp/wa-media".to_string(),
-            credentials_file: None,
-            acl: WhatsappAclConfig {
-                allow_list: vec!["+5491100000000".into()],
-                from_env: String::new(),
-            },
-            behavior: WhatsappBehaviorConfig::default(),
-            rate_limit: WhatsappRateLimitConfig::default(),
-            bridge: WhatsappBridgeConfig {
-                response_timeout_ms: 45_000,
-                on_timeout: "noop".into(),
-                apology_text: String::new(),
-            },
-            transcriber: WhatsappTranscriberConfig {
-                enabled: false,
-                skill: "whisper".into(),
-                timeout_ms: 60_000,
-            },
-            daemon: WhatsappDaemonConfig::default(),
-            public_tunnel: WhatsappPublicTunnelConfig::default(),
-            instance: instance.map(String::from),
-            allow_agents: Vec::new(),
-            typing_mode: Default::default(),
-        }
+    /// Build a YAML fixture matching the operator-facing schema of
+    /// `nexo-plugin-whatsapp`'s `WhatsappPluginConfig`. Returned as
+    /// `serde_yaml::Value` so the daemon binary's test crate
+    /// doesn't depend on the plugin's typed config — only the
+    /// wire shape consumed by `seed_whatsapp_subprocess_env_for`.
+    fn whatsapp_cfg_yaml(session_dir: &str, instance: Option<&str>) -> serde_yaml::Value {
+        let instance_field = match instance {
+            Some(s) => format!("\ninstance: \"{s}\""),
+            None => String::new(),
+        };
+        let yaml = format!(
+            "enabled: true\n\
+             session_dir: \"{session_dir}\"\n\
+             media_dir: \"/tmp/wa-media\"\n\
+             acl:\n  allow_list:\n    - \"+5491100000000\"\n  from_env: \"\"\n\
+             bridge:\n  response_timeout_ms: 45000\n  on_timeout: \"noop\"\n  apology_text: \"\"\n\
+             transcriber:\n  enabled: false\n  skill: \"whisper\"\n  timeout_ms: 60000\n\
+             {instance_field}",
+        );
+        serde_yaml::from_str(&yaml).expect("whatsapp test yaml parses")
     }
 
-    /// Happy path: every operator-facing field
-    /// of `WhatsappPluginConfig` lands in the spawn env dict
-    /// under the `NEXO_PLUGIN_WHATSAPP_*` namespace plus the
-    /// inherited daemon whitelist.
-    #[cfg(feature = "plugin-whatsapp")]
+    /// Happy path: every operator-facing field of the whatsapp
+    /// YAML lands in the spawn env dict under the
+    /// `NEXO_PLUGIN_WHATSAPP_*` namespace plus the inherited
+    /// daemon whitelist.
     #[test]
     fn seed_whatsapp_subprocess_env_for_happy_path() {
-        let cfg = whatsapp_cfg("/tmp/wa-session", Some("ventas"));
-        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://127.0.0.1:4222");
+        let cfg = whatsapp_cfg_yaml("/tmp/wa-session", Some("ventas"));
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
 
         assert_eq!(
             env.get("NEXO_PLUGIN_WHATSAPP_SESSION_DIR")
@@ -16272,36 +16242,37 @@ mod tests {
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
     }
 
-    /// Empty / `None` instance is omitted (not
-    /// emitted as empty string) so the subprocess's
-    /// `whatsapp_config_from_env` reads `instance = None`.
-    #[cfg(feature = "plugin-whatsapp")]
+    /// Empty / `None` instance is omitted (not emitted as empty
+    /// string) so the subprocess's `whatsapp_config_from_env`
+    /// reads `instance = None`.
     #[test]
     fn seed_whatsapp_subprocess_env_for_omits_empty_instance() {
-        let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg = whatsapp_cfg_yaml("/tmp/x", None);
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
 
-        let cfg2 = whatsapp_cfg("/tmp/x", Some("   "));
-        let env2 = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg2).unwrap(), "nats", "nats://x");
+        let cfg2 = whatsapp_cfg_yaml("/tmp/x", Some("   "));
+        let env2 = seed_whatsapp_subprocess_env_for(&cfg2, "nats", "nats://x");
         assert!(!env2.contains_key("NEXO_PLUGIN_WHATSAPP_INSTANCE"));
     }
 
-    /// Transcriber disabled drops whisper env;
-    /// enabled lights it up.
-    #[cfg(feature = "plugin-whatsapp")]
+    /// Transcriber disabled drops whisper env; enabled lights it
+    /// up.
     #[test]
     fn seed_whatsapp_subprocess_env_for_transcribe_toggle() {
-        let mut cfg = whatsapp_cfg("/tmp/x", None);
-        let env_off = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let mut cfg = whatsapp_cfg_yaml("/tmp/x", None);
+        let env_off = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env_off.contains_key("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED"));
 
-        cfg.transcriber = WhatsappTranscriberConfig {
-            enabled: true,
-            skill: "whisper".into(),
-            timeout_ms: 30_000,
-        };
-        let env_on = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg_map = cfg.as_mapping_mut().expect("mapping root");
+        cfg_map.insert(
+            serde_yaml::Value::String("transcriber".into()),
+            serde_yaml::from_str(
+                "enabled: true\nskill: \"whisper\"\ntimeout_ms: 30000\n",
+            )
+            .unwrap(),
+        );
+        let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
             env_on
                 .get("NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED")
@@ -16316,19 +16287,13 @@ mod tests {
         );
     }
 
-    // Wave 4 — seed_email_subprocess_env_for tests dropped along
-    // with the helper. Daemon no longer seeds email subprocess env;
-    // auto-subprocess fallback in init_loop.rs handles spawn from
-    // the discovered manifest.
-
-/// Sentinel daemon env var does NOT leak
-    /// into the spawn dict (defense-in-depth).
-    #[cfg(feature = "plugin-whatsapp")]
+    /// Sentinel daemon env var does NOT leak into the spawn dict
+    /// (defense-in-depth).
     #[test]
     fn seed_whatsapp_subprocess_env_for_does_not_leak_random_daemon_env() {
         std::env::set_var("__NEXO_WA_TEST_LEAK_SENTINEL__", "do-not-leak");
-        let cfg = whatsapp_cfg("/tmp/x", None);
-        let env = seed_whatsapp_subprocess_env_for(&serde_yaml::to_value(&cfg).unwrap(), "nats", "nats://x");
+        let cfg = whatsapp_cfg_yaml("/tmp/x", None);
+        let env = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert!(!env.contains_key("__NEXO_WA_TEST_LEAK_SENTINEL__"));
         std::env::remove_var("__NEXO_WA_TEST_LEAK_SENTINEL__");
     }
