@@ -123,17 +123,58 @@ Channels are subprocess plugins (Phase 81.18 onward). Easiest is
 from BotFather:
 
 ```bash
-# Drop the Telegram plugin into the daemon's plugin dir:
-nexo plugin install lordmacu/nexo-plugin-telegram
+# Cargo install drops the binary in ~/.cargo/bin/ — the daemon's
+# discovery walker scans that directory on boot, no YAML edit
+# required (Phase 81.33 Stage 8 auto-detection).
+cargo install nexo-plugin-telegram
 nexo plugin list
 
 # Tell BotFather to /newbot, save the token:
 export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ```
 
-For WhatsApp: `nexo plugin install lordmacu/nexo-plugin-whatsapp`,
-then [the setup wizard](./setup-wizard.md) walks you through QR
+For WhatsApp: `cargo install nexo-plugin-whatsapp`, then
+[the setup wizard](./setup-wizard.md) walks you through QR
 pairing.
+
+### How the daemon finds your plugin
+
+The discovery walker (Phase 81.33 Stage 8) probes every search
+path on boot. Defaults out of the box:
+
+| Path | Use |
+|------|-----|
+| `$HOME/.cargo/bin` | `cargo install nexo-plugin-X` lands here |
+| `$HOME/.local/share/nexo/plugins` | XDG-style per-user install |
+| `/usr/local/libexec/nexo/plugins` | system-wide install |
+
+In each path the walker looks for two shapes:
+
+1. **A directory** containing a `nexo-plugin.toml` manifest +
+   `bin/<plugin-id>` entrypoint (classic layout — used when you
+   want to ship multiple files together).
+2. **A bare executable** named `nexo-plugin-<id>`. The walker
+   invokes the binary with `--print-manifest` (2s timeout), parses
+   stdout as TOML, and registers the plugin if validation passes.
+   This is the layout `cargo install` produces.
+
+Operators can append paths via
+`config/plugins/discovery.yaml`:
+
+```yaml
+discovery:
+  search_paths:
+    - /opt/nexo-plugins        # site-specific install root
+  # Default paths above are STILL scanned — supply
+  # `search_paths: []` to opt out entirely.
+  auto_detect_binaries: true   # opt out by setting to false
+  disabled: []                 # plugin ids to skip
+  allowlist: []                # whitelist when non-empty
+```
+
+→ Authoring your own plugin: [Plugin SDKs → Rust SDK](../plugins/rust-sdk.md)
+documents the `print_manifest_if_requested(MANIFEST)` call that
+makes binaries discoverable.
 
 ---
 

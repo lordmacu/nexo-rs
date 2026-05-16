@@ -210,13 +210,21 @@ pub struct PluginDiscoveryConfigFile {
     pub discovery: PluginDiscoveryConfig,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginDiscoveryConfig {
-    /// Directories scanned at boot for `nexo-plugin.toml` manifests.
-    /// Each entry's immediate children are tested as plugin dirs.
-    /// Supports `$NEXO_HOME` and `$HOME` env-var expansion.
-    #[serde(default)]
+    /// Directories scanned at boot for `nexo-plugin.toml` manifests
+    /// AND for `nexo-plugin-*` executables when `auto_detect_binaries`
+    /// is enabled. Each entry's immediate children are tested as
+    /// plugin dirs. Supports `$NEXO_HOME`, `$HOME`, and `$CARGO_HOME`
+    /// env-var expansion.
+    ///
+    /// Defaults include `$CARGO_HOME/bin` (a.k.a. `~/.cargo/bin`),
+    /// `~/.local/share/nexo/plugins`, and
+    /// `/usr/local/libexec/nexo/plugins` so `cargo install nexo-plugin-X`
+    /// is auto-discovered without operator action. Missing dirs are
+    /// tolerated (warn diagnostic, walker continues).
+    #[serde(default = "default_search_paths")]
     pub search_paths: Vec<PathBuf>,
     /// Plugin ids to skip even when a valid manifest is found.
     #[serde(default)]
@@ -230,6 +238,40 @@ pub struct PluginDiscoveryConfig {
     /// trusted dev environments.
     #[serde(default)]
     pub follow_symlinks: bool,
+    /// When true (default), the walker treats `nexo-plugin-*`
+    /// executables found directly under each `search_paths` entry as
+    /// plugin candidates: spawn `<bin> --print-manifest` (2s timeout)
+    /// and use the dumped TOML as the manifest. Set false to restrict
+    /// discovery to filesystem-resident `nexo-plugin.toml` files.
+    #[serde(default = "default_auto_detect_binaries")]
+    pub auto_detect_binaries: bool,
+}
+
+impl Default for PluginDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            search_paths: default_search_paths(),
+            disabled: Vec::new(),
+            allowlist: Vec::new(),
+            follow_symlinks: false,
+            auto_detect_binaries: default_auto_detect_binaries(),
+        }
+    }
+}
+
+fn default_search_paths() -> Vec<PathBuf> {
+    vec![
+        // `cargo install nexo-plugin-X` lands here by default.
+        PathBuf::from("$HOME/.cargo/bin"),
+        // XDG-like per-user plugin tree.
+        PathBuf::from("$HOME/.local/share/nexo/plugins"),
+        // System-wide install target (Debian/Fedora-style libexec).
+        PathBuf::from("/usr/local/libexec/nexo/plugins"),
+    ]
+}
+
+fn default_auto_detect_binaries() -> bool {
+    true
 }
 
 // ── Browser plugin config ─────────────────────────────────────────────────────

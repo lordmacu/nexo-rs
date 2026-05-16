@@ -3366,7 +3366,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4573,7 +4573,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-broker"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-config"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "humantime-serde",
@@ -4653,7 +4653,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-core"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5194,7 +5194,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-microapp-sdk"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6903,7 +6903,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.38",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6940,7 +6940,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

@@ -15,7 +15,7 @@ readme      = "README.md"
 workspace = true
 
 [dependencies]
-nexo-core             = { version = "0.1.18", path = "../core" }
+nexo-core             = { version = "0.1.19", path = "../core" }
 nexo-llm              = { version = "0.1.5", path = "../llm" }
 nexo-driver-types     = { version = "0.1.7", path = "../driver-types" }
 nexo-driver-permission = { version = "0.1.7", path = "../driver-permission" }
@@ -33,6 +33,6 @@ anyhow              = { workspace = true }
 
 [dev-dependencies]
 tokio               = { workspace = true }
-nexo-broker         = { version = "0.1.4", path = "../broker" }
-nexo-config         = { version = "0.1.8", path = "../config" }
+nexo-broker         = { version = "0.1.5", path = "../broker" }
+nexo-config         = { version = "0.1.9", path = "../config" }
 tempfile            = "3"

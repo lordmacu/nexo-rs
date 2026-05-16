@@ -368,7 +368,7 @@ rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
 rand               = "0.8"
 nexo-tool-meta     = { version = "0.1.15", path = "crates/tool-meta" }
-nexo-microapp-sdk  = { version = "0.1.17", path = "crates/microapp-sdk" }
+nexo-microapp-sdk  = { version = "0.1.18", path = "crates/microapp-sdk" }
 # Phase 90.x.memory — long-term memory crate exposed at workspace
 # scope so `nexo-setup`'s `LiveMemoryReader` adapter can consume
 # `LongTermMemory` + `MemoryEntry` types via `workspace = true`.
@@ -451,9 +451,9 @@ nexo-auth = { version = "0.1.7", path = "crates/auth" }
 nexo-poller = { version = "0.1.2", path = "crates/poller" }
 nexo-poller-tools = { version = "0.1.2", path = "crates/poller-tools" }
 nexo-poller-ext = { version = "0.1.2", path = "crates/poller-ext" }
-nexo-config = { version = "0.1.8", path = "crates/config" }
-nexo-broker = { version = "0.1.4", path = "crates/broker" }
-nexo-core = { version = "0.1.18", path = "crates/core" }
+nexo-config = { version = "0.1.9", path = "crates/config" }
+nexo-broker = { version = "0.1.5", path = "crates/broker" }
+nexo-core = { version = "0.1.19", path = "crates/core" }
 nexo-team-store = { version = "0.1.2", path = "crates/team-store" }
 nexo-extensions = { version = "0.1.4", path = "crates/extensions" }
 nexo-ext-installer = { version = "0.1.1", path = "crates/ext-installer" }

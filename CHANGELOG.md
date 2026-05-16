@@ -8,6 +8,21 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Added
+
+- **Plugin auto-detection on `cargo install`** (Phase 81.33 Stage 8).
+  `PluginDiscoveryConfig::default()` now ships standard search
+  paths (`$HOME/.cargo/bin`, `$HOME/.local/share/nexo/plugins`,
+  `/usr/local/libexec/nexo/plugins`), and the discovery walker
+  gained a binary-mode branch that probes `nexo-plugin-<id>`
+  executables with `--print-manifest` (2s timeout) to extract the
+  embedded manifest. Result: `cargo install nexo-plugin-X`
+  followed by daemon restart is enough — no operator YAML edits.
+  Opt out via `discovery.auto_detect_binaries: false`.
+  `nexo_microapp_sdk::plugin::print_manifest_if_requested(MANIFEST)`
+  is the two-line plugin-side opt-in. Cache deferred (see
+  FOLLOWUPS.md).
+
 ### Changed
 
 - **`nexo-tool-meta` 0.1.15 — voice_addenda module added** (Phase

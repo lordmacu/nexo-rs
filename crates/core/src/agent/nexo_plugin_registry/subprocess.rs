@@ -195,6 +195,16 @@ pub struct SubprocessNexoPlugin {
     /// multiplex.
     instance_label: Option<String>,
 
+    /// Manifest's parent directory. Populated by
+    /// `subprocess_plugin_factory(_with_env)` from the
+    /// `DiscoveredPlugin.root_dir` the discovery walker recorded.
+    /// Used by `spawn_one_attempt` to resolve relative
+    /// `[plugin.entrypoint] command` paths (e.g. `./bin/browser`)
+    /// against the manifest's own directory instead of the daemon's
+    /// CWD. `None` for hand-built test plugins that bypass the
+    /// factory — those keep the pre-fix raw-path behaviour.
+    manifest_dir: Option<std::path::PathBuf>,
+
     /// Set by `shutdown()` so the supervisor
     /// task aborts any in-flight backoff sleep or respawn
     /// attempt instead of marching on after the daemon asked it
@@ -347,6 +357,7 @@ impl SubprocessNexoPlugin {
             pending_configure: Mutex::new(None),
             spawn_env: None,
             instance_label: None,
+            manifest_dir: None,
             // Auto-respawn shutdown coordination.
             // Both default-quiescent: the supervisor task only checks
             // them after init() succeeds + the respawn_loop is
@@ -375,6 +386,17 @@ impl SubprocessNexoPlugin {
     /// rationale. Builder API; chain after `new()`.
     pub fn with_spawn_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
         self.spawn_env = Some(env);
+        self
+    }
+
+    /// Supply the manifest's parent directory so relative
+    /// `[plugin.entrypoint] command` paths (e.g. `./bin/foo`) get
+    /// resolved against the manifest's own dir at spawn time
+    /// instead of the daemon's CWD. Mirrors how the discovery
+    /// walker records `DiscoveredPlugin.root_dir`; the factory
+    /// threads that value into here. Builder API.
+    pub fn with_manifest_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.manifest_dir = Some(dir);
         self
     }
 
@@ -1513,13 +1535,28 @@ impl SubprocessNexoPlugin {
         llm: Option<LlmServices>,
     ) -> Result<Inner, anyhow::Error> {
         let entry = &self.cached_manifest.plugin.entrypoint;
-        let command = entry
+        let raw_command = entry
             .command
             .clone()
             .ok_or_else(|| anyhow::anyhow!("manifest has no entrypoint.command — cannot spawn"))?;
-        if command.trim().is_empty() {
+        if raw_command.trim().is_empty() {
             anyhow::bail!("manifest entrypoint.command is empty");
         }
+
+        // Resolve relative `./` and `../` paths against the
+        // manifest's own directory when the factory recorded one.
+        // Operators install plugins as
+        // `<plugins-dir>/<id>-<version>/{nexo-plugin.toml,bin/...}`
+        // and the manifest's `command = "./bin/<id>"` should target
+        // the sibling `bin/` regardless of the daemon's CWD at spawn
+        // time. Absolute paths + bare executables (PATH lookups)
+        // pass through unchanged.
+        let command = match self.manifest_dir.as_ref() {
+            Some(dir) if raw_command.starts_with("./") || raw_command.starts_with("../") => {
+                dir.join(&raw_command).to_string_lossy().into_owned()
+            }
+            _ => raw_command,
+        };
 
         // Defense-in-depth: refuse env keys that overlap with the
         // daemon's own runtime envs. A plugin author who tries to
@@ -3179,20 +3216,25 @@ impl SubprocessNexoPlugin {
 /// invocation produces a new adapter; the daemon's init loop calls
 /// it once per discovered manifest.
 pub fn subprocess_plugin_factory(manifest: PluginManifest) -> PluginFactory {
+    subprocess_plugin_factory_with_manifest_dir(manifest, None)
+}
+
+/// Same as [`subprocess_plugin_factory`] but threads the manifest's
+/// parent directory through so relative `[plugin.entrypoint]
+/// command` paths (`./bin/foo`) resolve against it at spawn time.
+/// The discovery loop wires this with `Some(plugin.root_dir.clone())`
+/// where `plugin: &DiscoveredPlugin`.
+pub fn subprocess_plugin_factory_with_manifest_dir(
+    manifest: PluginManifest,
+    manifest_dir: Option<std::path::PathBuf>,
+) -> PluginFactory {
     Box::new(move |reg_manifest| {
-        // The init loop hands us the manifest it just discovered.
-        // Belt-and-suspenders: if the registry's manifest disagrees
-        // with the one captured at factory registration, prefer the
-        // captured one — that's what the operator vetted at boot.
-        // (Discovery should hand the same manifest back, so this is
-        // defensive against future refactors.)
         let _ = reg_manifest;
-        // Wrap in `Arc<SubprocessNexoPlugin>`
-        // first so we can populate the `weak_self` field used by
-        // `spawn_supervisor_loop` to upgrade back to a typed Arc.
-        // Then coerce to `Arc<dyn NexoPlugin>` for the registry.
-        let typed: Arc<SubprocessNexoPlugin> =
-            Arc::new(SubprocessNexoPlugin::new(manifest.clone()));
+        let mut builder = SubprocessNexoPlugin::new(manifest.clone());
+        if let Some(dir) = manifest_dir.as_ref() {
+            builder = builder.with_manifest_dir(dir.clone());
+        }
+        let typed: Arc<SubprocessNexoPlugin> = Arc::new(builder);
         let _ = typed.weak_self.set(Arc::downgrade(&typed));
         let plugin: Arc<dyn NexoPlugin> = typed;
         Ok(plugin)
@@ -3216,15 +3258,31 @@ pub fn subprocess_plugin_factory_with_env(
     spawn_env: std::collections::HashMap<String, String>,
     instance_label: String,
 ) -> PluginFactory {
+    subprocess_plugin_factory_with_env_and_manifest_dir(
+        manifest,
+        spawn_env,
+        instance_label,
+        None,
+    )
+}
+
+/// `subprocess_plugin_factory_with_env` + manifest-dir threading.
+/// Discovery loop variant for multi-instance plugins that ALSO need
+/// relative entrypoint resolution.
+pub fn subprocess_plugin_factory_with_env_and_manifest_dir(
+    manifest: PluginManifest,
+    spawn_env: std::collections::HashMap<String, String>,
+    instance_label: String,
+    manifest_dir: Option<std::path::PathBuf>,
+) -> PluginFactory {
     Box::new(move |_reg_manifest| {
-        // Same pattern as
-        // `subprocess_plugin_factory`: typed Arc first, populate
-        // `weak_self`, then coerce to `Arc<dyn NexoPlugin>`.
-        let typed: Arc<SubprocessNexoPlugin> = Arc::new(
-            SubprocessNexoPlugin::new(manifest.clone())
-                .with_spawn_env(spawn_env.clone())
-                .with_instance_label(instance_label.clone()),
-        );
+        let mut builder = SubprocessNexoPlugin::new(manifest.clone())
+            .with_spawn_env(spawn_env.clone())
+            .with_instance_label(instance_label.clone());
+        if let Some(dir) = manifest_dir.as_ref() {
+            builder = builder.with_manifest_dir(dir.clone());
+        }
+        let typed: Arc<SubprocessNexoPlugin> = Arc::new(builder);
         let _ = typed.weak_self.set(Arc::downgrade(&typed));
         let plugin: Arc<dyn NexoPlugin> = typed;
         Ok(plugin)

@@ -136,12 +136,17 @@ inbound event back on `plugin.inbound.<id>_echo`:
 
 ```rust
 use nexo_broker::Event;
-use nexo_microapp_sdk::plugin::{BrokerSender, PluginAdapter};
+use nexo_microapp_sdk::plugin::{print_manifest_if_requested, BrokerSender, PluginAdapter};
 
 const MANIFEST: &str = include_str!("../nexo-plugin.toml");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First line — honour the daemon's plugin auto-discovery probe.
+    // When invoked with `--print-manifest`, dump the embedded TOML
+    // to stdout and exit 0 before constructing any runtime state.
+    print_manifest_if_requested(MANIFEST);
+
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .init();
@@ -193,6 +198,23 @@ manifest's `id`, `version`, `name`, and the SDK's
 of valid JSON on stdout, check that you have not added stray
 `println!`s in the handler — every byte on stdout must be a
 JSON-RPC frame. Use `eprintln!` / `tracing::*` for logs.
+
+### Auto-discovery probe
+
+The daemon's discovery walker checks each candidate binary with
+`--print-manifest` (Phase 81.33 Stage 8). Verify your plugin
+answers it correctly:
+
+```bash
+./target/debug/my_plugin --print-manifest
+```
+
+The expected output is the verbatim contents of
+`nexo-plugin.toml` followed by exit 0. The
+`print_manifest_if_requested(MANIFEST)` call in `main()` handles
+this for you — if the smoke test prints anything else (logs,
+empty stdout, a JSON-RPC frame) the helper is missing from your
+entry point.
 
 ## Per-target tarball convention
 

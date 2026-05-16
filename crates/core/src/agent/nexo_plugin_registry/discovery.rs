@@ -239,6 +239,18 @@ pub fn discover(
             // when search_paths differ in mtime.
             let _ = root_index;
         }
+
+        if cfg.auto_detect_binaries {
+            scan_binaries_in_root(
+                &canonical_root,
+                current_nexo_version,
+                allowlist,
+                disabled,
+                &mut first_seen,
+                &mut plugins,
+                &mut report,
+            );
+        }
     }
 
     Arc::new(NexoPluginRegistrySnapshot {
@@ -248,9 +260,264 @@ pub fn discover(
     })
 }
 
+/// Auto-discovery branch: enumerate ELF/PE/Mach-O executables in
+/// `root` whose filename matches `nexo-plugin-<id>` (`.exe` accepted
+/// on Windows), spawn each with `--print-manifest` (2s timeout),
+/// parse the emitted TOML, and register the plugin if validation
+/// passes. Mirrors the manifest-file branch on diagnostics, dedup,
+/// disabled/allowlist filters.
+///
+/// Boot-time security note: this opens the door to executing
+/// untrusted binaries on daemon start. The trust root is whoever
+/// owns `root` (typically the operator's own `~/.cargo/bin`).
+/// Operators can disable via `discovery.auto_detect_binaries: false`.
+fn scan_binaries_in_root(
+    root: &std::path::Path,
+    current_nexo_version: &Version,
+    allowlist: &[String],
+    disabled: &[String],
+    first_seen: &mut HashMap<String, PathBuf>,
+    plugins: &mut Vec<DiscoveredPlugin>,
+    report: &mut PluginDiscoveryReport,
+) {
+    let read_dir = match std::fs::read_dir(root) {
+        Ok(r) => r,
+        // SearchPathMissing already reported by the outer canonicalize call.
+        Err(_) => return,
+    };
+    let mut entries: Vec<_> = read_dir.filter_map(Result::ok).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_plugin_binary_name(file_name) {
+            continue;
+        }
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        if !is_executable(&meta) {
+            continue;
+        }
+
+        report.scanned += 1;
+        let raw_manifest = match spawn_print_manifest(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                report.diagnostics.push(DiscoveryDiagnostic {
+                    level: DiagnosticLevel::Warn,
+                    path: path.clone(),
+                    kind: DiscoveryDiagnosticKind::ManifestParseError {
+                        error: format!("--print-manifest failed: {e}"),
+                    },
+                });
+                continue;
+            }
+        };
+        let mut manifest: PluginManifest = match toml::from_str(&raw_manifest) {
+            Ok(m) => m,
+            Err(e) => {
+                report.diagnostics.push(DiscoveryDiagnostic {
+                    level: DiagnosticLevel::Warn,
+                    path: path.clone(),
+                    kind: DiscoveryDiagnosticKind::ManifestParseError {
+                        error: format!("--print-manifest emitted invalid TOML: {e}"),
+                    },
+                });
+                report.invalid += 1;
+                continue;
+            }
+        };
+        // Override entrypoint with the on-disk path we just probed.
+        // The embedded manifest's `command` is built for the plugin's
+        // own source tree (`./bin/...`) and won't resolve from the
+        // daemon CWD.
+        manifest.plugin.entrypoint.command = Some(path.to_string_lossy().into_owned());
+
+        let mut errs: Vec<ManifestError> = Vec::new();
+        validate::run_all(&manifest, current_nexo_version, &mut errs);
+        if !errs.is_empty() {
+            let strings: Vec<String> = errs.iter().map(|e| format!("{e}")).collect();
+            report.diagnostics.push(DiscoveryDiagnostic {
+                level: DiagnosticLevel::Error,
+                path: path.clone(),
+                kind: DiscoveryDiagnosticKind::ValidationFailed { errors: strings },
+            });
+            report.invalid += 1;
+            continue;
+        }
+
+        let id = manifest.plugin.id.clone();
+        if disabled.iter().any(|d| d == &id) {
+            report.diagnostics.push(DiscoveryDiagnostic {
+                level: DiagnosticLevel::Warn,
+                path: path.clone(),
+                kind: DiscoveryDiagnosticKind::Disabled { id: id.clone() },
+            });
+            report.disabled += 1;
+            continue;
+        }
+        if !allowlist.is_empty() && !allowlist.iter().any(|a| a == &id) {
+            report.diagnostics.push(DiscoveryDiagnostic {
+                level: DiagnosticLevel::Warn,
+                path: path.clone(),
+                kind: DiscoveryDiagnosticKind::AllowlistRejected { id: id.clone() },
+            });
+            continue;
+        }
+        if let Some(kept) = first_seen.get(&id) {
+            report.diagnostics.push(DiscoveryDiagnostic {
+                level: DiagnosticLevel::Warn,
+                path: path.clone(),
+                kind: DiscoveryDiagnosticKind::DuplicateId {
+                    id: id.clone(),
+                    kept_path: kept.clone(),
+                },
+            });
+            report.duplicates += 1;
+            continue;
+        }
+        first_seen.insert(id.clone(), path.clone());
+        plugins.push(DiscoveredPlugin {
+            manifest,
+            root_dir: root.to_path_buf(),
+            manifest_path: path.clone(),
+        });
+        report.loaded_ids.push(id);
+    }
+}
+
+/// `true` when `name` is shaped `nexo-plugin-<id>` (optional `.exe`
+/// suffix on Windows). The `<id>` segment is restricted to
+/// lowercase ASCII alphanumerics + hyphens — same charset enforced
+/// by `nexo_plugin_manifest::validate` on the `plugin.id` field.
+fn is_plugin_binary_name(name: &str) -> bool {
+    const PREFIX: &str = "nexo-plugin-";
+    let Some(rest) = name.strip_prefix(PREFIX) else {
+        return false;
+    };
+    let stem = rest.strip_suffix(".exe").unwrap_or(rest);
+    if stem.is_empty() {
+        return false;
+    }
+    stem.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+#[cfg(unix)]
+fn is_executable(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(windows)]
+fn is_executable(_meta: &std::fs::Metadata) -> bool {
+    // On Windows there's no Unix-style x bit; the `.exe` suffix
+    // gate in `is_plugin_binary_name` already filters non-executables.
+    true
+}
+
+/// Spawn `<bin> --print-manifest`, return stdout. Hard 2s timeout —
+/// a plugin that hangs at startup is excluded from discovery and
+/// surfaced as a diagnostic. Kills on timeout to avoid orphaned
+/// children. Never blocks the daemon boot path indefinitely.
+fn spawn_print_manifest(bin: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new(bin)
+        .arg("--print-manifest")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn: {e}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err(format!("exit status {status}"));
+                }
+                let mut buf = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    out.read_to_string(&mut buf)
+                        .map_err(|e| format!("read stdout: {e}"))?;
+                }
+                return Ok(buf);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("timeout after 2s".into());
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => return Err(format!("wait: {e}")),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod binary_name_tests {
+    use super::is_plugin_binary_name;
+
+    #[test]
+    fn accepts_lowercase_id() {
+        assert!(is_plugin_binary_name("nexo-plugin-email"));
+        assert!(is_plugin_binary_name("nexo-plugin-whatsapp"));
+    }
+
+    #[test]
+    fn accepts_hyphens_and_digits_in_id() {
+        assert!(is_plugin_binary_name("nexo-plugin-my-plugin-v2"));
+        assert!(is_plugin_binary_name("nexo-plugin-sms2"));
+    }
+
+    #[test]
+    fn accepts_windows_exe_suffix() {
+        assert!(is_plugin_binary_name("nexo-plugin-email.exe"));
+    }
+
+    #[test]
+    fn rejects_missing_id_segment() {
+        assert!(!is_plugin_binary_name("nexo-plugin-"));
+        assert!(!is_plugin_binary_name("nexo-plugin-.exe"));
+    }
+
+    #[test]
+    fn rejects_unrelated_names() {
+        assert!(!is_plugin_binary_name("agent"));
+        assert!(!is_plugin_binary_name("nexo-rs"));
+        assert!(!is_plugin_binary_name("plugin-email"));
+    }
+
+    #[test]
+    fn rejects_uppercase_in_id() {
+        // Mirror the validator's lowercase-only rule on plugin.id.
+        assert!(!is_plugin_binary_name("nexo-plugin-Email"));
+    }
+
+    #[test]
+    fn rejects_invalid_chars() {
+        assert!(!is_plugin_binary_name("nexo-plugin-foo_bar"));
+        assert!(!is_plugin_binary_name("nexo-plugin-foo.bar"));
+        assert!(!is_plugin_binary_name("nexo-plugin-../etc/passwd"));
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -480,12 +747,135 @@ mod tests {
 
     #[test]
     fn empty_search_paths_returns_empty_snapshot() {
-        let snap = discover(&PluginDiscoveryConfig::default(), &current_v());
+        // Explicit empty list — the type's `Default` populates
+        // standard paths (`~/.cargo/bin` etc.) which may contain
+        // installed plugins on a developer machine.
+        let snap = discover(
+            &PluginDiscoveryConfig {
+                search_paths: Vec::new(),
+                ..PluginDiscoveryConfig::default()
+            },
+            &current_v(),
+        );
         assert_eq!(snap.plugins.len(), 0);
         assert_eq!(snap.last_report.loaded_ids.len(), 0);
         assert_eq!(snap.last_report.invalid, 0);
         assert_eq!(snap.last_report.disabled, 0);
         assert_eq!(snap.last_report.duplicates, 0);
+    }
+
+    /// Build a shell script at `<root>/<name>` that emits `manifest`
+    /// when invoked with `--print-manifest` and exits non-zero
+    /// otherwise. Returns the script path. Used by the binary
+    /// auto-detection tests below.
+    #[cfg(unix)]
+    fn fake_plugin_binary(root: &std::path::Path, name: &str, manifest: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join(name);
+        let script = format!(
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"--print-manifest\" ]; then\n\
+               cat <<'MANIFEST_EOF'\n{manifest}\nMANIFEST_EOF\n\
+               exit 0\n\
+             fi\n\
+             exit 1\n",
+        );
+        fs::write(&path, script).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_scan_picks_up_cargo_install_style_plugin() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = "[plugin]\n\
+                        id = \"fakeplugin\"\n\
+                        version = \"0.1.0\"\n\
+                        name = \"fakeplugin\"\n\
+                        description = \"fixture\"\n\
+                        min_nexo_version = \">=0.0.1\"\n\
+                        [plugin.entrypoint]\n\
+                        command = \"./does/not/exist\"\n";
+        let bin_path = fake_plugin_binary(root.path(), "nexo-plugin-fakeplugin", manifest);
+
+        let snap = discover(&cfg(vec![root.path().to_path_buf()]), &current_v());
+
+        assert_eq!(snap.plugins.len(), 1, "binary not detected");
+        assert_eq!(snap.last_report.loaded_ids, vec!["fakeplugin".to_string()]);
+        // Entrypoint command must be overridden to the on-disk path.
+        let cmd = snap.plugins[0]
+            .manifest
+            .plugin
+            .entrypoint
+            .command
+            .as_deref()
+            .unwrap();
+        assert_eq!(std::path::Path::new(cmd), bin_path.as_path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_scan_is_disabled_when_toggle_off() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = "[plugin]\n\
+                        id = \"offcheck\"\n\
+                        version = \"0.1.0\"\n\
+                        name = \"offcheck\"\n\
+                        description = \"fixture\"\n\
+                        min_nexo_version = \">=0.0.1\"\n";
+        fake_plugin_binary(root.path(), "nexo-plugin-offcheck", manifest);
+
+        let snap = discover(
+            &PluginDiscoveryConfig {
+                search_paths: vec![root.path().to_path_buf()],
+                auto_detect_binaries: false,
+                ..PluginDiscoveryConfig::default()
+            },
+            &current_v(),
+        );
+
+        assert!(snap.plugins.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_scan_skips_non_matching_executables() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = "ignored\n";
+        // Wrong prefix — should never be probed.
+        fake_plugin_binary(root.path(), "agent", manifest);
+        fake_plugin_binary(root.path(), "nexo-plugin-", manifest);
+        fake_plugin_binary(root.path(), "some-other-tool", manifest);
+
+        let snap = discover(&cfg(vec![root.path().to_path_buf()]), &current_v());
+
+        assert!(snap.plugins.is_empty());
+        assert_eq!(snap.last_report.scanned, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_scan_reports_diagnostic_on_failed_probe() {
+        let root = tempfile::tempdir().unwrap();
+        // Script exits non-zero on `--print-manifest`.
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.path().join("nexo-plugin-brokenprobe");
+        fs::write(&path, "#!/bin/sh\nexit 7\n").unwrap();
+        let mut p = fs::metadata(&path).unwrap().permissions();
+        p.set_mode(0o755);
+        fs::set_permissions(&path, p).unwrap();
+
+        let snap = discover(&cfg(vec![root.path().to_path_buf()]), &current_v());
+
+        assert!(snap.plugins.is_empty());
+        assert!(snap.last_report.diagnostics.iter().any(|d| matches!(
+            &d.kind,
+            DiscoveryDiagnosticKind::ManifestParseError { error }
+                if error.contains("--print-manifest failed")
+        )));
     }
 
     #[test]

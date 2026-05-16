@@ -566,3 +566,64 @@ The user-visible auto-discovery goal is met today: any new
 plugin can declare the 5 manifest sections + ship broker
 handlers, and the daemon auto-discovers every capability with
 zero framework code change.
+
+## Cargo-install ergonomics (2026-05-16)
+
+Stage 8 of auto-discovery: closing the last operator-side
+friction. Before today, `cargo install nexo-plugin-X` deposited
+a binary in `~/.cargo/bin/` but the daemon still required
+the operator to edit `config/plugins/discovery.yaml` and add
+the directory to `search_paths`. Out-of-the-box discovery was
+**empty**.
+
+The fix is two-part:
+
+1. **`PluginDiscoveryConfig::default()` populates standard
+   install paths.** The defaults now expand to
+   `$HOME/.cargo/bin`, `$HOME/.local/share/nexo/plugins`, and
+   `/usr/local/libexec/nexo/plugins`. Missing dirs are tolerated
+   (Warn diagnostic, walker continues) so a clean machine boots
+   without errors. Operator-supplied paths append to the defaults
+   rather than replacing them — supply an explicit empty
+   `search_paths: []` to opt out.
+
+2. **Binary-mode discovery branch.** When
+   `auto_detect_binaries` is `true` (default), the walker also
+   scans each search root's immediate children for executables
+   whose filename matches `nexo-plugin-<id>` (`.exe` accepted on
+   Windows). Each candidate is spawned with `--print-manifest`
+   (2s timeout, killed on overshoot); stdout is parsed as TOML
+   and treated as the plugin's manifest. The discovered binary
+   path is stamped into `manifest.plugin.entrypoint.command`
+   so the subprocess factory can spawn it directly — the
+   manifest's own `./bin/<id>` placeholder is ignored.
+
+The SDK gains
+`nexo_microapp_sdk::plugin::print_manifest_if_requested`.
+Plugin authors call it as the first statement of `main()`; it
+writes the bundled manifest to stdout and exits 0 when the flag
+is present, otherwise returns normally. Two lines on the plugin
+side, zero framework knowledge required.
+
+**Trust boundary.** This opens the door to executing arbitrary
+binaries during daemon boot. The trust root is whoever owns the
+search-path directory (typically the operator's own
+`~/.cargo/bin`). Operators in hardened environments can opt out
+via `discovery.auto_detect_binaries: false` and pin discovery
+back to filesystem-resident `nexo-plugin.toml` manifests only.
+
+**Limitations / deferred work.**
+
+- No probe-result cache. Every boot re-spawns each binary. With
+  N=5 plugins and ~20ms-per-probe this is ~100ms total — under
+  the noise floor of LLM-bound startup, so cache deferred. If
+  cold-boot latency becomes a constraint, key by
+  `(path, mtime, size)` and persist at
+  `<state_root>/plugin-discovery-cache.json`.
+- The `nexo-plugin-<id>` naming convention is the contract.
+  Plugins that ship as `awesome-channel` (no prefix) will never
+  be auto-detected. Documented in the plugin author guide.
+- One probe failure (timeout / non-zero exit) does not block
+  other plugins. The failed candidate is emitted as a
+  `ManifestParseError` diagnostic and the walker continues.
+

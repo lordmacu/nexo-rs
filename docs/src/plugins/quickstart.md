@@ -187,8 +187,28 @@ works too).
 
 ## 4. Smoke-test the handshake
 
-Hand-feed a JSON-RPC `initialize` frame to the binary and verify
-it replies with a well-formed manifest:
+Two probes the daemon performs at boot. Both must pass before
+the plugin shows up in `nexo plugin list`.
+
+### 4.a — `--print-manifest`
+
+The discovery walker (Phase 81.33 Stage 8) invokes each
+`nexo-plugin-*` binary with `--print-manifest` and reads the
+embedded TOML from stdout. Confirm yours obeys:
+
+```bash
+./target/debug/hello_plugin --print-manifest
+```
+
+Expected output: verbatim contents of `nexo-plugin.toml`,
+followed by exit 0. The scaffold wires the
+`print_manifest_if_requested(MANIFEST)` call into the first line
+of `main()`; if you see logs, JSON-RPC frames, or empty stdout,
+the helper is missing.
+
+### 4.b — `initialize` handshake
+
+Hand-feed a JSON-RPC `initialize` frame to verify the wire shape:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
@@ -316,8 +336,28 @@ convention.
 
 ## 9. Install on an operator host
 
-On any host running the daemon (could be the same machine — set
-`<state_root>/plugins/` writable), run:
+Three install routes, depending on how you shipped the plugin:
+
+### 9.a — `cargo install` (zero config)
+
+Recommended for crates.io-published plugins. The daemon's
+discovery defaults already cover `$HOME/.cargo/bin`:
+
+```bash
+cargo install nexo-plugin-hello_plugin
+nexo plugin list
+```
+
+The discovery walker invokes the binary with `--print-manifest`
+on next daemon boot (or next hot-reload tick under Phase 81.10),
+extracts the embedded TOML, and registers the plugin. No
+operator YAML edit. Authoring detail:
+[Auto-discovery quickstart](./rust-sdk.md#auto-discovery-probe).
+
+### 9.b — `nexo plugin install` (GitHub releases)
+
+When you ship tarballs to GitHub releases instead of (or in
+addition to) crates.io:
 
 ```bash
 nexo plugin install alice/hello_plugin@v0.1.0
@@ -335,12 +375,24 @@ The installer (Phase 31.1.c):
    `<state_root>/plugins/hello_plugin-0.1.0/{nexo-plugin.toml, bin/hello_plugin, .nexo-install.json}`.
 6. Records the install in the per-host install ledger.
 
-If your daemon already has
-`plugins.discovery.search_paths` pointing at the
-`<state_root>/plugins/` directory (the standard layout in the
-shipped scaffold), the next discovery walk picks the new plugin
-up — no restart required when Phase 81.10 hot-reload is on. On
-a stock daemon, restart it to load the plugin.
+The daemon's
+`plugins.discovery.search_paths` defaults include
+`$HOME/.local/share/nexo/plugins` and
+`/usr/local/libexec/nexo/plugins`. Move (or symlink) the
+extracted directory under one of those to skip the YAML edit,
+or point a custom `search_paths` entry at
+`<state_root>/plugins/`.
+
+### 9.c — Drop-in (manual)
+
+Copy the binary into any default search path:
+
+```bash
+cp ./target/release/hello_plugin ~/.cargo/bin/nexo-plugin-hello_plugin
+chmod +x ~/.cargo/bin/nexo-plugin-hello_plugin
+```
+
+Re-discovery happens on next daemon boot (or hot-reload).
 
 ## 10. Verify
 

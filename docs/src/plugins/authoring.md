@@ -91,10 +91,11 @@ because the toolchain ships with cargo. Adapt the
 `nexo plugin new --lang <other>` step for Python / TypeScript
 / PHP — the rest is identical.
 
-For the full zero-to-installed flow (scaffold → push to GitHub →
-release CI → operator-side `nexo plugin install`), see the
-linear [Plugin quickstart (10 min)](./quickstart.md). This
-section is the abridged inner-loop version.
+For the full zero-to-installed flow (scaffold → publish to
+crates.io → operator-side `cargo install nexo-plugin-X` →
+daemon auto-discovery), see the linear
+[Plugin quickstart (10 min)](./quickstart.md). This section is
+the abridged inner-loop version.
 
 ```bash
 # 1. Scaffold from the bundled template (Phase 31.6).

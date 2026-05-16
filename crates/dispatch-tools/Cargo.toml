@@ -24,7 +24,7 @@ gethostname         = "1"
 humantime           = { workspace = true }
 humantime-serde     = { workspace = true }
 nexo-agent-registry = { version = "0.1.7", path = "../agent-registry" }
-nexo-config         = { version = "0.1.8", path = "../config" }
+nexo-config         = { version = "0.1.9", path = "../config" }
 nexo-driver-claude  = { version = "0.1.7", path = "../driver-claude" }
 nexo-driver-loop    = { version = "0.1.7", path = "../driver-loop" }
 nexo-driver-permission = { version = "0.1.7", path = "../driver-permission" }

@@ -28,7 +28,7 @@ arc-swap   = { workspace = true }
 secrecy    = "0.8"
 toml       = "0.8"
 base64     = { workspace = true }
-nexo-config = { version = "0.1.8", path = "../config" }
+nexo-config = { version = "0.1.9", path = "../config" }
 nexo-resilience = { version = "0.1.3", path = "../resilience" }
 
 [dev-dependencies]

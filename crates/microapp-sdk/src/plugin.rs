@@ -63,6 +63,37 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// If the process was invoked with `--print-manifest`, write the
+/// embedded plugin manifest TOML to stdout and exit 0 immediately.
+///
+/// The nexo daemon's plugin discovery walker spawns each candidate
+/// `nexo-plugin-*` binary in its `search_paths` with this flag to
+/// extract the manifest without going through the full subprocess
+/// wire (no `initialize` handshake, no broker connection, no tokio
+/// runtime requirement).
+///
+/// Call this as the first statement of `main()`, before constructing
+/// any runtime or [`PluginAdapter`]. When the flag is absent the
+/// function returns normally and the plugin proceeds to its usual
+/// startup.
+///
+/// ```no_run
+/// # const MANIFEST: &str = "";
+/// fn main() {
+///     nexo_microapp_sdk::plugin::print_manifest_if_requested(MANIFEST);
+///     // ... normal plugin startup (tokio runtime, PluginAdapter, ...)
+/// }
+/// ```
+pub fn print_manifest_if_requested(manifest_toml: &str) {
+    if std::env::args().skip(1).any(|a| a == "--print-manifest") {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        let _ = out.write_all(manifest_toml.as_bytes());
+        let _ = out.flush();
+        std::process::exit(0);
+    }
+}
+
 use dashmap::DashMap;
 use nexo_broker::{Event, StdioBridgeBroker};
 use nexo_llm::types::ChatMessage;

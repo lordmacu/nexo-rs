@@ -20,7 +20,7 @@ use crate::agent::plugin_host::{NexoPlugin, PluginConfigureError, PluginInitCont
 use crate::agent::scoped_tool_registry::{NamespaceEnforcement, NamespaceViolation};
 
 use super::factory::{FactoryInstantiateError, PluginFactoryRegistry};
-use super::subprocess::subprocess_plugin_factory;
+use super::subprocess::subprocess_plugin_factory_with_manifest_dir;
 use super::NexoPluginRegistrySnapshot;
 
 #[derive(Clone, Debug, Serialize)]
@@ -626,7 +626,13 @@ where
         // entrypoint.command keep recording NoHandle.
         if !factory_registry.is_registered(&id) {
             if plugin.manifest.plugin.entrypoint.is_subprocess() {
-                let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
+                // Pass the manifest's discovered root_dir so relative
+                // `./bin/<id>` entrypoint commands resolve against
+                // the manifest's own dir instead of the daemon CWD.
+                let auto_factory = subprocess_plugin_factory_with_manifest_dir(
+                    plugin.manifest.clone(),
+                    Some(plugin.root_dir.clone()),
+                );
                 match auto_factory(&plugin.manifest) {
                     Ok(handle) => {
                         // Phase 93.2 — configure(value) before init.
@@ -1035,7 +1041,7 @@ mod tests {
             command: Some("/bin/true".to_string()),
             ..Default::default()
         };
-        let factory = subprocess_plugin_factory(manifest.clone());
+        let factory = subprocess_plugin_factory_with_manifest_dir(manifest.clone(), None);
         match factory(&manifest) {
             Ok(plugin) => assert_eq!(plugin.manifest().plugin.id, "auto_subproc"),
             Err(e) => panic!("auto-subprocess factory must build handle, got {e}"),
