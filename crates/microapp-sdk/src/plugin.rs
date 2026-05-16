@@ -729,6 +729,15 @@ pub struct ToolInvocation {
     /// dispatcher is operator-driven (admin RPC, debug CLI).
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Phase 95 — per-binding policy slice resolved by the host's
+    /// `EffectivePolicy::for_tool(&self.tool_name)` and stamped on
+    /// the JSON-RPC envelope by `RemoteToolHandler`. Present when
+    /// the tool carries a binding-level allowlist / defaults
+    /// contract (e.g. `web_search`); absent otherwise. Plugins
+    /// MAY ignore. Shape is tool-specific JSON; the SDK does not
+    /// validate the inner structure.
+    #[serde(default)]
+    pub policy: Option<serde_json::Value>,
 }
 
 /// Failure modes the child can surface from a `tool.invoke`
@@ -1825,6 +1834,33 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(inv.tool_name, "t");
         assert_eq!(inv.args, serde_json::Value::Null);
         assert!(inv.agent_id.is_none());
+        assert!(inv.policy.is_none());
+    }
+
+    #[test]
+    fn tool_invocation_policy_field_parses_when_present() {
+        let raw = r#"{
+            "plugin_id": "web_search",
+            "tool_name": "web_search",
+            "args": { "query": "rust async" },
+            "agent_id": "ana",
+            "policy": { "enabled": true, "default_count": 5, "provider": "brave" }
+        }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        let policy = inv.policy.expect("policy slice should parse");
+        assert_eq!(policy["enabled"], serde_json::json!(true));
+        assert_eq!(policy["default_count"], serde_json::json!(5));
+        assert_eq!(policy["provider"], serde_json::json!("brave"));
+    }
+
+    #[test]
+    fn tool_invocation_policy_field_defaults_to_none_when_absent() {
+        let raw = r#"{ "plugin_id": "p", "tool_name": "t" }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        assert!(
+            inv.policy.is_none(),
+            "absent `policy` field must deserialise to None"
+        );
     }
 
     #[test]
@@ -1881,6 +1917,7 @@ min_nexo_version = ">=0.1.0"
             tool_name: "echo".into(),
             args: serde_json::json!({"hello": "world"}),
             agent_id: None,
+            policy: None,
         };
         let out = ToolHandler::call(&handler, inv).await.unwrap();
         assert_eq!(out, serde_json::json!({"hello": "world"}));
@@ -1896,6 +1933,7 @@ min_nexo_version = ">=0.1.0"
             tool_name: "x".into(),
             args: serde_json::Value::Null,
             agent_id: None,
+            policy: None,
         };
         let err = ToolHandler::call(&handler, inv).await.unwrap_err();
         assert_eq!(err.code(), -33405);
