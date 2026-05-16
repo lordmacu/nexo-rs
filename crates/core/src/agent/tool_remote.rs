@@ -128,16 +128,29 @@ impl RemoteToolHandler {
 impl ToolHandler for RemoteToolHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        // Phase 95 — stamp the per-binding policy slice on the
+        // envelope when the tool carries a binding-level contract.
+        // Agnostic across plugins: `EffectivePolicy::for_tool` is
+        // the single dispatch point.
+        let policy = ctx.effective_policy().for_tool(&self.tool_name);
+        let mut params = serde_json::json!({
+            "plugin_id": &self.plugin_id,
+            "tool_name": &self.tool_name,
+            "args": args,
+            "agent_id": ctx.agent_id,
+        });
+        if let Some(p) = policy {
+            // SAFETY: params was just built as a Mapping above.
+            params
+                .as_object_mut()
+                .expect("params is a json object")
+                .insert("policy".to_string(), p);
+        }
         let frame = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": "tool.invoke",
-            "params": {
-                "plugin_id": &self.plugin_id,
-                "tool_name": &self.tool_name,
-                "args": args,
-                "agent_id": ctx.agent_id,
-            },
+            "params": params,
         });
 
         let (tx, rx) = oneshot::channel();
