@@ -705,14 +705,11 @@ struct RuntimeHealth {
     /// Health server exposes:
     ///   `/whatsapp/pair{,/qr,/status}` — first instance (back-compat)
     ///   `/whatsapp/<instance>/pair{,/qr,/status}` — targeted
-    ///   `/whatsapp/instances` — JSON list of available instances
-    ///
-    /// Phase 93.12.c.2 — gated. Without `plugin-whatsapp` the
-    /// `SharedPairingState` type isn't linked, so the field is
-    /// absent; `/whatsapp/*` routes return 404.
-    #[cfg(feature = "plugin-whatsapp")]
-    wa_pairing:
-        std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
+    // Phase 81.20.x Bucket C2 Stage 2 — `wa_pairing` field
+    // removed. The subprocess owns its own pairing state via
+    // `WhatsappPlugin::pairing`; daemon no longer mirrors it
+    // through the broker. `/whatsapp/*` HTTP routes are served
+    // by the subprocess via `PluginHttpRouter` Stage 2 forward.
     // Phase 81.20.x F2.2 — `email_plugin` handle removed.
     // `/email/health` + `/metrics` email rows now live in the
     // subprocess plugin (Phase 81.33.b.real Stages 2+5 broker
@@ -1101,127 +1098,15 @@ fn seed_telegram_subprocess_env_for(
     env
 }
 
-/// Daemon-side broker subscriber that watches
-/// `plugin.inbound.whatsapp.<inst>` for connection state events
-/// (Connected / Disconnected / Reconnecting / Qr / CredentialsExpired)
-/// and mirrors them into the daemon's `wa_pairing` map. With the
-/// in-tree plugin gone after the subprocess flip, the pairing
-/// `Arc` no longer travels through shared memory; this subscriber
-/// closes the loop so the admin RPC `/whatsapp/<inst>/pair*`
-/// endpoints keep rendering accurate state.
-///
-/// `pairings` is a `BTreeMap<String, SharedPairingState>` keyed by
-/// instance label. Events arriving for an unknown instance are
-/// silently dropped (operator deleted the cfg entry between events
-/// and this task draining them).
-#[cfg(feature = "plugin-whatsapp")]
-#[allow(dead_code)] // Wired in the whatsapp-loop flip below.
-fn spawn_whatsapp_pairing_state_subscriber(
-    broker: nexo_broker::AnyBroker,
-    pairings: std::sync::Arc<
-        std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
-    >,
-    shutdown: tokio_util::sync::CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    use nexo_broker::BrokerHandle;
-    tokio::spawn(async move {
-        let mut sub = match broker.subscribe("plugin.inbound.whatsapp.>").await {
-            Ok(s) => s,
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "whatsapp pairing state subscriber: broker subscribe failed; \
-                     pairing UI will show stale state until daemon restart",
-                );
-                return;
-            }
-        };
-        loop {
-            tokio::select! {
-                _ = shutdown.cancelled() => {
-                    tracing::debug!("whatsapp pairing state subscriber: shutdown signalled");
-                    break;
-                }
-                next = sub.next() => {
-                    let Some(msg) = next else {
-                        tracing::debug!("whatsapp pairing state subscriber: stream ended");
-                        break;
-                    };
-                    let topic = msg.topic.clone();
-                    let instance = topic
-                        .strip_prefix("plugin.inbound.whatsapp.")
-                        .unwrap_or("default");
-                    let Some(state) = pairings.get(instance) else {
-                        // Unknown instance — operator may have removed
-                        // the cfg entry. Drop silently; trace at debug
-                        // level so the operator can opt in via
-                        // RUST_LOG.
-                        tracing::debug!(
-                            instance = %instance,
-                            "whatsapp pairing state event for unknown instance; dropped",
-                        );
-                        continue;
-                    };
-                    let kind = msg
-                        .payload
-                        .get("kind")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    match kind {
-                        "connected" => {
-                            state.set_connected(true);
-                            let our_jid = msg
-                                .payload
-                                .get("our_jid")
-                                .and_then(|v| v.as_str())
-                                .map(String::from);
-                            state.set_our_jid(our_jid).await;
-                            state.clear_qr().await;
-                        }
-                        "disconnected" => {
-                            state.set_connected(false);
-                        }
-                        "reconnecting" => {
-                            let attempt = msg
-                                .payload
-                                .get("attempt")
-                                .and_then(|v| v.as_u64())
-                                .map(|v| v as u32);
-                            state.set_reconnect_attempt(attempt).await;
-                        }
-                        "qr" => {
-                            let ascii = msg
-                                .payload
-                                .get("ascii")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let png_b64 = msg
-                                .payload
-                                .get("png_base64")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let expires_at = msg
-                                .payload
-                                .get("expires_at")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
-                            let snap = nexo_plugin_whatsapp::pairing::QrSnapshot {
-                                ascii,
-                                png_b64,
-                                expires_at,
-                                captured_at: chrono::Utc::now().timestamp(),
-                            };
-                            state.set_qr(snap).await;
-                        }
-                        _ => {} // Message / MediaReceived / BridgeTimeout etc — not pairing state.
-                    }
-                }
-            }
-        }
-    })
-}
+// Phase 81.20.x Bucket C2 Stage 2 —
+// `spawn_whatsapp_pairing_state_subscriber` removed. Daemon no
+// longer mirrors `plugin.inbound.whatsapp.<inst>` events into a
+// typed `SharedPairingState` map. The subprocess owns its own
+// state via `WhatsappPlugin::pairing`; future plugin v0.4.4 will
+// serve the `/whatsapp/<inst>/pair*` routes from there via the
+// PluginHttpRouter (Stage 2) forward. The daemon-side mirror
+// existed only to back the hardcoded `/whatsapp/*` HTTP block,
+// which is also gone now.
 
 /// Daemon-side broker subscriber that watches
 /// `plugin.lifecycle.whatsapp.<inst>.peer_typing` events from
@@ -3323,19 +3208,16 @@ async fn main() -> Result<()> {
     // broker bridge, so subprocess instances don't surface
     // `AgentEventKind::PeerTyping` events on the firehose until
     // a follow-up ships the RPC callback.
-    // Phase 93.12.c.2 — whatsapp orchestration state.
-    // With `plugin-whatsapp` off these variables don't exist
-    // (the plugin crate isn't linked); the RuntimeHealth struct,
-    // subscriber spawn, HTTP route handler, and tunnel orchestration
-    // are all gated symmetrically so the daemon binary still builds.
-    #[cfg(feature = "plugin-whatsapp")]
-    let mut wa_pairing: std::collections::BTreeMap<
-        String,
-        nexo_plugin_whatsapp::pairing::SharedPairingState,
-    > = std::collections::BTreeMap::new();
-    // Wave 7 — wa_tunnel_cfg stays opaque; the first declared
-    // tenant's `public_tunnel` block is reconstructed from YAML
-    // when needed by downstream tunnel-autoboot code.
+    // Phase 81.20.x Bucket C2 Stage 2 — whatsapp pairing state
+    // map removed. Subprocess owns its own `SharedPairingState`
+    // via the plugin's `WhatsappPlugin::pairing` field; the
+    // daemon no longer mirrors it. Only `wa_tunnel_cfg` is
+    // still extracted from the first declared tenant's YAML —
+    // the auto-tunnel block downstream needs the opaque
+    // `public_tunnel` Value for the cloudflare-quick-tunnel
+    // spawn. That's the last whatsapp-specific orchestration
+    // site daemon-side (deferred to a `[plugin.public_tunnel]`
+    // manifest section follow-up).
     #[cfg(feature = "plugin-whatsapp")]
     let mut wa_tunnel_cfg: Option<serde_yaml::Value> = None;
     #[cfg(feature = "plugin-whatsapp")]
@@ -3356,8 +3238,6 @@ async fn main() -> Result<()> {
         if idx == 0 {
             wa_tunnel_cfg = wa_cfg.get("public_tunnel").cloned();
         }
-        let pairing = nexo_plugin_whatsapp::pairing::PairingState::new();
-        wa_pairing.insert(instance_label.clone(), pairing);
         tracing::info!(
             instance = %instance_label,
             "registered whatsapp pairing slot (Phase 81.18.b.2 subprocess flip)",
@@ -3677,25 +3557,15 @@ async fn main() -> Result<()> {
     // subscriber alongside the subprocess plugins.
     //
     // Phase 93.12.c.2 — gated. Without `plugin-whatsapp` the
-    // daemon ships without the typed `SharedPairingState` so this
-    // subscriber (and the typing-presence bridge) can't exist.
-    // The shared shutdown token is still declared so downstream
-    // shutdown logic compiles uniformly.
-    #[cfg(feature = "plugin-whatsapp")]
-    let wa_pairing_subscriber_shutdown = tokio_util::sync::CancellationToken::new();
-    #[cfg(feature = "plugin-whatsapp")]
-    let _wa_pairing_subscriber_handle = {
-        let wa_pairing_arc = std::sync::Arc::new(wa_pairing.clone());
-        if !wa_pairing.is_empty() {
-            Some(spawn_whatsapp_pairing_state_subscriber(
-                broker.clone(),
-                wa_pairing_arc,
-                wa_pairing_subscriber_shutdown.clone(),
-            ))
-        } else {
-            None
-        }
-    };
+    // Phase 81.20.x Bucket C2 Stage 2 —
+    // `spawn_whatsapp_pairing_state_subscriber` removed. The
+    // daemon no longer mirrors `plugin.inbound.whatsapp.<inst>`
+    // QR/connect/disconnect events into a typed
+    // `SharedPairingState` map; the subprocess owns its own
+    // pairing state and serves it via the plugin v0.4.4 HTTP
+    // routes (follow-up). The daemon-side mirror existed only
+    // to back the hardcoded `/whatsapp/*` HTTP block, which is
+    // also gone now.
 
     // Typing presence broker bridge. Subprocess
     // whatsapp publishes `plugin.lifecycle.whatsapp.<inst>.peer_typing`
@@ -3706,17 +3576,26 @@ async fn main() -> Result<()> {
     // whatsapp instances are configured OR the bootstrap
     // emitter isn't wired yet (test boots without the SSE
     // firehose).
+    // Phase 81.20.x Bucket C2 Stage 2 — typing-presence
+    // subscriber still wires unconditionally when whatsapp is
+    // configured + the emitter is ready. Previously gated on
+    // `!wa_pairing.is_empty()`; we now check the YAML directly
+    // since the daemon-side state map is gone.
     #[cfg(feature = "plugin-whatsapp")]
-    let _wa_typing_subscriber_handle = match (
-        wa_pairing.is_empty(),
-        admin_bootstrap.as_ref().map(|bs| bs.event_emitter()),
-    ) {
-        (false, Some(emitter)) => Some(spawn_whatsapp_typing_presence_subscriber(
-            broker.clone(),
-            emitter,
-            wa_pairing_subscriber_shutdown.clone(),
-        )),
-        _ => None,
+    let _wa_typing_subscriber_handle = {
+        let whatsapp_configured = !opaque_plugin_entries(&cfg.plugins, "whatsapp").is_empty();
+        let typing_shutdown = tokio_util::sync::CancellationToken::new();
+        match (
+            whatsapp_configured,
+            admin_bootstrap.as_ref().map(|bs| bs.event_emitter()),
+        ) {
+            (true, Some(emitter)) => Some(spawn_whatsapp_typing_presence_subscriber(
+                broker.clone(),
+                emitter,
+                typing_shutdown,
+            )),
+            _ => None,
+        }
     };
 
     let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
@@ -3889,8 +3768,6 @@ async fn main() -> Result<()> {
     let health = RuntimeHealth {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
-        #[cfg(feature = "plugin-whatsapp")]
-        wa_pairing: wa_pairing.clone(),
         pairing_handshake: Arc::clone(&pairing_handshake_slot),
         tunnel_registry: Arc::clone(&tunnel_registry),
         http_router: Arc::clone(&http_router),
@@ -3899,115 +3776,24 @@ async fn main() -> Result<()> {
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
 
-    // Auto-open a Cloudflare quick tunnel to expose
-    // `/whatsapp/pair` publicly. Tunnels the first account's pairing
-    // page; multi-account operators should reach their own instance
-    // via `/whatsapp/<instance>/pair` on the tunnelled URL.
-    //
-    // Phase 93.12.c.2 — gated. Without `plugin-whatsapp` neither
-    // `wa_pairing` nor `wa_tunnel_cfg` exist; the auto-tunnel block
-    // is absent and operators wanting a tunnel for another channel
-    // must wire it through `nexo admin --tunnel` (Phase 92).
+    // Phase 81.20.x Bucket C2 Stage 2 — whatsapp auto-tunnel
+    // block removed. The block exposed the daemon's hardcoded
+    // `/whatsapp/pair` HTML page via a Cloudflare quick tunnel +
+    // polled the daemon-mirrored `SharedPairingState` to close
+    // the tunnel post-pairing. Both the HTML page and the
+    // mirrored state are gone now (block above + subscriber
+    // drop), so this orchestration was dead UX. Operators
+    // wanting a public pairing URL now use either:
+    //   - admin RPC `pairing/start` + the admin-ui plugin's
+    //     pairing wizard (uses SSE for live QR, no tunnel
+    //     needed); or
+    //   - `nexo admin --tunnel` (Phase 92 standalone CLI
+    //     wraps a Cloudflare quick tunnel).
+    // Generic `[plugin.public_tunnel]` manifest section that
+    // any pairing-capable plugin could declare is the proper
+    // long-term solution (FOLLOWUPS).
     #[cfg(feature = "plugin-whatsapp")]
-    let wa_first_pairing = wa_pairing.values().next().cloned();
-    #[cfg(feature = "plugin-whatsapp")]
-    if let (Some(tcfg), Some(pairing)) = (wa_tunnel_cfg.as_ref(), wa_first_pairing) {
-        // Wave 7 — read opaque YAML fields.
-        let enabled = tcfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-        if enabled {
-            let only_until_paired = tcfg
-                .get("only_until_paired")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let tunnel_registry_c = Arc::clone(&tunnel_registry);
-            tokio::spawn(async move {
-                // Wait for the local HTTP server to actually bind before
-                // the tunnel registers — otherwise the tunnel comes up
-                // first and Cloudflare returns 502 "error opening stream
-                // to origin" for every request
-                // until the race resolves on its own.
-                for attempt in 0..60u32 {
-                    if reqwest::Client::new()
-                        .get("http://127.0.0.1:8080/health")
-                        .timeout(std::time::Duration::from_millis(500))
-                        .send()
-                        .await
-                        .ok()
-                        .filter(|r| r.status().is_success())
-                        .is_some()
-                    {
-                        tracing::debug!(attempt, "local health server ready, starting tunnel");
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                }
-                match nexo_tunnel::TunnelManager::new(8080).start().await {
-                    Ok(handle) => {
-                        // Phase 92.followup.b — register the live
-                        // handle so the `/metrics` aggregator can
-                        // snapshot per-tunnel supervisor counters.
-                        let handle = Arc::new(handle);
-                        tunnel_registry_c.write().await.push(Arc::clone(&handle));
-                        // Big, hard-to-miss banner on stderr so
-                        // operators see the URL even in noisy logs.
-                        let url = handle.url.clone();
-                        // FOLLOWUPS PR-3 — publish URL to the sidecar
-                        // file so a separately-launched
-                        // `nexo pair start` can pick it up without
-                        // an env-var hand-off or a daemon RPC.
-                        if let Err(e) = nexo_tunnel::write_url_file(&url) {
-                            tracing::warn!(error = %e, "failed to write tunnel URL sidecar");
-                        }
-                        let pair_url = format!("{url}/whatsapp/pair");
-                        eprintln!();
-                        eprintln!("╭───────────────────────────────────────────────────────────╮");
-                        eprintln!("│  WhatsApp pairing URL (Cloudflare Tunnel)                │");
-                        eprintln!("│                                                           │");
-                        eprintln!("│  {:<57} │", pair_url);
-                        eprintln!("│                                                           │");
-                        eprintln!("│  Abre esa URL desde el teléfono donde tengas WhatsApp.   │");
-                        eprintln!("╰───────────────────────────────────────────────────────────╯");
-                        eprintln!();
-                        tracing::info!(%url, "Cloudflare quick tunnel up");
-
-                        if only_until_paired {
-                            // Poll pairing state; once connected, close
-                            // the tunnel so the public URL doesn't
-                            // outlive its need.
-                            loop {
-                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                                let s = pairing.status().await;
-                                if s.state == "connected" {
-                                    tracing::info!("pairing complete — closing public tunnel");
-                                    handle.shutdown().await;
-                                    // Phase 92.followup.b — drop the
-                                    // registry entry so `/metrics`
-                                    // stops emitting stale per-tunnel
-                                    // counters for the shut handle.
-                                    tunnel_registry_c
-                                        .write()
-                                        .await
-                                        .retain(|h| !Arc::ptr_eq(h, &handle));
-                                    return;
-                                }
-                            }
-                        } else {
-                            // Keep the handle alive for the rest of
-                            // the process lifetime. The registry holds
-                            // the Arc so dropping the local binding
-                            // here is the right shape — Drop on the
-                            // last Arc still ticks the supervisor's
-                            // teardown.
-                            drop(handle);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Cloudflare quick tunnel failed to start — pairing will need LAN or port-forward");
-                    }
-                }
-            });
-        }
-    }
+    let _ = wa_tunnel_cfg;
 
     // Gmail poller — background task that polls Gmail on a fixed
     // interval and routes matching emails to channel plugins. No LLM
@@ -15298,74 +15084,18 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
             }
         }
     }
-    // Try to match `/whatsapp/...` routes first. Routing rules live in
-    // `nexo_plugin_whatsapp::pairing::dispatch_route` so they're
-    // unit-testable without a TCP listener.
-    //
-    // Phase 93.12.c.2 — gated behind `plugin-whatsapp`. Without the
-    // feature the daemon has no `wa_pairing` map (RuntimeHealth field
-    // is itself gated), so `/whatsapp/*` returns 404 from the
-    // bottom-of-fn fallthrough.
-    #[cfg(feature = "plugin-whatsapp")]
-    if let Some(rest) = path.strip_prefix("/whatsapp/") {
-        use nexo_plugin_whatsapp::pairing::{dispatch_route, WhatsappRoute};
-        match dispatch_route(rest, &health.wa_pairing) {
-            Some(WhatsappRoute::Html) => {
-                write_http_response(
-                    &mut stream,
-                    200,
-                    "text/html; charset=utf-8",
-                    nexo_plugin_whatsapp::pairing::PAIR_PAGE_HTML,
-                )
-                .await?;
-                return Ok(());
-            }
-            Some(WhatsappRoute::Qr(pairing)) => {
-                let body = match pairing.get_qr().await {
-                    Some(qr) => serde_json::to_string(&qr).unwrap_or_else(|_| "{}".into()),
-                    None => r#"{"state":"no_qr"}"#.to_string(),
-                };
-                write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body)
-                    .await?;
-                return Ok(());
-            }
-            Some(WhatsappRoute::Status(pairing)) => {
-                let body =
-                    serde_json::to_string(&pairing.status().await).unwrap_or_else(|_| "{}".into());
-                write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body)
-                    .await?;
-                return Ok(());
-            }
-            Some(WhatsappRoute::Json(s)) => {
-                write_http_response(&mut stream, 200, "application/json; charset=utf-8", &s)
-                    .await?;
-                return Ok(());
-            }
-            Some(WhatsappRoute::Disabled) => {
-                write_http_response(
-                    &mut stream,
-                    200,
-                    "application/json; charset=utf-8",
-                    r#"{"state":"disabled"}"#,
-                )
-                .await?;
-                return Ok(());
-            }
-            Some(WhatsappRoute::NotFound) => {
-                write_http_response(
-                    &mut stream,
-                    404,
-                    "application/json; charset=utf-8",
-                    r#"{"error":"instance not found"}"#,
-                )
-                .await?;
-                return Ok(());
-            }
-            None => {
-                // Fall through to the 404 at the bottom.
-            }
-        }
-    }
+    // Phase 81.20.x Bucket C2 Stage 2 — `/whatsapp/*` hardcoded
+    // block removed. `PluginHttpRouter` (Stage 2, matched at the
+    // top of this fn) forwards `/whatsapp/*` to the whatsapp
+    // subprocess via broker. The subprocess's
+    // `auto_discovery::http_request` handler decides what to
+    // serve (currently `/whatsapp/health` + `/whatsapp/status`;
+    // pair/QR/HTML routes land in plugin v0.4.4 follow-up).
+    // Operators using the daemon's legacy `/whatsapp/pair` HTML
+    // flow should migrate to the admin-ui plugin's pairing
+    // wizard (driven by admin RPC `pairing/start` —
+    // `WhatsappPairingTrigger` is unaffected).
+
 
     match path.as_str() {
         "/health" => {
