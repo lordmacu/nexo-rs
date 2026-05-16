@@ -1299,58 +1299,52 @@ fn seed_whatsapp_subprocess_env_for(
     env
 }
 
-/// Daemon-side helper that seeds the env dict the
-/// `nexo-plugin-email` subprocess reads on boot. Mirror of
-/// `seed_telegram_subprocess_env_for` but adapted to email's
-/// single-process / multi-account-internal model: one env dict
-/// covers every account in `cfg.accounts`, no per-account spawn.
+/// Daemon-side env seeder for the `nexo-plugin-email` subprocess.
+/// Wave 2 form — takes a single tenant config and stamps the env
+/// dict for one subprocess. Mirror of `seed_telegram_subprocess_env_for`.
 ///
-/// `secrets_dir`, `data_dir`, `config_path`, and `google_auth_path`
-/// are absolute paths. `google_auth_path` may be empty — the
-/// subprocess interprets that as "no Gmail OAuth accounts" and
-/// boots with `GoogleCredentialStore::empty()`.
+/// The actual cfg slice (tenant slice of `Vec<EmailPluginConfig>`) is
+/// delivered to the subprocess via `plugin.configure` JSON-RPC
+/// (Phase 93.4.c), not via env vars. This helper only stamps:
 ///
-/// Dead in production after the email
-/// plugin was extracted out-of-tree (the standalone plugin
-/// manages its own env). Kept under `#[cfg(test)]` so the
-/// existing happy-path / google-omitted regression tests still
-/// document the env contract for the published `nexo-plugin-email`
-/// crate. Removing both function + tests is a separate cleanup.
-#[cfg(test)]
+///   * `NEXO_BROKER_KIND` + `NEXO_BROKER_URL` — broker transport.
+///   * `NEXO_PLUGIN_EMAIL_INSTANCE` — tenant label so subprocess
+///     logs / metrics / inbound topics include the tenant.
+///   * `NEXO_PLUGIN_EMAIL_DATA_DIR` — per-tenant data root
+///     (`<NEXO_DATA_DIR>/email/<tenant>/`). The plugin's boot loop
+///     also resolves this on its side; stamping here keeps daemon
+///     + subprocess agreed on the path.
+///   * `NEXO_PLUGIN_EMAIL_SECRETS_DIR` — per-tenant secrets root.
+#[allow(dead_code)] // W2-4 wires this into register_instance_subprocess_factories.
 fn seed_email_subprocess_env_for(
+    cfg: &nexo_config::EmailPluginConfig,
+    broker_kind: &str,
     broker_url: &str,
-    config_path: &std::path::Path,
-    secrets_dir: &std::path::Path,
-    data_dir: &std::path::Path,
-    google_auth_path: Option<&std::path::Path>,
 ) -> std::collections::HashMap<String, String> {
     let mut env: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    // Whitelist of inherited daemon envs the subprocess legitimately
-    // needs. Same set as telegram / whatsapp.
     for key in ["PATH", "HOME", "RUST_LOG"] {
         if let Ok(val) = std::env::var(key) {
             env.insert(key.to_string(), val);
         }
     }
-    env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
-    env.insert(
-        "NEXO_PLUGIN_EMAIL_CONFIG_PATH".into(),
-        config_path.display().to_string(),
-    );
-    env.insert(
-        "NEXO_PLUGIN_EMAIL_SECRETS_DIR".into(),
-        secrets_dir.display().to_string(),
-    );
+    env.insert("NEXO_BROKER_KIND".into(), broker_kind.to_string());
+    if broker_kind != "stdio_bridge" {
+        env.insert("NEXO_BROKER_URL".into(), broker_url.to_string());
+    }
+    let tenant = cfg.instance.clone().unwrap_or_else(|| "default".into());
+    env.insert("NEXO_PLUGIN_EMAIL_INSTANCE".into(), tenant.clone());
+
+    let data_root = std::env::var("NEXO_DATA_DIR").unwrap_or_else(|_| "./data".into());
     env.insert(
         "NEXO_PLUGIN_EMAIL_DATA_DIR".into(),
-        data_dir.display().to_string(),
+        format!("{data_root}/email/{tenant}"),
     );
-    if let Some(p) = google_auth_path {
-        env.insert(
-            "NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH".into(),
-            p.display().to_string(),
-        );
-    }
+
+    let secrets_root = std::env::var("NEXO_SECRETS_DIR").unwrap_or_else(|_| "./secrets".into());
+    env.insert(
+        "NEXO_PLUGIN_EMAIL_SECRETS_DIR".into(),
+        format!("{secrets_root}/{tenant}"),
+    );
     env
 }
 
@@ -16749,61 +16743,76 @@ mod tests {
     /// Happy path: every env key the standalone
     /// `nexo-plugin-email` subprocess reads on boot lands in the
     /// spawn dict.
+    /// Build a minimal `EmailPluginConfig` for env-seeder tests.
+    fn email_cfg(instance: Option<&str>) -> nexo_config::EmailPluginConfig {
+        let yaml = match instance {
+            Some(inst) => format!(
+                "email:\n  - instance: {inst}\n    accounts: []\n"
+            ),
+            None => "email:\n  - accounts: []\n".to_string(),
+        };
+        let f: nexo_config::types::plugins::EmailPluginConfigFile =
+            serde_yaml::from_str(&yaml).unwrap();
+        f.email.into_vec().into_iter().next().unwrap()
+    }
+
+    /// Wave 2 form — per-tenant env dict stamps INSTANCE +
+    /// per-tenant DATA_DIR + SECRETS_DIR. Config slice itself
+    /// arrives over `plugin.configure` JSON-RPC, not via env.
     #[test]
-    fn seed_email_subprocess_env_for_happy_path() {
-        let cfg_path = std::path::PathBuf::from("/etc/nexo/email.yaml");
-        let secrets = std::path::PathBuf::from("/run/secrets/nexo");
-        let data = std::path::PathBuf::from("/var/lib/nexo");
-        let google = std::path::PathBuf::from("/etc/nexo/google-auth.yaml");
-
-        let env = seed_email_subprocess_env_for(
-            "nats://127.0.0.1:4222",
-            &cfg_path,
-            &secrets,
-            &data,
-            Some(&google),
+    fn seed_email_subprocess_env_for_stamps_tenant_paths() {
+        std::env::set_var("NEXO_DATA_DIR", "/var/lib/nexo");
+        std::env::set_var("NEXO_SECRETS_DIR", "/run/secrets/nexo");
+        let cfg = email_cfg(Some("empresa_a"));
+        let env =
+            seed_email_subprocess_env_for(&cfg, "nats", "nats://127.0.0.1:4222");
+        assert_eq!(
+            env.get("NEXO_BROKER_KIND").map(String::as_str),
+            Some("nats")
         );
-
         assert_eq!(
             env.get("NEXO_BROKER_URL").map(String::as_str),
             Some("nats://127.0.0.1:4222")
         );
         assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_CONFIG_PATH").map(String::as_str),
-            Some("/etc/nexo/email.yaml")
-        );
-        assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR").map(String::as_str),
-            Some("/run/secrets/nexo")
+            env.get("NEXO_PLUGIN_EMAIL_INSTANCE").map(String::as_str),
+            Some("empresa_a")
         );
         assert_eq!(
             env.get("NEXO_PLUGIN_EMAIL_DATA_DIR").map(String::as_str),
-            Some("/var/lib/nexo")
+            Some("/var/lib/nexo/email/empresa_a")
         );
         assert_eq!(
-            env.get("NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH")
-                .map(String::as_str),
-            Some("/etc/nexo/google-auth.yaml")
+            env.get("NEXO_PLUGIN_EMAIL_SECRETS_DIR").map(String::as_str),
+            Some("/run/secrets/nexo/empresa_a")
+        );
+        std::env::remove_var("NEXO_DATA_DIR");
+        std::env::remove_var("NEXO_SECRETS_DIR");
+    }
+
+    /// Missing `instance` defaults to `"default"`.
+    #[test]
+    fn seed_email_subprocess_env_for_default_instance_when_absent() {
+        let cfg = email_cfg(None);
+        let env =
+            seed_email_subprocess_env_for(&cfg, "nats", "nats://x");
+        assert_eq!(
+            env.get("NEXO_PLUGIN_EMAIL_INSTANCE").map(String::as_str),
+            Some("default")
         );
     }
 
-    /// Gmail OAuth optional: when google_auth_path
-    /// is None the env var is OMITTED (subprocess interprets as
-    /// "no Gmail OAuth accounts" and boots with
-    /// `GoogleCredentialStore::empty()`).
+    /// `stdio_bridge` mode omits the URL — daemon-derived only.
     #[test]
-    fn seed_email_subprocess_env_for_omits_google_when_none() {
-        let cfg_path = std::path::PathBuf::from("/x.yaml");
-        let secrets = std::path::PathBuf::from("/sec");
-        let data = std::path::PathBuf::from("/data");
-
-        let env = seed_email_subprocess_env_for("local://test", &cfg_path, &secrets, &data, None);
-
-        assert!(!env.contains_key("NEXO_PLUGIN_EMAIL_GOOGLE_AUTH_PATH"));
+    fn seed_email_subprocess_env_for_stdio_bridge_omits_url() {
+        let cfg = email_cfg(Some("t1"));
+        let env =
+            seed_email_subprocess_env_for(&cfg, "stdio_bridge", "ignored");
         assert_eq!(
-            env.get("NEXO_BROKER_URL").map(String::as_str),
-            Some("local://test")
+            env.get("NEXO_BROKER_KIND").map(String::as_str),
+            Some("stdio_bridge")
         );
+        assert!(!env.contains_key("NEXO_BROKER_URL"));
     }
 
     /// Sentinel daemon env var does NOT leak
