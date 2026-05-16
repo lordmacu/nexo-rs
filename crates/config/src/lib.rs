@@ -557,8 +557,9 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let telegram = load_optional::<TelegramPluginConfigFile>(&plugins_dir, "telegram.yaml")?
         .map(|f| f.telegram.into_vec())
         .unwrap_or_default();
-    let email =
-        load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?.map(|f| f.email);
+    let email = load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?
+        .map(|f| f.email.into_vec())
+        .unwrap_or_default();
     let browser =
         load_optional::<BrowserConfigFile>(&plugins_dir, "browser.yaml")?.map(|f| f.browser);
     // Optional discovery knobs at plugins/discovery.yaml.

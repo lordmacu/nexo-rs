@@ -27,7 +27,11 @@ pub struct PluginsConfig {
     /// the inbound topic (`plugin.inbound.telegram.<instance>`) so agent
     /// bindings can target a specific bot.
     pub telegram: Vec<TelegramPluginConfig>,
-    pub email: Option<EmailPluginConfig>,
+    /// 0.5.0: zero, one, or many tenants. Each tenant owns its own
+    /// `accounts: Vec<EmailAccountConfig>` and isolated state.
+    /// Legacy bare-map YAML normalises to a 1-element vec via the
+    /// `EmailPluginShape::Single` shim.
+    pub email: Vec<EmailPluginConfig>,
     pub browser: Option<BrowserConfig>,
     /// Operator-configured plugin discovery walk knobs.
     /// Loaded from `<config_dir>/plugins/discovery.yaml` (optional —
@@ -723,12 +727,41 @@ pub struct TelegramAllowlistConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmailPluginConfigFile {
-    pub email: EmailPluginConfig,
+    pub email: EmailPluginShape,
+}
+
+/// 0.5.0 multi-tenant shape. Operator YAML accepts either a single
+/// map (legacy 0.4.x bare object, normalised to a 1-element vec)
+/// or a sequence of maps (one entry per tenant).
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum EmailPluginShape {
+    Single(EmailPluginConfig),
+    Many(Vec<EmailPluginConfig>),
+}
+
+impl EmailPluginShape {
+    pub fn into_vec(self) -> Vec<EmailPluginConfig> {
+        match self {
+            Self::Single(c) => vec![c],
+            Self::Many(v) => v,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EmailPluginConfig {
+    /// 0.5.0 tenant label. `None` ⇒ legacy single-tenant
+    /// (resolved to `"default"` by the boot loop). Distinct
+    /// namespace from `EmailAccountConfig.instance` (per-account
+    /// label inside this tenant).
+    #[serde(default)]
+    pub instance: Option<String>,
+    /// 0.5.0 agent allowlist per tenant. Empty = accept any agent.
+    #[serde(default)]
+    pub allow_agents: Vec<String>,
     #[serde(default = "default_email_enabled")]
     pub enabled: bool,
     #[serde(default = "default_max_body_bytes")]
@@ -977,15 +1010,19 @@ email:
       smtp: { host: smtp.example.com, port: 587 }
 "#;
         let f: EmailPluginConfigFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(f.email.accounts.len(), 1);
-        let acc = &f.email.accounts[0];
+        // 0.5.0: f.email is EmailPluginShape; flatten to inspect.
+        let tenants = f.email.into_vec();
+        assert_eq!(tenants.len(), 1);
+        let cfg = &tenants[0];
+        assert_eq!(cfg.accounts.len(), 1);
+        let acc = &cfg.accounts[0];
         assert_eq!(acc.instance, "ops");
         assert_eq!(acc.imap.tls, TlsMode::ImplicitTls);
         assert_eq!(acc.smtp.tls, TlsMode::Starttls);
         assert!(matches!(acc.provider, EmailProvider::Custom));
-        assert_eq!(f.email.max_body_bytes, 32 * 1024);
-        assert_eq!(f.email.max_attachment_bytes, 25 * 1024 * 1024);
-        assert!(f.email.loop_prevention.auto_submitted);
+        assert_eq!(cfg.max_body_bytes, 32 * 1024);
+        assert_eq!(cfg.max_attachment_bytes, 25 * 1024 * 1024);
+        assert!(cfg.loop_prevention.auto_submitted);
     }
 
     #[test]
@@ -1012,11 +1049,13 @@ email:
         from_denylist: ["noreply@spam.example"]
 "#;
         let f: EmailPluginConfigFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(f.email.poll_fallback_seconds, 30);
-        assert_eq!(f.email.idle_reissue_minutes, 25);
-        assert!(!f.email.spf_dkim_warn);
-        assert!(!f.email.loop_prevention.auto_submitted);
-        let acc = &f.email.accounts[0];
+        let tenants = f.email.into_vec();
+        let cfg = &tenants[0];
+        assert_eq!(cfg.poll_fallback_seconds, 30);
+        assert_eq!(cfg.idle_reissue_minutes, 25);
+        assert!(!cfg.spf_dkim_warn);
+        assert!(!cfg.loop_prevention.auto_submitted);
+        let acc = &cfg.accounts[0];
         assert!(matches!(acc.provider, EmailProvider::Gmail));
         assert_eq!(acc.folders.sent, "[Gmail]/Sent Mail");
         assert_eq!(acc.filters.from_allowlist.len(), 1);

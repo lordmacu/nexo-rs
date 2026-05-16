@@ -231,7 +231,11 @@ pub fn build_credentials(
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
     let whatsapp = plugins.whatsapp.as_slice();
     let telegram = plugins.telegram.as_slice();
-    let email = plugins.email.as_ref();
+    // 0.5.0: plugins.email is `Vec<EmailPluginConfig>` (multi-tenant).
+    // Auth wiring still operates per-tenant; use the first declared
+    // tenant for now (back-compat with single-tenant). Multi-tenant
+    // credential aggregation lands in Wave 2 follow-up.
+    let email = plugins.email.first();
     let mut errors: Vec<BuildError> = Vec::new();
 
     // ── 1. Path claims (session_dir WA + credential files Google) ──

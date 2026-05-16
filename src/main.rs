@@ -3395,10 +3395,14 @@ async fn main() -> Result<()> {
     // branch (`init_loop.rs:417` checks `is_registered` first).
     // Operators that genuinely want subprocess isolation must
     // strip this block and place the manifest in `search_paths`.
+    // 0.5.0: plugins.email is `Vec<EmailPluginConfig>`. Wave 2
+    // daemon-side flip will spawn one subprocess per tenant; this
+    // legacy in-process factory uses the FIRST declared tenant for
+    // back-compat with single-tenant operators.
     let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = cfg
         .plugins
         .email
-        .as_ref()
+        .first()
         .filter(|c| c.enabled && !c.accounts.is_empty())
         .and_then(|email_cfg| {
             credentials.as_ref().map(|creds_bundle| {
@@ -3820,7 +3824,7 @@ async fn main() -> Result<()> {
     let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = match (
         email_plugin.as_ref(),
         credentials.as_ref(),
-        cfg.plugins.email.as_ref(),
+        cfg.plugins.email.first(),
     ) {
         (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
             // Audit follow-up E — `dispatcher_handle()` returning
@@ -14421,7 +14425,10 @@ async fn start_mcp_autonomous_worker(
     }
     let creds_bundle = Arc::new(creds_bundle);
 
-    let email_cfg = full_cfg.plugins.email.clone().ok_or_else(|| {
+    // 0.5.0: pick the FIRST declared tenant for the autonomous
+    // worker's in-process bootstrap. Multi-tenant fan-out arrives
+    // when the worker itself becomes tenant-aware.
+    let email_cfg = full_cfg.plugins.email.first().cloned().ok_or_else(|| {
         anyhow::anyhow!(
             "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
         )
