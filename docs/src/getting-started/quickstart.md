@@ -137,6 +137,14 @@ For WhatsApp: `cargo install nexo-plugin-whatsapp`, then
 [the setup wizard](./setup-wizard.md) walks you through QR
 pairing.
 
+For Google (Gmail / Calendar / Drive):
+`cargo install nexo-plugin-google`, then run
+`nexo-plugin-google --oauth-once <agent_id> --device` (or omit
+`--device` to use the loopback browser flow). See the
+[Google plugin docs](../plugins/google.md) for the full CLI flag
+list. Five canonical plugins live on crates.io:
+`whatsapp`/`telegram`/`email`/`browser`/`google`.
+
 ### How the daemon finds your plugin
 
 The discovery walker (Phase 81.33 Stage 8) probes every search

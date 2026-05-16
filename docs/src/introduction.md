@@ -69,7 +69,7 @@ nexo-rs is opinionated toward that shape.
 | Runtime | Multi-agent core, SessionManager, Heartbeat, CircuitBreaker. Boots zero-config; `nexo init` scaffolds 19 commented sample YAMLs |
 | Broker | **NATS** (`async-nats`) + disk queue + DLQ + backpressure, **or `local`** — stdio-bridge for subprocess plugins, no external server. Flip at runtime: `nexo set-broker {local,nats}` |
 | LLMs | MiniMax M2.5 (primary), Anthropic (OAuth + API), OpenAI-compat, Gemini, DeepSeek |
-| Plugins | WhatsApp, Telegram, Email, Browser (CDP), Google (Gmail/Calendar/Drive/Sheets). Install with `nexo plugin install <owner>/<repo>` (GitHub Releases tarball) — e.g. `nexo plugin install lordmacu/nexo-plugin-whatsapp` |
+| Plugins | WhatsApp, Telegram, Email, Browser (CDP), **Google (Gmail/Calendar/Drive/Sheets)**. Install with `nexo plugin install <owner>/<repo>` (GitHub Releases tarball) or `cargo install nexo-plugin-{whatsapp,telegram,email,browser,google}` from crates.io |
 | Memory | Short-term in-memory, long-term SQLite, vector via sqlite-vec |
 | Extensions | TOML manifest, stdio + NATS runtimes, CLI, 20+ skills shipped |
 | MCP | Client (stdio + HTTP), agent as MCP server, hot-reload |
@@ -105,9 +105,10 @@ curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 #    (or `cargo install nexo-rs` from crates.io, or download the
 #     .deb / .rpm / Termux .deb from GitHub Releases.)
 
-# 2. Add a channel plugin (GitHub Releases tarball):
+# 2. Add a channel plugin (GitHub Releases tarball OR crates.io):
 nexo plugin install lordmacu/nexo-plugin-whatsapp
-#    Built-ins: nexo-plugin-{whatsapp,telegram,email,browser}.
+#    Built-ins: nexo-plugin-{whatsapp,telegram,email,browser,google}.
+#    crates.io path: `cargo install nexo-plugin-google` (etc.).
 
 # 3. Install the Cody programmer-pair persona (or any other v2 pack):
 nexo persona install lordmacu/nexo-persona-cody

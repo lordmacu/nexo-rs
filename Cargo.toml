@@ -62,14 +62,11 @@ members = [
     # at `../nexo-rs-plugin-whatsapp/`; no longer a workspace member.
     # Phase 81.19.b — email plugin extracted to standalone repo
     # at `../nexo-rs-plugin-email/`; no longer a workspace member.
-    # Phase 94 — `nexo-rs-plugin-google` (subprocess bin) lives in
-    # standalone repo `../nexo-rs-plugin-google/`. The in-tree
-    # `crates/plugins/google` (lib only) survives as the dep for
-    # `nexo-poller`'s `google_calendar` + `gmail` builtins, which
-    # call the OAuth client in-process. Follow-up to switch poller
-    # to the published crate after `nexo-plugin-google` 0.2.0 ships
-    # (registered in proyecto/FOLLOWUPS.md).
-    "crates/plugins/google",
+    # Phase 94 — google plugin fully extracted. Standalone bin at
+    # `../nexo-rs-plugin-google/`; lib consumed by `nexo-poller`'s
+    # `google_calendar` + `gmail` builtins via the published
+    # `nexo-plugin-google = "0.2.0"` crates.io release. In-tree
+    # `crates/plugins/google/` deleted.
     "crates/setup",
     "crates/tunnel",
     "crates/tunnel-quick",

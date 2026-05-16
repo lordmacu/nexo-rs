@@ -21,8 +21,13 @@ follow the link.
 > nexo plugin install lordmacu/nexo-plugin-telegram
 > nexo plugin install lordmacu/nexo-plugin-email
 > nexo plugin install lordmacu/nexo-plugin-browser
+> nexo plugin install lordmacu/nexo-plugin-google  # Gmail/Calendar/Drive/Sheets
 > nexo plugin list
 > ```
+>
+> All five also ship to crates.io: `cargo install nexo-plugin-google`
+> (etc.) drops the binary in `$HOME/.cargo/bin/` and the daemon's
+> discovery walker picks it up automatically.
 >
 > (Or build from source: `cargo install --git
 > https://github.com/lordmacu/nexo-plugin-whatsapp`.) Then reference
@@ -72,6 +77,43 @@ agents:
 
 → [Email plugin docs](./plugins/email.md)
 → [Skill catalog](./skills/catalog.md)
+
+---
+
+### Google Workspace agent — Gmail + Calendar + Drive
+
+> ⏱ Build time · 1 afternoon · ⚙️ Layer · agent + Google plugin
+
+OAuth-authenticated agent that can search Gmail, schedule
+calendar events, and pull docs from Drive — all through the
+generic `google_call` tool that wraps any `*.googleapis.com`
+endpoint. Token state lives in the agent's workspace; access
+tokens auto-refresh.
+
+```bash
+cargo install nexo-plugin-google
+nexo                                        # daemon discovers + spawns
+nexo-plugin-google --oauth-once <agent_id> \
+    --client-id-file ./secrets/google_client_id.txt \
+    --client-secret-file ./secrets/google_client_secret.txt \
+    --token-file ./data/workspace/<agent_id>/google_tokens.json \
+    --scopes gmail.readonly,calendar,drive.readonly \
+    --workspace-dir ./data/workspace/<agent_id>
+```
+
+```yaml
+agents:
+  - id: gws
+    persona_path: ./personas/gws.md
+    google_auth:
+      client_id_file:     ./secrets/google_client_id.txt
+      client_secret_file: ./secrets/google_client_secret.txt
+      scopes: [gmail.readonly, calendar, drive.readonly]
+    tools: [google_auth_status, google_call]
+```
+
+→ [Google plugin docs](./plugins/google.md)
+→ [Source · github.com/lordmacu/nexo-rs-plugin-google](https://github.com/lordmacu/nexo-rs-plugin-google)
 
 ---
 

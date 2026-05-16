@@ -329,6 +329,16 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
         true,
     )? {
         let tok_path = secrets_dir.join(&tok_name);
+        // Agent workspace is the canonical home for runtime state
+        // (mirrors writer.rs::resolve_workspace_for_agent); fall back
+        // to the conventional `./data/workspace/<id>` when the agent
+        // yaml omits an explicit workspace.
+        let agents_yaml = config_dir.join("agents.yaml");
+        let workspace = yaml_patch::get_agent_workspace(&agents_yaml, &agent_id)
+            .ok()
+            .flatten()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(format!("./data/workspace/{agent_id}")));
         if let Err(e) = spawn_oauth_once_subprocess(
             &agent_id,
             &cid_path,
@@ -336,7 +346,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
             &tok_path,
             &scopes,
             /* device = */ true,
-            secrets_dir,
+            &workspace,
         ) {
             println!("⚠  Device-code falló: {e}");
             println!(
