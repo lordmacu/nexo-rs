@@ -5314,9 +5314,9 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-email"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e11d9673bc6bc59f9df8cf7a2982f6c36ecfad2f3af6ec49a0984454b9cbf7a"
+checksum = "b0cf9dd5d6c5cc8e128a50fedcd2a0d030602b5ca4dc25e3b839f15da27dc328"
 dependencies = [
  "anyhow",
  "async-imap",

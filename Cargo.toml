@@ -403,7 +403,7 @@ nexo-media         = { version = "0.1.7", path = "crates/media" }
 # `openssl-sys` through `tokio-tungstenite` and break musl
 # cross-build.
 nexo-plugin-whatsapp = { version = "0.1.3", default-features = false, features = ["rustls-tls"] }
-nexo-plugin-email    = { version = "0.5.1" }
+nexo-plugin-email    = { version = "0.5.2" }
 nexo-tunnel-quick    = { version = "0.1", path = "crates/tunnel-quick" }
 
 [dependencies]
