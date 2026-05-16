@@ -790,6 +790,15 @@ impl AdminRpcBootstrap {
                 #[allow(unused_mut)]
                 let mut outbound =
                     crate::admin_adapters::BrokerOutboundDispatcher::new(broker);
+                // Phase 81.20.x F3-followup — register the translators
+                // every shipped canonical plugin provides. The outbound
+                // dispatcher now covers email, telegram, and (cfg-gated)
+                // whatsapp, unblocking admin RPC `processing.intervention.reply`
+                // + the MCP autonomous worker's `plugin_channel_send` tool
+                // against any of them.
+                outbound = outbound
+                    .with_translator(Box::new(crate::admin_adapters::EmailTranslator))
+                    .with_translator(Box::new(crate::admin_adapters::TelegramTranslator));
                 // Phase 93.12.c — `WhatsAppTranslator` lives behind
                 // `plugin-whatsapp`. Skip when the feature is off; the
                 // outbound dispatcher then routes whatsapp messages to

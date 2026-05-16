@@ -14264,7 +14264,10 @@ async fn start_mcp_autonomous_worker(
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     use nexo_core::agent::{
         AgentBehavior, AgentContext, CancelFollowupTool, CheckFollowupTool, LlmAgentBehavior,
-        ToolRegistry,
+        PluginChannelSendTool, ToolRegistry,
+    };
+    use nexo_setup::admin_adapters::{
+        BrokerOutboundDispatcher, EmailTranslator, TelegramTranslator,
     };
 
     let memory = long_term_memory.ok_or_else(|| {
@@ -14290,13 +14293,27 @@ async fn start_mcp_autonomous_worker(
         worker_agent_cfg.allowed_tools.clear();
     }
 
-    // Phase 81.20.x F3 — email plugin bootstrap removed. Email is
-    // now a subprocess plugin discovered via manifest; the worker
-    // can dispatch email tools through the broker via
-    // `RemoteToolHandler` once that's wired in (FOLLOWUPS entry).
-    // For now the worker keeps only the memory-side follow-up tools
-    // — operators relying on autonomous email send during this
-    // transition should use the regular agent path.
+    // Phase 81.20.x F3-followup — build a `BrokerOutboundDispatcher`
+    // with the same translator set the daemon's admin RPC uses, then
+    // expose it to the LLM through the agnostic `plugin_channel_send`
+    // tool. The worker can now dispatch outbound messages through
+    // any registered channel plugin (email / telegram / cfg-gated
+    // whatsapp) by publishing to the plugin's broker topic — no
+    // daemon-side `RemoteToolHandler` plumbing required, because the
+    // plugin subprocess subscribes to the same broker the worker
+    // publishes on.
+    let mut outbound = BrokerOutboundDispatcher::new(broker.clone());
+    outbound = outbound
+        .with_translator(Box::new(EmailTranslator))
+        .with_translator(Box::new(TelegramTranslator));
+    #[cfg(feature = "plugin-whatsapp")]
+    {
+        outbound = outbound.with_translator(Box::new(
+            nexo_setup::admin_adapters::WhatsAppTranslator,
+        ));
+    }
+    let outbound: Arc<dyn nexo_core::agent::admin_rpc::channel_outbound::ChannelOutboundDispatcher> =
+        Arc::new(outbound);
 
     let worker_tools = Arc::new(ToolRegistry::new());
     worker_tools.register(
@@ -14306,6 +14323,10 @@ async fn start_mcp_autonomous_worker(
     worker_tools.register(
         CheckFollowupTool::tool_def(),
         CheckFollowupTool::new(Arc::clone(&memory)),
+    );
+    worker_tools.register(
+        PluginChannelSendTool::tool_def(),
+        PluginChannelSendTool::new(Arc::clone(&outbound)),
     );
 
     let llm_registry = LlmRegistry::with_builtins();

@@ -31,6 +31,7 @@ pub mod followup_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod hook_remote;
+pub mod plugin_send_tool;
 pub mod inbox;
 pub mod inbox_router;
 pub mod list_peers_tool;
@@ -135,6 +136,7 @@ pub use mcp_session::{
     register_session_tools_with_context, register_session_tools_with_overrides,
 };
 pub use mcp_tool::{sanitize_name_fragment, McpTool, MCP_NAME_PREFIX};
+pub use plugin_send_tool::PluginChannelSendTool;
 pub use memory_checkpoint_tool::MemoryCheckpointTool;
 pub use memory_history_tool::MemoryHistoryTool;
 pub use memory_snapshot_tool::MemorySnapshotTool;
