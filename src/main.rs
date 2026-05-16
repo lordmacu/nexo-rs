@@ -845,7 +845,9 @@ struct CronRebuildDeps {
     memory: Option<Arc<nexo_memory::LongTermMemory>>,
     peer_directory: Arc<nexo_core::agent::PeerDirectory>,
     credentials: Option<Arc<nexo_auth::CredentialsBundle>>,
-    web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    // Phase 95 — web_search_router field removed. The web_search
+    // tool now lives in the standalone subprocess plugin
+    // `nexo-rs-plugin-web-search`.
     link_extractor: Arc<nexo_core::link_understanding::LinkExtractor>,
     dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>>,
     // Phase 81.32 c5 — `DashMap` so hot-spawn can insert post-boot
@@ -1338,9 +1340,7 @@ fn build_cron_bindings_from_snapshots(
                 cron_ctx = cron_ctx.with_credentials(Arc::clone(&bundle.resolver));
                 cron_ctx = cron_ctx.with_breakers(Arc::clone(&bundle.breakers));
             }
-            if let Some(router) = deps.web_search_router.as_ref() {
-                cron_ctx = cron_ctx.with_web_search_router(Arc::clone(router));
-            }
+            // Phase 95 — web_search_router wiring removed.
             cron_ctx = cron_ctx.with_link_extractor(Arc::clone(&deps.link_extractor));
             if let Some(dc) = deps.dispatch_ctx.as_ref() {
                 cron_ctx = cron_ctx.with_dispatch(Arc::clone(dc));
@@ -4216,38 +4216,18 @@ async fn main() -> Result<()> {
         &nexo_core::link_understanding::LinkUnderstandingConfig::default(),
     ));
 
-    // Single shared web-search router. Builds at most one
-    // provider per backend from env credentials. `None` if no provider
-    // is configured (no env keys + DDG feature off); the `web_search`
-    // tool is then never registered.
-    let web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>> = {
-        let mut providers: Vec<Arc<dyn nexo_web_search::WebSearchProvider>> = Vec::new();
-        if let Ok(k) = std::env::var("BRAVE_SEARCH_API_KEY") {
-            providers.push(Arc::new(
-                nexo_web_search::providers::brave::BraveProvider::new(k, 8000),
-            ));
-        }
-        if let Ok(k) = std::env::var("TAVILY_API_KEY") {
-            providers.push(Arc::new(
-                nexo_web_search::providers::tavily::TavilyProvider::new(k, 10000),
-            ));
-        }
-        // DuckDuckGo bundles by default (no key) so every install has
-        // at least one usable provider. Operators that ban scraping
-        // can rebuild nexo-web-search without the `duckduckgo`
-        // feature.
-        providers.push(Arc::new(
-            nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
-        ));
-        Some(Arc::new(nexo_web_search::WebSearchRouter::new(
-            providers, None,
-        )))
-    };
-    if let Some(router) = web_search_router.as_ref() {
-        tracing::info!(providers = ?router.provider_ids(), "web-search router initialised");
-    } else {
-        tracing::info!("web-search router disabled (no providers configured)");
-    }
+    // Phase 95 — web-search router boot removed. The `web_search`
+    // tool now lives in the standalone subprocess plugin
+    // `nexo-rs-plugin-web-search`; daemon discovery walker spawns
+    // the binary via `[plugin.entrypoint]` and RemoteToolHandler
+    // routes calls over `tool.invoke` JSON-RPC. Operator config
+    // moves from BRAVE_SEARCH_API_KEY / TAVILY_API_KEY env vars
+    // to `<config_dir>/plugins/web-search.yaml::instances[].providers`.
+    tracing::debug!(
+        "web-search subprocess plugin: install via \
+         `cargo install nexo-plugin-web-search` + populate \
+         `plugins/web-search.yaml`"
+    );
 
     // Pairing protocol. Builds the SQLite store + the
     // HMAC-signed setup-code issuer once per process. The store path
@@ -5445,18 +5425,17 @@ async fn main() -> Result<()> {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if agent_ws_enabled {
-            if let Some(ws_router) = web_search_router.as_ref() {
-                tools.register(
-                    nexo_core::agent::WebSearchTool::tool_def(),
-                    nexo_core::agent::WebSearchTool::new(Arc::clone(ws_router)),
-                );
-                tracing::info!(agent = %agent_id, "registered web_search tool");
-            } else {
-                tracing::warn!(
-                    agent = %agent_id,
-                    "agent has web_search.enabled but no provider is configured (set BRAVE_SEARCH_API_KEY / TAVILY_API_KEY or rely on DuckDuckGo)"
-                );
-            }
+            // Phase 95 — web_search tool removed from in-process
+            // registration. The standalone `nexo-rs-plugin-web-search`
+            // subprocess plugin advertises it at `initialize`; the
+            // daemon's `RemoteToolHandler` registers the per-agent
+            // dispatcher automatically when the plugin is discovered.
+            tracing::debug!(
+                agent = %agent_id,
+                "agent has web_search.enabled — tool served by \
+                 nexo-plugin-web-search subprocess (install via \
+                 `cargo install nexo-plugin-web-search`)"
+            );
         }
 
         // `Lsp` tool, per-agent. Registered only when
@@ -6356,7 +6335,7 @@ async fn main() -> Result<()> {
             credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
             breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
             link_extractor: Arc::clone(&link_extractor),
-            web_search_router: web_search_router.as_ref().map(Arc::clone),
+            // Phase 95 — web_search_router removed from RuntimeAssemblyDeps.
             pairing_gate: Arc::clone(&pairing_gate),
             pairing_adapters: pairing_registry,
             plan_approval_registry: plan_approval_registry.clone(),
@@ -6691,7 +6670,7 @@ async fn main() -> Result<()> {
         memory: memory.clone(),
         peer_directory: Arc::clone(&peer_directory),
         credentials: credentials.clone(),
-        web_search_router: web_search_router.clone(),
+        // Phase 95 — web_search_router removed.
         link_extractor: Arc::clone(&link_extractor),
         dispatch_ctx: dispatch_ctx.clone(),
         tools_per_agent: Arc::clone(&tools_per_agent),
@@ -6773,7 +6752,7 @@ async fn main() -> Result<()> {
         let transcripts_index_c = transcripts_index.clone();
         let credentials_c = credentials.clone();
         let link_extractor_c = Arc::clone(&link_extractor);
-        let web_search_router_c = web_search_router.clone();
+        // Phase 95 — web_search_router capture removed.
         let pairing_gate_c = Arc::clone(&pairing_gate);
         let plan_approval_registry_c = plan_approval_registry.clone();
         let dispatch_ctx_c = dispatch_ctx.clone();
@@ -6814,7 +6793,7 @@ async fn main() -> Result<()> {
             let transcripts_index = transcripts_index_c.clone();
             let credentials = credentials_c.clone();
             let link_extractor = Arc::clone(&link_extractor_c);
-            let web_search_router = web_search_router_c.clone();
+            // Phase 95 — web_search_router clone removed.
             let pairing_gate = Arc::clone(&pairing_gate_c);
             let plan_approval_registry = plan_approval_registry_c.clone();
             let dispatch_ctx = dispatch_ctx_c.clone();
@@ -7142,7 +7121,7 @@ async fn main() -> Result<()> {
                     credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
                     breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
                     link_extractor: Arc::clone(&link_extractor),
-                    web_search_router: web_search_router.as_ref().map(Arc::clone),
+                    // Phase 95 — web_search_router removed.
                     pairing_gate: Arc::clone(&pairing_gate),
                     pairing_adapters: pairing_registry,
                     plan_approval_registry: plan_approval_registry.clone(),
@@ -11505,34 +11484,10 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
             }
         };
 
-        // web_search_router boot — env-driven provider discovery
-        // (mirrors the `nexo run` startup at src/main.rs:1259-1281).
-        let web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>> = {
-            if server_cfg.expose_tools.iter().any(|n| n == "web_search") {
-                let mut providers: Vec<Arc<dyn nexo_web_search::WebSearchProvider>> = Vec::new();
-                if let Ok(k) = std::env::var("BRAVE_SEARCH_API_KEY") {
-                    providers.push(Arc::new(
-                        nexo_web_search::providers::brave::BraveProvider::new(k, 8000),
-                    ));
-                }
-                if let Ok(k) = std::env::var("TAVILY_API_KEY") {
-                    providers.push(Arc::new(
-                        nexo_web_search::providers::tavily::TavilyProvider::new(k, 10000),
-                    ));
-                }
-                providers.push(Arc::new(
-                    nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
-                ));
-                Some(Arc::new(nexo_web_search::WebSearchRouter::new(
-                    providers, None,
-                )))
-            } else {
-                None
-            }
-        };
-        if let Some(router) = web_search_router.as_ref() {
-            ctx = ctx.with_web_search_router(Arc::clone(router));
-        }
+        // Phase 95 — web_search_router worker-reload boot removed.
+        // `web_search` is served by the standalone subprocess
+        // plugin; RemoteToolHandler routes calls when the plugin
+        // is discovered.
 
         // mcp_runtime boot — when router tools are requested, build a
         // session runtime from mcp.yaml if present/enabled. Fallback to an
@@ -11690,7 +11645,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         boot_ctx_enriched.cron_store = cron_store;
         boot_ctx_enriched.mcp_runtime = mcp_runtime;
         boot_ctx_enriched.config_changes_store = config_changes_store;
-        boot_ctx_enriched.web_search_router = web_search_router;
+        // Phase 95 — web_search_router removed.
         boot_ctx_enriched.link_extractor = Some(link_extractor);
         boot_ctx_enriched.long_term_memory = long_term_memory.clone();
         boot_ctx_enriched.memory_git = memory_git;

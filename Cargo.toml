@@ -456,7 +456,13 @@ nexo-mcp = { version = "0.1.5", path = "crates/mcp" }
 nexo-memory = { version = "0.1.5", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.2", path = "crates/taskflow" }
 sqlx               = { workspace = true }
-nexo-web-search = { version = "0.1.2", path = "crates/web-search" }
+# Phase 95 — nexo-web-search dep removed from daemon's compile
+# graph. The `web_search` tool lives in the standalone
+# `nexo-rs-plugin-web-search` subprocess plugin; daemon spawns it
+# via [plugin.entrypoint] discovery + RemoteToolHandler routes
+# tool.invoke JSON-RPC over stdio. The in-tree
+# `crates/web-search/` library remains as a workspace member for
+# direct consumers (microapp embeds, future MCP standalone tools).
 nexo-pairing = { version = "0.1.5", path = "crates/pairing" }
 nexo-agent-registry    = { version = "0.1.7", path = "crates/agent-registry" }
 nexo-dispatch-tools    = { version = "0.1.7", path = "crates/dispatch-tools" }

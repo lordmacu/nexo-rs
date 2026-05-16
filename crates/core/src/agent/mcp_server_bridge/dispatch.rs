@@ -189,7 +189,7 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
     use crate::agent::todo_write_tool::TodoWriteTool;
     use crate::agent::tool_search_tool::ToolSearchTool;
     use crate::agent::web_fetch_tool::WebFetchTool;
-    use crate::agent::web_search_tool::WebSearchTool;
+    // Phase 95 — WebSearchTool import removed; subprocess plugin serves it.
 
     match name {
         // --- handle-free tools (no infra handles needed) ---
@@ -290,14 +290,15 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
         },
 
         // --- web_search + web_fetch ---
-        "web_search" => match ctx.web_search_router.as_ref() {
-            Some(r) => BootResult::Registered(
-                WebSearchTool::tool_def(),
-                Arc::new(WebSearchTool::new(Arc::clone(r))),
-            ),
-            None => BootResult::SkippedInfraMissing {
-                handle: "web_search_router",
-            },
+        // Phase 95 — web_search is served by the standalone
+        // `nexo-rs-plugin-web-search` subprocess plugin. MCP bridge
+        // dispatch no longer registers it in-process; if a session
+        // calls `web_search`, the daemon's RemoteToolHandler routes
+        // through the subprocess via `tool.invoke` JSON-RPC.
+        // Returning `SkippedExtensionDispatch` mirrors how
+        // operator-extended tools are surfaced.
+        "web_search" => BootResult::SkippedInfraMissing {
+            handle: "web_search_subprocess_plugin",
         },
         "web_fetch" => {
             BootResult::Registered(WebFetchTool::tool_def(), Arc::new(WebFetchTool::new()))
@@ -1094,12 +1095,16 @@ mod tests {
     // --- step 9 — web_search + web_fetch ---
 
     #[tokio::test]
-    async fn web_search_skips_without_router() {
+    async fn web_search_skips_without_subprocess_plugin() {
+        // Phase 95 — web_search now served by the
+        // `nexo-rs-plugin-web-search` subprocess. MCP bridge
+        // dispatch surfaces "subprocess not installed" as the
+        // missing-infra reason.
         let bc = fixture_ctx();
         assert!(matches!(
             boot_exposable("web_search", &bc),
             BootResult::SkippedInfraMissing {
-                handle: "web_search_router"
+                handle: "web_search_subprocess_plugin"
             }
         ));
     }

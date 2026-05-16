@@ -950,7 +950,10 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
-    nexo_web_search::telemetry::render(&mut out);
+    // Phase 95 — web_search metrics now rendered by the
+    // `nexo-rs-plugin-web-search` subprocess via
+    // `plugin.web_search.metrics.scrape`; daemon's `/metrics`
+    // aggregator appends the scrape output, no in-process call.
     nexo_pairing::telemetry::render(&mut out);
 
     out.push_str("# HELP circuit_breaker_state Circuit breaker state (0=closed,1=open).\n");

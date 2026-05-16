@@ -70,10 +70,9 @@ pub struct AgentContext {
     /// `None` in early-boot / test contexts; llm_behavior treats
     /// that as "link understanding disabled regardless of config".
     pub link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
-    /// Shared multi-provider web-search router. `None`
-    /// when no provider is configured for this process; the
-    /// `web_search` tool errors out cleanly in that case.
-    pub web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    // Phase 95 — web_search_router field removed. The `web_search`
+    // tool now lives in the `nexo-rs-plugin-web-search` subprocess;
+    // RemoteToolHandler routes `tool.invoke` over stdio.
     /// Current effective enables for the four context-optimization
     /// mechanisms (hot-reloadable). Set per-event by
     /// `AgentRuntime` from `RuntimeSnapshot::context_optimization`, so
@@ -288,7 +287,7 @@ impl AgentContext {
             redactor: None,
             transcripts_index: None,
             link_extractor: None,
-            web_search_router: None,
+            // Phase 95 — web_search_router removed.
             context_optimization: None,
             event_emitter: None,
             dispatch: None,
@@ -401,10 +400,9 @@ impl AgentContext {
         self.dispatch = Some(d);
         self
     }
-    pub fn with_web_search_router(mut self, router: Arc<nexo_web_search::WebSearchRouter>) -> Self {
-        self.web_search_router = Some(router);
-        self
-    }
+    // Phase 95 — with_web_search_router builder removed alongside
+    // the field. The standalone subprocess plugin owns the router
+    // now.
     /// Set the per-turn context-optimization snapshot. Called by the
     /// agent runtime intake after loading the active `RuntimeSnapshot`,
     /// so a hot-reload that swaps the snapshot is observed without

@@ -99,7 +99,10 @@ pub mod types;
 pub mod vector_backend_registry;
 pub mod vector_remote;
 pub mod web_fetch_tool;
-pub mod web_search_tool;
+// Phase 95 — web_search_tool extracted to nexo-rs-plugin-web-search
+// subprocess. Tool reaches agents via `tool.invoke` JSON-RPC routed
+// by `RemoteToolHandler`; daemon-side compile-time integration
+// removed.
 pub mod worker_registry;
 pub mod workspace;
 pub mod workspace_cache;
@@ -187,7 +190,8 @@ pub use types::{InboundMessage, MessagePriority, RunTrigger};
 pub use vector_backend_registry::{VectorBackendRegistrationError, VectorBackendRegistry};
 pub use vector_remote::RemoteVectorBackend;
 pub use web_fetch_tool::WebFetchTool;
-pub use web_search_tool::WebSearchTool;
+// Phase 95 — WebSearchTool re-export removed; subprocess plugin
+// `nexo-plugin-web-search` serves the tool via RemoteToolHandler.
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,
 };
