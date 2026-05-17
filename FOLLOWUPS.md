@@ -49,6 +49,27 @@ Only operator-side actions remain: crates.io publish (token).
 
 **Deferred to Phase 97 (non-trivial, each 1-2 day proper impl):**
 
+- **97.x — Cross-process OAuth token-file lock for Google pollers.**
+  The `nexo-poller-gmail` + `nexo-poller-google-calendar` plugins
+  both share the agent's `token_path` (via reverse-RPC
+  `credentials_get("google").token_path`). Concurrent ticks
+  refreshing simultaneously can race the file write — last writer
+  wins; older token transiently still in use. Not catastrophic
+  (just mild double-refresh), but proper fix requires
+  `nexo-plugin-google::GoogleAuthClient` to acquire an `fcntl`
+  advisory lock around the refresh path BEFORE writing
+  `token_path`. Today the plugins can only lock at their own
+  level (mutex), which prevents same-plugin self-race but not
+  cross-process (gmail vs calendar). Upstream-fix-only.
+
+- **97.x — Gmail `historyId` cursor migration.** V1 + extracted
+  plugin both use a belt-and-suspenders seen-ids set (capped 5000)
+  as the dedup cursor. Non-breaking swap to Gmail watch + `historyId`
+  semantics gives proper missed-message recovery + tighter
+  cursors. Keep current pattern as fallback.
+
+
+
 - **97.x — Ephemeral bidirectional reverse-RPC.** V1 ephemeral
   has no reverse-RPC during tick — `host.credentials_get` and
   `host.llm_invoke` return `-32601`. Lifting this requires
