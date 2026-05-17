@@ -15,6 +15,7 @@ pub mod builtins;
 pub mod cli;
 pub mod dispatch;
 pub mod error;
+pub mod host;
 pub mod poller;
 pub mod runner;
 pub mod schedule;
@@ -24,6 +25,7 @@ pub mod telemetry;
 pub use runner::PollerRunner;
 
 pub use error::PollerError;
+pub use host::{HostError, HostErrorKind, LogLevel, PollerHost, TickAck, TickMetrics};
 pub use poller::{
     CustomToolHandler, CustomToolSpec, OutboundDelivery, PollContext, Poller, TickOutcome,
 };
