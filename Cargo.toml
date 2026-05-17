@@ -444,7 +444,7 @@ nexo-tunnel = { version = "0.3", path = "crates/tunnel" }
 nexo-tunnel-quick = { version = "0.1", path = "crates/tunnel-quick" }
 nexo-auth = { version = "0.1.7", path = "crates/auth" }
 nexo-poller = { version = "0.2.0", path = "crates/poller" }
-nexo-poller-tools = { version = "0.1.2", path = "crates/poller-tools" }
+nexo-poller-tools = { version = "0.2.0", path = "crates/poller-tools" }
 nexo-poller-ext = { version = "0.1.2", path = "crates/poller-ext" }
 nexo-config = { version = "0.1.9", path = "crates/config" }
 nexo-broker = { version = "0.1.5", path = "crates/broker" }
