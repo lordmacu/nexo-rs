@@ -21,7 +21,7 @@ pub mod sanitise;
 pub mod telemetry;
 pub mod types;
 
-pub use cache::WebSearchCache;
+pub use cache::{CacheStats, WebSearchCache};
 pub use provider::WebSearchProvider;
-pub use router::WebSearchRouter;
+pub use router::{ProviderState, WebSearchRouter};
 pub use types::{Freshness, WebSearchArgs, WebSearchError, WebSearchHit, WebSearchResult};

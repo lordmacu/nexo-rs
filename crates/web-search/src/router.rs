@@ -14,6 +14,16 @@ use crate::types::{WebSearchArgs, WebSearchError, WebSearchResult};
 /// the best signal-to-noise; DDG last because it scrapes HTML.
 pub const DEFAULT_ORDER: &[&str] = &["brave", "tavily", "perplexity", "duckduckgo"];
 
+/// Phase 95 FU#1 — operator-facing per-provider operational state.
+/// `available = false` means the per-provider circuit breaker is
+/// open (recent failures pushed it above the failure threshold);
+/// the router will skip the provider until the breaker re-allows.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProviderState {
+    pub id: String,
+    pub available: bool,
+}
+
 pub struct WebSearchRouter {
     providers: HashMap<&'static str, Arc<dyn WebSearchProvider>>,
     breakers: HashMap<&'static str, Arc<CircuitBreaker>>,
@@ -165,6 +175,26 @@ impl WebSearchRouter {
         let mut v: Vec<&'static str> = self.providers.keys().copied().collect();
         v.sort();
         v
+    }
+
+    /// Phase 95 FU#1 — per-provider operational snapshot for the
+    /// admin/provider_status RPC. Reports each configured
+    /// provider's circuit-breaker availability (open breakers
+    /// surface as `available: false`).
+    pub fn provider_states(&self) -> Vec<ProviderState> {
+        let mut out: Vec<ProviderState> = Vec::with_capacity(self.providers.len());
+        for (id, _) in self.providers.iter() {
+            let available = match self.breakers.get(id) {
+                Some(b) => b.allow(),
+                None => true,
+            };
+            out.push(ProviderState {
+                id: (*id).to_string(),
+                available,
+            });
+        }
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
     }
 
     /// Optional `LinkExtractor` integration. Owners (nexo-core) call

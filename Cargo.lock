@@ -4609,7 +4609,7 @@ dependencies = [
  "nexo-taskflow 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "nexo-team-store 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "nexo-tool-meta",
- "nexo-web-search 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nexo-web-search 0.1.2",
  "notify",
  "notify-debouncer-full",
  "regex",
@@ -5751,6 +5751,8 @@ dependencies = [
 [[package]]
 name = "nexo-web-search"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f812c5fa04fa2936115f4049a353f9f784ccc09533798d9c68e7cbe7479579c"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5770,9 +5772,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-web-search"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f812c5fa04fa2936115f4049a353f9f784ccc09533798d9c68e7cbe7479579c"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",

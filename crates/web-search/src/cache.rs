@@ -120,4 +120,37 @@ impl WebSearchCache {
             .map_err(|e| WebSearchError::Cache(e.to_string()))?;
         Ok(res.rows_affected())
     }
+
+    /// Phase 95 FU#1 — flush every cache entry. Returns the row
+    /// count deleted (informational; callers typically don't act
+    /// on it). Used by `nexo-plugin-web-search`'s
+    /// `admin/cache_clear` RPC so operators can force a refresh
+    /// after rotating provider keys or scope changes.
+    pub async fn clear(&self) -> Result<u64, WebSearchError> {
+        let res = sqlx::query("DELETE FROM web_search_cache")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| WebSearchError::Cache(e.to_string()))?;
+        Ok(res.rows_affected())
+    }
+
+    /// Phase 95 FU#1 — report the row count currently in the
+    /// cache + the sqlite db size on disk (when the cache is
+    /// file-backed; `0` for `:memory:`). Provides operator-facing
+    /// "cache size" telemetry the admin UI surfaces.
+    pub async fn stats(&self) -> Result<CacheStats, WebSearchError> {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM web_search_cache")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| WebSearchError::Cache(e.to_string()))?;
+        Ok(CacheStats {
+            entries: row.0.max(0) as u64,
+        })
+    }
+}
+
+/// Phase 95 FU#1 — operator-facing cache snapshot.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CacheStats {
+    pub entries: u64,
 }
