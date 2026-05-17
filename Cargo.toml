@@ -144,7 +144,7 @@ exclude = [
 resolver = "2"
 
 [workspace.package]
-version      = "0.1.7"
+version      = "0.1.8"
 edition      = "2021"
 rust-version = "1.80"
 license      = "MIT OR Apache-2.0"
@@ -371,8 +371,8 @@ nexo-memory-snapshot = { version = "0.1.4", path = "crates/memory-snapshot" }
 # so consumers (microapp-sdk's `email-template` feature) can
 # resolve the dep on crates.io. Workspace pin keeps the local
 # override transparent for in-tree dev.
-nexo-sanitize      = { version = "0.1.7", path = "crates/sanitize" }
-nexo-media         = { version = "0.1.7", path = "crates/media" }
+nexo-sanitize      = { version = "0.1.8", path = "crates/sanitize" }
+nexo-media         = { version = "0.1.8", path = "crates/media" }
 # Phase 81.19.a — declared at workspace scope so member crates
 # (e.g. `crates/setup`) can pull through `workspace = true`. The
 # proyecto binary's `[dependencies]` block below also references
@@ -466,22 +466,22 @@ sqlx               = { workspace = true }
 # `crates/web-search/` library remains as a workspace member for
 # direct consumers (microapp embeds, future MCP standalone tools).
 nexo-pairing = { version = "0.1.8", path = "crates/pairing" }
-nexo-agent-registry    = { version = "0.1.7", path = "crates/agent-registry" }
-nexo-dispatch-tools    = { version = "0.1.7", path = "crates/dispatch-tools" }
-nexo-dream             = { version = "0.1.7", path = "crates/dream" }
-nexo-fork              = { version = "0.1.7", path = "crates/fork" }
-nexo-driver-claude     = { version = "0.1.7", path = "crates/driver-claude" }
-nexo-driver-loop       = { version = "0.1.7", path = "crates/driver-loop" }
-nexo-driver-permission = { version = "0.1.7", path = "crates/driver-permission" }
-nexo-driver-types      = { version = "0.1.7", path = "crates/driver-types" }
+nexo-agent-registry    = { version = "0.1.8", path = "crates/agent-registry" }
+nexo-dispatch-tools    = { version = "0.1.8", path = "crates/dispatch-tools" }
+nexo-dream             = { version = "0.1.8", path = "crates/dream" }
+nexo-fork              = { version = "0.1.8", path = "crates/fork" }
+nexo-driver-claude     = { version = "0.1.8", path = "crates/driver-claude" }
+nexo-driver-loop       = { version = "0.1.8", path = "crates/driver-loop" }
+nexo-driver-permission = { version = "0.1.8", path = "crates/driver-permission" }
+nexo-driver-types      = { version = "0.1.8", path = "crates/driver-types" }
 nexo-memory-snapshot   = { version = "0.1.4", path = "crates/memory-snapshot" }
 nexo-plugin-manifest   = { version = "0.1.7", path = "crates/plugin-manifest" }
 nexo-persona-manifest  = { version = "0.1.0", path = "crates/persona-manifest" }
 nexo-persona-installer = { version = "0.1.0", path = "crates/persona-installer" }
-nexo-project-tracker   = { version = "0.1.7", path = "crates/project-tracker" }
+nexo-project-tracker   = { version = "0.1.8", path = "crates/project-tracker" }
 nexo-tool-meta         = { version = "0.1.16", path = "crates/tool-meta" }
-nexo-webhook-receiver  = { version = "0.1.7", path = "crates/webhook-receiver" }
-nexo-webhook-server    = { version = "0.1.7", path = "crates/webhook-server" }
+nexo-webhook-receiver  = { version = "0.1.8", path = "crates/webhook-receiver" }
+nexo-webhook-server    = { version = "0.1.8", path = "crates/webhook-server" }
 dirs                   = "5"
 tokio-tungstenite   = { workspace = true }
 tokio-util          = { workspace = true }
