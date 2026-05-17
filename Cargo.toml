@@ -366,7 +366,7 @@ nexo-memory        = { version = "0.1.6", path = "crates/memory" }
 # Phase 90.x.memory-snapshot — snapshot crate exposed at
 # workspace scope so `nexo-setup`'s `LiveMemorySnapshotReader`
 # adapter can consume `MemorySnapshotter` + `SnapshotMeta`.
-nexo-memory-snapshot = { version = "0.1.4", path = "crates/memory-snapshot" }
+nexo-memory-snapshot = { version = "0.1.5", path = "crates/memory-snapshot" }
 # Phase 83.14.b — sanitize/media published independently as 0.1.6
 # so consumers (microapp-sdk's `email-template` feature) can
 # resolve the dep on crates.io. Workspace pin keeps the local
@@ -474,7 +474,7 @@ nexo-driver-claude     = { version = "0.1.9", path = "crates/driver-claude" }
 nexo-driver-loop       = { version = "0.1.9", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.9", path = "crates/driver-permission" }
 nexo-driver-types      = { version = "0.1.9", path = "crates/driver-types" }
-nexo-memory-snapshot   = { version = "0.1.4", path = "crates/memory-snapshot" }
+nexo-memory-snapshot   = { version = "0.1.5", path = "crates/memory-snapshot" }
 nexo-plugin-manifest   = { version = "0.1.7", path = "crates/plugin-manifest" }
 nexo-persona-manifest  = { version = "0.1.0", path = "crates/persona-manifest" }
 nexo-persona-installer = { version = "0.1.0", path = "crates/persona-installer" }

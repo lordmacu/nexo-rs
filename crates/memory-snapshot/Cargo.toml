@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-memory-snapshot"
 description = "Atomic point-in-time snapshot/restore for agent memory: git memdir + SQLite (long_term, vector, concepts, compactions) + extract cursor + dream_run row, packaged as a verifiable tar.zst bundle with optional redaction and age encryption."
-version       = "0.1.4"
+version       = "0.1.5"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }

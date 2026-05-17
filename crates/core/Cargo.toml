@@ -77,7 +77,7 @@ nexo-driver-claude  = { version = "0.1.9", path = "../driver-claude" }
 nexo-driver-loop    = { version = "0.1.9", path = "../driver-loop" }
 nexo-driver-types   = { version = "0.1.9", path = "../driver-types" }
 nexo-driver-permission = { version = "0.1.9", path = "../driver-permission" }
-nexo-memory-snapshot = { version = "0.1.4", path = "../memory-snapshot" }
+nexo-memory-snapshot = { version = "0.1.5", path = "../memory-snapshot" }
 nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
 nexo-project-tracker = { version = "0.1.9", path = "../project-tracker" }
 futures         = { workspace = true }
