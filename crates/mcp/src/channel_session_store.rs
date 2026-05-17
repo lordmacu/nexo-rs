@@ -223,10 +223,13 @@ mod tests {
         let r = SqliteSessionRegistry::open_memory().await.unwrap();
         let _ = r.resolve(&key("a")).await;
         let _ = r.resolve(&key("b")).await;
-        // No row is old enough yet → no eviction.
-        assert_eq!(r.gc_idle(1).await, 0);
+        // No row is old enough yet — use a generous threshold so a
+        // slow CI runner doesn't tick past it between resolve() and
+        // this call (the 1ms threshold this used to carry was racey
+        // on GitHub Actions ubuntu-latest under load).
+        assert_eq!(r.gc_idle(10_000).await, 0);
         assert_eq!(r.len().await, 2);
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let evicted = r.gc_idle(20).await;
         assert_eq!(evicted, 2);
         assert_eq!(r.len().await, 0);
