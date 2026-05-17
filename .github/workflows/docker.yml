@@ -27,6 +27,16 @@ on:
     tags: ["nexo-rs-v*"]
   workflow_dispatch:
 
+# Cancel obsolete in-flight multi-arch builds on burst pushes —
+# cargo-release wave + drive-by fmt fixes can stack 5+ builds in
+# the queue at 10-15min each. Without this, runner pool stays
+# saturated and downstream workflows (CI) sit queued for an hour+.
+# Tag-pushes use a separate group so a `v*` release tag never
+# cancels its own builds.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
