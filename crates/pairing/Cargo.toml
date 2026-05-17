@@ -1,7 +1,7 @@
 [package]
 name = "nexo-pairing"
 description   = "Setup-code pairing store and DM-challenge gate for Nexo channel plugins."
-version       = "0.1.6"
+version       = "0.1.8"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -37,11 +37,11 @@ tracing        = { workspace = true }
 # adapter via manifest data instead of a hardcoded Rust
 # constructor on the daemon side.
 nexo-broker    = { version = "0.1.5", path = "../broker" }
-nexo-plugin-manifest = { version = "0.1.6", path = "../plugin-manifest" }
+nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
 # Phase 96 — PluginPollerRouter forwards ticks via broker JSON-RPC
 # and reuses the TickAck/TickMetrics wire shapes from nexo-poller
 # so the runner doesn't have to re-define them.
-nexo-poller    = { version = "0.1.2", path = "../poller" }
+nexo-poller    = { version = "0.2.0", path = "../poller" }
 hmac           = "0.12"
 subtle         = "2"
 rand           = "0.8"

@@ -30,7 +30,7 @@ tower       = { version = "0.5", features = ["limit", "util"] }
 tower-http  = { version = "0.5", features = ["limit", "timeout", "trace"] }
 arc-swap    = "1"
 nexo-broker            = { version = "0.1.5", path = "../broker" }
-nexo-config            = { version = "0.1.9", path = "../config" }
+nexo-config            = { version = "0.1.10", path = "../config" }
 nexo-webhook-receiver  = { version = "0.1.7", path = "../webhook-receiver" }
 
 [dev-dependencies]

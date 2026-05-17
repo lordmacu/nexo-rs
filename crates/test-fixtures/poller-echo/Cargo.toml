@@ -1,0 +1,45 @@
+# Phase 96 follow-up — tiny synthetic poller plugin fixture used by
+# the daemon's Block B+C+D+E end-to-end tests. Speaks the
+# `serve_one_ephemeral_tick` stdio JSON-RPC contract; echoes a
+# canned `TickReply` with the tick metadata it received so the
+# test can assert round-trip fidelity.
+#
+# Lives in its own crate (mirrors `mock-subprocess-plugin`) so
+# `cargo-dist` doesn't try to ship it as a release binary and so
+# the co-located test in `tests/ephemeral_e2e.rs` can resolve the
+# binary via `CARGO_BIN_EXE_poller_echo`.
+
+[package]
+name = "nexo-poller-echo"
+version = "0.0.1"
+description = "Internal test fixture — synthetic poller plugin used by the daemon's Phase 96 e2e tests. Not published."
+publish = false
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.dist]
+dist = false
+
+[[bin]]
+name = "poller_echo"
+path = "src/main.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+nexo-pairing = { path = "../../pairing" }
+nexo-poller  = { path = "../../poller" }
+tokio        = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-util   = { workspace = true }
+chrono       = { workspace = true }
+serial_test  = "3"

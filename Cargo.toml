@@ -118,6 +118,8 @@ members = [
     # cargo-dist's manifest planner can opt it out of release
     # tarballs via `[package.metadata.dist] dist = false`.
     "crates/test-fixtures/mock-subprocess-plugin",
+    # Phase 96 — poller plugin fixture for Block D+E e2e tests.
+    "crates/test-fixtures/poller-echo",
     "crates/test-fixtures/reference-plugin",
 ]
 # Keep standalone extension templates out of the agent workspace so
@@ -355,8 +357,8 @@ rustls             = { version = "0.23", default-features = false, features = ["
 rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
 rand               = "0.8"
-nexo-tool-meta     = { version = "0.1.15", path = "crates/tool-meta" }
-nexo-microapp-sdk  = { version = "0.1.19", path = "crates/microapp-sdk" }
+nexo-tool-meta     = { version = "0.1.16", path = "crates/tool-meta" }
+nexo-microapp-sdk  = { version = "0.1.20", path = "crates/microapp-sdk" }
 # Phase 90.x.memory — long-term memory crate exposed at workspace
 # scope so `nexo-setup`'s `LiveMemoryReader` adapter can consume
 # `LongTermMemory` + `MemoryEntry` types via `workspace = true`.
@@ -437,16 +439,16 @@ nexo-cdp = { version = "0.1.1", path = "crates/cdp" }
 # removed. Discovery walker auto-spawns the subprocess via
 # `[plugin.entrypoint]`; per-agent google_* tools register through
 # `RemoteToolHandler` on the canonical `tool.invoke` path.
-nexo-setup = { version = "0.1.2", path = "crates/setup" }
+nexo-setup = { version = "0.1.3", path = "crates/setup" }
 nexo-tunnel = { version = "0.3", path = "crates/tunnel" }
 nexo-tunnel-quick = { version = "0.1", path = "crates/tunnel-quick" }
-nexo-auth = { version = "0.1.7", path = "crates/auth" }
-nexo-poller = { version = "0.1.2", path = "crates/poller" }
-nexo-poller-tools = { version = "0.1.2", path = "crates/poller-tools" }
-nexo-poller-ext = { version = "0.1.2", path = "crates/poller-ext" }
-nexo-config = { version = "0.1.9", path = "crates/config" }
+nexo-auth = { version = "0.1.9", path = "crates/auth" }
+nexo-poller = { version = "0.2.0", path = "crates/poller" }
+nexo-poller-tools = { version = "0.2.0", path = "crates/poller-tools" }
+nexo-poller-ext = { version = "0.2.0", path = "crates/poller-ext" }
+nexo-config = { version = "0.1.10", path = "crates/config" }
 nexo-broker = { version = "0.1.5", path = "crates/broker" }
-nexo-core = { version = "0.2.0", path = "crates/core" }
+nexo-core = { version = "0.2.1", path = "crates/core" }
 nexo-team-store = { version = "0.1.2", path = "crates/team-store" }
 nexo-extensions = { version = "0.1.4", path = "crates/extensions" }
 nexo-ext-installer = { version = "0.1.1", path = "crates/ext-installer" }
@@ -463,7 +465,7 @@ sqlx               = { workspace = true }
 # tool.invoke JSON-RPC over stdio. The in-tree
 # `crates/web-search/` library remains as a workspace member for
 # direct consumers (microapp embeds, future MCP standalone tools).
-nexo-pairing = { version = "0.1.5", path = "crates/pairing" }
+nexo-pairing = { version = "0.1.8", path = "crates/pairing" }
 nexo-agent-registry    = { version = "0.1.7", path = "crates/agent-registry" }
 nexo-dispatch-tools    = { version = "0.1.7", path = "crates/dispatch-tools" }
 nexo-dream             = { version = "0.1.7", path = "crates/dream" }
@@ -473,11 +475,11 @@ nexo-driver-loop       = { version = "0.1.7", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.7", path = "crates/driver-permission" }
 nexo-driver-types      = { version = "0.1.7", path = "crates/driver-types" }
 nexo-memory-snapshot   = { version = "0.1.4", path = "crates/memory-snapshot" }
-nexo-plugin-manifest   = { version = "0.1.6", path = "crates/plugin-manifest" }
+nexo-plugin-manifest   = { version = "0.1.7", path = "crates/plugin-manifest" }
 nexo-persona-manifest  = { version = "0.1.0", path = "crates/persona-manifest" }
 nexo-persona-installer = { version = "0.1.0", path = "crates/persona-installer" }
 nexo-project-tracker   = { version = "0.1.7", path = "crates/project-tracker" }
-nexo-tool-meta         = { version = "0.1.15", path = "crates/tool-meta" }
+nexo-tool-meta         = { version = "0.1.16", path = "crates/tool-meta" }
 nexo-webhook-receiver  = { version = "0.1.7", path = "crates/webhook-receiver" }
 nexo-webhook-server    = { version = "0.1.7", path = "crates/webhook-server" }
 dirs                   = "5"

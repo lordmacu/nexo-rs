@@ -4,13 +4,35 @@ This file tracks the **active technical backlog** in English.
 
 ### Phase 96 — Poller Laravel refactor + builtins extraction   🔄 OPERATOR ACTIONS ONLY
 
-Phase 96 Blocks A through F + ephemeral lifecycle + CI workflows
-shipped on `phase-96-poller-laravel-refactor` branch (11 commits) +
-3 standalone repos (`nexo-rs-poller-{rss,google-calendar,gmail}`).
-Only operator-side actions remain: crates.io publish (token) +
-GitHub repo creation + branch push + PR.
+Phase 96 Blocks A through F + ephemeral lifecycle + CI workflows +
+e2e integration tests + Prometheus aggregator shipped on:
+- `main` (PR #73 merged) — 12 commits, ~12.7K LOC delta
+- `phase-96-followup-e2e-test` (PR #74 in-flight) — e2e fixture
+  + 10 tests + Prometheus aggregator
 
-**Remaining open items:**
+3 standalone repos (`nexo-rs-poller-{rss,google-calendar,gmail}`)
+published as public GitHub repos with CI + release.yml workflows.
+Only operator-side actions remain: crates.io publish (token).
+
+**Closed in main wave (PR #73):**
+- ✅ 96.1-E1-E4 (Block A + B + C + D + E full implementation)
+- ✅ Docs: poller-plugin.md + poller-v2.md
+- ✅ GitHub repo creation + push (3 standalone repos public)
+
+**Closed in PR #74 follow-up wave:**
+- ✅ Daemon end-to-end integration test — `crates/test-fixtures/poller-echo/`
+  fixture + 10 `ephemeral_e2e` tests exercising
+  `EphemeralPollerProxy::spawn_ephemeral_tick` against the real
+  binary (happy path + 3 error classifications + malformed reply
+  + timeout + cancel + crash + missing binary).
+- ✅ PluginPollerHost `metric_inc` Prometheus aggregator —
+  generic `inc_named_counter(name, labels)` in
+  `nexo_poller::telemetry`. Daemon reverse-RPC handler +
+  `InProcessHost::metric_inc` both fan in. Sanitization +
+  cardinality cap + 7 new tests. Plugin counters surface in
+  `/metrics` output without any per-kind hardcoded counter wiring.
+
+**Remaining operator-only items:**
 
 - **96.19 — crates.io publish wave.** Needs `CARGO_REGISTRY_TOKEN`
   scoped to publish. Order: `nexo-plugin-manifest` minor (new
@@ -25,62 +47,76 @@ GitHub repo creation + branch push + PR.
   `cargo install nexo-poller-<kind>`. Blocked on publish wave —
   the crates need to exist on crates.io first.
 
-- **GitHub repo creation + push.** Three new repos to create as
-  `lordmacu/nexo-rs-poller-{rss,google-calendar,gmail}` (public,
-  MIT/Apache-2.0 per Phase 94/95 pattern). Then `git push -u
-  origin main` in each + branch push for the proyecto refactor
-  branch + open PR.
+**Deferred to Phase 97 (non-trivial, each 1-2 day proper impl):**
 
-- **`nexo-poller-ext` deletion (cycle 3).** Crate is
+- **97.x — Cross-process OAuth token-file lock for Google pollers.**
+  The `nexo-poller-gmail` + `nexo-poller-google-calendar` plugins
+  both share the agent's `token_path` (via reverse-RPC
+  `credentials_get("google").token_path`). Concurrent ticks
+  refreshing simultaneously can race the file write — last writer
+  wins; older token transiently still in use. Not catastrophic
+  (just mild double-refresh), but proper fix requires
+  `nexo-plugin-google::GoogleAuthClient` to acquire an `fcntl`
+  advisory lock around the refresh path BEFORE writing
+  `token_path`. Today the plugins can only lock at their own
+  level (mutex), which prevents same-plugin self-race but not
+  cross-process (gmail vs calendar). Upstream-fix-only.
+
+- **97.x — Gmail `historyId` cursor migration.** V1 + extracted
+  plugin both use a belt-and-suspenders seen-ids set (capped 5000)
+  as the dedup cursor. Non-breaking swap to Gmail watch + `historyId`
+  semantics gives proper missed-message recovery + tighter
+  cursors. Keep current pattern as fallback.
+
+
+
+- **97.x — Ephemeral bidirectional reverse-RPC.** V1 ephemeral
+  has no reverse-RPC during tick — `host.credentials_get` and
+  `host.llm_invoke` return `-32601`. Lifting this requires
+  bi-directional stdio JSON-RPC multiplexing: subprocess writes
+  request frames on stdout while reading daemon responses on
+  stdin. Protocol: JSON-RPC 2.0 over newline-delimited frames,
+  `id` field distinguishes host requests (id > 0) from final
+  tick reply (id == 0). Needs an `EphemeralHostDispatcher` trait
+  the daemon implements + SDK `EphemeralHost` rewrite + protocol
+  framing + tests. Scope: ~400 LOC, multiple iteration cycles
+  for protocol correctness.
+
+- **97.x — Plugin poller supervisor beyond inherited.** Today
+  plugin v2 poller subprocesses inherit the
+  `SubprocessNexoPlugin` supervisor (Phase 81.21.b.b lineage).
+  Reverse-RPC subscribers are tokio tasks that survive child
+  restart; broker request timeouts surface as `Transient`
+  retried by the runner. A dedicated per-kind supervisor with
+  exponential backoff + manual restart RPC + per-restart
+  cooldown is a follow-up if real subprocess crash patterns
+  expose insufficiency in the inherited path.
+
+- **97.x — `gmail/tools.rs` LLM tools port (~430 LOC).** V1
+  in-tree gmail builtin exposed `gmail_search_recent` /
+  `gmail_send_message` / `gmail_get_message` /
+  `gmail_label_modify` LLM custom tools via `Poller::custom_tools`.
+  Block D full port of the gmail handler skipped these. Needs
+  the `PollerHandler` trait extended with `custom_tools()` +
+  `custom_tool_call()`, SDK broker handlers for
+  `plugin.poller.gmail.list_tools` + `plugin.poller.gmail.tool_call`,
+  daemon `PluginPollerProxy::custom_tools()` cache from boot-time
+  broker query + per-tool `CustomToolHandler` that routes through
+  broker. Then port the 5 gmail-specific tools.
+
+- **97.x — `nexo-poller-ext` cycle-3 deletion.** Crate is
   `#[deprecated(since = "0.2.0")]` + README WARN. Delete entirely
   after 2 release cycles (Phase 97 + 98) with zero download
   telemetry from crates.io.
 
-- **PluginPollerHost `metric_inc` Prometheus aggregator.** Today
-  forwards subprocess `metric_inc` calls to `tracing::info!` only.
-  Wire into daemon's Prometheus registry so subprocess pollers can
-  fan out arbitrary counters into `/metrics`. Blocked on adding a
-  generic named-counter API to `nexo-poller::telemetry` (currently
-  only per-kind hardcoded metrics).
-
-- **Plugin poller supervisor (96.8.a beyond inherited path).**
-  Today plugin v2 poller subprocesses rely on the existing
-  `SubprocessNexoPlugin` supervisor (Phase 81.21.b.b). Reverse-RPC
-  subscribers are tokio tasks that survive child restart; broker
-  request timeouts surface as `Transient` retried by the runner.
-  A dedicated per-kind supervisor with backoff + manual restart
-  RPC is a follow-up if the inherited path proves insufficient
-  under real subprocess crash patterns.
-
-- **Ephemeral V1 limitations.** V1 spawn-per-tick has no reverse-
-  RPC during tick — `host.credentials_get` and `host.llm_invoke`
-  return `-32601` so the poller errors Permanent. Credentialed or
-  LLM-using pollers must use `lifecycle = "long_lived"`.
-  Removing this constraint requires bi-directional stdio JSON-RPC
-  multiplexing in `serve_one_ephemeral_tick` (subprocess reads
-  daemon replies on stdin while writing its own requests on
-  stdout). Reasonable scope: 2-3 day follow-up.
-
-- **`gmail/tools.rs` LLM tools port (~430 LOC).** The V1 in-tree
-  builtin exposed `gmail_search_recent` / `gmail_send_message` /
-  similar LLM custom tools via `Poller::custom_tools`. Block D
-  full port of the gmail handler skipped these — needs the
-  `PollerHandler` trait to expose `custom_tools` (currently does
-  not). Either add it to the trait + SDK or build a side-channel
-  tool registry per plugin.
-
-- **Daemon end-to-end integration test.** No fixture-driven test
-  exercises the full `daemon boot → router register → tick
-  dispatch → broker round-trip → reply → cursor persist` flow.
-  Unit tests cover each layer; an e2e proves the integration.
-  Approach: `tests/poller_plugin_e2e.rs` spawning a fixture
-  subprocess that responds to ticks with a canned reply.
-
-- **`integration-tests` harness for ephemeral.** `EphemeralPollerProxy`
-  shell-out wire is unit-tested for envelope parse + error
-  classification but not against a real binary. A `tests/`
-  fixture binary (or feature-gated bin entry) would round-trip
-  the full spawn → stdin → stdout → exit path.
+- **97.x — Long-lived broker round-trip integration test.**
+  Sibling to the ephemeral fixture. Same shape as
+  `crates/test-fixtures/poller-echo/` but with `AnyBroker::local`
+  plumbing in dev-deps + a fixture binary that subscribes to
+  `plugin.poller.echo.tick`. Tests `PluginPollerProxy::tick()`
+  end-to-end through broker. Lower priority — the long-lived
+  path is already validated by the round-trip unit tests in
+  `nexo-pairing::plugin_poller::tests` (11 cases).
 
 ### Phase 95 — Web-search plugin extraction (close-out follow-ups)   ⬜ ACTIVE
 

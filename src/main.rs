@@ -16078,9 +16078,25 @@ async fn spawn_poller_reverse_rpc_subscriber(
                 Ok(serde_json::json!({}))
             }
             "metric_inc" => {
-                tracing::info!(
+                // Phase 96 follow-up — fan in to the daemon-wide
+                // Prometheus counter store so subprocess pollers
+                // surface custom counters in `/metrics`. Labels JSON
+                // object → sanitized label pairs; non-object labels
+                // produce a labelless counter.
+                let metric_name = params
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let labels = params
+                    .get("labels")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                nexo_poller::telemetry::inc_named_counter(&metric_name, &labels);
+                tracing::trace!(
                     plugin = %plugin_id,
-                    ?params,
+                    metric = %metric_name,
+                    ?labels,
                     "poller subprocess metric_inc",
                 );
                 Ok(serde_json::json!({}))
