@@ -173,7 +173,7 @@ impl EffectiveBindingPolicy {
 /// described in `docs/src/ops/web-search.md`. Lives here (not in the
 /// `nexo-web-search` crate) so the policy stays a pure-config view
 /// disconnected from HTTP / SQLite concerns.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebSearchPolicy {
     #[serde(default)]
@@ -220,6 +220,26 @@ fn default_cache_ttl() -> u64 {
 }
 
 impl EffectiveBindingPolicy {
+    /// Phase 95 — Opt-in slice extractor used by `RemoteToolHandler`
+    /// when forwarding a `tool.invoke` request to a subprocess
+    /// plugin. Tools that carry a per-binding policy (allowlists /
+    /// defaults / provider overrides) return their slice as a JSON
+    /// value; tools without per-binding contract return `None` and
+    /// the JSON-RPC envelope omits `params.policy`.
+    ///
+    /// Agnostic — every future subprocess tool requiring binding-
+    /// level gating reuses the same envelope without daemon-side
+    /// changes beyond adding its match arm here.
+    pub fn for_tool(&self, tool_name: &str) -> Option<serde_json::Value> {
+        match tool_name {
+            "web_search" => serde_json::to_value(&self.web_search).ok(),
+            // Future entries land here when a new subprocess tool
+            // surface needs per-binding policy delivery (e.g. lsp,
+            // dream, fork, project-tracker).
+            _ => None,
+        }
+    }
+
     /// Build the effective policy for the `binding_index`-th binding of
     /// `agent`. Out-of-range indices fall back to the agent-level defaults
     /// so callers in legacy/unbound code paths can still produce a policy.

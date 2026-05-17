@@ -207,9 +207,7 @@ mod tests {
     fn validate_rejects_empty_candidates() {
         let s = PluginDashboardSection {
             layout: InstanceLayout::Single,
-            auth_check: AuthCheck::SessionDirFiles {
-                candidates: vec![],
-            },
+            auth_check: AuthCheck::SessionDirFiles { candidates: vec![] },
         };
         assert!(s.validate().is_err());
     }

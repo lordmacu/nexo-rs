@@ -328,4 +328,3 @@ fn default_connect_timeout_ms() -> u64 {
 fn default_command_timeout_ms() -> u64 {
     15_000
 }
-

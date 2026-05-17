@@ -183,14 +183,11 @@ async fn boot_ctx() -> McpServerBootContext {
             .await
             .expect("memory open"),
     ));
-    // web_fetch is handle-free; web_search needs a router. Use the
-    // DDG fallback (no api key required) so the test stays offline.
-    bc.web_search_router = Some(Arc::new(nexo_web_search::WebSearchRouter::new(
-        vec![Arc::new(
-            nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
-        )],
-        None,
-    )));
+    // Phase 95 — web_search now runs in the subprocess plugin
+    // `nexo-rs-plugin-web-search`. MCP bridge dispatch surfaces
+    // it as `SkippedInfraMissing { handle: "web_search_subprocess_plugin" }`
+    // when the plugin isn't installed; tests that assert on
+    // missing infra align with that handle name.
     bc
 }
 

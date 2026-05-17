@@ -1,31 +1,31 @@
-//! Built-in pollers shipped with the framework. To add a new one:
+//! In-tree built-in pollers shipped with the framework.
 //!
-//! 1. Create `crates/poller/src/builtins/<your_kind>.rs` with a struct
-//!    that `impl Poller`.
-//! 2. Add a `pub mod` line below.
-//! 3. Push your struct into [`register_all`].
+//! After Phase 96 only two builtins remain in-tree:
+//!  - `webhook_poll` — generic HTTP poller, not provider-specific.
+//!  - `agent_turn`   — generic scheduled LLM prompt, not
+//!                     provider-specific (LLM access via
+//!                     `PollerHost::llm_invoke`).
 //!
-//! That is the only place wiring is touched — `main.rs` calls
-//! `register_all` once at boot. See `docs/src/recipes/build-a-poller.md`
-//! for the full pattern.
+//! Provider-specific pollers (`gmail`, `google_calendar`, `rss`) ship
+//! as standalone subprocess plugins via the `[plugin.poller]`
+//! manifest section + `nexo-microapp-sdk::poller` adapter. The legacy
+//! `nexo-poller-ext` path is deprecated.
 
 use std::sync::Arc;
 
 use crate::PollerRunner;
 
 pub mod agent_turn;
-pub mod gmail;
-pub mod google_calendar;
-pub mod rss;
 pub mod webhook_poll;
 
-/// Register every built-in poller. Single touch point — adding a new
-/// module means dropping a `pub mod x;` above and one `runner.register`
-/// line below. Idempotent: re-registering replaces the previous impl.
+/// Register the two in-tree built-in pollers. Single touch point —
+/// adding a new in-tree builtin means dropping a `pub mod x;` above
+/// and one `runner.register` line below. Idempotent: re-registering
+/// the same kind replaces the previous impl.
+///
+/// Out-of-tree (plugin v2) pollers are discovered separately by the
+/// daemon from each plugin manifest's `[plugin.poller]` section.
 pub fn register_all(runner: &PollerRunner) {
-    runner.register(Arc::new(gmail::GmailPoller::new()));
-    runner.register(Arc::new(rss::RssPoller::new()));
     runner.register(Arc::new(webhook_poll::WebhookPoller::new()));
-    runner.register(Arc::new(google_calendar::GoogleCalendarPoller::new()));
     runner.register(Arc::new(agent_turn::AgentTurnPoller::new()));
 }

@@ -1,9 +1,13 @@
-//! `ExtensionPoller` — wraps an `nexo-extensions::StdioRuntime` and
-//! implements `nexo_poller::Poller`. The runner treats it just like
-//! a built-in module, so operators can ship a `poller` extension
-//! written in any language that speaks JSON-RPC over stdio.
+//! `ExtensionPoller` — legacy stdio JSON-RPC bridge for `Poller`
+//! implementations written in other languages.
 //!
-//! ## Wire protocol
+//! **Deprecated post Phase 96** (`nexo-poller-ext 0.2.0`): out-of-tree
+//! pollers should ship as plugin v2 subprocess plugins declaring the
+//! `[plugin.poller]` manifest section, using the
+//! `nexo-microapp-sdk::poller::PollerPluginAdapter` helper. This crate
+//! is preserved one release cycle for migration.
+//!
+//! ## Wire protocol (V2)
 //!
 //! The extension MUST handle one method:
 //!
@@ -19,26 +23,24 @@
 //! }
 //!
 //! result: {
-//!   "items_seen":       <u32>,
-//!   "items_dispatched": <u32>,
-//!   "deliver": [
-//!     { "channel": "whatsapp"|"telegram"|"google",
-//!       "recipient": "<jid|chat_id|email>",
-//!       "payload":   <JSON>
-//!     },
-//!     ...
-//!   ],
 //!   "next_cursor":         null | "<base64 url-safe string>",
-//!   "next_interval_secs":  null | <u64>
+//!   "next_interval_secs":  null | <u64>,
+//!   "metrics": {
+//!     "items_seen":       <u32>,
+//!     "items_dispatched": <u32>
+//!   } | null
 //! }
 //! ```
+//!
+//! Pollers are responsible for their own outbound — the runner no
+//! longer translates a `deliver[]` payload into channel topics.
 //!
 //! Errors must use a JSON-RPC error response with `code`:
 //! - `-32001` for `Transient` (network blip, 5xx)
 //! - `-32002` for `Permanent` (token revoked, scope changed)
 //! - `-32602` for `Config` (validation failure)
-//!
-//! Any other code is treated as `Transient`.
+
+#![allow(deprecated)]
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,7 +48,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine;
 use nexo_extensions::StdioRuntime;
-use nexo_poller::{OutboundDelivery, PollContext, Poller, PollerError, TickOutcome};
+use nexo_poller::{PollContext, Poller, PollerError, TickAck, TickMetrics};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -54,16 +56,13 @@ const ERR_TRANSIENT: i32 = -32001;
 const ERR_PERMANENT: i32 = -32002;
 const ERR_CONFIG: i32 = -32602;
 
+#[deprecated(
+    since = "0.2.0",
+    note = "use `[plugin.poller]` manifest section + nexo-microapp-sdk::poller adapter"
+)]
 pub struct ExtensionPoller {
-    /// One stdio subprocess can advertise multiple `kind`s; this
-    /// struct is one binding (extension × kind) registered to the
-    /// runner.
     kind: &'static str,
     runtime: Arc<StdioRuntime>,
-    /// Snapshot of the extension's custom tools fetched once at
-    /// registration time via `poll_list_tools`. Cached because
-    /// `Poller::custom_tools` is sync — we cannot await on every
-    /// call.
     tools_cache: Vec<ToolDefinition>,
 }
 
@@ -98,21 +97,16 @@ impl Poller for ExtensionPoller {
     }
 
     fn description(&self) -> &'static str {
-        "(extension)"
+        "(extension — deprecated, migrate to [plugin.poller])"
     }
 
     fn validate(&self, _config: &Value) -> Result<(), PollerError> {
-        // The extension owns its own validation in `poll_tick`. We
-        // could add a `poll_validate` round-trip in the future; for
-        // V1 errors surface on the first tick.
         Ok(())
     }
 
     fn custom_tools(&self) -> Vec<nexo_poller::CustomToolSpec> {
         let mut out = Vec::with_capacity(self.tools_cache.len());
         for t in &self.tools_cache {
-            // Capture the kind + tool name in the handler so calls
-            // round-trip back to the right extension.
             let kind = self.kind;
             let runtime_for_handler = Arc::clone(&self.runtime);
             let tool_name = t.name.clone();
@@ -157,7 +151,7 @@ impl Poller for ExtensionPoller {
         out
     }
 
-    async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+    async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
         let cursor_b64 = ctx
             .cursor
             .as_deref()
@@ -192,35 +186,16 @@ impl Poller for ExtensionPoller {
 
         let next_interval_hint = parsed.next_interval_secs.map(Duration::from_secs);
 
-        let deliver = parsed
-            .deliver
-            .into_iter()
-            .map(|d| {
-                Ok::<_, PollerError>(OutboundDelivery {
-                    channel: channel_from_str(&d.channel)?,
-                    recipient: d.recipient,
-                    payload: d.payload,
-                })
-            })
-            .collect::<Result<Vec<_>, PollerError>>()?;
-
-        Ok(TickOutcome {
-            items_seen: parsed.items_seen,
-            items_dispatched: parsed.items_dispatched,
-            deliver,
+        Ok(TickAck {
             next_cursor,
             next_interval_hint,
+            metrics: parsed.metrics,
         })
     }
 }
 
 /// Walk the runtime's manifest capabilities and register one
-/// `ExtensionPoller` per `kind`. For each kind, fetch the
-/// extension's custom tools via `poll_list_tools` and bake them
-/// into the poller's tool cache so `Poller::custom_tools()` (sync)
-/// can return them without an awaitable round-trip on every call.
-///
-/// Returns the count of registered pollers so the caller can log it.
+/// `ExtensionPoller` per `kind`. Deprecated alongside the crate.
 pub async fn register_for_runtime(
     runner: &nexo_poller::PollerRunner,
     runtime: &Arc<StdioRuntime>,
@@ -228,16 +203,8 @@ pub async fn register_for_runtime(
 ) -> usize {
     let mut count = 0;
     for kind in pollers {
-        // `Poller::kind()` returns &'static str, so we have to leak.
-        // Extension pollers are registered once at boot and live for
-        // the daemon's lifetime — leaking a few short kind strings is
-        // a controlled, bounded cost.
         let leaked: &'static str = Box::leak(kind.clone().into_boxed_str());
 
-        // Fetch this kind's custom tools once. Failures degrade
-        // silently to "no custom tools" — the generic pollers_*
-        // tools still work; the operator can debug with the agent
-        // ext doctor command.
         let tools = match runtime
             .call("poll_list_tools", json!({ "kind": leaked }))
             .await
@@ -266,9 +233,6 @@ pub async fn register_for_runtime(
                 Vec::new()
             }
             Err(e) => {
-                // `Method not found` is a normal "no custom tools"
-                // signal for older / minimal extensions. Any other
-                // error logs at warn but does not abort registration.
                 tracing::debug!(
                     kind = %leaked,
                     error = %e,
@@ -283,18 +247,6 @@ pub async fn register_for_runtime(
         count += 1;
     }
     count
-}
-
-fn channel_from_str(s: &str) -> Result<nexo_auth::Channel, PollerError> {
-    match s {
-        "whatsapp" => Ok(nexo_auth::handle::WHATSAPP),
-        "telegram" => Ok(nexo_auth::handle::TELEGRAM),
-        "google" => Ok(nexo_auth::handle::GOOGLE),
-        other => Err(PollerError::Config {
-            job: "<extension>".into(),
-            reason: format!("unknown deliver.channel '{other}' from extension"),
-        }),
-    }
 }
 
 fn map_call_error(err: nexo_extensions::CallError) -> PollerError {
@@ -320,22 +272,11 @@ fn map_call_error(err: nexo_extensions::CallError) -> PollerError {
 #[derive(Debug, Deserialize)]
 struct TickResponse {
     #[serde(default)]
-    items_seen: u32,
-    #[serde(default)]
-    items_dispatched: u32,
-    #[serde(default)]
-    deliver: Vec<DeliveryWire>,
-    #[serde(default)]
     next_cursor: Option<String>,
     #[serde(default)]
     next_interval_secs: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DeliveryWire {
-    channel: String,
-    recipient: String,
-    payload: Value,
+    #[serde(default)]
+    metrics: Option<TickMetrics>,
 }
 
 #[cfg(test)]
@@ -345,25 +286,23 @@ mod tests {
     #[test]
     fn parses_minimal_response() {
         let raw = json!({
-            "items_seen": 3,
-            "items_dispatched": 2,
-            "deliver": [
-                { "channel": "telegram", "recipient": "1", "payload": { "text": "x" } }
-            ],
-            "next_cursor": null
+            "next_cursor": null,
+            "metrics": { "items_seen": 3, "items_dispatched": 2 }
         });
         let parsed: TickResponse = serde_json::from_value(raw).unwrap();
-        assert_eq!(parsed.items_seen, 3);
-        assert_eq!(parsed.items_dispatched, 2);
-        assert_eq!(parsed.deliver.len(), 1);
+        assert!(parsed.next_cursor.is_none());
+        let m = parsed.metrics.unwrap();
+        assert_eq!(m.items_seen, 3);
+        assert_eq!(m.items_dispatched, 2);
     }
 
     #[test]
-    fn channel_mapping() {
-        assert!(channel_from_str("whatsapp").is_ok());
-        assert!(channel_from_str("telegram").is_ok());
-        assert!(channel_from_str("google").is_ok());
-        assert!(channel_from_str("xmpp").is_err());
+    fn parses_empty_response() {
+        let raw = json!({});
+        let parsed: TickResponse = serde_json::from_value(raw).unwrap();
+        assert!(parsed.next_cursor.is_none());
+        assert!(parsed.next_interval_secs.is_none());
+        assert!(parsed.metrics.is_none());
     }
 
     #[test]

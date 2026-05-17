@@ -135,7 +135,11 @@ async fn fabricated_spawned(id: &str) -> (SpawnedAgent, mpsc::Receiver<ReloadCom
     struct Noop;
     #[async_trait::async_trait]
     impl AgentBehavior for Noop {
-        async fn on_message(&self, _ctx: &AgentContext, _msg: InboundMessage) -> anyhow::Result<()> {
+        async fn on_message(
+            &self,
+            _ctx: &AgentContext,
+            _msg: InboundMessage,
+        ) -> anyhow::Result<()> {
             Ok(())
         }
         async fn on_heartbeat(&self, _ctx: &AgentContext) -> anyhow::Result<()> {
@@ -310,11 +314,7 @@ async fn spawner_success_registers_id_and_reports_applied() {
     coord.set_spawner(Arc::new(spawner));
 
     let outcome = coord.reload().await;
-    assert!(
-        outcome.rejected.is_empty(),
-        "{:#?}",
-        outcome.rejected
-    );
+    assert!(outcome.rejected.is_empty(), "{:#?}", outcome.rejected);
     assert_eq!(outcome.applied, vec!["hot".to_string()]);
 }
 

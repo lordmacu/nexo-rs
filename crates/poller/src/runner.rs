@@ -3,6 +3,11 @@
 //!
 //! The core happy path is spawn → tick → save → sleep → tick.
 //! Backoff, breaker, auto-pause, and hot-reload are layered on top.
+//!
+//! Post Phase 96 the runner is Laravel-style. It still owns the
+//! daemon-side `AnyBroker`, `CredentialsBundle`, and optional LLM
+//! registry / config — but only to build an [`InProcessHost`] per
+//! tick. The trait surface never sees those types.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,21 +17,25 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use nexo_auth::CredentialsBundle;
-use nexo_broker::AnyBroker;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
 use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use serde_json::json;
 use serde_yaml::Value as YamlValue;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::dispatch;
 use crate::error::{ErrorClass, PollerError};
-use crate::poller::{PollContext, Poller, TickOutcome};
+use crate::host::TickAck;
+use crate::in_process_host::InProcessHost;
+use crate::poller::{PollContext, Poller};
 use crate::schedule::{apply_jitter, Schedule};
 use crate::state::PollState;
 use crate::telemetry;
+
+const FAILURE_ALERT_SOURCE: &str = "plugin.poller.failure";
 
 /// Default config for the per-job circuit breaker. Threshold lives in
 /// PollersConfig; we use the resilience crate's exponential backoff.
@@ -64,10 +73,6 @@ fn same_shape(a: &PollerJob, b: &PollerJob) -> bool {
 /// One running task per job — keep its handle + a cancel token so
 /// hot-reload can cancel a single job without touching the rest.
 struct JobTask {
-    /// Kept for hot-reload diff (paso 10) — compares the new config
-    /// against the running task's current job to decide
-    /// keep/replace/drop. Marked `allow(dead_code)` until step 10
-    /// reads it.
     #[allow(dead_code)]
     job: Arc<PollerJob>,
     cancel: CancellationToken,
@@ -83,10 +88,9 @@ pub struct PollerRunner {
     state: Arc<PollState>,
     broker: AnyBroker,
     credentials: Arc<CredentialsBundle>,
-    /// Optional LLM access for the `agent_turn` built-in.
-    /// Boot wires this from the same `LlmRegistry` + `LlmConfig` the
-    /// agent runtimes use; pollers without LLM-driven kinds leave
-    /// it `None` and pay no cost.
+    /// Optional LLM access. Used only to build the per-tick
+    /// `InProcessHost` for in-tree builtins (`agent_turn`) — never
+    /// exposed to the trait surface.
     llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
     llm_config: Option<Arc<nexo_config::LlmConfig>>,
     leaseholder: String,
@@ -116,9 +120,10 @@ impl PollerRunner {
         }
     }
 
-    /// Wire the LLM registry + config so the `agent_turn`
-    /// built-in can build clients on demand. Optional: pollers that
-    /// only do data ingestion (gmail, rss, webhook) work without it.
+    /// Wire the LLM registry + config so the `agent_turn` built-in
+    /// can fire LLM turns through [`PollerHost::llm_invoke`].
+    /// Optional: pollers that only do data ingestion (webhook_poll)
+    /// work without it.
     pub fn with_llm(
         mut self,
         registry: Arc<nexo_llm::LlmRegistry>,
@@ -130,8 +135,7 @@ impl PollerRunner {
     }
 
     /// Register a built-in or custom `Poller`. Idempotent — re-register
-    /// of the same `kind` replaces the previous impl. Tests rely on
-    /// this to inject mocks.
+    /// of the same `kind` replaces the previous impl.
     pub fn register(&self, poller: Arc<dyn Poller>) {
         let kind = poller.kind();
         self.pollers.insert(kind, poller);
@@ -142,8 +146,8 @@ impl PollerRunner {
     }
 
     /// Credential bundle (resolver + stores + breakers). Custom-tool
-    /// handlers use this to look up an agent's Google handle without
-    /// a `PollContext` (tools fire from the LLM loop, not a tick).
+    /// handlers use this to look up an agent's handle without a
+    /// `PollContext` (tools fire from the LLM loop, not a tick).
     pub fn credentials(&self) -> Arc<CredentialsBundle> {
         Arc::clone(&self.credentials)
     }
@@ -161,8 +165,7 @@ impl PollerRunner {
         out
     }
 
-    /// Snapshot every configured job + its current persisted state for
-    /// the admin endpoint.
+    /// Snapshot every configured job + its current persisted state.
     pub async fn list_jobs(&self) -> Result<Vec<crate::admin::JobView>> {
         let cfg = self.cfg.lock().await.clone();
         let mut out = Vec::with_capacity(cfg.jobs.len());
@@ -204,9 +207,23 @@ impl PollerRunner {
         }
     }
 
+    /// Build the per-tick host. Bundles broker + credentials + (when
+    /// available) LLM registry/config. Cheap — only `Arc` clones.
+    fn build_host(&self, agent_id: &str, job_id: &str) -> Arc<InProcessHost> {
+        let mut host = InProcessHost::new(
+            agent_id.to_string(),
+            job_id.to_string(),
+            self.broker.clone(),
+            Arc::clone(&self.credentials),
+        );
+        if let (Some(r), Some(c)) = (self.llm_registry.as_ref(), self.llm_config.as_ref()) {
+            host = host.with_llm(Arc::clone(r), Arc::clone(c));
+        }
+        Arc::new(host)
+    }
+
     /// Boot path. Validates every configured job, persists `paused_on_boot`,
-    /// then spawns a task per job. Errors here fail boot loud — the
-    /// operator wants to see misconfigured jobs immediately.
+    /// then spawns a task per job. Errors here fail boot loud.
     pub async fn start(&self) -> Result<()> {
         let cfg = self.cfg.lock().await.clone();
         if !cfg.enabled {
@@ -237,10 +254,8 @@ impl PollerRunner {
                 job.kind
             )
         })?;
-        // schedule must parse
         let _: Schedule = serde_yaml::from_value(job.schedule.clone())
             .with_context(|| format!("invalid schedule for '{}'", job.id))?;
-        // module-specific validation
         let cfg_json: serde_json::Value = yaml_to_json(&job.config);
         kind.validate(&cfg_json)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -273,6 +288,8 @@ impl PollerRunner {
             state: Arc::clone(&self.state),
             broker: self.broker.clone(),
             credentials: Arc::clone(&self.credentials),
+            llm_registry: self.llm_registry.clone(),
+            llm_config: self.llm_config.clone(),
             leaseholder: self.leaseholder.clone(),
             cancel: cancel.clone(),
             cfg: cfg.clone(),
@@ -280,8 +297,6 @@ impl PollerRunner {
                 format!("poller:{}", job.id),
                 default_breaker(cfg.breaker_threshold),
             )),
-            llm_registry: self.llm_registry.clone(),
-            llm_config: self.llm_config.clone(),
         };
 
         let handle = tokio::spawn(run_job_loop(runner_ctx));
@@ -311,7 +326,6 @@ impl PollerRunner {
     }
 
     /// Diff a fresh `PollersConfig` against the running set.
-    /// Returns the apply plan so callers can preview before executing.
     pub async fn diff(&self, new_cfg: &PollersConfig) -> ReloadPlan {
         let tasks = self.tasks.lock().await;
         let live: std::collections::HashSet<String> = tasks.keys().cloned().collect();
@@ -354,19 +368,13 @@ impl PollerRunner {
         }
     }
 
-    /// Apply a fresh `PollersConfig` atomically: cancel removed jobs,
-    /// replace shape-changed ones, leave keep set untouched.
+    /// Apply a fresh `PollersConfig` atomically.
     pub async fn reload(&self, new_cfg: PollersConfig) -> Result<ReloadPlan> {
-        // Validate every new/replaced job before touching the live
-        // task set — a typo should not knock siblings offline.
         for job in &new_cfg.jobs {
             self.validate_job(job)
                 .with_context(|| format!("validate '{}'", job.id))?;
         }
-
         let plan = self.diff(&new_cfg).await;
-
-        // Cancel + drop tasks that are gone or being replaced.
         let mut tasks = self.tasks.lock().await;
         for id in plan.remove.iter().chain(plan.replace.iter()) {
             if let Some(t) = tasks.remove(id) {
@@ -374,10 +382,8 @@ impl PollerRunner {
                 drop(t.handle);
             }
         }
-        // Swap config before spawning so the new tasks see the right
-        // global knobs (jitter, breaker_threshold, …).
         *self.cfg.lock().await = new_cfg.clone();
-        drop(tasks); // release before spawn_job re-locks
+        drop(tasks);
 
         let job_lookup: HashMap<&str, &PollerJob> =
             new_cfg.jobs.iter().map(|j| (j.id.as_str(), j)).collect();
@@ -390,9 +396,8 @@ impl PollerRunner {
     }
 
     /// Trigger a single tick out-of-band. Bypasses the schedule and
-    /// the lease — caller assumes the job is otherwise idle. Used by
-    /// `agent pollers run <id>` and admin endpoint.
-    pub async fn run_once(&self, job_id: &str) -> Result<TickOutcome> {
+    /// the lease — caller assumes the job is otherwise idle.
+    pub async fn run_once(&self, job_id: &str) -> Result<TickAck> {
         let cfg = self.cfg.lock().await.clone();
         let job = cfg
             .jobs
@@ -406,44 +411,34 @@ impl PollerRunner {
             .clone();
         let schedule: Schedule = serde_yaml::from_value(job.schedule.clone())?;
         let snapshot = self.state.load(job_id).await?.unwrap_or_default();
+        let host = self.build_host(&job.agent, &job.id);
         let ctx = PollContext {
             job_id: job.id.clone(),
             agent_id: job.agent.clone(),
             kind: kind.kind(),
-            credentials: Arc::clone(&self.credentials.resolver),
-            bundle: Some(Arc::clone(&self.credentials)),
-            broker: self.broker.clone(),
-            now: Utc::now(),
-            cursor: snapshot.cursor.clone(),
             config: yaml_to_json(&job.config),
+            cursor: snapshot.cursor.clone(),
+            now: Utc::now(),
             interval_hint: schedule.nominal_interval(),
             cancel: self.shutdown.child_token(),
-            llm_registry: self.llm_registry.clone(),
-            llm_config: self.llm_config.clone(),
+            host,
         };
         let started = std::time::Instant::now();
         let result = kind.tick(&ctx).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
         telemetry::observe_latency(kind.kind(), &job.agent, &job.id, elapsed_ms);
         match result {
-            Ok(outcome) => {
+            Ok(ack) => {
                 telemetry::inc_tick(kind.kind(), &job.agent, &job.id, "ok");
-                telemetry::add_items_seen(kind.kind(), &job.agent, &job.id, outcome.items_seen);
+                let metrics = ack.metrics.unwrap_or_default();
+                telemetry::add_items_seen(kind.kind(), &job.agent, &job.id, metrics.items_seen);
                 telemetry::add_items_dispatched(
                     kind.kind(),
                     &job.agent,
                     &job.id,
-                    outcome.items_dispatched,
+                    metrics.items_dispatched,
                 );
-                for d in &outcome.deliver {
-                    if let Err(e) =
-                        dispatch::publish(&self.broker, &self.credentials.resolver, &job.agent, d)
-                            .await
-                    {
-                        warn!(job = %job.id, error = %e, "dispatch failed");
-                    }
-                }
-                Ok(outcome)
+                Ok(ack)
             }
             Err(e) => Err(anyhow::anyhow!("{e}")),
         }
@@ -459,12 +454,27 @@ struct TaskCtx {
     state: Arc<PollState>,
     broker: AnyBroker,
     credentials: Arc<CredentialsBundle>,
+    llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
+    llm_config: Option<Arc<nexo_config::LlmConfig>>,
     leaseholder: String,
     cancel: CancellationToken,
     cfg: PollersConfig,
     breaker: Arc<CircuitBreaker>,
-    llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
-    llm_config: Option<Arc<nexo_config::LlmConfig>>,
+}
+
+impl TaskCtx {
+    fn build_host(&self) -> Arc<InProcessHost> {
+        let mut host = InProcessHost::new(
+            self.job.agent.clone(),
+            self.job.id.clone(),
+            self.broker.clone(),
+            Arc::clone(&self.credentials),
+        );
+        if let (Some(r), Some(c)) = (self.llm_registry.as_ref(), self.llm_config.as_ref()) {
+            host = host.with_llm(Arc::clone(r), Arc::clone(c));
+        }
+        Arc::new(host)
+    }
 }
 
 async fn run_job_loop(tctx: TaskCtx) {
@@ -476,9 +486,6 @@ async fn run_job_loop(tctx: TaskCtx) {
     );
 
     loop {
-        // Compute next firing instant. One-shot `at` schedules return
-        // None when their target is in the past — honor that and exit
-        // the loop.
         let now = Utc::now();
         let next = match tctx.schedule.next_run_at(now) {
             Ok(Some(t)) => t,
@@ -501,8 +508,6 @@ async fn run_job_loop(tctx: TaskCtx) {
             .to_std()
             .unwrap_or(Duration::from_millis(0));
 
-        // Wait until the next tick or until the runner shuts down /
-        // the job is hot-reloaded.
         tokio::select! {
             _ = tokio::time::sleep(sleep_for) => {}
             _ = tctx.cancel.cancelled() => {
@@ -511,8 +516,6 @@ async fn run_job_loop(tctx: TaskCtx) {
             }
         }
 
-        // Skip ticks while paused. Paused jobs still respond to
-        // shutdown / hot-reload immediately.
         if let Ok(Some(snap)) = tctx.state.load(&tctx.job.id).await {
             if snap.paused {
                 tokio::select! {
@@ -522,8 +525,6 @@ async fn run_job_loop(tctx: TaskCtx) {
             }
         }
 
-        // Acquire the cross-process lease. Failure means another
-        // worker is mid-tick; we skip and try again next slot.
         let now_ms_v = now_ms();
         let interval_secs = tctx.schedule.nominal_interval().as_secs().max(30);
         let ttl_ms = ((interval_secs as f32) * tctx.cfg.lease_ttl_factor.max(1.0)) as i64 * 1_000;
@@ -545,8 +546,6 @@ async fn run_job_loop(tctx: TaskCtx) {
             }
         }
 
-        // Skip the tick when the breaker is open. The breaker will
-        // self-transition to half-open after its backoff window.
         if !tctx.breaker.allow() {
             telemetry::inc_tick(tctx.kind.kind(), &tctx.job.agent, &tctx.job.id, "skipped");
             telemetry::set_breaker_state(&tctx.job.id, telemetry::BreakerState::Open);
@@ -557,7 +556,6 @@ async fn run_job_loop(tctx: TaskCtx) {
             continue;
         }
 
-        // ── tick ──
         let snapshot = tctx
             .state
             .load(&tctx.job.id)
@@ -565,20 +563,17 @@ async fn run_job_loop(tctx: TaskCtx) {
             .ok()
             .flatten()
             .unwrap_or_default();
+        let host = tctx.build_host();
         let pctx = PollContext {
             job_id: tctx.job.id.clone(),
             agent_id: tctx.job.agent.clone(),
             kind: tctx.kind.kind(),
-            credentials: Arc::clone(&tctx.credentials.resolver),
-            bundle: Some(Arc::clone(&tctx.credentials)),
-            broker: tctx.broker.clone(),
-            now: Utc::now(),
-            cursor: snapshot.cursor.clone(),
             config: tctx.ctx_cfg.clone(),
+            cursor: snapshot.cursor.clone(),
+            now: Utc::now(),
             interval_hint: tctx.schedule.nominal_interval(),
             cancel: tctx.cancel.clone(),
-            llm_registry: tctx.llm_registry.clone(),
-            llm_config: tctx.llm_config.clone(),
+            host,
         };
         let started = std::time::Instant::now();
         let outcome = tctx.kind.tick(&pctx).await;
@@ -589,43 +584,32 @@ async fn run_job_loop(tctx: TaskCtx) {
             (next + chrono::Duration::milliseconds(jitter_ms as i64)).timestamp_millis();
 
         match outcome {
-            Ok(o) => {
+            Ok(ack) => {
                 tctx.breaker.on_success();
                 telemetry::set_breaker_state(&tctx.job.id, telemetry::BreakerState::Closed);
                 telemetry::set_consecutive_errors(&tctx.job.id, 0);
                 telemetry::inc_tick(tctx.kind.kind(), &tctx.job.agent, &tctx.job.id, "ok");
+                let metrics = ack.metrics.unwrap_or_default();
                 telemetry::add_items_seen(
                     tctx.kind.kind(),
                     &tctx.job.agent,
                     &tctx.job.id,
-                    o.items_seen,
+                    metrics.items_seen,
                 );
                 telemetry::add_items_dispatched(
                     tctx.kind.kind(),
                     &tctx.job.agent,
                     &tctx.job.id,
-                    o.items_dispatched,
+                    metrics.items_dispatched,
                 );
-                for d in &o.deliver {
-                    if let Err(e) = dispatch::publish(
-                        &tctx.broker,
-                        &tctx.credentials.resolver,
-                        &tctx.job.agent,
-                        d,
-                    )
-                    .await
-                    {
-                        warn!(job = %tctx.job.id, error = %e, "dispatch failed");
-                    }
-                }
-                let cursor_ref = o.next_cursor.as_deref();
+                let cursor_ref = ack.next_cursor.as_deref();
                 let _ = tctx
                     .state
                     .save_tick_ok(
                         &tctx.job.id,
                         cursor_ref,
-                        o.items_seen,
-                        o.items_dispatched,
+                        metrics.items_seen,
+                        metrics.items_dispatched,
                         elapsed_ms as i64,
                         next_run_at_ms,
                         now_ms(),
@@ -646,7 +630,7 @@ async fn run_job_loop(tctx: TaskCtx) {
 
 /// Handle a `PollerError` from `tick`: classify, update breaker,
 /// persist state, and (when threshold hit) dispatch the failure
-/// alert. Cooldown for the alert is honored from `poll_state`.
+/// alert.
 async fn handle_tick_error(tctx: &TaskCtx, err: PollerError, next_run_at_ms: i64, elapsed_ms: i64) {
     let class = err.classify();
     let msg = err.to_string();
@@ -684,15 +668,12 @@ async fn handle_tick_error(tctx: &TaskCtx, err: PollerError, next_run_at_ms: i64
         )
         .await;
 
-    // Auto-pause on permanent failure.
     if matches!(class, ErrorClass::Permanent | ErrorClass::Config) {
         let _ = tctx.state.set_paused(&tctx.job.id, true, now_ms_v).await;
     }
 
-    // Read the latest consecutive_errors back so the gauge matches DB.
     if let Ok(Some(snap)) = tctx.state.load(&tctx.job.id).await {
         telemetry::set_consecutive_errors(&tctx.job.id, snap.consecutive_errors);
-        // Failure-destination alert when threshold crossed and cooldown elapsed.
         if let Some(target) = tctx.job.failure_to.as_ref() {
             let cooldown_ms = (tctx.cfg.failure_alert_cooldown_secs as i64) * 1_000;
             let last = snap.last_failure_alert_at_ms.unwrap_or(0);
@@ -715,31 +696,39 @@ async fn send_failure_alert(
     target: &nexo_config::types::pollers::DeliveryTarget,
     error_text: &str,
 ) -> Result<()> {
-    let channel: nexo_auth::Channel = match target.channel.as_str() {
+    let channel_static: &'static str = match target.channel.as_str() {
         "whatsapp" => nexo_auth::handle::WHATSAPP,
         "telegram" => nexo_auth::handle::TELEGRAM,
         "google" => nexo_auth::handle::GOOGLE,
         other => anyhow::bail!("unknown failure_to.channel '{other}'"),
     };
-    let payload = serde_json::json!({
+    let handle = tctx
+        .credentials
+        .resolver
+        .resolve(&tctx.job.agent, channel_static)
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "agent '{}' has no '{}' binding for failure alerts",
+                tctx.job.agent,
+                channel_static
+            )
+        })?;
+    let topic = format!(
+        "plugin.outbound.{channel_static}.{}",
+        handle.account_id_raw()
+    );
+    let payload = json!({
+        "to": target.to,
         "text": format!(
             "⚠ poller `{}` (kind={}) failing: {}",
             tctx.job.id, tctx.kind.kind(), error_text
         ),
     });
-    let delivery = crate::poller::OutboundDelivery {
-        channel,
-        recipient: target.to.clone(),
-        payload,
-    };
-    dispatch::publish(
-        &tctx.broker,
-        &tctx.credentials.resolver,
-        &tctx.job.agent,
-        &delivery,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))
+    let event = Event::new(&topic, FAILURE_ALERT_SOURCE, payload);
+    tctx.broker
+        .publish(&topic, event)
+        .await
+        .map_err(|e| anyhow::anyhow!("broker publish: {e}"))
 }
 
 fn now_ms() -> i64 {
@@ -776,7 +765,7 @@ pub(crate) fn _force_unused_now_marker(_: DateTime<Utc>) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poller::TickOutcome;
+    use crate::host::{TickAck, TickMetrics};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -786,7 +775,7 @@ mod tests {
 
     struct MockPoller {
         ticks: Arc<AtomicU32>,
-        next_outcome: Arc<Mutex<Result<TickOutcome, PollerError>>>,
+        next_outcome: Arc<Mutex<Result<TickAck, PollerError>>>,
     }
 
     #[async_trait]
@@ -794,10 +783,10 @@ mod tests {
         fn kind(&self) -> &'static str {
             "mock"
         }
-        async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+        async fn tick(&self, _ctx: &PollContext) -> Result<TickAck, PollerError> {
             self.ticks.fetch_add(1, Ordering::Relaxed);
             let mut g = self.next_outcome.lock().await;
-            std::mem::replace(&mut *g, Ok(TickOutcome::default()))
+            std::mem::replace(&mut *g, Ok(TickAck::default()))
         }
     }
 
@@ -821,7 +810,7 @@ mod tests {
         let runner = PollerRunner::new(cfg, state, AnyBroker::local(), empty_creds());
         runner.register(Arc::new(MockPoller {
             ticks: Arc::new(AtomicU32::new(0)),
-            next_outcome: Arc::new(Mutex::new(Ok(TickOutcome::default()))),
+            next_outcome: Arc::new(Mutex::new(Ok(TickAck::default()))),
         }));
         assert_eq!(runner.registered_kinds(), vec!["mock"]);
     }
@@ -834,7 +823,6 @@ mod tests {
         };
         let state = Arc::new(PollState::open_in_memory().await.unwrap());
         let runner = PollerRunner::new(cfg.clone(), state, AnyBroker::local(), empty_creds());
-        // No mock registered → validate fails.
         let err = runner.validate_job(&cfg.jobs[0]).unwrap_err();
         assert!(err.to_string().contains("unknown kind"));
     }
@@ -847,16 +835,17 @@ mod tests {
         };
         let state = Arc::new(PollState::open_in_memory().await.unwrap());
         let ticks = Arc::new(AtomicU32::new(0));
-        let outcome = TickOutcome {
-            items_seen: 1,
-            items_dispatched: 0,
-            deliver: vec![],
+        let ack = TickAck {
             next_cursor: Some(b"c1".to_vec()),
             next_interval_hint: None,
+            metrics: Some(TickMetrics {
+                items_seen: 1,
+                items_dispatched: 0,
+            }),
         };
         let mock = Arc::new(MockPoller {
             ticks: Arc::clone(&ticks),
-            next_outcome: Arc::new(Mutex::new(Ok(outcome))),
+            next_outcome: Arc::new(Mutex::new(Ok(ack))),
         });
         let runner = PollerRunner::new(cfg, Arc::clone(&state), AnyBroker::local(), empty_creds());
         runner.register(mock);
@@ -870,6 +859,5 @@ mod tests {
         let state = Arc::new(PollState::open_in_memory().await.unwrap());
         let runner = PollerRunner::new(cfg, state, AnyBroker::local(), empty_creds());
         runner.shutdown().await.unwrap();
-        // No tasks, no panic — that's the assertion.
     }
 }

@@ -16,7 +16,8 @@ use nexo_memory::LongTermMemory;
 use nexo_memory_snapshot::MemorySnapshotter;
 use nexo_taskflow::FlowManager;
 use nexo_team_store::TeamStore;
-use nexo_web_search::WebSearchRouter;
+// Phase 95 — nexo_web_search import removed; subprocess plugin
+// serves the `web_search` tool via RemoteToolHandler.
 
 #[cfg(feature = "config-self-edit")]
 use crate::agent::approval_correlator::ApprovalCorrelator;
@@ -36,7 +37,7 @@ pub struct McpServerBootContext {
     pub cron_store: Option<Arc<dyn CronStore>>,
     pub mcp_runtime: Option<Arc<SessionMcpRuntime>>,
     pub config_changes_store: Option<Arc<dyn ConfigChangesStore>>,
-    pub web_search_router: Option<Arc<WebSearchRouter>>,
+    // Phase 95 — web_search_router field removed.
     pub link_extractor: Option<Arc<LinkExtractor>>,
     /// Long-term memory handle. Required by durable follow-up tools.
     pub long_term_memory: Option<Arc<LongTermMemory>>,
@@ -98,7 +99,7 @@ impl McpServerBootContext {
             cron_store: None,
             mcp_runtime: None,
             config_changes_store: None,
-            web_search_router: None,
+            // Phase 95 — web_search_router removed.
             link_extractor: None,
             long_term_memory: None,
             memory_git: None,
@@ -134,7 +135,7 @@ pub struct McpServerBootContextBuilder {
     cron_store: Option<Arc<dyn CronStore>>,
     mcp_runtime: Option<Arc<SessionMcpRuntime>>,
     config_changes_store: Option<Arc<dyn ConfigChangesStore>>,
-    web_search_router: Option<Arc<WebSearchRouter>>,
+    // Phase 95 — web_search_router builder field removed.
     link_extractor: Option<Arc<LinkExtractor>>,
     long_term_memory: Option<Arc<LongTermMemory>>,
     memory_git: Option<Arc<MemoryGitRepo>>,
@@ -174,10 +175,8 @@ impl McpServerBootContextBuilder {
         self
     }
 
-    pub fn web_search_router(mut self, router: Arc<WebSearchRouter>) -> Self {
-        self.web_search_router = Some(router);
-        self
-    }
+    // Phase 95 — web_search_router builder removed. Tool now
+    // served by `nexo-rs-plugin-web-search` subprocess.
 
     pub fn link_extractor(mut self, extractor: Arc<LinkExtractor>) -> Self {
         self.link_extractor = Some(extractor);
@@ -243,7 +242,7 @@ impl McpServerBootContextBuilder {
             cron_store: self.cron_store,
             mcp_runtime: self.mcp_runtime,
             config_changes_store: self.config_changes_store,
-            web_search_router: self.web_search_router,
+            // Phase 95 — web_search_router removed.
             link_extractor: self.link_extractor,
             long_term_memory: self.long_term_memory,
             memory_git: self.memory_git,
@@ -355,7 +354,7 @@ mod tests {
         assert!(bc.cron_store.is_none());
         assert!(bc.mcp_runtime.is_none());
         assert!(bc.config_changes_store.is_none());
-        assert!(bc.web_search_router.is_none());
+        // Phase 95 — web_search_router field removed.
         assert!(bc.link_extractor.is_none());
         assert!(bc.memory_git.is_none());
         assert!(bc.taskflow_manager.is_none());

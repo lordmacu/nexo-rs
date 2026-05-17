@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use nexo_auth::CredentialsBundle;
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
-use nexo_poller::poller::{PollContext, Poller, TickOutcome};
-use nexo_poller::{PollState, PollerError, PollerRunner};
+use nexo_poller::poller::{PollContext, Poller};
+use nexo_poller::{PollState, PollerError, PollerRunner, TickAck};
 
 fn empty_creds() -> Arc<CredentialsBundle> {
     Arc::new(CredentialsBundle::empty_for_testing())
@@ -25,7 +25,7 @@ impl Poller for AlwaysTransient {
     fn kind(&self) -> &'static str {
         "always_transient"
     }
-    async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+    async fn tick(&self, _ctx: &PollContext) -> Result<TickAck, PollerError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         Err(PollerError::Transient(anyhow::anyhow!("503 from upstream")))
     }
@@ -38,7 +38,7 @@ impl Poller for AlwaysPermanent {
     fn kind(&self) -> &'static str {
         "always_permanent"
     }
-    async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+    async fn tick(&self, _ctx: &PollContext) -> Result<TickAck, PollerError> {
         Err(PollerError::Permanent(anyhow::anyhow!(
             "refresh_token revoked"
         )))

@@ -1168,7 +1168,7 @@ dependencies = [
  "httparse",
  "quinn",
  "reqwest",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "rustls-native-certs",
  "rustls-pemfile 2.2.0",
  "serde",
@@ -1570,7 +1570,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1847,7 +1847,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2056,7 +2056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3232,7 +3232,7 @@ dependencies = [
  "http 1.4.0",
  "hyper",
  "hyper-util",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
@@ -3662,7 +3662,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3918,7 +3918,7 @@ dependencies = [
  "nom 8.0.0",
  "percent-encoding",
  "quoted_printable",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "socket2 0.6.3",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -4487,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-core"
-version = "0.1.19"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4527,7 +4527,6 @@ dependencies = [
  "nexo-taskflow",
  "nexo-team-store",
  "nexo-tool-meta",
- "nexo-web-search",
  "notify",
  "notify-debouncer-full",
  "regex",
@@ -4716,7 +4715,7 @@ dependencies = [
  "lettre",
  "nexo-auth",
  "once_cell",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "rustls-native-certs",
  "secrecy",
  "serde",
@@ -5053,8 +5052,9 @@ dependencies = [
 
 [[package]]
 name = "nexo-microapp-sdk"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "candle-core",
@@ -5073,6 +5073,7 @@ dependencies = [
  "nexo-memory",
  "nexo-microapp-sdk",
  "nexo-plugin-manifest",
+ "nexo-poller",
  "nexo-sanitize",
  "nexo-tool-meta",
  "ogg",
@@ -5123,6 +5124,7 @@ dependencies = [
  "image",
  "nexo-broker",
  "nexo-plugin-manifest",
+ "nexo-poller",
  "qrcode",
  "rand 0.8.6",
  "serde",
@@ -5134,6 +5136,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -5172,27 +5175,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexo-plugin-google"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "arc-swap",
- "async-trait",
- "chrono",
- "nexo-core",
- "nexo-llm",
- "nexo-resilience",
- "rand 0.8.6",
- "reqwest",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "nexo-plugin-manifest"
 version = "0.1.6"
 dependencies = [
@@ -5224,7 +5206,6 @@ dependencies = [
  "nexo-broker",
  "nexo-config",
  "nexo-llm",
- "nexo-plugin-google",
  "nexo-resilience",
  "regex",
  "reqwest",
@@ -5352,7 +5333,6 @@ dependencies = [
  "nexo-pairing",
  "nexo-persona-installer",
  "nexo-persona-manifest",
- "nexo-plugin-google",
  "nexo-plugin-manifest",
  "nexo-poller",
  "nexo-poller-ext",
@@ -5364,13 +5344,12 @@ dependencies = [
  "nexo-tool-meta",
  "nexo-tunnel",
  "nexo-tunnel-quick",
- "nexo-web-search",
  "nexo-webhook-receiver",
  "nexo-webhook-server",
  "rand 0.8.6",
  "regex",
  "reqwest",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "semver",
  "serde",
  "serde_json",
@@ -5416,13 +5395,12 @@ dependencies = [
  "nexo-memory",
  "nexo-memory-snapshot",
  "nexo-pairing",
- "nexo-plugin-google",
  "nexo-plugin-manifest",
  "nexo-tool-meta",
  "rand 0.8.6",
  "regex",
  "reqwest",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "rustls-native-certs",
  "secrecy",
  "semver",
@@ -5512,7 +5490,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-web-search"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5668,7 +5646,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6557,7 +6535,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.2",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
@@ -6577,7 +6555,7 @@ dependencies = [
  "rand 0.9.4",
  "ring",
  "rustc-hash 2.1.2",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.18",
@@ -6895,7 +6873,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -7052,7 +7030,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7083,9 +7061,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.38"
+version = "0.23.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
+checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "log",
  "once_cell",
@@ -7792,7 +7770,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8258,10 +8236,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8521,7 +8499,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.38",
+ "rustls 0.23.40",
  "tokio",
 ]
 
@@ -9453,7 +9431,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

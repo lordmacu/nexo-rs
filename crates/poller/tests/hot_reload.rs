@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use nexo_auth::CredentialsBundle;
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
-use nexo_poller::poller::{PollContext, Poller, TickOutcome};
-use nexo_poller::{PollState, PollerError, PollerRunner};
+use nexo_poller::poller::{PollContext, Poller};
+use nexo_poller::{PollState, PollerError, PollerRunner, TickAck};
 use tokio::sync::Mutex;
 
 fn empty_creds() -> Arc<CredentialsBundle> {
@@ -22,8 +22,8 @@ impl Poller for Mock {
     fn kind(&self) -> &'static str {
         "mock"
     }
-    async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
-        Ok(TickOutcome::default())
+    async fn tick(&self, _ctx: &PollContext) -> Result<TickAck, PollerError> {
+        Ok(TickAck::default())
     }
 }
 

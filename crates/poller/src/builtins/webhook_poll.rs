@@ -5,6 +5,11 @@
 //! `id_field` to dedup with. Useful for any service that exposes
 //! "list since cursor" endpoints (Slack, Linear, custom internal APIs)
 //! and doesn't need a bespoke built-in.
+//!
+//! Post Phase 96 outbound goes through `ctx.host.broker_publish`. The
+//! poller resolves the target account via `host.credentials_get` and
+//! builds the topic `plugin.outbound.<channel>.<account_id>` itself —
+//! the runner is channel-agnostic.
 
 use std::collections::HashSet;
 
@@ -13,8 +18,10 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::deliver::{render_template, DeliverCfg};
 use crate::error::PollerError;
-use crate::poller::{OutboundDelivery, PollContext, Poller, TickOutcome};
+use crate::host::{TickAck, TickMetrics};
+use crate::poller::{PollContext, Poller};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +47,7 @@ pub struct WebhookJobConfig {
     /// Mustache-light template. The whole item is exposed under
     /// `{json}` (debug only) and individual fields via their key.
     pub message_template: String,
-    pub deliver: super::gmail::DeliverCfg,
+    pub deliver: DeliverCfg,
     /// Reject hosts in RFC1918 / loopback ranges to avoid SSRF. Set
     /// to true only for internal services.
     #[serde(default)]
@@ -101,7 +108,6 @@ impl Poller for WebhookPoller {
                 job: "<webhook_poll>".into(),
                 reason: e.to_string(),
             })?;
-        // SSRF guard: reject loopback / RFC1918 unless explicitly opt-in.
         if !cfg.allow_private_networks && url_targets_private(&cfg.url) {
             return Err(PollerError::Config {
                 job: "<webhook_poll>".into(),
@@ -114,7 +120,7 @@ impl Poller for WebhookPoller {
         Ok(())
     }
 
-    async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+    async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
         let cfg: WebhookJobConfig =
             serde_json::from_value(ctx.config.clone()).map_err(|e| PollerError::Config {
                 job: ctx.job_id.clone(),
@@ -159,22 +165,33 @@ impl Poller for WebhookPoller {
             return Err(PollerError::Transient(anyhow::anyhow!("HTTP {status}")));
         };
 
+        // Resolve the outbound channel's account id via the host so
+        // the runner stays channel-agnostic. Topic format follows the
+        // plugin.outbound.<channel>.<instance> contract that the
+        // WhatsApp / Telegram plugins subscribe to.
+        let cred = ctx
+            .host
+            .credentials_get(cfg.deliver.channel.clone())
+            .await
+            .map_err(|e| PollerError::Permanent(anyhow::anyhow!("credentials_get: {e}")))?;
+        let account_id = cred
+            .get("account_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                PollerError::Permanent(anyhow::anyhow!(
+                    "credentials_get('{}') returned no `account_id`",
+                    cfg.deliver.channel
+                ))
+            })?
+            .to_string();
+        let topic = format!("plugin.outbound.{}.{}", cfg.deliver.channel, account_id);
+
         let items = pluck_items(&body, &cfg.items_path);
-        let target_channel: nexo_auth::Channel = match cfg.deliver.channel.as_str() {
-            "whatsapp" => nexo_auth::handle::WHATSAPP,
-            "telegram" => nexo_auth::handle::TELEGRAM,
-            other => {
-                return Err(PollerError::Config {
-                    job: ctx.job_id.clone(),
-                    reason: format!("unknown deliver.channel '{other}'"),
-                });
-            }
-        };
         let known: HashSet<String> = state.seen_ids.iter().cloned().collect();
 
-        let mut deliver = Vec::new();
         let mut new_ids = Vec::new();
         let mut items_seen = 0u32;
+        let mut items_dispatched = 0u32;
         for item in items.iter().take(cfg.max_per_tick) {
             items_seen += 1;
             let id = match item.get(&cfg.id_field) {
@@ -185,12 +202,15 @@ impl Poller for WebhookPoller {
             if known.contains(&id) {
                 continue;
             }
-            let text = render(&cfg.message_template, item);
-            deliver.push(OutboundDelivery {
-                channel: target_channel,
-                recipient: cfg.deliver.to.clone(),
-                payload: json!({ "text": text }),
-            });
+            let text = render_template(&cfg.message_template, item);
+            let payload = json!({ "to": cfg.deliver.to, "text": text });
+            let payload_bytes = serde_json::to_vec(&payload)
+                .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
+            ctx.host
+                .broker_publish(topic.clone(), payload_bytes)
+                .await
+                .map_err(|e| PollerError::Transient(anyhow::anyhow!("broker_publish: {e}")))?;
+            items_dispatched += 1;
             new_ids.push(id);
         }
 
@@ -200,13 +220,13 @@ impl Poller for WebhookPoller {
             state.seen_ids.drain(0..drop);
         }
         let cursor = serde_json::to_vec(&state).ok();
-        let dispatched = deliver.len() as u32;
-        Ok(TickOutcome {
-            items_seen,
-            items_dispatched: dispatched,
-            deliver,
+        Ok(TickAck {
             next_cursor: cursor,
             next_interval_hint: None,
+            metrics: Some(TickMetrics {
+                items_seen,
+                items_dispatched,
+            }),
         })
     }
 }
@@ -230,25 +250,7 @@ fn pluck_items<'a>(body: &'a Value, path: &str) -> Vec<&'a Value> {
         .unwrap_or_default()
 }
 
-fn render(template: &str, item: &Value) -> String {
-    let mut out = template.to_string();
-    if let Value::Object(map) = item {
-        for (k, v) in map {
-            let needle = format!("{{{k}}}");
-            let val = match v {
-                Value::String(s) => s.clone(),
-                _ => v.to_string(),
-            };
-            out = out.replace(&needle, &val);
-        }
-    }
-    out = out.replace("{json}", &item.to_string());
-    out
-}
-
 fn url_targets_private(url: &str) -> bool {
-    // Heuristic: parse host segment, check loopback / RFC1918 prefix.
-    // Rejects 127.x, 10.x, 192.168.x, 172.16-31.x, ::1, fd00::/8.
     let lower = url.to_ascii_lowercase();
     let after_scheme = lower.split("://").nth(1).unwrap_or(&lower);
     let host = after_scheme
@@ -302,13 +304,6 @@ mod tests {
     }
 
     #[test]
-    fn render_substitutes_fields() {
-        let item = json!({"name": "Ana", "phone": "+57"});
-        let s = render("Hi {name} ({phone})", &item);
-        assert_eq!(s, "Hi Ana (+57)");
-    }
-
-    #[test]
     fn ssrf_rejects_loopback() {
         assert!(url_targets_private("http://localhost:8080"));
         assert!(url_targets_private("http://127.0.0.1:8080"));
@@ -316,7 +311,7 @@ mod tests {
         assert!(url_targets_private("http://192.168.1.1"));
         assert!(url_targets_private("http://172.16.5.5"));
         assert!(!url_targets_private("https://api.example.com"));
-        assert!(!url_targets_private("https://172.32.0.1")); // outside RFC1918
+        assert!(!url_targets_private("https://172.32.0.1"));
     }
 
     #[test]
@@ -338,6 +333,17 @@ mod tests {
             "message_template": "x",
             "deliver": { "channel": "telegram", "to": "1" },
             "allow_private_networks": true,
+        });
+        p.validate(&cfg).unwrap();
+    }
+
+    #[test]
+    fn validate_accepts_recipient_alias_via_deliver() {
+        let p = WebhookPoller::new();
+        let cfg = json!({
+            "url": "https://api.example.com",
+            "message_template": "x",
+            "deliver": { "channel": "telegram", "recipient": "1" },
         });
         p.validate(&cfg).unwrap();
     }

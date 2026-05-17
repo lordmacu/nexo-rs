@@ -28,10 +28,10 @@ pub mod event_subscriber;
 pub mod extension_hook;
 pub mod extension_tool;
 pub mod followup_tool;
+pub mod generic_rpc_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod hook_remote;
-pub mod plugin_send_tool;
 pub mod inbox;
 pub mod inbox_router;
 pub mod list_peers_tool;
@@ -59,6 +59,7 @@ pub mod plugin;
 pub mod plugin_config_loader;
 pub mod plugin_host;
 pub mod plugin_sandbox;
+pub mod plugin_send_tool;
 pub mod proactive_hint;
 pub mod prompt_assembly;
 pub mod rate_limit;
@@ -78,11 +79,10 @@ pub mod send_message_to_worker_tool;
 pub mod send_to_peer_tool;
 pub mod send_user_message_tool;
 pub mod sender_rate_limit;
-pub mod generic_rpc_tool;
-pub mod spawn;
 pub mod session_logs_tool;
 pub mod skills;
 pub mod sleep_tool;
+pub mod spawn;
 pub mod synthetic_output_tool;
 pub mod taskflow_tool;
 pub mod team_tools;
@@ -99,7 +99,10 @@ pub mod types;
 pub mod vector_backend_registry;
 pub mod vector_remote;
 pub mod web_fetch_tool;
-pub mod web_search_tool;
+// Phase 95 — web_search_tool extracted to nexo-rs-plugin-web-search
+// subprocess. Tool reaches agents via `tool.invoke` JSON-RPC routed
+// by `RemoteToolHandler`; daemon-side compile-time integration
+// removed.
 pub mod worker_registry;
 pub mod workspace;
 pub mod workspace_cache;
@@ -136,7 +139,6 @@ pub use mcp_session::{
     register_session_tools_with_context, register_session_tools_with_overrides,
 };
 pub use mcp_tool::{sanitize_name_fragment, McpTool, MCP_NAME_PREFIX};
-pub use plugin_send_tool::PluginChannelSendTool;
 pub use memory_checkpoint_tool::MemoryCheckpointTool;
 pub use memory_history_tool::MemoryHistoryTool;
 pub use memory_snapshot_tool::MemorySnapshotTool;
@@ -155,6 +157,7 @@ pub use plugin_host::{
     NexoPlugin, PluginConfigureError, PluginInitContext, PluginInitError, PluginShutdownError,
     DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
 };
+pub use plugin_send_tool::PluginChannelSendTool;
 pub use rate_limit::{ToolRateLimitConfig, ToolRateLimiter, ToolRateLimitsConfig};
 pub use redaction::{RedactionReport, Redactor};
 pub use registry::PluginRegistry;
@@ -187,7 +190,8 @@ pub use types::{InboundMessage, MessagePriority, RunTrigger};
 pub use vector_backend_registry::{VectorBackendRegistrationError, VectorBackendRegistry};
 pub use vector_remote::RemoteVectorBackend;
 pub use web_fetch_tool::WebFetchTool;
-pub use web_search_tool::WebSearchTool;
+// Phase 95 — WebSearchTool re-export removed; subprocess plugin
+// `nexo-plugin-web-search` serves the tool via RemoteToolHandler.
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,
 };

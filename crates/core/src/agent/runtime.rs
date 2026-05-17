@@ -93,10 +93,8 @@ pub struct AgentRuntime {
     /// Shared link extractor (HTTP client + LRU cache).
     /// `None` keeps link understanding off regardless of YAML.
     link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
-    /// Shared web-search router (one per process, every
-    /// runtime gets the same Arc). `None` disables the `web_search`
-    /// tool regardless of YAML.
-    web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    // Phase 95 — web_search_router field removed. Tool lives in
+    // `nexo-rs-plugin-web-search` subprocess plugin.
     /// Shared pairing gate. Consulted in the intake hot
     /// path before sender_rate_limit; when the resolved
     /// `EffectiveBindingPolicy::pairing.auto_challenge` is true and
@@ -215,7 +213,7 @@ impl AgentRuntime {
             redactor: None,
             transcripts_index: None,
             link_extractor: None,
-            web_search_router: None,
+            // Phase 95 — web_search_router removed.
             pairing_gate: None,
             pairing_adapters: nexo_pairing::PairingAdapterRegistry::new(),
             dispatch_ctx: None,
@@ -276,12 +274,9 @@ impl AgentRuntime {
         self.link_extractor = Some(ext);
         self
     }
-    /// Attach the shared web-search router. Every `AgentContext` built
-    /// by this runtime inherits it so the `web_search` tool can route.
-    pub fn with_web_search_router(mut self, router: Arc<nexo_web_search::WebSearchRouter>) -> Self {
-        self.web_search_router = Some(router);
-        self
-    }
+    // Phase 95 — with_web_search_router builder removed. Tool now
+    // lives in `nexo-rs-plugin-web-search` subprocess.
+
     /// Attach the shared pairing gate. Consulted before the per-sender
     /// rate limiter in the intake hot path so unknown senders never
     /// reach the agent's behavior.
@@ -399,7 +394,7 @@ impl AgentRuntime {
         let redactor = self.redactor.clone();
         let transcripts_index = self.transcripts_index.clone();
         let link_extractor = self.link_extractor.clone();
-        let web_search_router = self.web_search_router.clone();
+        // Phase 95 — web_search_router removed.
         let pairing_gate = self.pairing_gate.clone();
         let pairing_adapters = self.pairing_adapters.clone();
         let dispatch_ctx = self.dispatch_ctx.clone();
@@ -451,9 +446,7 @@ impl AgentRuntime {
             if let Some(ref ext) = link_extractor {
                 ctx = ctx.with_link_extractor(Arc::clone(ext));
             }
-            if let Some(ref ws) = web_search_router {
-                ctx = ctx.with_web_search_router(Arc::clone(ws));
-            }
+            // Phase 95 — web_search router wiring removed.
             if let Some(ref idx) = transcripts_index {
                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
             }
@@ -1008,9 +1001,7 @@ impl AgentRuntime {
                             if let Some(ref ext) = link_extractor {
                                 ctx = ctx.with_link_extractor(Arc::clone(ext));
                             }
-                            if let Some(ref ws) = web_search_router {
-                                ctx = ctx.with_web_search_router(Arc::clone(ws));
-                            }
+                            // Phase 95 — web_search router wiring removed.
                             // Share the DispatchToolContext
                             // so program_phase / list_agents / etc.
                             // see the runtime services on every session.

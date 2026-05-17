@@ -190,13 +190,8 @@ pub async fn forward_request(
 /// [`PluginAdminRouter::register`].
 #[derive(Debug, thiserror::Error)]
 pub enum AdminRouteRegistrationError {
-    #[error(
-        "method_prefix `{requested}` collides with daemon-reserved prefix `{reserved}`"
-    )]
-    Reserved {
-        requested: String,
-        reserved: String,
-    },
+    #[error("method_prefix `{requested}` collides with daemon-reserved prefix `{reserved}`")]
+    Reserved { requested: String, reserved: String },
 }
 
 /// Typed forwarder errors.
@@ -215,13 +210,8 @@ mod tests {
     #[test]
     fn match_method_uses_longest_prefix_first() {
         let r = PluginAdminRouter::new();
-        r.register(
-            "wa",
-            "nexo/admin/whatsapp/",
-            "plugin.whatsapp.admin",
-            None,
-        )
-        .unwrap();
+        r.register("wa", "nexo/admin/whatsapp/", "plugin.whatsapp.admin", None)
+            .unwrap();
         r.register(
             "wa_bot",
             "nexo/admin/whatsapp/bot/",
@@ -238,13 +228,8 @@ mod tests {
     #[test]
     fn match_method_falls_back_to_shorter_prefix() {
         let r = PluginAdminRouter::new();
-        r.register(
-            "wa",
-            "nexo/admin/whatsapp/",
-            "plugin.whatsapp.admin",
-            None,
-        )
-        .unwrap();
+        r.register("wa", "nexo/admin/whatsapp/", "plugin.whatsapp.admin", None)
+            .unwrap();
         r.register(
             "wa_bot",
             "nexo/admin/whatsapp/bot/",
@@ -261,13 +246,8 @@ mod tests {
     #[test]
     fn match_method_returns_none_on_miss() {
         let r = PluginAdminRouter::new();
-        r.register(
-            "wa",
-            "nexo/admin/whatsapp/",
-            "plugin.whatsapp.admin",
-            None,
-        )
-        .unwrap();
+        r.register("wa", "nexo/admin/whatsapp/", "plugin.whatsapp.admin", None)
+            .unwrap();
         assert!(r.match_method("nexo/admin/agents/list").is_none());
     }
 
@@ -275,8 +255,7 @@ mod tests {
     fn register_rejects_reserved_prefixes() {
         let r = PluginAdminRouter::new();
         for reserved in RESERVED_ADMIN_PREFIXES {
-            let result =
-                r.register("evil", reserved, "plugin.evil", None);
+            let result = r.register("evil", reserved, "plugin.evil", None);
             assert!(
                 matches!(result, Err(AdminRouteRegistrationError::Reserved { .. })),
                 "expected rejection for `{reserved}`",
@@ -287,12 +266,7 @@ mod tests {
     #[test]
     fn register_rejects_subpath_of_reserved() {
         let r = PluginAdminRouter::new();
-        let result = r.register(
-            "evil",
-            "nexo/admin/agents/sneaky/",
-            "plugin.evil",
-            None,
-        );
+        let result = r.register("evil", "nexo/admin/agents/sneaky/", "plugin.evil", None);
         assert!(matches!(
             result,
             Err(AdminRouteRegistrationError::Reserved { .. })
@@ -306,8 +280,7 @@ mod tests {
         // first (because `nexo/admin/age/` is a SHORTER prefix
         // that the dispatcher would compare against).
         let r = PluginAdminRouter::new();
-        let result =
-            r.register("evil", "nexo/admin/", "plugin.evil", None);
+        let result = r.register("evil", "nexo/admin/", "plugin.evil", None);
         assert!(matches!(
             result,
             Err(AdminRouteRegistrationError::Reserved { .. })
@@ -316,10 +289,8 @@ mod tests {
 
     #[test]
     fn method_to_broker_suffix_replaces_slashes_with_dots() {
-        let suffix = method_to_broker_suffix(
-            "nexo/admin/whatsapp/bot/list",
-            "nexo/admin/whatsapp/",
-        );
+        let suffix =
+            method_to_broker_suffix("nexo/admin/whatsapp/bot/list", "nexo/admin/whatsapp/");
         assert_eq!(suffix, "bot.list");
     }
 
@@ -327,10 +298,8 @@ mod tests {
     fn method_to_broker_suffix_falls_back_when_prefix_missing() {
         // Defensive — should never happen if router matched, but
         // confirms the function doesn't panic.
-        let suffix = method_to_broker_suffix(
-            "nexo/admin/whatsapp/bot/list",
-            "nexo/admin/telegram/",
-        );
+        let suffix =
+            method_to_broker_suffix("nexo/admin/whatsapp/bot/list", "nexo/admin/telegram/");
         assert_eq!(suffix, "nexo.admin.whatsapp.bot.list");
     }
 
@@ -346,16 +315,9 @@ mod tests {
                 Some(Duration::from_millis(100)),
             )
             .unwrap();
-        let info = router
-            .match_method("nexo/admin/whatsapp/bot/list")
-            .unwrap();
-        let result = forward_request(
-            &broker,
-            info,
-            "nexo/admin/whatsapp/bot/list",
-            json!({}),
-        )
-        .await;
+        let info = router.match_method("nexo/admin/whatsapp/bot/list").unwrap();
+        let result =
+            forward_request(&broker, info, "nexo/admin/whatsapp/bot/list", json!({})).await;
         assert!(matches!(result, Err(PluginAdminForwardError::Broker(_))));
     }
 }

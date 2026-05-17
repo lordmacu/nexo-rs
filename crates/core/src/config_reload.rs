@@ -285,7 +285,11 @@ impl ConfigReloadCoordinator {
                 };
                 match spawner.call(agent_cfg.clone()).await {
                     Ok(spawned) => {
-                        self.register(spawned.agent_id.clone(), spawned.reload_tx, spawned.known_tools);
+                        self.register(
+                            spawned.agent_id.clone(),
+                            spawned.reload_tx,
+                            spawned.known_tools,
+                        );
                         applied.push(spawned.agent_id.clone());
                         // Best-effort firehose notification — operators
                         // tail the broker events stream to see when a
@@ -334,8 +338,7 @@ impl ConfigReloadCoordinator {
             // into a "tool not available" error every turn.
             let known_strs: Vec<&str> = handle.known_tools.iter().map(|s| s.as_str()).collect();
             let catalog = crate::agent::KnownTools::new(known_strs);
-            if let Err(e) = crate::agent::validate_agent(agent_cfg, &cfg.plugins, &catalog)
-            {
+            if let Err(e) = crate::agent::validate_agent(agent_cfg, &cfg.plugins, &catalog) {
                 rejected.push(ReloadRejection {
                     agent_id: Some(agent_cfg.id.clone()),
                     reason: format!("post-assembly validation: {e}"),

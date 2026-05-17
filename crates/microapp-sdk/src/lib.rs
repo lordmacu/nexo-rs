@@ -125,6 +125,9 @@ pub mod dedup;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
+#[cfg(feature = "poller")]
+pub mod poller;
+
 #[cfg(feature = "test-harness")]
 pub mod test_harness;
 

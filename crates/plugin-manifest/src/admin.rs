@@ -76,7 +76,9 @@ impl PluginAdminSection {
             ));
         }
         if self.method_prefix == "nexo/admin/" {
-            return Err("method_prefix `nexo/admin/` is the root namespace; declare a sub-prefix".into());
+            return Err(
+                "method_prefix `nexo/admin/` is the root namespace; declare a sub-prefix".into(),
+            );
         }
         if self.broker_topic_prefix.is_empty() {
             return Err("broker_topic_prefix cannot be empty".into());

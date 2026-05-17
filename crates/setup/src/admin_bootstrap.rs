@@ -313,8 +313,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// route so the admin doesn't see a `-32603` during boot.
     /// Production wires the same cell that backs
     /// [`crate::admin_adapters::LivePluginRestarter`].
-    pub plugin_handles_cell:
-        Option<crate::admin_adapters::SharedPluginHandles>,
+    pub plugin_handles_cell: Option<crate::admin_adapters::SharedPluginHandles>,
     /// Install roots of every persona discovered at boot. Each
     /// entry points at a `<state>/personas/<id>-<ver>` directory
     /// that may ship its own `agents.d/*.yaml`. Empty default keeps
@@ -457,8 +456,7 @@ pub struct AdminBootstrapInputs<'a> {
     /// logged + skipped). `None` keeps the dispatcher on the
     /// legacy `.with_<plugin>_handle()` typed path; production
     /// always passes `Some`.
-    pub plugin_admin_router:
-        Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
+    pub plugin_admin_router: Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
 }
 
 impl AdminRpcBootstrap {
@@ -789,8 +787,7 @@ impl AdminRpcBootstrap {
             // gap clearly.
             if let Some(broker) = inputs.broker.clone() {
                 #[allow(unused_mut)]
-                let mut outbound =
-                    crate::admin_adapters::BrokerOutboundDispatcher::new(broker);
+                let mut outbound = crate::admin_adapters::BrokerOutboundDispatcher::new(broker);
                 // Phase 81.20.x F3-followup — register the translators
                 // every shipped canonical plugin provides. The outbound
                 // dispatcher now covers email, telegram, and (cfg-gated)
@@ -1341,8 +1338,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1358,7 +1355,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1394,8 +1391,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1411,7 +1408,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1447,8 +1444,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1464,7 +1461,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1508,8 +1505,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1525,7 +1522,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1575,8 +1572,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1592,7 +1589,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1637,8 +1634,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1654,7 +1651,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )
@@ -1780,8 +1777,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1797,7 +1794,7 @@ mod tests {
                 agent_event_log: None,
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             false,
         )
@@ -1844,8 +1841,8 @@ mod tests {
                 tenant_store: None,
                 mcp_store: None,
                 plugin_doctor: None,
-            plugin_handles_cell: None,
-            persona_install_roots: Vec::new(),
+                plugin_handles_cell: None,
+                persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
@@ -1861,7 +1858,7 @@ mod tests {
                 agent_event_log: Some(log.clone()),
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
-            plugin_admin_router: None,
+                plugin_admin_router: None,
             },
             true,
         )

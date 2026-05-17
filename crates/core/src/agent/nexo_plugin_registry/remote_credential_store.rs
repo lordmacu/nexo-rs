@@ -51,8 +51,7 @@ const CACHE_TTL_SECS: u64 = 30;
 /// outlive any handle issuance; `Box::leak` produces the static
 /// reference. Bounded by the operator's manifest size (one entry
 /// per distinct plugin id; typically < 100).
-static CHANNEL_INTERN: LazyLock<DashMap<String, &'static str>> =
-    LazyLock::new(DashMap::new);
+static CHANNEL_INTERN: LazyLock<DashMap<String, &'static str>> = LazyLock::new(DashMap::new);
 
 fn intern_channel(plugin_id: &str) -> Channel {
     if let Some(s) = CHANNEL_INTERN.get(plugin_id) {
@@ -185,10 +184,7 @@ impl GenericCredentialStore for RemoteCredentialStore {
         }
     }
 
-    async fn resolve_bytes(
-        &self,
-        handle: &CredentialHandle,
-    ) -> Result<Vec<u8>, CredentialError> {
+    async fn resolve_bytes(&self, handle: &CredentialHandle) -> Result<Vec<u8>, CredentialError> {
         let Some(sub) = self.weak.upgrade() else {
             return Err(CredentialError::InvalidSecret {
                 path: self.synthetic_path(),
@@ -377,4 +373,3 @@ mod tests {
         }
     }
 }
-

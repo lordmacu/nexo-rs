@@ -37,7 +37,10 @@ cron         = "0.12"
 humantime    = { workspace = true }
 regex        = "1"
 base64       = { workspace = true }
-nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
+# Phase 96 — google_calendar + gmail moved out to standalone
+# plugin v2 subprocess repos. This crate no longer depends on
+# `nexo-plugin-google`; in-tree builtins are now `webhook_poll`
+# and `agent_turn`, both provider-agnostic.
 
 [features]
 default = []

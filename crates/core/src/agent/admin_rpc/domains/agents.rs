@@ -118,9 +118,7 @@ pub async fn get_with_persona(
             )))
         }
         Err(e) => {
-            return AdminRpcResult::err(AdminRpcError::Internal(format!(
-                "yaml read failed: {e}"
-            )))
+            return AdminRpcResult::err(AdminRpcError::Internal(format!("yaml read failed: {e}")))
         }
     };
     if let Some(reader) = snapshot {
@@ -766,7 +764,13 @@ mod tests {
             .expect("locale_prompts persisted");
         let obj = raw.as_object().expect("object");
         assert_eq!(obj.len(), 2);
-        assert_eq!(obj.get("en").and_then(Value::as_str), Some("english prompt"));
-        assert_eq!(obj.get("es").and_then(Value::as_str), Some("prompt en espanol"));
+        assert_eq!(
+            obj.get("en").and_then(Value::as_str),
+            Some("english prompt")
+        );
+        assert_eq!(
+            obj.get("es").and_then(Value::as_str),
+            Some("prompt en espanol")
+        );
     }
 }

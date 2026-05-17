@@ -184,12 +184,10 @@ async fn full_boot_ctx() -> McpServerBootContext {
             .await
             .expect("memory open"),
     ));
-    bc.web_search_router = Some(Arc::new(nexo_web_search::WebSearchRouter::new(
-        vec![Arc::new(
-            nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
-        )],
-        None,
-    )));
+    // Phase 95 — web_search_router field removed; the
+    // `web_search` boot dispatch now returns
+    // `SkippedInfraMissing` (subprocess plugin path). The
+    // catalog test below was already updated to assert this.
     bc.mcp_runtime = Some(Arc::new(SessionMcpRuntime::new(
         Uuid::new_v4(),
         "exposable-test-fingerprint".into(),
@@ -444,6 +442,15 @@ async fn every_always_entry_boots_with_full_context() {
         if !matches!(entry.boot_kind, BootKind::Always) {
             continue;
         }
+        // Phase 95 — `web_search` is `Always` in the catalog because
+        // it IS always exposable in principle, but its handler ships
+        // out-of-tree as a subprocess plugin (`nexo-plugin-web-search`)
+        // that the test fixture's `full_boot_ctx()` does not spawn.
+        // The dispatcher correctly reports `SkippedInfraMissing` in
+        // that case; accept it as a valid outcome here.
+        if entry.name == "web_search" {
+            continue;
+        }
         match boot_exposable(entry.name, &bc) {
             BootResult::Registered(def, _h) => {
                 assert_eq!(def.name, entry.name, "tool def name mismatch");
@@ -488,7 +495,10 @@ async fn always_entries_skip_with_clear_handle_label_when_handle_missing() {
         "cron_store",
         "mcp_runtime",
         "config_changes_store",
-        "web_search_router",
+        // Phase 95 — web_search now reports
+        // `web_search_subprocess_plugin` as its missing-infra
+        // handle instead of `web_search_router`.
+        "web_search_subprocess_plugin",
         "long_term_memory",
         "memory_git",
         "taskflow_manager",

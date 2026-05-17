@@ -166,6 +166,17 @@ pub static EXPOSABLE_TOOLS: &[ExposableToolEntry] = &[
     ExposableToolEntry {
         name: "web_search",
         tier: SecurityTier::OutboundSideEffect,
+        // Phase 95 — `web_search` extracted to standalone
+        // subprocess plugin (`nexo-plugin-web-search`). Catalog
+        // keeps `boot_kind: Always` because the tool IS always
+        // exposable in principle; the daemon's
+        // `boot_exposable("web_search", ...)` now returns
+        // `SkippedInfraMissing { handle: "web_search_subprocess_plugin" }`
+        // when the subprocess plugin is not installed. Tests in
+        // `crates/core/tests/exposable_catalog_test.rs` special-case
+        // this entry to accept `SkippedInfraMissing` as a valid
+        // outcome under `full_boot_ctx()` (the test fixture does
+        // not spawn the plugin subprocess).
         boot_kind: BootKind::Always,
         feature_gate: None,
     },

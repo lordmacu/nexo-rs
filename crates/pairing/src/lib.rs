@@ -23,6 +23,7 @@ pub mod generic_adapter;
 pub mod plugin_admin;
 pub mod plugin_http;
 pub mod plugin_metrics;
+pub mod plugin_poller;
 pub mod qr;
 pub mod registry;
 pub mod session_store;

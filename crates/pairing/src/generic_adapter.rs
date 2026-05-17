@@ -101,8 +101,7 @@ impl GenericBrokerPairingAdapter {
         broker: AnyBroker,
         adapter: &nexo_plugin_manifest::pairing::PairingAdapterSection,
     ) -> Self {
-        let leaked: &'static str =
-            Box::leak(adapter.channel_id.clone().into_boxed_str());
+        let leaked: &'static str = Box::leak(adapter.channel_id.clone().into_boxed_str());
         Self {
             channel_id: leaked,
             broker,
@@ -141,9 +140,7 @@ impl GenericBrokerPairingAdapter {
     /// tokio runtime; panics otherwise (acceptable — every daemon
     /// hot path runs on multi-thread).
     fn block_on<F: std::future::Future>(&self, fut: F) -> F::Output {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(fut)
-        })
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
     }
 }
 
@@ -161,18 +158,13 @@ impl PairingChannelAdapter for GenericBrokerPairingAdapter {
         let topic = format!("{}.pairing.normalize_sender", self.topic_prefix);
         let payload = json!({ "raw": raw });
         let msg = Message::new(topic.clone(), payload);
-        let result = self.block_on(
-            self.broker.request(&topic, msg, DEFAULT_REQUEST_TIMEOUT),
-        );
+        let result = self.block_on(self.broker.request(&topic, msg, DEFAULT_REQUEST_TIMEOUT));
         let normalized = match result {
-            Ok(reply) => reply
-                .payload
-                .get("normalized")
-                .and_then(|v| match v {
-                    serde_json::Value::Null => None,
-                    serde_json::Value::String(s) => Some(s.clone()),
-                    _ => None,
-                }),
+            Ok(reply) => reply.payload.get("normalized").and_then(|v| match v {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(s) => Some(s.clone()),
+                _ => None,
+            }),
             Err(err) => {
                 tracing::warn!(
                     channel = %self.channel_id,
@@ -216,12 +208,7 @@ impl PairingChannelAdapter for GenericBrokerPairingAdapter {
         Ok(())
     }
 
-    async fn send_qr_image(
-        &self,
-        account: &str,
-        to: &str,
-        png: &[u8],
-    ) -> anyhow::Result<()> {
+    async fn send_qr_image(&self, account: &str, to: &str, png: &[u8]) -> anyhow::Result<()> {
         use base64::Engine;
         let topic = format!("{}.pairing.send_qr_image", self.topic_prefix);
         let payload = json!({

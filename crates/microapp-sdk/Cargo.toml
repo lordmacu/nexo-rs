@@ -1,7 +1,7 @@
 [package]
 name        = "nexo-microapp-sdk"
 description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
-version       = "0.1.18"
+version       = "0.1.19"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -210,6 +210,12 @@ voice = [
 # YAML via serde_yaml::Value, so the plugin feature now pulls
 # serde_yaml unconditionally.
 plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:nexo-llm", "dep:nexo-memory", "dep:toml", "dep:dashmap", "dep:serde_yaml", "dep:base64"]
+# Phase 96 — child-side helpers for plugin v2 poller subprocesses.
+# `PollerHandler` trait + `BrokerPollerHost` impl (reverse-RPC to
+# daemon) + `serve_one_tick` helper that adapter authors call from
+# their broker-event handler. Requires `plugin` so the SDK's broker
+# + manifest plumbing is already wired.
+poller = ["plugin", "dep:nexo-poller"]
 # Phase 82.15 / M15.3 — identity store traits + sqlite default
 # impl. Person + PersonEmail + Company stores keyed by tenant
 # id with composite indexes. Pulls sqlx + chrono so non-CRM
@@ -392,6 +398,9 @@ nexo-broker = { version = "0.1.5", path = "../broker", optional = true }
 # MemoryEntry for recall_memory results.
 nexo-llm = { version = "0.1.5", path = "../llm", optional = true }
 nexo-memory = { version = "0.1.5", path = "../memory", optional = true }
+# Phase 96 — `poller` feature: PollerHost trait + TickAck wire shape
+# re-export. Optional so non-poller plugin authors don't pay the dep.
+nexo-poller = { version = "0.1.2", path = "../poller", optional = true }
 toml = { version = "0.8", optional = true }
 # `events` feature — SQLite append-log + retention sweep +
 # wall-clock cutoff for time-based pruning. All optional;
@@ -502,6 +511,7 @@ nexo-media    = { workspace = true, optional = true }
 nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound", "events", "stt", "wizard", "voice", "identity", "routing", "enrichment", "tracking", "tracking-store", "scoring", "guardrails", "templating", "templating-handlebars", "email-threading", "email-template", "module-state", "compose-attachment", "compose-draft", "db-migrate", "dedup", "dedup-sled"] }
 tempfile          = "3"
 tokio             = { workspace = true, features = ["full"] }
+anyhow            = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true

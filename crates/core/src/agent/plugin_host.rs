@@ -169,10 +169,7 @@ pub trait NexoPlugin: Send + Sync + 'static {
     /// `&self` (not `&mut`) — interior mutability is the
     /// workspace-wide idiom; hot-reload re-calls land here
     /// repeatedly without borrow conflicts.
-    async fn configure(
-        &self,
-        _value: &serde_yaml::Value,
-    ) -> Result<(), PluginConfigureError> {
+    async fn configure(&self, _value: &serde_yaml::Value) -> Result<(), PluginConfigureError> {
         Ok(())
     }
 
@@ -191,9 +188,7 @@ pub trait NexoPlugin: Send + Sync + 'static {
     /// initialised by `init` time; exposing it is an `Arc::clone`.
     /// The store's own `list() / resolve_bytes()` methods are
     /// async; only the lookup is sync.
-    fn credential_store(
-        &self,
-    ) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
+    fn credential_store(&self) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
         None
     }
 }
@@ -446,8 +441,7 @@ min_nexo_version = ">=0.1.0"
         /// delivered. Tests assert ordering (configure-before-init)
         /// by checking this is `Some(_)` while `init_called` is still
         /// `false` mid-flight.
-        pub(crate) last_configure_value:
-            tokio::sync::Mutex<Option<serde_yaml::Value>>,
+        pub(crate) last_configure_value: tokio::sync::Mutex<Option<serde_yaml::Value>>,
         /// Phase 93.2 — outcome the override returns. `None` ≡ Ok(()).
         /// `Some(Err(msg))` returns `PluginRejected` wrapping `msg`.
         pub(crate) configure_outcome: Option<Result<(), String>>,
@@ -476,7 +470,6 @@ min_nexo_version = ">=0.1.0"
                 configure_outcome: None,
             }
         }
-
     }
 
     #[async_trait]
@@ -502,10 +495,7 @@ min_nexo_version = ">=0.1.0"
                 }),
             }
         }
-        async fn configure(
-            &self,
-            value: &serde_yaml::Value,
-        ) -> Result<(), PluginConfigureError> {
+        async fn configure(&self, value: &serde_yaml::Value) -> Result<(), PluginConfigureError> {
             *self.last_configure_value.lock().await = Some(value.clone());
             match &self.configure_outcome {
                 None => Ok(()),

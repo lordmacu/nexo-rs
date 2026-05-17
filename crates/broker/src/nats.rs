@@ -5,7 +5,6 @@ use async_nats::connection::State;
 use async_nats::ConnectOptions;
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -318,8 +317,10 @@ impl BrokerHandle for NatsBroker {
 
         match tokio::time::timeout(timeout, sub.next()).await {
             Ok(Some(reply_event)) => {
-                let reply_msg: Message = serde_json::from_value(reply_event.payload)
-                    .map_err(|e| BrokerError::SendError(format!("failed to deserialize reply: {e}")))?;
+                let reply_msg: Message =
+                    serde_json::from_value(reply_event.payload).map_err(|e| {
+                        BrokerError::SendError(format!("failed to deserialize reply: {e}"))
+                    })?;
                 Ok(reply_msg)
             }
             Ok(None) => Err(BrokerError::RequestTimeout(topic.to_string())),

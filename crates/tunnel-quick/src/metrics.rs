@@ -40,8 +40,7 @@ pub fn record_start_success() {
 /// unbounded callers collapse to `"other"` once the cardinality
 /// cap is hit.
 pub fn record_start_failure(reason: &'static str) {
-    if !STARTS_FAILED_TOTAL.contains_key(reason)
-        && STARTS_FAILED_TOTAL.len() >= FAILURE_REASON_CAP
+    if !STARTS_FAILED_TOTAL.contains_key(reason) && STARTS_FAILED_TOTAL.len() >= FAILURE_REASON_CAP
     {
         STARTS_FAILED_TOTAL
             .entry("other")
@@ -78,14 +77,10 @@ pub fn render_prometheus() -> String {
 /// Callers gather the snapshots upstream (the snapshot itself is
 /// `async` on [`TunnelHandle::metrics`]) and hand the resulting
 /// `(tunnel_id, TunnelMetrics)` pairs in.
-pub fn render_prometheus_with_handles(
-    handles: &[(&str, crate::TunnelMetrics)],
-) -> String {
+pub fn render_prometheus_with_handles(handles: &[(&str, crate::TunnelMetrics)]) -> String {
     let mut out = String::new();
 
-    out.push_str(
-        "# HELP tunnel_starts_total Total successful TunnelManager::start calls.\n",
-    );
+    out.push_str("# HELP tunnel_starts_total Total successful TunnelManager::start calls.\n");
     out.push_str("# TYPE tunnel_starts_total counter\n");
     out.push_str(&format!(
         "tunnel_starts_total {}\n",
@@ -125,9 +120,7 @@ pub fn render_prometheus_with_handles(
             ));
         }
 
-        out.push_str(
-            "# HELP tunnel_bytes_in_total Bytes proxied edge→local (per tunnel).\n",
-        );
+        out.push_str("# HELP tunnel_bytes_in_total Bytes proxied edge→local (per tunnel).\n");
         out.push_str("# TYPE tunnel_bytes_in_total counter\n");
         for (id, m) in handles {
             out.push_str(&format!(
@@ -136,9 +129,7 @@ pub fn render_prometheus_with_handles(
             ));
         }
 
-        out.push_str(
-            "# HELP tunnel_bytes_out_total Bytes proxied local→edge (per tunnel).\n",
-        );
+        out.push_str("# HELP tunnel_bytes_out_total Bytes proxied local→edge (per tunnel).\n");
         out.push_str("# TYPE tunnel_bytes_out_total counter\n");
         for (id, m) in handles {
             out.push_str(&format!(
@@ -147,9 +138,7 @@ pub fn render_prometheus_with_handles(
             ));
         }
 
-        out.push_str(
-            "# HELP tunnel_reconnects_total Supervisor reconnect cycles (per tunnel).\n",
-        );
+        out.push_str("# HELP tunnel_reconnects_total Supervisor reconnect cycles (per tunnel).\n");
         out.push_str("# TYPE tunnel_reconnects_total counter\n");
         for (id, m) in handles {
             out.push_str(&format!(
@@ -172,8 +161,10 @@ pub async fn render_prometheus_for(handles: &[&TunnelHandle]) -> String {
             snaps.push((h.tunnel_id.clone(), m));
         }
     }
-    let view: Vec<(&str, crate::TunnelMetrics)> =
-        snaps.iter().map(|(id, m)| (id.as_str(), m.clone())).collect();
+    let view: Vec<(&str, crate::TunnelMetrics)> = snaps
+        .iter()
+        .map(|(id, m)| (id.as_str(), m.clone()))
+        .collect();
     render_prometheus_with_handles(&view)
 }
 

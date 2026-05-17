@@ -1,12 +1,22 @@
-# Build a poller module
+# Build a poller module (V1 — deprecated)
+
+> **⚠ Deprecated since Phase 96 (`nexo-poller 0.2.0`).** The in-tree
+> builtins this page documents (`gmail`, `rss`, `google_calendar`)
+> have been extracted to standalone subprocess plugin repos. New
+> pollers should follow [Build a poller plugin (V2)](./poller-plugin.md).
+> The `OutboundDelivery` / `TickOutcome` types referenced below are
+> replaced by `PollerHost::broker_publish` + `TickAck` as of Phase
+> 96. Treat this page as historical reference.
 
 Three steps. No `main.rs` edit, no scheduler, no breaker, no SQLite
 work. The runner gives you all of that — your code only describes
 what to fetch, what to dispatch, and (optionally) what kind-specific
 LLM tools to expose.
 
-Reference: `crates/poller/src/builtins/` for in-tree examples (`gmail.rs`,
-`rss.rs`, `webhook_poll.rs`, `google_calendar.rs`).
+Reference (post-Phase-96): `crates/poller/src/builtins/` for the two
+remaining in-tree examples (`webhook_poll.rs` + `agent_turn.rs`).
+Phase 96 extractions live in standalone repos: `nexo-rs-poller-rss`,
+`nexo-rs-poller-google-calendar`, `nexo-rs-poller-gmail`.
 
 ## Step 1 — implement the trait
 

@@ -33,8 +33,8 @@
 //! `voice_mode_inbound_transform` / `language_style_inbound_transform`
 //! into a JSON `system_addendum` field.
 
-use crate::locale::{LangCode, Locale, RegionCode};
 use super::DEFAULT_VOICE_ID;
+use crate::locale::{LangCode, Locale, RegionCode};
 
 // ────────────────────────────────────────────────────────────────
 // Voice picker

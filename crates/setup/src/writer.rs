@@ -400,8 +400,8 @@ fn persist_google_auth(
                 .with_context(|| format!("mkdir workspace {}", workspace.display()))?;
 
             run_google_consent_callback_url(
-                &client_id,
-                &client_secret,
+                secrets_dir,
+                id,
                 &scopes_vec,
                 redirect_port,
                 &workspace,
@@ -434,124 +434,41 @@ fn resolve_workspace_for_agent(config_dir: &Path, agent_id: &str) -> Option<Path
     }
 }
 
-/// Build the consent URL, print it, wait for the user to paste back
-/// the localhost URL from their browser's address bar, extract `code`,
-/// exchange → tokens. No listener, no tunnel, no GCP edits.
+/// Phase 94 — spawn `nexo-plugin-google --oauth-once <agent>`
+/// loopback flow. The subprocess binds `127.0.0.1:<redirect_port>`
+/// and the operator's browser hits the callback URL. Pre-extraction
+/// this function ran an inline thread+tokio paste-the-URL workaround;
+/// the subprocess flow is more robust + the workaround was unique to
+/// the wizard. Operators that need the paste-URL escape hatch can
+/// run `nexo-plugin-google --oauth-once --device` for device-code
+/// directly.
 fn run_google_consent_callback_url(
-    client_id: &str,
-    client_secret: &str,
+    secrets_dir: &Path,
+    agent_id: &str,
     scopes: &[String],
     redirect_port: u16,
     workspace: &Path,
 ) -> Result<()> {
-    let client_id = client_id.to_string();
-    let client_secret = client_secret.to_string();
-    let scopes = scopes.to_vec();
-    let workspace = workspace.to_path_buf();
-    std::thread::spawn(move || -> Result<()> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("build tokio runtime for callback-url flow")?;
-        rt.block_on(async move {
-            use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig};
-            let cfg = GoogleAuthConfig {
-                client_id,
-                client_secret,
-                scopes,
-                token_file: "google_tokens.json".to_string(),
-                redirect_port,
-            };
-            let client = GoogleAuthClient::new(cfg, &workspace);
-            let state = format!("{:016x}", rand::random::<u64>());
-            let url = client.build_auth_url(&state);
-
-            println!();
-            println!("╭─ Google OAuth consent ────────────────────────────────────────╮");
-            println!("│ 1. Abrí este link en CUALQUIER browser (laptop/celular):      │");
-            println!("╰───────────────────────────────────────────────────────────────╯");
-            println!();
-            println!("  {url}");
-            println!();
-            println!("2. Login con tu cuenta de Google → click Allow.");
-            println!();
-            println!(
-                "3. El browser te va a redirigir a `http://127.0.0.1:{redirect_port}/callback?…`"
-            );
-            println!("   Va a aparecer error 'esta página no funciona' — ignoralo.");
-            println!("   Lo único que importa: la URL completa en la barra de direcciones.");
-            println!();
-            println!("4. Copiá esa URL y pegala aquí abajo.");
-            println!();
-
-            let pasted = crate::prompt::ask_callback_url()?;
-            let code = extract_code_from_url(&pasted)
-                .context("no pude extraer `code=…` de la URL pegada")?;
-            let tokens = client
-                .exchange_code(&code)
-                .await
-                .context("intercambio de code falló — ¿URL completa? ¿se venció (10min)?")?;
-
-            println!();
-            println!("✔ Tokens guardados en {}", client.token_path().display());
-            println!("  Scopes otorgados : {}", tokens.scopes.join(", "));
-            println!(
-                "  Refresh token    : {}",
-                if tokens.refresh_token.is_some() {
-                    "sí (auto-renovación activa)"
-                } else {
-                    "NO — re-corré este flow con access_type=offline forzado"
-                }
-            );
-            Ok::<(), anyhow::Error>(())
-        })
-    })
-    .join()
-    .map_err(|_| anyhow::anyhow!("callback-url thread panicked"))?
+    let _ = redirect_port; // honoured by the subprocess via --workspace-dir + manifest defaults
+    let cid_path = secrets_dir.join("google_client_id.txt");
+    let cs_path = secrets_dir.join("google_client_secret.txt");
+    let token_path = workspace.join("google_tokens.json");
+    crate::services_imperative::spawn_oauth_once_subprocess(
+        agent_id,
+        &cid_path,
+        &cs_path,
+        &token_path,
+        scopes,
+        /* device = */ false,
+        workspace,
+    )
 }
 
-/// Parse `code=…` out of any string that looks like a URL or query.
-fn extract_code_from_url(raw: &str) -> Option<String> {
-    let raw = raw.trim();
-    let q = raw.split_once('?').map(|(_, q)| q).unwrap_or(raw);
-    for pair in q.split('&') {
-        if let Some(v) = pair.strip_prefix("code=") {
-            let decoded = urlencoding_decode(v);
-            return Some(decoded);
-        }
-    }
-    None
-}
-
-fn urlencoding_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                    if let Ok(n) = u8::from_str_radix(hex, 16) {
-                        out.push(n);
-                        i += 3;
-                        continue;
-                    }
-                }
-                out.push(bytes[i]);
-                i += 1;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+// Phase 94 — `extract_code_from_url` + `urlencoding_decode` removed.
+// The paste-URL workaround they supported is replaced by the
+// `nexo-plugin-google --oauth-once` subprocess spawn (loopback or
+// device-code). If a future setup path needs URL parsing again, lift
+// these helpers from the git history at this file's pre-Phase-94 rev.
 
 /// Channel-first linking UX. User picks a canal (whatsapp/telegram/…)
 /// and the wizard branches on its current state:
@@ -713,7 +630,11 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 // fallback when the daemon was built without `plugin-whatsapp`.
 // Setup-side wipe is unaffected.
 #[allow(dead_code)]
-fn _wipe_channel_session_legacy_stub(_canal_id: &str, _agent_id: &str, _config_dir: &Path) -> Result<()> {
+fn _wipe_channel_session_legacy_stub(
+    _canal_id: &str,
+    _agent_id: &str,
+    _config_dir: &Path,
+) -> Result<()> {
     // Phase 93.12.c.1 — feature off: no whatsapp = nothing to wipe.
     // Telegram / email channels do not own a daemon-side session dir
     // (telegram credentials live in the credential store; email in

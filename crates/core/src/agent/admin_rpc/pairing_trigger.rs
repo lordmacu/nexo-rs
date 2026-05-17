@@ -239,8 +239,7 @@ impl PairingChannelTriggers {
 impl std::fmt::Debug for PairingChannelTriggers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("PairingChannelTriggers");
-        let channels: Vec<String> =
-            self.inner.iter().map(|e| e.key().clone()).collect();
+        let channels: Vec<String> = self.inner.iter().map(|e| e.key().clone()).collect();
         d.field("channels", &channels).finish()
     }
 }

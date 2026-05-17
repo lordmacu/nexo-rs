@@ -197,10 +197,7 @@ fn validate_supervisor(
 /// `kind = "form"` without `fields`) would land in the admin's
 /// channel descriptor + render an empty modal at runtime; better
 /// to refuse the plugin at boot with a typed error.
-fn validate_pairing(
-    pairing: &crate::pairing::PairingSection,
-    errors: &mut Vec<ManifestError>,
-) {
+fn validate_pairing(pairing: &crate::pairing::PairingSection, errors: &mut Vec<ManifestError>) {
     use crate::pairing::PairingKind;
     let Some(kind) = pairing.kind else {
         return;
@@ -1524,10 +1521,8 @@ expose = ["wrong_prefix"]
         );
         let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(
-                e,
-                ManifestError::PairingTriggerOnlyWithQr { .. }
-            )),
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PairingTriggerOnlyWithQr { .. })),
             "expected PairingTriggerOnlyWithQr, got: {errs:?}"
         );
     }
@@ -1571,7 +1566,11 @@ expose = ["wrong_prefix"]
     // ── Phase 81.20.x Stage 7 Phase 2 — [plugin.public_tunnel] ───
 
     fn manifest_with_public_tunnel(body: &str) -> PluginManifest {
-        let toml = format!("{}\n[plugin.public_tunnel]\n{}\n", base_manifest_toml(), body);
+        let toml = format!(
+            "{}\n[plugin.public_tunnel]\n{}\n",
+            base_manifest_toml(),
+            body
+        );
         parse(&toml)
     }
 
@@ -1594,40 +1593,30 @@ expose = ["wrong_prefix"]
         let m = manifest_with_public_tunnel("close_on_event = \"   \"");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(
-                e,
-                ManifestError::PublicTunnelCloseEventEmpty
-            )),
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PublicTunnelCloseEventEmpty)),
             "expected PublicTunnelCloseEventEmpty, got: {errs:?}"
         );
     }
 
     #[test]
     fn public_tunnel_close_event_with_wildcard_rejected() {
-        let m = manifest_with_public_tunnel(
-            "close_on_event = \"plugin.lifecycle.*.tunnel_done\"",
-        );
+        let m = manifest_with_public_tunnel("close_on_event = \"plugin.lifecycle.*.tunnel_done\"");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(
-                e,
-                ManifestError::PublicTunnelCloseEventWildcard { .. }
-            )),
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PublicTunnelCloseEventWildcard { .. })),
             "expected PublicTunnelCloseEventWildcard, got: {errs:?}"
         );
     }
 
     #[test]
     fn public_tunnel_close_event_with_rest_wildcard_rejected() {
-        let m = manifest_with_public_tunnel(
-            "close_on_event = \"plugin.lifecycle.whatsapp.>\"",
-        );
+        let m = manifest_with_public_tunnel("close_on_event = \"plugin.lifecycle.whatsapp.>\"");
         let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(
-                e,
-                ManifestError::PublicTunnelCloseEventWildcard { .. }
-            )),
+            errs.iter()
+                .any(|e| matches!(e, ManifestError::PublicTunnelCloseEventWildcard { .. })),
             "expected PublicTunnelCloseEventWildcard (>), got: {errs:?}"
         );
     }
@@ -1724,7 +1713,11 @@ expose = ["wrong_prefix"]
         s.push_str("enabled = true\n");
         s.push_str("accounts_shape = \"array\"\n");
         let m = parse(&s);
-        let cs = m.plugin.credentials_schema.as_ref().expect("section present");
+        let cs = m
+            .plugin
+            .credentials_schema
+            .as_ref()
+            .expect("section present");
         assert!(cs.enabled);
         assert_eq!(cs.accounts_shape, Some(crate::manifest::ConfigShape::Array));
     }

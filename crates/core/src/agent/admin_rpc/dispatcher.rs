@@ -189,8 +189,7 @@ pub struct AdminRpcDispatcher {
     /// without needing a hardcoded `.with_<plugin>_handle()`
     /// builder. `None` = no plugin admin routes (or daemon
     /// running without subprocess plugins).
-    plugin_admin_router:
-        Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
+    plugin_admin_router: Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
     /// Broker handle paired with `plugin_admin_router` so the
     /// dispatcher can issue the forward request. `None` when the
     /// router is also `None`.
@@ -738,10 +737,7 @@ impl AdminRpcDispatcher {
     /// manifests via `wire_plugin_registry` + joins linked
     /// instances from `credentials/list`. `None` disables
     /// `nexo/admin/pairing/channels`.
-    pub fn with_pairing_channels(
-        mut self,
-        reader: Arc<dyn PairingChannelsReader>,
-    ) -> Self {
+    pub fn with_pairing_channels(mut self, reader: Arc<dyn PairingChannelsReader>) -> Self {
         self.pairing_channels_reader = Some(reader);
         self
     }
@@ -749,10 +745,7 @@ impl AdminRpcDispatcher {
     /// Install the Phase 81.31 persona-snapshot reader. Without
     /// one, `agents/get` returns `persona_locales: None` and the
     /// admin wizard falls back to the single-locale flow.
-    pub fn with_persona_snapshot_reader(
-        mut self,
-        reader: Arc<dyn PersonaSnapshotReader>,
-    ) -> Self {
+    pub fn with_persona_snapshot_reader(mut self, reader: Arc<dyn PersonaSnapshotReader>) -> Self {
         self.persona_snapshot_reader = Some(reader);
         self
     }
@@ -991,8 +984,7 @@ impl AdminRpcDispatcher {
             .plugin_admin_router
             .as_ref()
             .and_then(|r| r.match_method(method).is_some().then_some(()));
-        let Some(capability) =
-            static_cap.or_else(|| plugin_router_match.map(|_| "channels_crud"))
+        let Some(capability) = static_cap.or_else(|| plugin_router_match.map(|_| "channels_crud"))
         else {
             let row = AdminAuditRow {
                 microapp_id: microapp_id.to_string(),
@@ -1063,27 +1055,24 @@ impl AdminRpcDispatcher {
         // over the legacy hardcoded `wa_bot_handle` block —
         // smooth migration once canonical plugins ship the
         // manifest section.
-        if let (Some(router), Some(broker)) =
-            (self.plugin_admin_router.as_ref(), self.plugin_admin_broker.as_ref())
-        {
+        if let (Some(router), Some(broker)) = (
+            self.plugin_admin_router.as_ref(),
+            self.plugin_admin_broker.as_ref(),
+        ) {
             if let Some(info) = router.match_method(method) {
-                match nexo_pairing::plugin_admin::forward_request(
-                    broker, info, method, params,
-                )
-                .await
+                match nexo_pairing::plugin_admin::forward_request(broker, info, method, params)
+                    .await
                 {
                     Ok(reply) => {
                         if reply.ok {
                             return AdminRpcResult::ok(reply.result);
                         }
-                        return AdminRpcResult::err(AdminRpcError::Internal(
-                            reply.error,
-                        ));
+                        return AdminRpcResult::err(AdminRpcError::Internal(reply.error));
                     }
                     Err(err) => {
-                        return AdminRpcResult::err(AdminRpcError::Internal(
-                            format!("plugin admin forward failed: {err}"),
-                        ));
+                        return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                            "plugin admin forward failed: {err}"
+                        )));
                     }
                 }
             }

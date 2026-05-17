@@ -185,9 +185,7 @@ mod tests {
         // future refactor keeps the diagnostic fields.
         let plugin_id = "telegram";
         let tool_name = "telegram_send_message";
-        let expected = format!(
-            "outbound tool `{tool_name}`: plugin `{plugin_id}` no longer alive"
-        );
+        let expected = format!("outbound tool `{tool_name}`: plugin `{plugin_id}` no longer alive");
         // Smoke test the format expectation matches the literal
         // call path. If the implementation changes the wording,
         // both this string and the assertion below must update
@@ -196,13 +194,7 @@ mod tests {
             expected.contains("no longer alive"),
             "error message contract requires `no longer alive`"
         );
-        assert!(
-            expected.contains(plugin_id),
-            "error must include plugin id"
-        );
-        assert!(
-            expected.contains(tool_name),
-            "error must include tool name"
-        );
+        assert!(expected.contains(plugin_id), "error must include plugin id");
+        assert!(expected.contains(tool_name), "error must include tool name");
     }
 }

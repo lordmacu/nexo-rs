@@ -70,10 +70,7 @@ impl PluginMetricsDescriptor {
 ///
 /// Returns a single `String` with newline-separated plugin
 /// outputs. Caller appends to its own `/metrics` body.
-pub async fn scrape_all(
-    broker: &AnyBroker,
-    descriptors: &[PluginMetricsDescriptor],
-) -> String {
+pub async fn scrape_all(broker: &AnyBroker, descriptors: &[PluginMetricsDescriptor]) -> String {
     if descriptors.is_empty() {
         return String::new();
     }
@@ -87,7 +84,7 @@ pub async fn scrape_all(
         results.push(scrape_one(broker, d).await);
     }
     let mut out = String::new();
-    for (descriptor, result) in descriptors.iter().zip(results.into_iter()) {
+    for (descriptor, result) in descriptors.iter().zip(results) {
         match result {
             Ok(text) if text.is_empty() => {}
             Ok(text) => {

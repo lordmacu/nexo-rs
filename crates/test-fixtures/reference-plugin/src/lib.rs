@@ -65,7 +65,10 @@ pub mod pairing {
     /// Request: `{ "account": "<inst>", "to": "<sender>", "text": "..." }`
     /// Reply:   `{ "ok": true }` or `{ "ok": false, "error": "..." }`
     pub fn send_reply(request: &Value) -> Value {
-        let account = request.get("account").and_then(|v| v.as_str()).unwrap_or("");
+        let account = request
+            .get("account")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let to = request.get("to").and_then(|v| v.as_str()).unwrap_or("");
         let text = request.get("text").and_then(|v| v.as_str()).unwrap_or("");
         if account.is_empty() || to.is_empty() {
@@ -74,7 +77,12 @@ pub mod pairing {
         // Real plugins call their channel SDK here. The demo just
         // records a tracing event so the test harness can assert
         // the handler ran with the right fields.
-        tracing::info!(account, to, text_len = text.len(), "reference_demo pairing send_reply");
+        tracing::info!(
+            account,
+            to,
+            text_len = text.len(),
+            "reference_demo pairing send_reply"
+        );
         json!({ "ok": true })
     }
 
@@ -116,7 +124,10 @@ pub mod http {
     /// `/reference_demo/echo` as JSON echo, everything else 404.
     pub fn handle_request(request: &Value) -> Value {
         let path = request.get("path").and_then(|v| v.as_str()).unwrap_or("/");
-        let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+        let method = request
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET");
         match (method, path) {
             ("GET", "/reference_demo/hello") => respond(
                 200,
@@ -167,10 +178,7 @@ pub mod admin {
     use super::*;
 
     pub fn handle(request: &Value) -> Value {
-        let method = request
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(Value::Null);
         match method {
             "nexo/admin/reference_demo/list" => json!({
@@ -357,7 +365,10 @@ mod tests {
             "params": { "msg": "hello" },
         }));
         assert_eq!(
-            r.get("result").and_then(|v| v.get("echo")).and_then(|v| v.get("msg")).and_then(|v| v.as_str()),
+            r.get("result")
+                .and_then(|v| v.get("echo"))
+                .and_then(|v| v.get("msg"))
+                .and_then(|v| v.as_str()),
             Some("hello"),
         );
     }

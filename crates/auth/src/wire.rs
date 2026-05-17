@@ -169,11 +169,11 @@ fn email_accounts_from_entries(plugins: &PluginsConfig) -> Vec<EmailCredAccount>
     }
 }
 use crate::error::BuildError;
-use crate::generic_store::GenericCredentialStore;
 use crate::gauntlet::{
     canonicalize_session_dirs, check_duplicate_paths, check_permissions, check_prefix_overlap,
     format_errors, PathClaim,
 };
+use crate::generic_store::GenericCredentialStore;
 use crate::google::{GoogleAccount, GoogleCredentialStore};
 use crate::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
 use crate::resolver::{
@@ -250,18 +250,12 @@ impl CredentialsBundle {
     /// subprocess plugin contributes a `RemoteCredentialStore` to
     /// `stores_v2` but legacy in-process consumers (gauntlet,
     /// observability surface) still need typed access.
-    pub fn whatsapp_account(
-        &self,
-        instance: &str,
-    ) -> Option<&crate::whatsapp::WhatsappAccount> {
+    pub fn whatsapp_account(&self, instance: &str) -> Option<&crate::whatsapp::WhatsappAccount> {
         self.stores.whatsapp.account(instance)
     }
 
     /// Phase 93.9.b — daemon-owned Telegram typed accessor.
-    pub fn telegram_account(
-        &self,
-        instance: &str,
-    ) -> Option<&crate::telegram::TelegramAccount> {
+    pub fn telegram_account(&self, instance: &str) -> Option<&crate::telegram::TelegramAccount> {
         self.stores.telegram.account(instance)
     }
 
@@ -882,11 +876,7 @@ mod tests {
     /// Wave 7 — opaque whatsapp fixture built as a serde_yaml::Value
     /// directly. nexo-auth no longer depends on `nexo_config::Whatsapp*`
     /// typed structs.
-    fn wa_cfg(
-        instance: Option<&str>,
-        dir: &Path,
-        allow: &[&str],
-    ) -> serde_yaml::Value {
+    fn wa_cfg(instance: Option<&str>, dir: &Path, allow: &[&str]) -> serde_yaml::Value {
         let mut map = serde_yaml::Mapping::new();
         map.insert(
             serde_yaml::Value::String("enabled".into()),

@@ -145,7 +145,10 @@ pub struct PluginSection {
     /// that don't expose a pair-able channel omit the section.
     /// Consumed by the admin `nexo/admin/pairing/channels` RPC
     /// to drive the channel selector + per-channel modal flow.
-    #[serde(default, skip_serializing_if = "crate::pairing::PairingSection::is_unset")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::pairing::PairingSection::is_unset"
+    )]
     pub pairing: crate::pairing::PairingSection,
 
     #[serde(default)]
@@ -194,6 +197,19 @@ pub struct PluginSection {
     /// hardcoded `/whatsapp/*` blocks per plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<crate::http::PluginHttpSection>,
+
+    /// Phase 96 — scheduled-work declaration. Plugins implementing
+    /// poller kinds (cron / interval / one-shot) declare the kinds
+    /// they handle plus the broker topic prefix the daemon's
+    /// `nexo-poller` runtime publishes ticks to.
+    ///
+    /// Absent / default = the plugin owns no scheduled work. With
+    /// this section the daemon's `PluginPollerRouter` discovers the
+    /// kinds at boot and routes matching `pollers.yaml` jobs through
+    /// broker RPC instead of the deprecated `nexo-poller-ext`
+    /// `StdioRuntime` bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poller: Option<crate::poller::PluginPollerSection>,
 
     /// Phase 81.20.x Stage 7 Phase 2 — public-internet tunnel
     /// declaration. When the plugin sets

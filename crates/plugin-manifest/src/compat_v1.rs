@@ -358,6 +358,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
         metrics: None,
         admin: None,
         http: None,
+        poller: None,
         public_tunnel: Default::default(),
         contracts: Default::default(),
         meta: MetaSection {

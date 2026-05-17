@@ -116,12 +116,12 @@ impl ToolHandler for PollersRunTool {
         let id = args["id"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("pollers_run requires `id`"))?;
-        let outcome = self.runner.run_once(id).await?;
+        let ack = self.runner.run_once(id).await?;
+        let metrics = ack.metrics.unwrap_or_default();
         Ok(json!({
             "ok": true,
-            "items_seen": outcome.items_seen,
-            "items_dispatched": outcome.items_dispatched,
-            "deliveries": outcome.deliver.len(),
+            "items_seen": metrics.items_seen,
+            "items_dispatched": metrics.items_dispatched,
         }))
     }
 }

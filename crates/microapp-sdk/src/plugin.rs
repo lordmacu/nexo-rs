@@ -168,10 +168,7 @@ pub trait ConfigureHandler: Send + Sync + 'static {
     /// Hook called with the operator-supplied YAML slice. Return
     /// `Ok(())` to accept; `Err(msg)` maps to a JSON-RPC `-32603`
     /// error reply.
-    fn handle(
-        &self,
-        value: serde_yaml::Value,
-    ) -> BoxFuture<'static, Result<(), String>>;
+    fn handle(&self, value: serde_yaml::Value) -> BoxFuture<'static, Result<(), String>>;
 }
 
 impl<F, Fut> ConfigureHandler for F
@@ -179,10 +176,7 @@ where
     F: Fn(serde_yaml::Value) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), String>> + Send + 'static,
 {
-    fn handle(
-        &self,
-        value: serde_yaml::Value,
-    ) -> BoxFuture<'static, Result<(), String>> {
+    fn handle(&self, value: serde_yaml::Value) -> BoxFuture<'static, Result<(), String>> {
         Box::pin((self)(value))
     }
 }
@@ -729,6 +723,15 @@ pub struct ToolInvocation {
     /// dispatcher is operator-driven (admin RPC, debug CLI).
     #[serde(default)]
     pub agent_id: Option<String>,
+    /// Phase 95 — per-binding policy slice resolved by the host's
+    /// `EffectivePolicy::for_tool(&self.tool_name)` and stamped on
+    /// the JSON-RPC envelope by `RemoteToolHandler`. Present when
+    /// the tool carries a binding-level allowlist / defaults
+    /// contract (e.g. `web_search`); absent otherwise. Plugins
+    /// MAY ignore. Shape is tool-specific JSON; the SDK does not
+    /// validate the inner structure.
+    #[serde(default)]
+    pub policy: Option<serde_json::Value>,
 }
 
 /// Failure modes the child can surface from a `tool.invoke`
@@ -1560,9 +1563,8 @@ where
                 if let Some(handler) = &adapter.on_credentials_list {
                     match handler.handle().await {
                         Ok(reply) => {
-                            let value = serde_json::to_value(&reply).unwrap_or_else(|_| {
-                                json!({ "accounts": [], "warnings": [] })
-                            });
+                            let value = serde_json::to_value(&reply)
+                                .unwrap_or_else(|_| json!({ "accounts": [], "warnings": [] }));
                             write_result(&writer, id, value).await?;
                         }
                         Err(e) => write_error(&writer, id, -32603, &e).await?,
@@ -1637,8 +1639,7 @@ where
                     {
                         Ok(bytes) => {
                             use base64::Engine as _;
-                            let b64 =
-                                base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                             write_result(&writer, id, json!({ "bytes_b64": b64 })).await?;
                         }
                         Err(e) => write_error(&writer, id, -32603, &e).await?,
@@ -1825,6 +1826,33 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(inv.tool_name, "t");
         assert_eq!(inv.args, serde_json::Value::Null);
         assert!(inv.agent_id.is_none());
+        assert!(inv.policy.is_none());
+    }
+
+    #[test]
+    fn tool_invocation_policy_field_parses_when_present() {
+        let raw = r#"{
+            "plugin_id": "web_search",
+            "tool_name": "web_search",
+            "args": { "query": "rust async" },
+            "agent_id": "ana",
+            "policy": { "enabled": true, "default_count": 5, "provider": "brave" }
+        }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        let policy = inv.policy.expect("policy slice should parse");
+        assert_eq!(policy["enabled"], serde_json::json!(true));
+        assert_eq!(policy["default_count"], serde_json::json!(5));
+        assert_eq!(policy["provider"], serde_json::json!("brave"));
+    }
+
+    #[test]
+    fn tool_invocation_policy_field_defaults_to_none_when_absent() {
+        let raw = r#"{ "plugin_id": "p", "tool_name": "t" }"#;
+        let inv: ToolInvocation = serde_json::from_str(raw).unwrap();
+        assert!(
+            inv.policy.is_none(),
+            "absent `policy` field must deserialise to None"
+        );
     }
 
     #[test]
@@ -1881,6 +1909,7 @@ min_nexo_version = ">=0.1.0"
             tool_name: "echo".into(),
             args: serde_json::json!({"hello": "world"}),
             agent_id: None,
+            policy: None,
         };
         let out = ToolHandler::call(&handler, inv).await.unwrap();
         assert_eq!(out, serde_json::json!({"hello": "world"}));
@@ -1896,6 +1925,7 @@ min_nexo_version = ">=0.1.0"
             tool_name: "x".into(),
             args: serde_json::Value::Null,
             agent_id: None,
+            policy: None,
         };
         let err = ToolHandler::call(&handler, inv).await.unwrap_err();
         assert_eq!(err.code(), -33405);
@@ -2768,10 +2798,7 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(reply["id"], 5);
         assert_eq!(reply["result"]["ok"], serde_json::Value::Bool(true));
         let captured = observed.lock().unwrap().clone();
-        assert_eq!(
-            captured,
-            Some(("main".to_string(), "alice".to_string())),
-        );
+        assert_eq!(captured, Some(("main".to_string(), "alice".to_string())),);
     }
 
     /// Phase 93.8.a-sdk — `plugin.credentials.resolve_bytes` returns
@@ -2780,9 +2807,7 @@ min_nexo_version = ">=0.1.0"
     async fn credentials_resolve_bytes_dispatch_returns_base64() {
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_credentials_resolve_bytes(|_acc, _ag, _fp| async move {
-                Ok(vec![1u8, 2, 3, 4])
-            });
+            .on_credentials_resolve_bytes(|_acc, _ag, _fp| async move { Ok(vec![1u8, 2, 3, 4]) });
         let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
         host_write
             .write_all(

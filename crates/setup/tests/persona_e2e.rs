@@ -51,11 +51,7 @@ fn build_dispatcher(config_dir: &std::path::Path) -> AdminRpcDispatcher {
 async fn save_localized_then_agents_get_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
-    std::fs::write(
-        dir.path().join("ws/ana/IDENTITY.md"),
-        "default identity",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("ws/ana/IDENTITY.md"), "default identity").unwrap();
     seed_agents_yaml(
         dir.path(),
         r#"agents:
@@ -85,7 +81,11 @@ async fn save_localized_then_agents_get_round_trip() {
         "patch_yaml": true,
     });
     let save_res = dispatcher
-        .dispatch("test_microapp", "nexo/admin/persona/save_localized", save_params)
+        .dispatch(
+            "test_microapp",
+            "nexo/admin/persona/save_localized",
+            save_params,
+        )
         .await;
     assert!(
         save_res.error.is_none(),
@@ -121,11 +121,21 @@ async fn save_localized_then_agents_get_round_trip() {
 
     // 4. agents/get returns persona_locales with both locales
     let get_res = dispatcher
-        .dispatch("test_microapp", "nexo/admin/agents/get", json!({"agent_id": "ana"}))
+        .dispatch(
+            "test_microapp",
+            "nexo/admin/agents/get",
+            json!({"agent_id": "ana"}),
+        )
         .await;
-    assert!(get_res.error.is_none(), "agents/get error: {:?}", get_res.error);
+    assert!(
+        get_res.error.is_none(),
+        "agents/get error: {:?}",
+        get_res.error
+    );
     let detail = get_res.result.unwrap();
-    let pl = detail.get("persona_locales").expect("persona_locales present");
+    let pl = detail
+        .get("persona_locales")
+        .expect("persona_locales present");
     let available: Vec<String> = pl
         .get("available")
         .and_then(|v| v.as_array())
@@ -145,8 +155,14 @@ async fn save_localized_then_agents_get_round_trip() {
         .find(|s| s.get("locale").and_then(|v| v.as_str()) == Some("es"))
         .expect("es snapshot present");
     let snap = es_entry.get("snapshot").unwrap();
-    assert_eq!(snap.get("identity").and_then(|v| v.as_str()), Some("identidad"));
-    assert_eq!(snap.get("system_prompt").and_then(|v| v.as_str()), Some("prompt ES"));
+    assert_eq!(
+        snap.get("identity").and_then(|v| v.as_str()),
+        Some("identidad")
+    );
+    assert_eq!(
+        snap.get("system_prompt").and_then(|v| v.as_str()),
+        Some("prompt ES")
+    );
 }
 
 /// Capability gate: caller without `agents_crud` gets a typed
@@ -167,7 +183,8 @@ async fn save_localized_returns_domain_not_configured_when_store_missing() {
         .with_capabilities(capabilities_for_test())
         .with_agents_domain(agents_yaml, Arc::new(|| {}));
     let res = dispatcher
-        .dispatch("test_microapp", 
+        .dispatch(
+            "test_microapp",
             "nexo/admin/persona/save_localized",
             json!({
                 "agent_id": "ana",
@@ -208,7 +225,8 @@ async fn save_localized_invalid_locale_maps_to_invalid_params() {
     std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
     let dispatcher = build_dispatcher(dir.path());
     let res = dispatcher
-        .dispatch("test_microapp", 
+        .dispatch(
+            "test_microapp",
             "nexo/admin/persona/save_localized",
             json!({
                 "agent_id": "ana",
@@ -252,7 +270,8 @@ async fn agents_upsert_persists_locale_prompts_via_dispatcher() {
     prompts.insert("en".to_string(), "english variant".to_string());
     prompts.insert("es".to_string(), "variante espanola".to_string());
     let res = dispatcher
-        .dispatch("test_microapp", 
+        .dispatch(
+            "test_microapp",
             "nexo/admin/agents/upsert",
             json!({
                 "id": "ana",

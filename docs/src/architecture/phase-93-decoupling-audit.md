@@ -2,6 +2,45 @@
 
 Status: **closed 2026-05-16**. All 47 anchor sites cleared.
 
+## Phase 95 close-out — 6/N plugin extraction milestone
+
+Status: **closed 2026-05-17**. Web-search joins the canonical
+subprocess plugin set: browser (81.17.c) → telegram (81.18) →
+whatsapp (81.19.a) → email (81.19.b) → google (94) →
+**web-search (95)**.
+
+`nexo-rs-plugin-web-search` lives in a standalone repo and ships
+as `nexo-plugin-web-search 0.1.0`. The daemon's `nexo-core 0.2.0`
+breaking release removes `web_search_router` from
+`AgentContext` / `AgentRuntime` / `AgentSpawnConfig` /
+`McpServerBootContext`; the `WebSearchTool` in-process
+ToolHandler (`crates/core/src/agent/web_search_tool.rs`) deleted
+entirely. `crates/web-search/` survives as a workspace member
+for direct consumers (microapp embeds, future MCP standalone
+tools); the daemon's compile graph no longer pulls it.
+
+Phase 95 also adds the agnostic `tool.invoke.params.policy`
+framework contract (microapp-sdk 0.1.19 + nexo-core 0.2.0): the
+daemon's `RemoteToolHandler` stamps the per-binding
+`EffectivePolicy::for_tool(tool_name)` slice onto every JSON-RPC
+envelope. Future subprocess tools needing per-binding gating
+(lsp, dream, fork) reuse the same envelope without daemon-side
+changes.
+
+## Phase 94 close-out — 5/5 plugin extraction milestone
+
+Status: **closed 2026-05-16**. The Phase 81 plugin-extraction
+lineage is complete: browser (81.17.c) → telegram (81.18) →
+whatsapp (81.19.a) → email (81.19.b) → **google (94)**.
+
+`nexo-rs-plugin-google` lives in a standalone repo and ships as
+`nexo-plugin-google 0.2.0` (subprocess binary). The daemon
+(`nexo-rs`) no longer imports `nexo_plugin_google::*` from `main.rs`
+nor from `crates/setup/`. `crates/plugins/google/` survives as the
+lib dep for `nexo-poller`'s `google_calendar` + `gmail` builtins
+(in-process callers); future cleanup migrates the poller to the
+published lib crate so the in-tree dir can be deleted.
+
 ## Result
 
 `cargo tree -i nexo-plugin-{whatsapp,telegram,email,browser}`

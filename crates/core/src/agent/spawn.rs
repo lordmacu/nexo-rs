@@ -318,7 +318,10 @@ pub fn validate_agent_config(
 /// the closure captures into the coordinator's API surface.
 pub struct AgentSpawnerFn(
     pub  Box<
-        dyn Fn(AgentConfig) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
+        dyn Fn(
+                AgentConfig,
+            )
+                -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
             + Send
             + Sync,
     >,
@@ -378,9 +381,8 @@ pub struct RuntimeAssemblyDeps {
     /// Link extractor used by `llm_behavior` to build the
     /// `# LINK CONTEXT` block from inbound URLs.
     pub link_extractor: Arc<LinkExtractor>,
-    /// Web-search router (optional — present only when at least
-    /// one provider is configured in `web_search.yaml`).
-    pub web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    // Phase 95 — web_search_router removed; subprocess plugin
+    // owns the router now.
     /// Process-shared pairing gate. Required so unknown senders
     /// never reach agent behavior.
     pub pairing_gate: Arc<nexo_pairing::PairingGate>,
@@ -439,9 +441,7 @@ pub fn assemble_agent_runtime(
         runtime = runtime.with_breakers(brk);
     }
     runtime = runtime.with_link_extractor(deps.link_extractor);
-    if let Some(ws) = deps.web_search_router {
-        runtime = runtime.with_web_search_router(ws);
-    }
+    // Phase 95 — web_search_router wiring removed.
     runtime = runtime.with_pairing_gate(deps.pairing_gate);
     runtime = runtime.with_pairing_adapters(deps.pairing_adapters);
     runtime = runtime.with_plan_approval_registry(deps.plan_approval_registry);
@@ -475,7 +475,10 @@ mod tests {
         for case in cases {
             let s = case.to_string();
             assert!(!s.is_empty(), "error display must produce text");
-            assert!(s.len() > 4, "error display must be operator-readable: {s:?}");
+            assert!(
+                s.len() > 4,
+                "error display must be operator-readable: {s:?}"
+            );
         }
     }
 

@@ -9,7 +9,29 @@ Two related subsystems:
   matches subjects/bodies with regex, and dispatches results to any
   outbound topic (WhatsApp, Telegram, another agent)
 
-Sources: `crates/plugins/google/` and `crates/plugins/gmail-poller/`.
+> **Phase 94 — extracted to standalone subprocess plugin.**
+> The agent-callable surface (`google_auth_start`,
+> `google_auth_status`, `google_call`, `google_auth_revoke`) now
+> lives in [`nexo-rs-plugin-google`](https://github.com/lordmacu/nexo-rs-plugin-google),
+> packaged as a separate binary the daemon spawns via discovery.
+> Operator install:
+>
+> ```bash
+> cargo install nexo-plugin-google
+> ```
+>
+> The binary self-publishes its manifest at boot
+> (`nexo-plugin-google --print-manifest`) and exposes a
+> `--oauth-once <agent_id>` CLI subcommand the setup wizard uses for
+> initial consent (loopback by default; `--device` for headless).
+>
+> The in-tree `crates/plugins/google/` lib survives as the dep for
+> `nexo-poller`'s `google_calendar` + `gmail` builtins (call the
+> OAuth client in-process). Future cleanup: migrate poller to the
+> published `nexo-plugin-google 0.2.0` lib crate.
+
+Sources: `nexo-rs-plugin-google/` (standalone repo) and the legacy
+in-tree `crates/plugins/google/` (poller-only).
 
 ## `google` — per-agent OAuth
 

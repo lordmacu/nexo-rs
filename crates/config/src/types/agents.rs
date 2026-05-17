@@ -513,7 +513,10 @@ model:
         )
         .unwrap();
         cfg.system_prompt = top.into();
-        cfg.locale_prompts = prompts.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        cfg.locale_prompts = prompts
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         cfg
     }
 
@@ -552,7 +555,10 @@ locale_prompts:
 "#;
         let cfg: AgentConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.locale_prompts.len(), 2);
-        assert_eq!(cfg.locale_prompts.get("es").map(String::as_str), Some("spanish variant"));
+        assert_eq!(
+            cfg.locale_prompts.get("es").map(String::as_str),
+            Some("spanish variant")
+        );
     }
 
     #[test]
@@ -566,7 +572,9 @@ system_prompt: top
 locale_prompts:
   klingon: nope
 "#;
-        let err = serde_yaml::from_str::<AgentConfig>(yaml).unwrap_err().to_string();
+        let err = serde_yaml::from_str::<AgentConfig>(yaml)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("locale_prompts key") || err.contains("klingon"),
             "expected locale-key validation error, got: {err}"

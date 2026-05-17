@@ -95,10 +95,7 @@ pub enum ManifestError {
          The `schema` field must be a non-empty JSON object with \
          `\"type\":\"object\"` at the root."
     )]
-    PluginConfigInvalidSchema {
-        plugin_id: String,
-        reason: String,
-    },
+    PluginConfigInvalidSchema { plugin_id: String, reason: String },
 
     #[error("duplicate capability gate env_var `{env_var}` (each gate must be unique)")]
     DuplicateGateEnvVar { env_var: String },

@@ -73,9 +73,9 @@ pub async fn save_localized(store: &dyn PersonaStore, params: Value) -> AdminRpc
         Err(PersonaStoreError::InvalidLocale(msg)) => {
             AdminRpcResult::err(AdminRpcError::InvalidParams(msg))
         }
-        Err(PersonaStoreError::NotFound(id)) => AdminRpcResult::err(AdminRpcError::Internal(
-            format!("agent {id:?} not found"),
-        )),
+        Err(PersonaStoreError::NotFound(id)) => {
+            AdminRpcResult::err(AdminRpcError::Internal(format!("agent {id:?} not found")))
+        }
         Err(PersonaStoreError::Io(msg)) => {
             AdminRpcResult::err(AdminRpcError::Internal(format!("io error: {msg}")))
         }
