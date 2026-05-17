@@ -1,5 +1,12 @@
 # nexo-poller-ext
 
+> **⚠ DEPRECATED (Phase 96, since v0.2.0).** Out-of-tree pollers
+> should ship as plugin v2 subprocess plugins declaring the
+> `[plugin.poller]` manifest section + using the
+> `nexo-microapp-sdk::poller::{PollerHandler, BrokerPollerHost,
+> serve_one_tick}` helpers. This crate is preserved one release
+> cycle for migration; deletion is tracked as a Phase 96 follow-up.
+
 > Bridge between the [`nexo-poller`](https://github.com/lordmacu/nexo-rs/tree/main/crates/poller) runtime and the [`nexo-extensions`](https://github.com/lordmacu/nexo-rs/tree/main/crates/extensions) system — lets a third-party extension declare its own poller kind and have it discovered + scheduled by the runtime.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
