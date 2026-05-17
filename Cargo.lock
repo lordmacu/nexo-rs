@@ -5362,13 +5362,14 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-google"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3685c9fa629bdb50973081c0ed5b0f0716191fc6529006bce697bd251790f4d7"
+checksum = "93625fc1caa85ba5e3732bc6791412c2dd184772c553a248595f2d5f6727295f"
 dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "dashmap 6.1.0",
@@ -5389,6 +5390,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "serde_yaml",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
