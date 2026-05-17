@@ -23,7 +23,7 @@ nexo-driver-types      = { version = "0.1.9", path = "../driver-types" }
 nexo-driver-claude     = { version = "0.1.9", path = "../driver-claude" }
 nexo-driver-permission = { version = "0.1.9", path = "../driver-permission" }
 nexo-llm               = { version = "0.1.6", path = "../llm" }
-nexo-memory            = { version = "0.1.5", path = "../memory" }
+nexo-memory            = { version = "0.1.6", path = "../memory" }
 sqlx                   = { workspace = true }
 anyhow                 = { workspace = true }
 async-nats             = { workspace = true, optional = true }

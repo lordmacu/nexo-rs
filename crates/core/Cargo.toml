@@ -61,7 +61,7 @@ nexo-llm = { version = "0.1.6", path = "../llm" }
 # shared PKCE + exchange primitives.
 nexo-llm-auth = { version = "0.1.1", path = "../llm-auth" }
 nexo-lsp = { version = "0.1.3", path = "../lsp" }
-nexo-memory = { version = "0.1.5", path = "../memory" }
+nexo-memory = { version = "0.1.6", path = "../memory" }
 nexo-extensions = { version = "0.1.5", path = "../extensions" }
 nexo-mcp = { version = "0.1.6", path = "../mcp" }
 nexo-taskflow = { version = "0.1.2", path = "../taskflow" }
