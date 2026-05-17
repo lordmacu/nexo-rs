@@ -584,7 +584,7 @@ mod tests {
         // the round-trip; if the test hangs the local broker
         // implementation has changed. Bounded by trigger timeout.
         let result = timeout(TDuration::from_secs(3), trigger.start(ctx)).await;
-        let _ = responder.abort();
+        responder.abort();
         let _ = done_tx;
         // Local broker `request` may not have a reply path that
         // matches a hand-rolled responder — accept either a

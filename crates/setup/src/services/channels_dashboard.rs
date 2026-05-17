@@ -307,7 +307,7 @@ fn intern_static_str(s: &str) -> &'static str {
     let map = INTERN.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = map.lock().expect("intern table poisoned");
     if let Some(existing) = guard.get(s) {
-        return *existing;
+        return existing;
     }
     let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
     guard.insert(s.to_string(), leaked);
