@@ -84,7 +84,7 @@ webbrowser = "1"
 nexo-pairing = { version = "0.1.8", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher
 # adapter (publishes to per-channel `plugin.outbound.*` topics).
-nexo-broker = { version = "0.1.5", path = "../broker" }
+nexo-broker = { version = "0.1.6", path = "../broker" }
 # Phase 81.21.b.b follow-up — `LivePluginRestarter` adapter
 # needs `tokio_util::sync::CancellationToken` for the
 # context-shutdown propagation into `force_restart`.

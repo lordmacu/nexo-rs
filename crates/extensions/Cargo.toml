@@ -26,7 +26,7 @@ semver     = "1"
 regex      = "1.10"
 walkdir    = "2"
 nexo-resilience = { version = "0.1.3", path = "../resilience" }
-nexo-broker = { version = "0.1.5", path = "../broker" }
+nexo-broker = { version = "0.1.6", path = "../broker" }
 nexo-config = { version = "0.1.10", path = "../config" }
 # Phase 81.13 — share id regex + RESERVED_IDS + AdminCapabilities
 # + HttpServerCapability with the canonical manifest crate so

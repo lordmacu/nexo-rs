@@ -42,5 +42,5 @@ tempfile              = "3"
 anyhow                = { workspace = true }
 futures               = { workspace = true }
 filetime              = "0.2"
-nexo-broker           = { version = "0.1.5", path = "../broker" }
+nexo-broker           = { version = "0.1.6", path = "../broker" }
 nexo-config           = { version = "0.1.10", path = "../config" }
