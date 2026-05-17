@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# Auto-cancel obsolete runs when a newer commit lands on the same
+# branch — important during burst pushes (cargo-release wave pushes
+# one commit per crate so the queue can stack to 30+ runs without
+# this). PRs cancel against the same PR head, never against main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
