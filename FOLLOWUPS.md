@@ -2,60 +2,85 @@
 
 This file tracks the **active technical backlog** in English.
 
-### Phase 96 — Poller Laravel refactor + builtins extraction (in-flight)   ⬜ ACTIVE
+### Phase 96 — Poller Laravel refactor + builtins extraction   🔄 OPERATOR ACTIONS ONLY
 
-Phase 96 ships V2 Laravel-style poller contract + `[plugin.poller]`
-manifest section + daemon-side reverse-RPC handler + extracts
-provider-specific builtins to standalone subprocess plugin repos.
+Phase 96 Blocks A through F + ephemeral lifecycle + CI workflows
+shipped on `phase-96-poller-laravel-refactor` branch (11 commits) +
+3 standalone repos (`nexo-rs-poller-{rss,google-calendar,gmail}`).
+Only operator-side actions remain: crates.io publish (token) +
+GitHub repo creation + branch push + PR.
 
-Open items recorded during execution (Block A + B done as of
-this commit, Blocks C-F still pending):
+**Remaining open items:**
+
+- **96.19 — crates.io publish wave.** Needs `CARGO_REGISTRY_TOKEN`
+  scoped to publish. Order: `nexo-plugin-manifest` minor (new
+  `[plugin.poller]` section) → `nexo-pairing` minor (new router +
+  proxy + ephemeral) → `nexo-microapp-sdk` minor (new `poller`
+  feature) → `nexo-poller 0.2.0` BREAKING → `nexo-poller-tools 0.2.0`
+  → 3 plugin crates. Each repo carries a `release.yml` workflow
+  that fires on tag push matching `<crate-name>-v*`.
+
+- **96.17 — setup wizard auto-install.** When `pollers.yaml`
+  references unknown kinds, `crates/setup/src/wizard.rs` suggests
+  `cargo install nexo-poller-<kind>`. Blocked on publish wave —
+  the crates need to exist on crates.io first.
+
+- **GitHub repo creation + push.** Three new repos to create as
+  `lordmacu/nexo-rs-poller-{rss,google-calendar,gmail}` (public,
+  MIT/Apache-2.0 per Phase 94/95 pattern). Then `git push -u
+  origin main` in each + branch push for the proyecto refactor
+  branch + open PR.
 
 - **`nexo-poller-ext` deletion (cycle 3).** Crate is
-  `#[deprecated(since = "0.2.0")]` and README carries a WARN
-  header. Plan: after 2 release cycles (Phase 97 + 98) with zero
-  download telemetry, delete the crate entirely. Today: dep is
-  intact, still functional for any operator with extension-based
-  pollers in flight.
+  `#[deprecated(since = "0.2.0")]` + README WARN. Delete entirely
+  after 2 release cycles (Phase 97 + 98) with zero download
+  telemetry from crates.io.
 
-- **PluginPollerHost `metric_inc` Prometheus aggregator.** Daemon
-  reverse-RPC handler today forwards subprocess `metric_inc` calls
-  to `tracing::info!` only. Wire into the daemon's Prometheus
-  registry so subprocess pollers can fan out arbitrary counters
-  into `/metrics`. Blocked on a generic named-counter API in
-  `nexo-poller::telemetry` (currently only per-kind hardcoded
-  metrics).
+- **PluginPollerHost `metric_inc` Prometheus aggregator.** Today
+  forwards subprocess `metric_inc` calls to `tracing::info!` only.
+  Wire into daemon's Prometheus registry so subprocess pollers can
+  fan out arbitrary counters into `/metrics`. Blocked on adding a
+  generic named-counter API to `nexo-poller::telemetry` (currently
+  only per-kind hardcoded metrics).
 
-- **Plugin poller supervisor (Phase 96.8.a).** Today plugin v2
-  poller subprocesses inherit the existing `SubprocessNexoPlugin`
-  supervisor (Phase 81.21.b.b lineage); the reverse-RPC subscriber
-  is a tokio task that survives child restart, and broker request
-  timeouts surface as `Transient` errors the runner retries. A
-  dedicated supervisor with backoff per kind + manual restart RPC
-  is a follow-up if the inherited path proves insufficient under
-  real-world subprocess crash patterns.
+- **Plugin poller supervisor (96.8.a beyond inherited path).**
+  Today plugin v2 poller subprocesses rely on the existing
+  `SubprocessNexoPlugin` supervisor (Phase 81.21.b.b). Reverse-RPC
+  subscribers are tokio tasks that survive child restart; broker
+  request timeouts surface as `Transient` retried by the runner.
+  A dedicated per-kind supervisor with backoff + manual restart
+  RPC is a follow-up if the inherited path proves insufficient
+  under real subprocess crash patterns.
 
-- **Block D — extract `nexo-rs-poller-{gmail,google_calendar,rss}`
-  to standalone public repos + crates.io publish.** Three repos
-  scaffold + port logic + publish per Phase 94/95 pattern.
-  Includes OAuth fcntl-lock concurrency mitigation for the two
-  Google pollers (gmail + google_calendar both touch the same
-  agent token file).
+- **Ephemeral V1 limitations.** V1 spawn-per-tick has no reverse-
+  RPC during tick — `host.credentials_get` and `host.llm_invoke`
+  return `-32601` so the poller errors Permanent. Credentialed or
+  LLM-using pollers must use `lifecycle = "long_lived"`.
+  Removing this constraint requires bi-directional stdio JSON-RPC
+  multiplexing in `serve_one_ephemeral_tick` (subprocess reads
+  daemon replies on stdin while writing its own requests on
+  stdout). Reasonable scope: 2-3 day follow-up.
 
-- **Block E — ephemeral lifecycle (96.E1-E4).** `[plugin.poller]
-  lifecycle = "ephemeral"` is parsed and validated by the manifest
-  layer but the daemon currently only handles `long_lived`. Spawn-
-  per-tick path requires new stdio JSON-RPC primitives (no broker
-  subscription, direct stdin/stdout dispatch + SIGTERM on reply).
-  Decision locked during /forge plan as Block E (4 sub-phases);
-  not yet implemented.
+- **`gmail/tools.rs` LLM tools port (~430 LOC).** The V1 in-tree
+  builtin exposed `gmail_search_recent` / `gmail_send_message` /
+  similar LLM custom tools via `Poller::custom_tools`. Block D
+  full port of the gmail handler skipped these — needs the
+  `PollerHandler` trait to expose `custom_tools` (currently does
+  not). Either add it to the trait + SDK or build a side-channel
+  tool registry per plugin.
 
-- **Block F — docs (`recipes/poller-plugin.md` +
-  `architecture/poller-v2.md` + update `build-a-poller.md`).**
-  Operator how-to for the manifest section + design rationale of
-  the Laravel-style cut + V2 builder recipe. Blocked on Block D
-  completion so the docs can reference live plugin repos as
-  examples.
+- **Daemon end-to-end integration test.** No fixture-driven test
+  exercises the full `daemon boot → router register → tick
+  dispatch → broker round-trip → reply → cursor persist` flow.
+  Unit tests cover each layer; an e2e proves the integration.
+  Approach: `tests/poller_plugin_e2e.rs` spawning a fixture
+  subprocess that responds to ticks with a canned reply.
+
+- **`integration-tests` harness for ephemeral.** `EphemeralPollerProxy`
+  shell-out wire is unit-tested for envelope parse + error
+  classification but not against a real binary. A `tests/`
+  fixture binary (or feature-gated bin entry) would round-trip
+  the full spawn → stdin → stdout → exit path.
 
 ### Phase 95 — Web-search plugin extraction (close-out follow-ups)   ⬜ ACTIVE
 
