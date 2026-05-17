@@ -3734,6 +3734,51 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Phase 96 — populate the plugin poller router from every loaded
+    // plugin's `[plugin.poller]` manifest section. Each registration
+    // covers all kinds declared by that plugin; cross-plugin
+    // duplicate-kind collisions warn-log + skip so the daemon never
+    // crashes on a misconfigured manifest set.
+    let plugin_poller_router =
+        std::sync::Arc::new(nexo_pairing::plugin_poller::PluginPollerRouter::new());
+    for (plugin_id, handle) in wire.plugin_handles.iter() {
+        let manifest = handle.manifest();
+        let poller_sec = match manifest.plugin.poller.as_ref() {
+            Some(p) => p,
+            None => continue,
+        };
+        if let Err(err) = poller_sec.validate() {
+            tracing::warn!(
+                plugin = %plugin_id,
+                error = %err,
+                "[plugin.poller] validation failed; skipping",
+            );
+            continue;
+        }
+        let new_handle = nexo_pairing::plugin_poller::PluginPollerHandle {
+            plugin_id: plugin_id.clone(),
+            kinds: poller_sec.kinds.clone(),
+            broker_topic_prefix: poller_sec.broker_topic_prefix.clone(),
+            lifecycle: poller_sec.lifecycle,
+            max_concurrent_ticks: poller_sec.max_concurrent_ticks,
+            tick_timeout: std::time::Duration::from_secs(poller_sec.tick_timeout_secs),
+        };
+        match plugin_poller_router.register(new_handle) {
+            Ok(()) => tracing::info!(
+                plugin = %plugin_id,
+                kinds = ?poller_sec.kinds,
+                broker_topic_prefix = %poller_sec.broker_topic_prefix,
+                lifecycle = ?poller_sec.lifecycle,
+                "registered [plugin.poller] (Phase 96.7)",
+            ),
+            Err(err) => tracing::warn!(
+                plugin = %plugin_id,
+                error = %err,
+                "plugin poller registration rejected — duplicate kind",
+            ),
+        }
+    }
+
     // Phase 81.20.x Stage 7 Phase 2 — populate the pairing trigger
     // registry from plugin manifests. Plugins that declare BOTH
     // `[plugin.pairing.adapter]` (channel_id) and `[plugin.pairing.trigger]`
@@ -4045,6 +4090,68 @@ async fn main() -> Result<()> {
                             ),
                         );
                         nexo_poller::builtins::register_all(&runner);
+
+                        // Phase 96.7 — register one PluginPollerProxy
+                        // per (handle, kind) from the router so every
+                        // subprocess-served kind shows up in the
+                        // runner's kind registry. Multi-kind plugins
+                        // produce one proxy per kind sharing the same
+                        // handle Arc (per-tick broker RPC).
+                        let mut plugin_poller_count = 0usize;
+                        for (plugin_id, handle) in wire.plugin_handles.iter() {
+                            if let Some(_poller_sec) = handle.manifest().plugin.poller.as_ref() {
+                                if let Some(h) = plugin_poller_router
+                                    .handles_for_plugin(plugin_id)
+                                {
+                                    for kind in &h.kinds {
+                                        let leaked: &'static str =
+                                            Box::leak(kind.clone().into_boxed_str());
+                                        let proxy = nexo_pairing::plugin_poller::PluginPollerProxy::new(
+                                            leaked,
+                                            std::sync::Arc::clone(&h),
+                                            broker.clone(),
+                                        );
+                                        runner.register(std::sync::Arc::new(proxy));
+                                        plugin_poller_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                        if plugin_poller_count > 0 {
+                            tracing::info!(
+                                count = plugin_poller_count,
+                                "plugin v2 poller proxies registered (Phase 96.7)",
+                            );
+
+                            // Reverse-RPC handler: subprocess pollers
+                            // call back to the daemon for credential
+                            // resolution, log/metric forwarding, and
+                            // LLM invocation. One subscriber per
+                            // plugin id; replies use the message's
+                            // own `reply_to` topic.
+                            for (plugin_id, _handle) in wire.plugin_handles.iter() {
+                                if _handle.manifest().plugin.poller.is_none() {
+                                    continue;
+                                }
+                                let topic = format!("daemon.rpc.{}", plugin_id);
+                                let broker_clone = broker.clone();
+                                let creds_clone = Arc::clone(&runner.credentials());
+                                let llm_registry = Arc::new(LlmRegistry::with_builtins());
+                                let llm_config = Arc::new(cfg.llm.clone());
+                                let plugin_id_owned = plugin_id.clone();
+                                tokio::spawn(async move {
+                                    spawn_poller_reverse_rpc_subscriber(
+                                        plugin_id_owned,
+                                        topic,
+                                        broker_clone,
+                                        creds_clone,
+                                        llm_registry,
+                                        llm_config,
+                                    )
+                                    .await;
+                                });
+                            }
+                        }
 
                         // Register extension-provided
                         // pollers. Walk every loaded stdio extension and
@@ -15900,6 +16007,252 @@ fn truncate(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
+}
+
+/// Phase 96.7 — daemon-side reverse-RPC handler for plugin v2
+/// poller subprocesses. Subscribes to `daemon.rpc.{plugin_id}` and
+/// services `credentials_get` / `log` / `metric_inc` / `llm_invoke`
+/// calls; replies on the message's own `reply_to` topic.
+async fn spawn_poller_reverse_rpc_subscriber(
+    plugin_id: String,
+    topic: String,
+    broker: nexo_broker::AnyBroker,
+    credentials: std::sync::Arc<nexo_auth::CredentialsBundle>,
+    llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
+    llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+) {
+    use nexo_broker::{BrokerHandle, Event, Message};
+    let mut sub = match broker.subscribe(&topic).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                plugin = %plugin_id,
+                topic = %topic,
+                error = %e,
+                "poller reverse-RPC subscribe failed",
+            );
+            return;
+        }
+    };
+    tracing::info!(
+        plugin = %plugin_id,
+        topic = %topic,
+        "poller reverse-RPC subscriber started",
+    );
+    while let Some(event) = sub.next().await {
+        // Request-reply envelope: `event.payload` is a serialized
+        // `Message` containing `reply_to` + the actual JSON-RPC body
+        // in `payload`.
+        let msg: Message = match serde_json::from_value(event.payload.clone()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %plugin_id,
+                    error = %e,
+                    "poller reverse-RPC envelope parse failed; dropping",
+                );
+                continue;
+            }
+        };
+        let reply_topic = match msg.reply_to.clone() {
+            Some(r) => r,
+            None => {
+                tracing::warn!(
+                    plugin = %plugin_id,
+                    "poller reverse-RPC message missing reply_to; dropping",
+                );
+                continue;
+            }
+        };
+        let body = msg.payload;
+        let method = body.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let params = body.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let agent_id_field = body
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let result = match method.as_str() {
+            "credentials_get" => handle_creds_get(&credentials, agent_id_field.as_deref(), &params),
+            "log" => {
+                tracing::info!(
+                    plugin = %plugin_id,
+                    ?params,
+                    "poller subprocess log",
+                );
+                Ok(serde_json::json!({}))
+            }
+            "metric_inc" => {
+                tracing::info!(
+                    plugin = %plugin_id,
+                    ?params,
+                    "poller subprocess metric_inc",
+                );
+                Ok(serde_json::json!({}))
+            }
+            "llm_invoke" => {
+                handle_llm_invoke(&llm_registry, &llm_config, params.clone()).await
+            }
+            other => Err((-32601, format!("method not found: {other}"))),
+        };
+        let reply_payload = match result {
+            Ok(v) => serde_json::json!({ "result": v }),
+            Err((code, msg)) => serde_json::json!({
+                "error": { "code": code, "message": msg }
+            }),
+        };
+        let reply_msg = Message::new(reply_topic.clone(), reply_payload);
+        let reply_event = Event::new(
+            &reply_topic,
+            "daemon.poller",
+            match serde_json::to_value(&reply_msg) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %plugin_id,
+                        error = %e,
+                        "poller reverse-RPC reply serialize failed",
+                    );
+                    continue;
+                }
+            },
+        );
+        if let Err(e) = broker.publish(&reply_topic, reply_event).await {
+            tracing::warn!(
+                plugin = %plugin_id,
+                topic = %reply_topic,
+                error = %e,
+                "poller reverse-RPC reply publish failed",
+            );
+        }
+    }
+}
+
+fn handle_creds_get(
+    credentials: &nexo_auth::CredentialsBundle,
+    agent_id_override: Option<&str>,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, (i32, String)> {
+    let channel = params
+        .get("channel")
+        .and_then(|v| v.as_str())
+        .ok_or((-32602, "credentials_get: missing `channel`".to_string()))?;
+    let agent_id = params
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .or(agent_id_override)
+        .ok_or((-32602, "credentials_get: missing `agent_id`".to_string()))?;
+    let channel_static: &'static str = match channel {
+        "whatsapp" => nexo_auth::handle::WHATSAPP,
+        "telegram" => nexo_auth::handle::TELEGRAM,
+        "google" => nexo_auth::handle::GOOGLE,
+        other => {
+            return Err((
+                -32002,
+                format!("credentials_get: unknown channel '{other}'"),
+            ))
+        }
+    };
+    let handle = credentials
+        .resolver
+        .resolve(agent_id, channel_static)
+        .map_err(|_| {
+            (
+                -32002,
+                format!("no '{channel_static}' binding for agent '{agent_id}'"),
+            )
+        })?;
+    let mut out = serde_json::json!({
+        "channel": channel_static,
+        "account_id": handle.account_id_raw(),
+        "agent_id": agent_id,
+    });
+    if channel_static == nexo_auth::handle::GOOGLE {
+        if let Some(acct) = credentials.google_account(agent_id) {
+            if let serde_json::Value::Object(ref mut m) = out {
+                m.insert(
+                    "client_id_path".into(),
+                    serde_json::Value::String(acct.client_id_path.to_string_lossy().into_owned()),
+                );
+                m.insert(
+                    "token_path".into(),
+                    serde_json::Value::String(acct.token_path.to_string_lossy().into_owned()),
+                );
+            }
+        }
+    }
+    Ok(out)
+}
+
+async fn handle_llm_invoke(
+    registry: &nexo_llm::LlmRegistry,
+    config: &nexo_config::LlmConfig,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, (i32, String)> {
+    use nexo_llm::{ChatMessage, ChatRequest, ChatRole, ResponseContent};
+    use nexo_poller::{LlmInvokeRequest, LlmInvokeResponse, LlmUsage};
+
+    let req: LlmInvokeRequest = serde_json::from_value(params)
+        .map_err(|e| (-32602, format!("llm_invoke: malformed params: {e}")))?;
+
+    let model_cfg = nexo_config::types::agents::ModelConfig {
+        provider: req.provider.clone(),
+        model: req.model.clone(),
+    };
+    let client = registry
+        .build(config, &model_cfg)
+        .map_err(|e| (-32602, format!("llm client build: {e}")))?;
+
+    let mut messages: Vec<ChatMessage> = Vec::with_capacity(req.messages.len());
+    for m in req.messages {
+        let role = match m.role.as_str() {
+            "system" => ChatRole::System,
+            "user" => ChatRole::User,
+            "assistant" => ChatRole::Assistant,
+            other => return Err((-32602, format!("unknown role '{other}'"))),
+        };
+        messages.push(ChatMessage {
+            role,
+            content: m.content,
+            attachments: Vec::new(),
+            tool_call_id: None,
+            name: None,
+            tool_calls: Vec::new(),
+        });
+    }
+    let mut chat_req = ChatRequest::new(&req.model, messages);
+    if let Some(mt) = req.max_tokens {
+        chat_req.max_tokens = mt;
+    }
+    let resp = client.chat(chat_req).await.map_err(|e| {
+        let msg = e.to_string();
+        let is_perm = msg.contains("401")
+            || msg.contains("403")
+            || msg.contains("not registered")
+            || msg.contains("not present in config.providers");
+        if is_perm {
+            (-32002, msg)
+        } else {
+            (-32001, msg)
+        }
+    })?;
+    let text = match resp.content {
+        ResponseContent::Text(t) => t,
+        ResponseContent::ToolCalls(_) => {
+            return Err((-32602, "llm_invoke: tool calls not supported".into()))
+        }
+    };
+    let usage = (resp.usage.prompt_tokens > 0 || resp.usage.completion_tokens > 0).then_some(
+        LlmUsage {
+            input_tokens: resp.usage.prompt_tokens,
+            output_tokens: resp.usage.completion_tokens,
+        },
+    );
+    Ok(serde_json::to_value(LlmInvokeResponse {
+        content: text,
+        model_id: req.model,
+        usage,
+    })
+    .unwrap_or(serde_json::Value::Null))
 }
 
 #[cfg(test)]

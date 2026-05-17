@@ -16,10 +16,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use nexo_broker::{AnyBroker, BrokerHandle, Message};
 use nexo_plugin_manifest::poller::PollerLifecycle;
-use nexo_poller::{TickAck, TickMetrics};
+use nexo_poller::{PollContext, Poller, PollerError, TickAck, TickMetrics};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -100,6 +101,13 @@ impl PluginPollerRouter {
         all.iter()
             .find(|h| h.kinds.iter().any(|k| k == kind))
             .cloned()
+    }
+
+    /// Look up the handle owned by `plugin_id`. Used by the daemon
+    /// boot loop to wire one `PluginPollerProxy` per declared kind.
+    pub fn handles_for_plugin(&self, plugin_id: &str) -> Option<Arc<PluginPollerHandle>> {
+        let all = self.handles.read().expect("router lock poisoned");
+        all.iter().find(|h| h.plugin_id == plugin_id).cloned()
     }
 
     /// True when no plugins are registered. Used by the runner's
@@ -210,6 +218,69 @@ pub async fn forward_tick(
             handle.plugin_id
         ))
     })
+}
+
+/// Daemon-side `Poller` impl that proxies every tick to a subprocess
+/// plugin via broker JSON-RPC. Registered with the runner alongside
+/// in-tree builtins so the runner sees a single homogeneous registry.
+///
+/// `kind()` returns the leaked `&'static str` for one of the
+/// plugin's declared kinds; multi-kind plugins register one proxy
+/// per kind sharing the same `PluginPollerHandle`.
+pub struct PluginPollerProxy {
+    kind: &'static str,
+    handle: Arc<PluginPollerHandle>,
+    broker: AnyBroker,
+}
+
+impl PluginPollerProxy {
+    /// Wrap a `(handle, kind)` pair into a `Poller` impl. `kind` must
+    /// be one of `handle.kinds`; the runner validates this at boot.
+    pub fn new(kind: &'static str, handle: Arc<PluginPollerHandle>, broker: AnyBroker) -> Self {
+        Self {
+            kind,
+            handle,
+            broker,
+        }
+    }
+}
+
+#[async_trait]
+impl Poller for PluginPollerProxy {
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    fn description(&self) -> &'static str {
+        "(plugin v2 subprocess via [plugin.poller])"
+    }
+
+    async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
+        let request = build_tick_request(
+            self.kind,
+            &ctx.job_id,
+            &ctx.agent_id,
+            ctx.cursor.as_deref(),
+            ctx.config.clone(),
+            ctx.now,
+            ctx.interval_hint,
+        );
+
+        let reply = forward_tick(&self.broker, &self.handle, request)
+            .await
+            .map_err(|e| match e {
+                PluginPollerForwardError::Broker(s) => {
+                    PollerError::Transient(anyhow::anyhow!("plugin poller broker: {s}"))
+                }
+                PluginPollerForwardError::ParseReply(s) => {
+                    PollerError::Transient(anyhow::anyhow!("plugin poller reply parse: {s}"))
+                }
+            })?;
+
+        reply.into_tick_ack().map_err(|e| {
+            PollerError::Transient(anyhow::anyhow!("plugin poller cursor decode: {e}"))
+        })
+    }
 }
 
 pub fn encode_cursor(raw: &[u8]) -> String {
