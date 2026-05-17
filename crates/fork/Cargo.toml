@@ -34,5 +34,5 @@ anyhow              = { workspace = true }
 [dev-dependencies]
 tokio               = { workspace = true }
 nexo-broker         = { version = "0.1.5", path = "../broker" }
-nexo-config         = { version = "0.1.9", path = "../config" }
+nexo-config         = { version = "0.1.10", path = "../config" }
 tempfile            = "3"

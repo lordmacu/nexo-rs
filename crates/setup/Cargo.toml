@@ -29,7 +29,7 @@ config-self-edit = ["nexo-core/config-self-edit"]
 # source compile unconditionally now.
 
 [dependencies]
-nexo-config = { version = "0.1.9", path = "../config" }
+nexo-config = { version = "0.1.10", path = "../config" }
 # Phase 81.20.x F2 — wizard validators use the framework-agnostic
 # probe crate so this crate stops linking the full plugin lib.
 nexo-email-probe = "0.1.0"

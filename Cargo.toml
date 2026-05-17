@@ -446,7 +446,7 @@ nexo-auth = { version = "0.1.7", path = "crates/auth" }
 nexo-poller = { version = "0.2.0", path = "crates/poller" }
 nexo-poller-tools = { version = "0.2.0", path = "crates/poller-tools" }
 nexo-poller-ext = { version = "0.2.0", path = "crates/poller-ext" }
-nexo-config = { version = "0.1.9", path = "crates/config" }
+nexo-config = { version = "0.1.10", path = "crates/config" }
 nexo-broker = { version = "0.1.5", path = "crates/broker" }
 nexo-core = { version = "0.2.0", path = "crates/core" }
 nexo-team-store = { version = "0.1.2", path = "crates/team-store" }

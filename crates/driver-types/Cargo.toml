@@ -15,7 +15,7 @@ categories    = { workspace = true }
 
 [dependencies]
 async-trait     = { workspace = true }
-nexo-config      = { version = "0.1.9", path = "../config" }
+nexo-config      = { version = "0.1.10", path = "../config" }
 chrono          = { workspace = true }
 humantime-serde = { workspace = true }
 serde           = { workspace = true }
