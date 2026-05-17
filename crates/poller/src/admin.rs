@@ -96,12 +96,12 @@ async fn action_endpoint(
     }
     match action {
         "run" => match runner.run_once(id).await {
-            Ok(o) => {
+            Ok(ack) => {
+                let metrics = ack.metrics.unwrap_or_default();
                 let body = json!({
                     "ok": true,
-                    "items_seen": o.items_seen,
-                    "items_dispatched": o.items_dispatched,
-                    "deliveries": o.deliver.len(),
+                    "items_seen": metrics.items_seen,
+                    "items_dispatched": metrics.items_dispatched,
                 });
                 (200, body.to_string(), JSON)
             }
@@ -192,8 +192,8 @@ async fn reload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poller::{PollContext, Poller, TickOutcome};
-    use crate::{PollState, PollerError, PollerRunner};
+    use crate::poller::{PollContext, Poller};
+    use crate::{PollState, PollerError, PollerRunner, TickAck};
     use async_trait::async_trait;
     use nexo_auth::CredentialsBundle;
     use nexo_broker::AnyBroker;
@@ -206,8 +206,8 @@ mod tests {
         fn kind(&self) -> &'static str {
             "mock"
         }
-        async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
-            Ok(TickOutcome::default())
+        async fn tick(&self, _ctx: &PollContext) -> Result<TickAck, PollerError> {
+            Ok(TickAck::default())
         }
     }
 

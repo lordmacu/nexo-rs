@@ -37,12 +37,10 @@ cron         = "0.12"
 humantime    = { workspace = true }
 regex        = "1"
 base64       = { workspace = true }
-# Phase 94 — switched from path-dep to published crates.io
-# release. `google_calendar` + `gmail` builtins still call the
-# OAuth client in-process, but the lib code now lives in the
-# standalone repo + crates.io. Enables deletion of the in-tree
-# `crates/plugins/google/` directory in this same wave.
-nexo-plugin-google = "0.3.0"
+# Phase 96 — google_calendar + gmail moved out to standalone
+# plugin v2 subprocess repos. This crate no longer depends on
+# `nexo-plugin-google`; in-tree builtins are now `webhook_poll`
+# and `agent_turn`, both provider-agnostic.
 
 [features]
 default = []

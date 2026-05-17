@@ -1,12 +1,10 @@
 //! `kind: agent_turn` — runs an LLM turn on a schedule and dispatches
 //! the reply to a configured channel.
 //!
-//! Where `gmail` / `rss` / `webhook_poll` are *data ingestion* modules
-//! (fetch external state, emit messages), `agent_turn` is the cron
-//! complement: an operator-described prompt that fires every N
-//! seconds / on a cron expression / once at a specific time, runs
-//! through a real `LlmClient`, and ships the model's output to a
-//! channel — no Rust required.
+//! Where ingestion pollers fetch external state and emit messages,
+//! `agent_turn` is the cron complement: an operator-described prompt
+//! that fires on a schedule, runs through `PollerHost::llm_invoke`,
+//! and ships the model's output to a channel — no Rust required.
 //!
 //! ## YAML
 //!
@@ -15,7 +13,7 @@
 //!   jobs:
 //!     - id: kate_daily_summary
 //!       kind: agent_turn
-//!       agent: kate                # used only as the OutboundDelivery sender
+//!       agent: kate                # used to resolve outbound credentials
 //!       schedule:
 //!         cron: "0 0 8 * * *"
 //!         tz: America/Bogota
@@ -26,37 +24,21 @@
 //!         system_prompt: |
 //!           You are Kate, a personal assistant.
 //!         user_prompt: |
-//!           Summarise unanswered emails from the last 24h. One bullet
-//!           per email; include sender + subject.
+//!           Summarise unanswered emails from the last 24h.
 //!         deliver:
 //!           channel: telegram
-//!           recipient: "-1001234567890"
+//!           to: "-1001234567890"
 //!         language: en              # optional — omit to let the model decide
 //! ```
-//!
-//! ## Notes
-//!
-//! - The poller does NOT carry workspace docs (IDENTITY, SOUL,
-//!   MEMORY) — this is intentional. `agent_turn` is for cron-style
-//!   one-shot prompts, not full agent sessions. If you need MEMORY
-//!   awareness, route through a real agent and have it run a tool.
-//! - The runner must be wired with `with_llm(registry, config)` at
-//!   boot. Without it, every tick fails with `PollerError::Config`.
-//! - Errors are classified: 4xx from the LLM endpoint = `Permanent`
-//!   (config bug), 5xx / network = `Transient` (retried by the runner
-//!   per backoff policy). Token-limit errors land as `Permanent` so
-//!   the breaker trips quickly instead of burning quota.
-//! - Cursor stays empty — the job has no inter-tick state to persist.
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use nexo_auth::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
-use nexo_llm::{ChatMessage, ChatRequest, ChatRole, ResponseContent};
-
+use crate::deliver::DeliverCfg;
 use crate::error::PollerError;
-use crate::poller::{OutboundDelivery, PollContext, Poller, TickOutcome};
+use crate::host::{LlmInvokeRequest, LlmMessage, TickAck, TickMetrics};
+use crate::poller::{PollContext, Poller};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -65,9 +47,8 @@ pub struct AgentTurnJobConfig {
     pub system_prompt: Option<String>,
     pub user_prompt: String,
     pub deliver: DeliverCfg,
-    /// Optional output-language directive — same semantics as
-    /// `AgentConfig.language`. Rendered as a
-    /// `# OUTPUT LANGUAGE` system block.
+    /// Optional output-language directive — rendered as a
+    /// `# OUTPUT LANGUAGE` system block prepended to messages.
     #[serde(default)]
     pub language: Option<String>,
     /// Optional per-tick max-tokens cap. None = let the model
@@ -83,13 +64,6 @@ pub struct LlmRef {
     pub model: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct DeliverCfg {
-    pub channel: String,
-    pub recipient: String,
-}
-
 pub struct AgentTurnPoller;
 
 impl AgentTurnPoller {
@@ -101,17 +75,6 @@ impl AgentTurnPoller {
 impl Default for AgentTurnPoller {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn parse_channel(s: &str) -> Result<Channel, PollerError> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "whatsapp" => Ok(WHATSAPP),
-        "telegram" => Ok(TELEGRAM),
-        "google" => Ok(GOOGLE),
-        other => Err(PollerError::Permanent(anyhow::anyhow!(
-            "agent_turn: unknown channel '{other}' (supported: whatsapp, telegram, google)"
-        ))),
     }
 }
 
@@ -134,8 +97,7 @@ impl Poller for AgentTurnPoller {
     }
 
     fn description(&self) -> &'static str {
-        "Runs an LLM turn on a schedule and dispatches the reply to a configured channel. \
-         Cron-style replacement for hand-coded modules that just want 'fire prompt at time T'."
+        "Runs an LLM turn on a schedule and dispatches the reply to a configured channel."
     }
 
     fn validate(&self, config: &Value) -> Result<(), PollerError> {
@@ -144,153 +106,134 @@ impl Poller for AgentTurnPoller {
                 job: "<agent_turn>".into(),
                 reason: e.to_string(),
             })?;
-        parse_channel(&cfg.deliver.channel)?;
         if cfg.user_prompt.trim().is_empty() {
             return Err(PollerError::Config {
                 job: "<agent_turn>".into(),
                 reason: "user_prompt must be non-empty".into(),
             });
         }
+        if cfg.deliver.channel.trim().is_empty() {
+            return Err(PollerError::Config {
+                job: "<agent_turn>".into(),
+                reason: "deliver.channel must be non-empty".into(),
+            });
+        }
         Ok(())
     }
 
-    async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
+    async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
         let cfg: AgentTurnJobConfig =
             serde_json::from_value(ctx.config.clone()).map_err(|e| PollerError::Config {
                 job: ctx.job_id.clone(),
                 reason: e.to_string(),
             })?;
 
-        let registry = ctx
-            .llm_registry
-            .as_ref()
-            .ok_or_else(|| PollerError::Config {
-                job: ctx.job_id.clone(),
-                reason: "agent_turn requires the runner to be wired with with_llm(...) at boot"
-                    .into(),
-            })?;
-        let llm_config = ctx.llm_config.as_ref().ok_or_else(|| PollerError::Config {
-            job: ctx.job_id.clone(),
-            reason: "agent_turn requires LlmConfig — wire with_llm(registry, config)".into(),
-        })?;
-
-        let model_cfg = nexo_config::types::agents::ModelConfig {
-            provider: cfg.llm.provider.clone(),
-            model: cfg.llm.model.clone(),
-        };
-        let client = registry
-            .build(llm_config, &model_cfg)
-            .map_err(|e| PollerError::Config {
-                job: ctx.job_id.clone(),
-                reason: format!("LLM client build: {e}"),
-            })?;
-
-        let mut messages: Vec<ChatMessage> = Vec::new();
+        let mut messages: Vec<LlmMessage> = Vec::new();
         if let Some(sp) = cfg.system_prompt.as_deref() {
             let sp = sp.trim();
             if !sp.is_empty() {
-                messages.push(ChatMessage {
-                    role: ChatRole::System,
+                messages.push(LlmMessage {
+                    role: "system".into(),
                     content: sp.to_string(),
-                    attachments: Vec::new(),
-                    tool_call_id: None,
-                    name: None,
-                    tool_calls: Vec::new(),
                 });
             }
         }
         if let Some(lang) = cfg.language.as_deref().and_then(validate_lang) {
-            messages.push(ChatMessage {
-                role: ChatRole::System,
+            messages.push(LlmMessage {
+                role: "system".into(),
                 content: format!(
                     "# OUTPUT LANGUAGE\n\nRespond in {lang}. Workspace docs and tool \
                      descriptions are in English; reply to the user in {lang}."
                 ),
-                attachments: Vec::new(),
-                tool_call_id: None,
-                name: None,
-                tool_calls: Vec::new(),
             });
         }
-        messages.push(ChatMessage {
-            role: ChatRole::User,
+        messages.push(LlmMessage {
+            role: "user".into(),
             content: cfg.user_prompt.clone(),
-            attachments: Vec::new(),
-            tool_call_id: None,
-            name: None,
-            tool_calls: Vec::new(),
         });
 
-        let mut req = ChatRequest::new(&cfg.llm.model, messages);
-        if let Some(mt) = cfg.max_tokens {
-            req.max_tokens = mt;
-        }
+        let llm_req = LlmInvokeRequest {
+            provider: cfg.llm.provider.clone(),
+            model: cfg.llm.model.clone(),
+            messages,
+            max_tokens: cfg.max_tokens,
+            temperature: None,
+        };
 
         let response = tokio::select! {
-            r = client.chat(req) => r,
+            r = ctx.host.llm_invoke(llm_req) => r,
             _ = ctx.cancel.cancelled() => {
-                return Ok(TickOutcome::default());
+                return Ok(TickAck::default());
             }
         }
-        .map_err(|e| {
-            // Conservative classification: any LLM error is Transient
-            // unless it clearly looks like a config / 4xx problem. The
-            // breaker still trips after `breaker_threshold` failures
-            // so a permanently broken job won't run forever.
-            let msg = e.to_string();
-            let is_perm = msg.contains("401")
-                || msg.contains("403")
-                || msg.contains("not registered")
-                || msg.contains("not present in config.providers");
-            if is_perm {
-                PollerError::Permanent(e)
-            } else {
-                PollerError::Transient(e)
+        .map_err(|e: crate::host::HostError| {
+            use crate::host::HostErrorKind;
+            match e.into_poller_kind() {
+                HostErrorKind::Permanent => {
+                    PollerError::Permanent(anyhow::anyhow!("llm_invoke failed"))
+                }
+                HostErrorKind::Config => PollerError::Config {
+                    job: ctx.job_id.clone(),
+                    reason: "llm_invoke config error".into(),
+                },
+                HostErrorKind::Transient => {
+                    PollerError::Transient(anyhow::anyhow!("llm_invoke failed"))
+                }
             }
         })?;
 
-        let text = match response.content {
-            ResponseContent::Text(t) => t,
-            ResponseContent::ToolCalls(_) => {
-                return Err(PollerError::Permanent(anyhow::anyhow!(
-                    "agent_turn does not support tool calls — the LLM returned tool_use; \
-                     remove tools from the prompt or use a real agent for this workflow"
-                )));
-            }
-        };
-
-        let trimmed = text.trim();
+        let trimmed = response.content.trim();
         if trimmed.is_empty() {
             tracing::warn!(
                 job = %ctx.job_id,
                 "agent_turn produced empty text — skipping delivery"
             );
-            return Ok(TickOutcome {
-                items_seen: 1,
-                items_dispatched: 0,
-                deliver: Vec::new(),
+            return Ok(TickAck {
                 next_cursor: None,
                 next_interval_hint: None,
+                metrics: Some(TickMetrics {
+                    items_seen: 1,
+                    items_dispatched: 0,
+                }),
             });
         }
 
-        let channel = parse_channel(&cfg.deliver.channel)?;
+        // Resolve account_id for the configured channel + publish via host.
+        let cred = ctx
+            .host
+            .credentials_get(cfg.deliver.channel.clone())
+            .await
+            .map_err(|e| PollerError::Permanent(anyhow::anyhow!("credentials_get: {e}")))?;
+        let account_id = cred
+            .get("account_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                PollerError::Permanent(anyhow::anyhow!(
+                    "credentials_get('{}') returned no `account_id`",
+                    cfg.deliver.channel
+                ))
+            })?
+            .to_string();
+        let topic = format!("plugin.outbound.{}.{}", cfg.deliver.channel, account_id);
         let payload = json!({
             "kind": "text",
-            "to": cfg.deliver.recipient,
+            "to": cfg.deliver.to,
             "text": trimmed,
         });
+        let payload_bytes = serde_json::to_vec(&payload)
+            .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
+        ctx.host
+            .broker_publish(topic, payload_bytes)
+            .await
+            .map_err(|e| PollerError::Transient(anyhow::anyhow!("broker_publish: {e}")))?;
 
-        Ok(TickOutcome {
-            items_seen: 1,
-            items_dispatched: 1,
-            deliver: vec![OutboundDelivery {
-                channel,
-                recipient: cfg.deliver.recipient.clone(),
-                payload,
-            }],
+        Ok(TickAck {
             next_cursor: None,
             next_interval_hint: None,
+            metrics: Some(TickMetrics {
+                items_seen: 1,
+                items_dispatched: 1,
+            }),
         })
     }
 }
@@ -304,7 +247,7 @@ mod tests {
         let cfg = json!({
             "llm": { "provider": "anthropic", "model": "claude-haiku-4-5" },
             "user_prompt": "summarise the day",
-            "deliver": { "channel": "telegram", "recipient": "-100" }
+            "deliver": { "channel": "telegram", "to": "-100" }
         });
         AgentTurnPoller::new()
             .validate(&cfg)
@@ -312,22 +255,11 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_unknown_channel() {
-        let cfg = json!({
-            "llm": { "provider": "anthropic", "model": "x" },
-            "user_prompt": "p",
-            "deliver": { "channel": "smtp", "recipient": "a" }
-        });
-        let err = AgentTurnPoller::new().validate(&cfg).unwrap_err();
-        assert!(err.to_string().contains("smtp"));
-    }
-
-    #[test]
     fn validate_rejects_empty_user_prompt() {
         let cfg = json!({
             "llm": { "provider": "anthropic", "model": "x" },
             "user_prompt": "   ",
-            "deliver": { "channel": "telegram", "recipient": "a" }
+            "deliver": { "channel": "telegram", "to": "a" }
         });
         let err = AgentTurnPoller::new().validate(&cfg).unwrap_err();
         assert!(err.to_string().contains("user_prompt"));
@@ -338,12 +270,24 @@ mod tests {
         let cfg = json!({
             "llm": { "provider": "anthropic", "model": "x" },
             "user_prompt": "p",
-            "deliver": { "channel": "telegram", "recipient": "a" },
+            "deliver": { "channel": "telegram", "to": "a" },
             "bogus_key": 1
         });
         AgentTurnPoller::new()
             .validate(&cfg)
             .expect_err("deny_unknown_fields rejects typos");
+    }
+
+    #[test]
+    fn validate_accepts_recipient_alias() {
+        let cfg = json!({
+            "llm": { "provider": "anthropic", "model": "x" },
+            "user_prompt": "p",
+            "deliver": { "channel": "telegram", "recipient": "a" }
+        });
+        AgentTurnPoller::new()
+            .validate(&cfg)
+            .expect("recipient alias accepted");
     }
 
     #[test]
