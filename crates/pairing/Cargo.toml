@@ -41,7 +41,7 @@ nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
 # Phase 96 — PluginPollerRouter forwards ticks via broker JSON-RPC
 # and reuses the TickAck/TickMetrics wire shapes from nexo-poller
 # so the runner doesn't have to re-define them.
-nexo-poller    = { version = "0.1.2", path = "../poller" }
+nexo-poller    = { version = "0.2.0", path = "../poller" }
 hmac           = "0.12"
 subtle         = "2"
 rand           = "0.8"

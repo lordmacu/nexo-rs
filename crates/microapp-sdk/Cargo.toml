@@ -400,7 +400,7 @@ nexo-llm = { version = "0.1.5", path = "../llm", optional = true }
 nexo-memory = { version = "0.1.5", path = "../memory", optional = true }
 # Phase 96 — `poller` feature: PollerHost trait + TickAck wire shape
 # re-export. Optional so non-poller plugin authors don't pay the dep.
-nexo-poller = { version = "0.1.2", path = "../poller", optional = true }
+nexo-poller = { version = "0.2.0", path = "../poller", optional = true }
 toml = { version = "0.8", optional = true }
 # `events` feature — SQLite append-log + retention sweep +
 # wall-clock cutoff for time-based pruning. All optional;

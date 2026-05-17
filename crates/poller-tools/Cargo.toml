@@ -20,7 +20,7 @@ categories    = { workspace = true }
 [dependencies]
 nexo-core = { version = "0.2.0", path = "../core" }
 nexo-llm = { version = "0.1.5", path = "../llm" }
-nexo-poller = { version = "0.1.2", path = "../poller" }
+nexo-poller = { version = "0.2.0", path = "../poller" }
 async-trait  = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }
