@@ -52,7 +52,7 @@ nexo-tool-meta = { version = "0.1.16", path = "../tool-meta" }
 nexo-config = { version = "0.1.10", path = "../config" }
 nexo-broker = { version = "0.1.5", path = "../broker" }
 nexo-team-store = { version = "0.1.2", path = "../team-store" }
-nexo-auth = { version = "0.1.7", path = "../auth" }
+nexo-auth = { version = "0.1.9", path = "../auth" }
 tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
