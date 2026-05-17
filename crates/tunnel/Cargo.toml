@@ -1,7 +1,7 @@
 [package]
 name = "nexo-tunnel"
 description   = "Legacy alias for `nexo-tunnel-quick` — re-exports every public item verbatim so existing callers keep building. Phase 92.11 retires this crate; prefer `nexo-tunnel-quick` in new code."
-version       = "0.3.0"
+version       = "0.3.1"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
