@@ -70,7 +70,7 @@ nexo-taskflow = { version = "0.1.2", path = "../taskflow" }
 # plugin; nexo-core's RemoteToolHandler routes calls via
 # `tool.invoke` JSON-RPC. Operators install the plugin via
 # `cargo install nexo-plugin-web-search`.
-nexo-pairing    = { version = "0.1.5", path = "../pairing" }
+nexo-pairing    = { version = "0.1.7", path = "../pairing" }
 nexo-dispatch-tools = { version = "0.1.7", path = "../dispatch-tools" }
 nexo-agent-registry = { version = "0.1.7", path = "../agent-registry" }
 nexo-driver-claude  = { version = "0.1.7", path = "../driver-claude" }

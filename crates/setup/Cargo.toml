@@ -81,7 +81,7 @@ webbrowser = "1"
 # Phase 94 — `nexo-plugin-google` direct dep removed. OAuth flows
 # now spawn the standalone `nexo-plugin-google --oauth-once`
 # binary (operator installs via `cargo install nexo-plugin-google`).
-nexo-pairing = { version = "0.1.5", path = "../pairing" }
+nexo-pairing = { version = "0.1.7", path = "../pairing" }
 # Phase 83.8.4.b — broker handle for the outbound dispatcher
 # adapter (publishes to per-channel `plugin.outbound.*` topics).
 nexo-broker = { version = "0.1.5", path = "../broker" }
