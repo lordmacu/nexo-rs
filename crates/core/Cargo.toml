@@ -47,7 +47,7 @@ dashmap     = { workspace = true }
 humantime   = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
-nexo-assistant = { version = "0.1.8", path = "../assistant" }
+nexo-assistant = { version = "0.1.9", path = "../assistant" }
 nexo-tool-meta = { version = "0.1.16", path = "../tool-meta" }
 nexo-config = { version = "0.1.10", path = "../config" }
 nexo-broker = { version = "0.1.6", path = "../broker" }
@@ -71,15 +71,15 @@ nexo-taskflow = { version = "0.1.2", path = "../taskflow" }
 # `tool.invoke` JSON-RPC. Operators install the plugin via
 # `cargo install nexo-plugin-web-search`.
 nexo-pairing    = { version = "0.1.8", path = "../pairing" }
-nexo-dispatch-tools = { version = "0.1.8", path = "../dispatch-tools" }
-nexo-agent-registry = { version = "0.1.8", path = "../agent-registry" }
-nexo-driver-claude  = { version = "0.1.8", path = "../driver-claude" }
-nexo-driver-loop    = { version = "0.1.8", path = "../driver-loop" }
-nexo-driver-types   = { version = "0.1.8", path = "../driver-types" }
-nexo-driver-permission = { version = "0.1.8", path = "../driver-permission" }
+nexo-dispatch-tools = { version = "0.1.9", path = "../dispatch-tools" }
+nexo-agent-registry = { version = "0.1.9", path = "../agent-registry" }
+nexo-driver-claude  = { version = "0.1.9", path = "../driver-claude" }
+nexo-driver-loop    = { version = "0.1.9", path = "../driver-loop" }
+nexo-driver-types   = { version = "0.1.9", path = "../driver-types" }
+nexo-driver-permission = { version = "0.1.9", path = "../driver-permission" }
 nexo-memory-snapshot = { version = "0.1.4", path = "../memory-snapshot" }
 nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
-nexo-project-tracker = { version = "0.1.8", path = "../project-tracker" }
+nexo-project-tracker = { version = "0.1.9", path = "../project-tracker" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }
@@ -109,8 +109,8 @@ nexo-llm = { version = "0.1.6", path = "../llm", features = ["stub"] }
 futures       = { workspace = true }
 tempfile      = "3"
 serial_test   = "3"
-nexo-driver-permission = { version = "0.1.8", path = "../driver-permission" }
-nexo-driver-claude     = { version = "0.1.8", path = "../driver-claude" }
+nexo-driver-permission = { version = "0.1.9", path = "../driver-permission" }
+nexo-driver-claude     = { version = "0.1.9", path = "../driver-claude" }
 
 [lints]
 workspace = true

@@ -17,9 +17,9 @@ workspace = true
 [dependencies]
 nexo-core             = { version = "0.2.1", path = "../core" }
 nexo-llm              = { version = "0.1.6", path = "../llm" }
-nexo-driver-types     = { version = "0.1.8", path = "../driver-types" }
-nexo-driver-permission = { version = "0.1.8", path = "../driver-permission" }
-nexo-agent-registry   = { version = "0.1.8", path = "../agent-registry" }
+nexo-driver-types     = { version = "0.1.9", path = "../driver-types" }
+nexo-driver-permission = { version = "0.1.9", path = "../driver-permission" }
+nexo-agent-registry   = { version = "0.1.9", path = "../agent-registry" }
 tokio               = { workspace = true }
 tokio-util          = { workspace = true }
 async-trait         = { workspace = true }

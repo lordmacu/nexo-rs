@@ -3256,7 +3256,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4350,7 +4350,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexo-agent-registry"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4373,7 +4373,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-assistant"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "nexo-config",
  "serde",
@@ -4552,7 +4552,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-dispatch-tools"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -4584,7 +4584,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-dream"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4614,7 +4614,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-claude"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4636,7 +4636,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-loop"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -4667,7 +4667,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-permission"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-types"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4807,7 +4807,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-fork"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4960,7 +4960,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-media"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "image",
  "thiserror 1.0.69",
@@ -5263,7 +5263,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-project-tracker"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -5382,7 +5382,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-sanitize"
-version = "0.1.8"
+version = "0.1.9"
 
 [[package]]
 name = "nexo-setup"
@@ -5523,7 +5523,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-webhook-receiver"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5546,7 +5546,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-webhook-server"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6557,7 +6557,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6594,7 +6594,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]

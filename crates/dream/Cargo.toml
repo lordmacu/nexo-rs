@@ -18,10 +18,10 @@ workspace = true
 nexo-core             = { version = "0.2.1", path = "../core" }
 nexo-config           = { version = "0.1.10", path = "../config" }
 nexo-llm              = { version = "0.1.6", path = "../llm" }
-nexo-fork             = { version = "0.1.8", path = "../fork" }
-nexo-agent-registry   = { version = "0.1.8", path = "../agent-registry" }
+nexo-fork             = { version = "0.1.9", path = "../fork" }
+nexo-agent-registry   = { version = "0.1.9", path = "../agent-registry" }
 nexo-memory           = { version = "0.1.5", path = "../memory" }
-nexo-driver-types     = { version = "0.1.8", path = "../driver-types" }
+nexo-driver-types     = { version = "0.1.9", path = "../driver-types" }
 anyhow                = { workspace = true }
 arc-swap              = { workspace = true }
 async-trait           = { workspace = true }

@@ -30,7 +30,7 @@ unicode-normalization = "0.1"
 unicode-segmentation  = "1.12"
 unicode-script        = "0.5"
 nexo-llm = { version = "0.1.6", path = "../llm" }
-nexo-driver-types = { version = "0.1.8", path = "../driver-types" }
+nexo-driver-types = { version = "0.1.9", path = "../driver-types" }
 reqwest = { workspace = true, features = ["rustls-tls", "stream", "cookies", "http2"] }
 url          = "2"
 sqlite-vec   = { workspace = true }
