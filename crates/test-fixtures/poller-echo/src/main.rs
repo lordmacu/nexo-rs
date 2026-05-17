@@ -141,7 +141,7 @@ fn write_reply(value: &serde_json::Value) -> io::Result<()> {
 /// (and tokio/serial_test in dev-only).
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((input.len() * 4 + 2) / 3);
+    let mut out = String::with_capacity((input.len() * 4).div_ceil(3));
     let mut chunks = input.chunks_exact(3);
     for chunk in chunks.by_ref() {
         let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);

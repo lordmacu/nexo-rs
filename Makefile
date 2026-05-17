@@ -1,4 +1,4 @@
-.PHONY: dev build test lint fmt check ci-local clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke setup setup-wizard setup-list setup-doctor setup-google setup-google-docker dist-build dist-check
+.PHONY: dev build test lint fmt check ci-local install-hooks clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke setup setup-wizard setup-list setup-doctor setup-google setup-google-docker dist-build dist-check
 
 # integration-browser is shipped as an example (not a `[[bin]]`) so
 # cargo-dist excludes it from release tarballs while it stays runnable
@@ -37,6 +37,30 @@ check: fmt-check lint test
 #   make ci-local GATES="fmt clippy"
 ci-local:
 	./scripts/ci-local.sh $(GATES)
+
+# Wire git pre-commit + pre-push hooks (idempotent). `scripts/bootstrap.sh`
+# already runs this on first-clone setup; this target is the
+# manual entry point for existing clones that predate the hooks.
+#
+# Pre-commit: docs-sync gate + fmt + lint (fast).
+# Pre-push:   full `make ci-local` (mirrors GitHub Actions CI 1:1).
+#
+# Bypass any push: `git push --no-verify` or `NEXO_SKIP_PRE_PUSH=1 git push`.
+install-hooks:
+	@if [ -d .git ]; then \
+	  current=$$(git config --get core.hooksPath 2>/dev/null || true); \
+	  if [ "$$current" != ".githooks" ]; then \
+	    git config core.hooksPath .githooks; \
+	    echo "[install-hooks] wired core.hooksPath = .githooks"; \
+	  else \
+	    echo "[install-hooks] already wired"; \
+	  fi; \
+	  chmod +x .githooks/pre-commit .githooks/pre-push 2>/dev/null || true; \
+	  echo "[install-hooks] hooks executable:"; \
+	  ls -l .githooks/pre-commit .githooks/pre-push; \
+	else \
+	  echo "[install-hooks] not a git repo — skipping"; \
+	fi
 
 clean:
 	cargo clean

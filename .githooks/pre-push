@@ -1,0 +1,50 @@
+#!/bin/sh
+# Pre-push gate: runs `make ci-local` to mirror GitHub Actions CI
+# 1:1 (rustfmt + clippy --all-targets + build --locked + test --locked
+# + features=config-self-edit + template builds). Catches the issues
+# CI catches BEFORE the runner queue, saving 10-30min per round-trip.
+#
+# Install: `git config core.hooksPath .githooks` (or run
+# `scripts/bootstrap.sh` which wires it for you).
+#
+# Bypass for emergency hot-push:
+#     git push --no-verify
+#
+# Honor `NEXO_SKIP_PRE_PUSH=1` env if you want to disable globally
+# without --no-verify on every push:
+#     export NEXO_SKIP_PRE_PUSH=1
+
+set -e
+
+if [ "${NEXO_SKIP_PRE_PUSH:-0}" = "1" ]; then
+    echo "[pre-push] NEXO_SKIP_PRE_PUSH=1 — skipping ci-local gate"
+    exit 0
+fi
+
+# Read the push refspec list from stdin (git push contract). If
+# there's nothing to push (e.g. only deletes), exit clean.
+remote="$1"
+url="$2"
+empty="0000000000000000000000000000000000000000"
+have_commits=0
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$local_sha" != "$empty" ]; then
+        have_commits=1
+    fi
+done
+
+if [ "$have_commits" = "0" ]; then
+    echo "[pre-push] no commits to push — skipping ci-local gate"
+    exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if [ ! -x scripts/ci-local.sh ]; then
+    echo "[pre-push] WARN: scripts/ci-local.sh missing or not executable — skipping" >&2
+    exit 0
+fi
+
+echo "[pre-push] running ci-local gate (set NEXO_SKIP_PRE_PUSH=1 to disable, or git push --no-verify)"
+exec ./scripts/ci-local.sh
