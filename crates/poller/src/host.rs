@@ -49,6 +49,19 @@ pub trait PollerHost: Send + Sync + 'static {
     /// key/values. Non-string values are coerced to strings; missing
     /// labels default to the empty string.
     async fn metric_inc(&self, name: String, labels: Value) -> Result<(), HostError>;
+
+    /// Invoke an LLM provider on the daemon-side `LlmRegistry`. The
+    /// runner stays unaware of providers and models — pollers that
+    /// need scheduled LLM work (`agent_turn`, custom prompts) go
+    /// through this single API.
+    ///
+    /// Returns the assistant response as a flat string plus usage.
+    /// Pollers requiring structured/streaming output should compose
+    /// their own logic over this primitive.
+    async fn llm_invoke(
+        &self,
+        request: LlmInvokeRequest,
+    ) -> Result<LlmInvokeResponse, HostError>;
 }
 
 /// What `PollerHost` operations can fail with. Pollers map these into
@@ -143,6 +156,50 @@ pub struct TickMetrics {
     pub items_dispatched: u32,
 }
 
+/// Provider-agnostic LLM invocation request. Daemon translates into
+/// the matching `LlmRegistry::chat` call. Wire-safe (no internal
+/// `nexo-llm` types leak into the trait surface) so plugin pollers
+/// over reverse-RPC can use the same shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmInvokeRequest {
+    /// Key in `llm.yaml::providers` — e.g. `"anthropic"`, `"minimax"`.
+    pub provider: String,
+    /// Model id understood by the provider. Empty string defers to
+    /// the provider's default model.
+    #[serde(default)]
+    pub model: String,
+    pub messages: Vec<LlmMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmMessage {
+    /// `"system"`, `"user"`, `"assistant"`. Daemon maps to internal
+    /// `ChatRole`; unknown roles return [`HostError::Rpc`] with
+    /// `-32602` (config error).
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmInvokeResponse {
+    pub content: String,
+    /// What model actually answered (may differ from requested when
+    /// the provider has aliasing).
+    pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<LlmUsage>,
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +264,41 @@ mod tests {
             serde_json::to_string(&LogLevel::Warn).unwrap(),
             "\"warn\""
         );
+    }
+
+    #[test]
+    fn llm_invoke_request_round_trips_serde() {
+        let req = LlmInvokeRequest {
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+            messages: vec![
+                LlmMessage {
+                    role: "system".into(),
+                    content: "You are helpful.".into(),
+                },
+                LlmMessage {
+                    role: "user".into(),
+                    content: "Hi".into(),
+                },
+            ],
+            max_tokens: Some(128),
+            temperature: Some(0.7),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: LlmInvokeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.provider, "anthropic");
+        assert_eq!(back.messages.len(), 2);
+        assert_eq!(back.max_tokens, Some(128));
+    }
+
+    #[test]
+    fn llm_invoke_response_omits_none_usage() {
+        let resp = LlmInvokeResponse {
+            content: "ok".into(),
+            model_id: "claude-haiku-4-5".into(),
+            usage: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(!json.contains("usage"), "None usage should be omitted: {json}");
     }
 }
