@@ -57,7 +57,10 @@ fn main() -> io::Result<()> {
         }
     };
 
-    let params = envelope.get("params").cloned().unwrap_or(serde_json::Value::Null);
+    let params = envelope
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let kind = params
         .get("kind")
         .and_then(|v| v.as_str())
@@ -137,8 +140,7 @@ fn write_reply(value: &serde_json::Value) -> io::Result<()> {
 /// crate intentionally has zero non-stdlib deps beyond `serde_json`
 /// (and tokio/serial_test in dev-only).
 fn base64_encode(input: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((input.len() * 4 + 2) / 3);
     let mut chunks = input.chunks_exact(3);
     for chunk in chunks.by_ref() {

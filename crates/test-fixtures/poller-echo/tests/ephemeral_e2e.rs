@@ -239,14 +239,8 @@ async fn ephemeral_cancel_token_kills_child_during_tick() {
         cancel_clone.cancel();
     });
     let started = std::time::Instant::now();
-    let result = spawn_ephemeral_tick(
-        BINARY,
-        "test-echo",
-        req,
-        Duration::from_secs(10),
-        cancel,
-    )
-    .await;
+    let result =
+        spawn_ephemeral_tick(BINARY, "test-echo", req, Duration::from_secs(10), cancel).await;
     std::env::remove_var("POLLER_ECHO_SLEEP_MS");
     let elapsed = started.elapsed();
 
