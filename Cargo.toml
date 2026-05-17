@@ -454,7 +454,7 @@ nexo-extensions = { version = "0.1.4", path = "crates/extensions" }
 nexo-ext-installer = { version = "0.1.1", path = "crates/ext-installer" }
 nexo-llm = { version = "0.1.6", path = "crates/llm" }
 nexo-lsp = { version = "0.1.2", path = "crates/lsp" }
-nexo-mcp = { version = "0.1.5", path = "crates/mcp" }
+nexo-mcp = { version = "0.1.6", path = "crates/mcp" }
 nexo-memory = { version = "0.1.5", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.2", path = "crates/taskflow" }
 sqlx               = { workspace = true }
