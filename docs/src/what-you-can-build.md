@@ -21,11 +21,12 @@ follow the link.
 > nexo plugin install lordmacu/nexo-plugin-telegram
 > nexo plugin install lordmacu/nexo-plugin-email
 > nexo plugin install lordmacu/nexo-plugin-browser
-> nexo plugin install lordmacu/nexo-plugin-google  # Gmail/Calendar/Drive/Sheets
+> nexo plugin install lordmacu/nexo-plugin-google      # Gmail/Calendar/Drive/Sheets
+> nexo plugin install lordmacu/nexo-plugin-web-search  # Brave/Tavily/DuckDuckGo/Perplexity
 > nexo plugin list
 > ```
 >
-> All five also ship to crates.io: `cargo install nexo-plugin-google`
+> All six also ship to crates.io: `cargo install nexo-plugin-web-search`
 > (etc.) drops the binary in `$HOME/.cargo/bin/` and the daemon's
 > discovery walker picks it up automatically.
 >

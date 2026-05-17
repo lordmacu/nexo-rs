@@ -142,8 +142,17 @@ For Google (Gmail / Calendar / Drive):
 `nexo-plugin-google --oauth-once <agent_id> --device` (or omit
 `--device` to use the loopback browser flow). See the
 [Google plugin docs](../plugins/google.md) for the full CLI flag
-list. Five canonical plugins live on crates.io:
-`whatsapp`/`telegram`/`email`/`browser`/`google`.
+list.
+
+For Web Search (Brave / Tavily / DuckDuckGo / Perplexity):
+`cargo install nexo-plugin-web-search`, then populate
+`<config_dir>/plugins/web-search.yaml::instances[].providers`
+with API key file refs. See the
+[Web Search plugin docs](../plugins/web-search.md). DuckDuckGo
+works with no API key as the fallback provider.
+
+Six canonical plugins live on crates.io:
+`whatsapp`/`telegram`/`email`/`browser`/`google`/`web-search`.
 
 ### How the daemon finds your plugin
 
