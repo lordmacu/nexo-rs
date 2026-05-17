@@ -64,6 +64,34 @@ static CONSEC_ERR: LazyLock<DashMap<String, AtomicI64>> = LazyLock::new(DashMap:
 static BREAKER: LazyLock<DashMap<String, AtomicI64>> = LazyLock::new(DashMap::new);
 static LEASE_TAKEOVERS: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
+/// Phase 96 follow-up — generic named counter store the
+/// `PollerHost::metric_inc` API + the daemon-side reverse-RPC
+/// handler fan out into. Lets a subprocess poller emit arbitrary
+/// per-plugin metrics that show up in `/metrics` without the
+/// daemon needing per-kind hardcoded counters.
+///
+/// Key shape: `(name, sorted_label_pairs)`. Names + labels are
+/// sanitized to the Prometheus naming alphabet
+/// (`[a-zA-Z_:][a-zA-Z0-9_:]*` for names,
+/// `[a-zA-Z_][a-zA-Z0-9_]*` for label keys) — bad inputs get
+/// `_` substituted. Label value escaping reuses [`escape`].
+static PLUGIN_COUNTERS: LazyLock<DashMap<PluginCounterKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+
+/// Per-counter label cardinality cap. Beyond this, the
+/// excess labels are silently dropped — a single misbehaving
+/// plugin cannot blow up the daemon's `/metrics` payload.
+const PLUGIN_COUNTER_MAX_LABELS: usize = 10;
+
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct PluginCounterKey {
+    name: String,
+    /// Sorted-by-key pairs so two equivalent labelings hash to
+    /// the same counter regardless of insertion order in the JSON
+    /// object the plugin sent.
+    labels: Vec<(String, String)>,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum BreakerState {
     Closed = 0,
@@ -135,6 +163,92 @@ pub fn inc_lease_takeover(job_id: &str) {
         .entry(job_id.to_string())
         .or_insert_with(|| AtomicU64::new(0))
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Phase 96 follow-up — generic named counter fan-out for
+/// `PollerHost::metric_inc`. `name` is sanitized to the
+/// Prometheus name alphabet, `labels` must be a JSON object whose
+/// string values become label values; non-object inputs are
+/// silently treated as labelless. Counter increments by 1 per call;
+/// the host could later expose `inc_by(n)` if a use case justifies.
+///
+/// Cardinality is capped at [`PLUGIN_COUNTER_MAX_LABELS`] labels
+/// per counter to prevent a misbehaving plugin from blowing up the
+/// `/metrics` payload. Excess labels (sorted lexicographically) are
+/// silently dropped.
+pub fn inc_named_counter(name: &str, labels: &serde_json::Value) {
+    let key = build_plugin_counter_key(name, labels);
+    PLUGIN_COUNTERS
+        .entry(key)
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+fn build_plugin_counter_key(name: &str, labels: &serde_json::Value) -> PluginCounterKey {
+    let mut pairs: Vec<(String, String)> = match labels {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(k, v)| {
+                let key = sanitize_label_name(k);
+                let val = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                (key, val)
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    if pairs.len() > PLUGIN_COUNTER_MAX_LABELS {
+        pairs.truncate(PLUGIN_COUNTER_MAX_LABELS);
+    }
+    PluginCounterKey {
+        name: sanitize_counter_name(name),
+        labels: pairs,
+    }
+}
+
+/// Prometheus counter name alphabet: `[a-zA-Z_:][a-zA-Z0-9_:]*`.
+/// Replace invalid chars with `_`. Empty input → `_invalid_`.
+fn sanitize_counter_name(input: &str) -> String {
+    if input.is_empty() {
+        return "_invalid_".to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    for (i, c) in input.chars().enumerate() {
+        let ok = if i == 0 {
+            c.is_ascii_alphabetic() || c == '_' || c == ':'
+        } else {
+            c.is_ascii_alphanumeric() || c == '_' || c == ':'
+        };
+        out.push(if ok { c } else { '_' });
+    }
+    out
+}
+
+/// Prometheus label name alphabet: `[a-zA-Z_][a-zA-Z0-9_]*`.
+/// Label names starting with `__` are reserved; we replace the
+/// leading `_` with `x` so well-meaning plugins can't reach the
+/// reserved namespace.
+fn sanitize_label_name(input: &str) -> String {
+    if input.is_empty() {
+        return "_invalid_".to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    for (i, c) in input.chars().enumerate() {
+        let ok = if i == 0 {
+            c.is_ascii_alphabetic() || c == '_'
+        } else {
+            c.is_ascii_alphanumeric() || c == '_'
+        };
+        out.push(if ok { c } else { '_' });
+    }
+    if out.starts_with("__") {
+        out.replace_range(0..1, "x");
+    }
+    out
 }
 
 fn escape(s: &str) -> String {
@@ -320,6 +434,43 @@ pub fn render_prometheus() -> String {
         }
     }
 
+    // Phase 96 follow-up — emit every plugin-side counter fanned in
+    // via `PollerHost::metric_inc`. Grouped by name so consumers of
+    // the textual `/metrics` output see one HELP/TYPE pair per
+    // counter family. Counters with empty store are not emitted
+    // (they'd require a HELP without any sample lines).
+    {
+        let mut grouped: std::collections::BTreeMap<String, Vec<(Vec<(String, String)>, u64)>> =
+            std::collections::BTreeMap::new();
+        for entry in PLUGIN_COUNTERS.iter() {
+            let key = entry.key().clone();
+            let v = entry.value().load(Ordering::Relaxed);
+            grouped
+                .entry(key.name.clone())
+                .or_default()
+                .push((key.labels, v));
+        }
+        for (name, mut rows) in grouped {
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            out.push_str(&format!(
+                "# HELP {name} Plugin-emitted counter (via PollerHost::metric_inc).\n"
+            ));
+            out.push_str(&format!("# TYPE {name} counter\n"));
+            for (labels, v) in rows {
+                if labels.is_empty() {
+                    out.push_str(&format!("{name} {v}\n"));
+                } else {
+                    let label_str = labels
+                        .iter()
+                        .map(|(k, val)| format!("{k}=\"{}\"", escape(val)))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    out.push_str(&format!("{name}{{{label_str}}} {v}\n"));
+                }
+            }
+        }
+    }
+
     out
 }
 
@@ -355,6 +506,107 @@ mod tests {
         assert!(body.contains(
             "poller_ticks_total{agent=\"kate\",job_id=\"kate_blog\",kind=\"rss\",status=\"transient\"} 1"
         ));
+    }
+
+    #[test]
+    fn sanitize_counter_name_replaces_invalid_chars() {
+        assert_eq!(
+            sanitize_counter_name("gmail.tick.total"),
+            "gmail_tick_total"
+        );
+        assert_eq!(sanitize_counter_name("gmail tick"), "gmail_tick");
+        assert_eq!(sanitize_counter_name("9bad_lead"), "_bad_lead");
+        assert_eq!(sanitize_counter_name(""), "_invalid_");
+        assert_eq!(sanitize_counter_name("ok_name"), "ok_name");
+        assert_eq!(
+            sanitize_counter_name("namespace:counter"),
+            "namespace:counter"
+        );
+    }
+
+    #[test]
+    fn sanitize_label_name_disallows_reserved_prefix() {
+        assert_eq!(sanitize_label_name("__reserved"), "x_reserved");
+        assert_eq!(sanitize_label_name("ok"), "ok");
+        assert_eq!(sanitize_label_name("with.dot"), "with_dot");
+        assert_eq!(sanitize_label_name(""), "_invalid_");
+    }
+
+    #[test]
+    fn plugin_counter_increments_under_same_label_set() {
+        inc_named_counter(
+            "test_plugin_counter_one",
+            &serde_json::json!({ "kind": "rss", "agent": "ana" }),
+        );
+        inc_named_counter(
+            "test_plugin_counter_one",
+            &serde_json::json!({ "agent": "ana", "kind": "rss" }),
+        );
+        // Differently-ordered keys collapse to the same key — both
+        // ticks land on a single counter at value 2.
+        let key = build_plugin_counter_key(
+            "test_plugin_counter_one",
+            &serde_json::json!({ "kind": "rss", "agent": "ana" }),
+        );
+        let v = PLUGIN_COUNTERS
+            .get(&key)
+            .map(|e| e.value().load(Ordering::Relaxed))
+            .unwrap_or(0);
+        assert_eq!(v, 2);
+    }
+
+    #[test]
+    fn plugin_counter_label_cardinality_capped() {
+        let mut labels = serde_json::Map::new();
+        for i in 0..50 {
+            labels.insert(format!("k{i}"), serde_json::json!(format!("v{i}")));
+        }
+        let key = build_plugin_counter_key(
+            "test_plugin_counter_cap",
+            &serde_json::Value::Object(labels),
+        );
+        assert_eq!(key.labels.len(), PLUGIN_COUNTER_MAX_LABELS);
+        // Sorted-lex truncation keeps the first 10 keys (k0,k1,...,k17
+        // with leading-zero sort caveat — k0,k1,k10..k17 actually,
+        // because k10 < k2 lexically).
+        assert!(key.labels.iter().any(|(k, _)| k == "k0"));
+    }
+
+    #[test]
+    fn plugin_counter_renders_with_labels() {
+        inc_named_counter(
+            "test_plugin_counter_render",
+            &serde_json::json!({ "channel": "whatsapp" }),
+        );
+        inc_named_counter(
+            "test_plugin_counter_render",
+            &serde_json::json!({ "channel": "telegram" }),
+        );
+        inc_named_counter(
+            "test_plugin_counter_render",
+            &serde_json::json!({ "channel": "whatsapp" }),
+        );
+        let body = render_prometheus();
+        assert!(body.contains("# TYPE test_plugin_counter_render counter"));
+        assert!(body.contains("test_plugin_counter_render{channel=\"whatsapp\"} 2"));
+        assert!(body.contains("test_plugin_counter_render{channel=\"telegram\"} 1"));
+    }
+
+    #[test]
+    fn plugin_counter_renders_labelless() {
+        inc_named_counter("test_plugin_counter_no_labels", &serde_json::Value::Null);
+        let body = render_prometheus();
+        assert!(body.contains("test_plugin_counter_no_labels 1"));
+    }
+
+    #[test]
+    fn plugin_counter_escapes_label_value_quotes() {
+        inc_named_counter(
+            "test_plugin_counter_escape",
+            &serde_json::json!({ "topic": "with\"quote" }),
+        );
+        let body = render_prometheus();
+        assert!(body.contains("test_plugin_counter_escape{topic=\"with\\\"quote\"} 1"));
     }
 
     #[test]

@@ -152,12 +152,12 @@ impl PollerHost for InProcessHost {
     }
 
     async fn metric_inc(&self, name: String, labels: Value) -> Result<(), HostError> {
-        // V1: emit as a tracing event so operators see the increment in
-        // logs. The poller crate's telemetry module does not expose a
-        // generic Prometheus counter API yet; adding one is tracked as
-        // a Phase 96 follow-up so subprocess pollers can fan out
-        // arbitrary counters into the daemon's `/metrics` endpoint.
-        tracing::info!(
+        // Phase 96 follow-up shipped — fan in to the generic
+        // Prometheus counter store. `/metrics` aggregator picks
+        // these up via `render_prometheus()`. Trace mirror kept
+        // for grep-ability in daemon logs.
+        crate::telemetry::inc_named_counter(&name, &labels);
+        tracing::trace!(
             metric = %name,
             job_id = %self.job_id,
             agent_id = %self.agent_id,
