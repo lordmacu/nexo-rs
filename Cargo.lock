@@ -5221,6 +5221,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-poller-echo"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "nexo-pairing",
+ "nexo-poller",
+ "serde_json",
+ "serial_test",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "nexo-poller-ext"
 version = "0.1.2"
 dependencies = [

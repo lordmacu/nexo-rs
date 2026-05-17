@@ -118,6 +118,8 @@ members = [
     # cargo-dist's manifest planner can opt it out of release
     # tarballs via `[package.metadata.dist] dist = false`.
     "crates/test-fixtures/mock-subprocess-plugin",
+    # Phase 96 — poller plugin fixture for Block D+E e2e tests.
+    "crates/test-fixtures/poller-echo",
     "crates/test-fixtures/reference-plugin",
 ]
 # Keep standalone extension templates out of the agent workspace so
