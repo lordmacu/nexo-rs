@@ -84,7 +84,7 @@ pub async fn scrape_all(broker: &AnyBroker, descriptors: &[PluginMetricsDescript
         results.push(scrape_one(broker, d).await);
     }
     let mut out = String::new();
-    for (descriptor, result) in descriptors.iter().zip(results.into_iter()) {
+    for (descriptor, result) in descriptors.iter().zip(results) {
         match result {
             Ok(text) if text.is_empty() => {}
             Ok(text) => {
