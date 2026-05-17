@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 nexo-core             = { version = "0.2.1", path = "../core" }
 nexo-config           = { version = "0.1.10", path = "../config" }
-nexo-llm              = { version = "0.1.5", path = "../llm" }
+nexo-llm              = { version = "0.1.6", path = "../llm" }
 nexo-fork             = { version = "0.1.7", path = "../fork" }
 nexo-agent-registry   = { version = "0.1.7", path = "../agent-registry" }
 nexo-memory           = { version = "0.1.5", path = "../memory" }

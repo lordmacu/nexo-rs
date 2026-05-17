@@ -56,7 +56,7 @@ nexo-auth = { version = "0.1.9", path = "../auth" }
 tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
-nexo-llm = { version = "0.1.5", path = "../llm" }
+nexo-llm = { version = "0.1.6", path = "../llm" }
 # Phase 82.10.u — OAuth start/finish admin RPC handlers reuse the
 # shared PKCE + exchange primitives.
 nexo-llm-auth = { version = "0.1.1", path = "../llm-auth" }
@@ -105,7 +105,7 @@ which           = { workspace = true }
 async-nats      = { workspace = true }
 
 [dev-dependencies]
-nexo-llm = { version = "0.1.5", path = "../llm", features = ["stub"] }
+nexo-llm = { version = "0.1.6", path = "../llm", features = ["stub"] }
 futures       = { workspace = true }
 tempfile      = "3"
 serial_test   = "3"

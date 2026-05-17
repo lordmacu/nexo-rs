@@ -396,7 +396,7 @@ nexo-broker = { version = "0.1.6", path = "../broker", optional = true }
 # ChatResponse types so authors construct + decode messages
 # with the same shape the daemon uses; nexo-memory gives
 # MemoryEntry for recall_memory results.
-nexo-llm = { version = "0.1.5", path = "../llm", optional = true }
+nexo-llm = { version = "0.1.6", path = "../llm", optional = true }
 nexo-memory = { version = "0.1.5", path = "../memory", optional = true }
 # Phase 96 — `poller` feature: PollerHost trait + TickAck wire shape
 # re-export. Optional so non-poller plugin authors don't pay the dep.

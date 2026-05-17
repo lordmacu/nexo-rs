@@ -29,7 +29,7 @@ thiserror   = { workspace = true }
 unicode-normalization = "0.1"
 unicode-segmentation  = "1.12"
 unicode-script        = "0.5"
-nexo-llm = { version = "0.1.5", path = "../llm" }
+nexo-llm = { version = "0.1.6", path = "../llm" }
 nexo-driver-types = { version = "0.1.7", path = "../driver-types" }
 reqwest = { workspace = true, features = ["rustls-tls", "stream", "cookies", "http2"] }
 url          = "2"
