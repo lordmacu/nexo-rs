@@ -33,6 +33,11 @@ pub struct PluginPollerHandle {
     pub lifecycle: PollerLifecycle,
     pub max_concurrent_ticks: u32,
     pub tick_timeout: Duration,
+    /// `[plugin.entrypoint].command` — binary path the daemon
+    /// spawns. Required for `ephemeral` lifecycle (each tick spawns
+    /// a fresh subprocess). Optional for `long_lived` (the broker
+    /// path doesn't need it).
+    pub entrypoint_command: Option<String>,
 }
 
 impl PluginPollerHandle {
@@ -220,6 +225,186 @@ pub async fn forward_tick(
     })
 }
 
+/// Phase 96.E — daemon-side `Poller` impl that spawns a fresh
+/// subprocess per tick, drives the tick over stdio JSON-RPC, kills
+/// the child on reply. Used when the plugin manifest declares
+/// `lifecycle = "ephemeral"`.
+///
+/// Wire shape (one JSON line each):
+///
+/// ```text
+/// daemon → subprocess.stdin:  {"method":"poll_tick","params":{...TickRequest}}
+/// subprocess → daemon.stdout: {"result":{...TickReply}} | {"error":{code,message}}
+/// ```
+///
+/// **Limitations of V1 ephemeral**:
+/// - No reverse-RPC during tick. The subprocess receives one input
+///   (TickRequest) + writes one output (TickReply). For credential
+///   resolution or LLM invocation, use `lifecycle = "long_lived"`.
+/// - The subprocess inherits the daemon's `NEXO_BROKER_URL` env so
+///   it can publish outbound directly if needed (Phase 92 pattern).
+pub struct EphemeralPollerProxy {
+    kind: &'static str,
+    handle: Arc<PluginPollerHandle>,
+}
+
+impl EphemeralPollerProxy {
+    /// Wrap a `(handle, kind)` pair for spawn-per-tick dispatch.
+    /// `handle.entrypoint_command` MUST be `Some` — the proxy uses
+    /// it as the binary path.
+    pub fn new(kind: &'static str, handle: Arc<PluginPollerHandle>) -> Self {
+        Self { kind, handle }
+    }
+}
+
+#[async_trait]
+impl Poller for EphemeralPollerProxy {
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    fn description(&self) -> &'static str {
+        "(plugin v2 subprocess — ephemeral, spawn-per-tick)"
+    }
+
+    async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
+        let command = self.handle.entrypoint_command.as_deref().ok_or_else(|| {
+            PollerError::Config {
+                job: ctx.job_id.clone(),
+                reason: format!(
+                    "ephemeral poller '{}' has no [plugin.entrypoint] command",
+                    self.handle.plugin_id
+                ),
+            }
+        })?;
+        let request = build_tick_request(
+            self.kind,
+            &ctx.job_id,
+            &ctx.agent_id,
+            ctx.cursor.as_deref(),
+            ctx.config.clone(),
+            ctx.now,
+            ctx.interval_hint,
+        );
+        spawn_ephemeral_tick(
+            command,
+            &self.handle.plugin_id,
+            request,
+            self.handle.tick_timeout,
+            ctx.cancel.clone(),
+        )
+        .await
+    }
+}
+
+/// Spawn the binary, write the tick request to stdin, read one
+/// JSON line from stdout, await exit, classify the reply.
+pub async fn spawn_ephemeral_tick(
+    command: &str,
+    plugin_id: &str,
+    request: TickRequest,
+    timeout: Duration,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<TickAck, PollerError> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::process::Command;
+
+    let request_json = serde_json::to_string(&json!({
+        "method": "poll_tick",
+        "params": request,
+    }))
+    .map_err(|e| PollerError::Config {
+        job: request.job_id.clone(),
+        reason: format!("serialize TickRequest: {e}"),
+    })?;
+
+    let mut child = Command::new(command)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env("NEXO_POLLER_EPHEMERAL", "1")
+        .env("NEXO_POLLER_PLUGIN_ID", plugin_id)
+        .spawn()
+        .map_err(|e| PollerError::Transient(anyhow::anyhow!(
+            "spawn '{command}' failed: {e}"
+        )))?;
+
+    {
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            PollerError::Transient(anyhow::anyhow!("subprocess stdin not captured"))
+        })?;
+        stdin
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
+        stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
+        // Closing stdin signals end-of-input. Subprocess proceeds.
+    }
+
+    let mut stdout = BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| PollerError::Transient(anyhow::anyhow!("stdout not captured")))?,
+    );
+    let mut line = String::new();
+    let read = tokio::select! {
+        r = stdout.read_line(&mut line) => r,
+        _ = tokio::time::sleep(timeout) => {
+            let _ = child.kill().await;
+            return Err(PollerError::Transient(anyhow::anyhow!(
+                "ephemeral subprocess exceeded tick_timeout ({timeout:?})"
+            )));
+        }
+        _ = cancel.cancelled() => {
+            let _ = child.kill().await;
+            return Err(PollerError::Transient(anyhow::anyhow!(
+                "ephemeral subprocess cancelled (shutdown or hot-reload)"
+            )));
+        }
+    };
+    read.map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
+    let _ = child.wait().await;
+
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Err(PollerError::Transient(anyhow::anyhow!(
+            "ephemeral subprocess wrote no reply"
+        )));
+    }
+    let envelope: Value = serde_json::from_str(trimmed).map_err(|e| {
+        PollerError::Transient(anyhow::anyhow!(
+            "ephemeral reply parse failed: {e} (line: {trimmed:.200})"
+        ))
+    })?;
+    if let Some(err) = envelope.get("error") {
+        let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(-32603);
+        let message = err
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("subprocess error")
+            .to_string();
+        return Err(match code {
+            -32002 => PollerError::Permanent(anyhow::anyhow!("ephemeral: {message}")),
+            -32602 => PollerError::Config {
+                job: request.job_id.clone(),
+                reason: message,
+            },
+            _ => PollerError::Transient(anyhow::anyhow!("ephemeral rpc {code}: {message}")),
+        });
+    }
+    let result = envelope.get("result").cloned().unwrap_or(Value::Null);
+    let reply: TickReply = serde_json::from_value(result).map_err(|e| {
+        PollerError::Transient(anyhow::anyhow!("ephemeral TickReply parse: {e}"))
+    })?;
+    reply
+        .into_tick_ack()
+        .map_err(|e| PollerError::Transient(anyhow::anyhow!("cursor decode: {e}")))
+}
+
 /// Daemon-side `Poller` impl that proxies every tick to a subprocess
 /// plugin via broker JSON-RPC. Registered with the runner alongside
 /// in-tree builtins so the runner sees a single homogeneous registry.
@@ -327,6 +512,7 @@ mod tests {
             lifecycle: PollerLifecycle::LongLived,
             max_concurrent_ticks: 1,
             tick_timeout: Duration::from_secs(60),
+            entrypoint_command: None,
         }
     }
 

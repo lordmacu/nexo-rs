@@ -356,6 +356,217 @@ pub enum ServeError {
     MissingReplyTo,
 }
 
+/// Phase 96.E — `PollerHost` for ephemeral subprocesses. Spawn-per-
+/// tick processes have no broker subscription and no reverse-RPC
+/// channel back to the daemon, so credential resolution and LLM
+/// invocation are unavailable. The host returns
+/// [`HostError::Rpc { code: -32601 }`] for those methods. The plugin
+/// author treats the failure as `PollerError::Permanent` and the
+/// runner auto-pauses with a clear message — the operator switches
+/// the job's plugin manifest to `lifecycle = "long_lived"`.
+///
+/// `broker_publish` works when the subprocess inherits a usable
+/// `NEXO_BROKER_URL` from the daemon's env. `log` + `metric_inc`
+/// forward to local `tracing` so operators still see structured
+/// output in the daemon's log stream (subprocess stderr is captured
+/// alongside daemon logs).
+pub struct EphemeralHost {
+    plugin_id: String,
+    job_id: String,
+    agent_id: String,
+    broker: Option<nexo_broker::AnyBroker>,
+}
+
+impl EphemeralHost {
+    /// Construct with no broker — every method except `log` /
+    /// `metric_inc` errors. Useful when the subprocess does
+    /// everything via direct API calls without a broker handoff.
+    pub fn new(
+        plugin_id: impl Into<String>,
+        job_id: impl Into<String>,
+        agent_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            plugin_id: plugin_id.into(),
+            job_id: job_id.into(),
+            agent_id: agent_id.into(),
+            broker: None,
+        }
+    }
+
+    /// Attach a broker for `broker_publish`. The plugin's main.rs
+    /// constructs the broker from `NEXO_BROKER_URL` before serving
+    /// the tick.
+    pub fn with_broker(mut self, broker: nexo_broker::AnyBroker) -> Self {
+        self.broker = Some(broker);
+        self
+    }
+}
+
+#[async_trait]
+impl PollerHost for EphemeralHost {
+    async fn broker_publish(&self, topic: String, payload: Vec<u8>) -> Result<(), HostError> {
+        let broker = self.broker.as_ref().ok_or_else(|| HostError::Rpc {
+            code: -32601,
+            message:
+                "EphemeralHost has no broker — set NEXO_BROKER_URL + attach via with_broker(...)"
+                    .into(),
+        })?;
+        let value: Value = serde_json::from_slice(&payload).unwrap_or(Value::Null);
+        let event = nexo_broker::Event::new(&topic, "plugin.poller.ephemeral", value);
+        use nexo_broker::BrokerHandle;
+        broker
+            .publish(&topic, event)
+            .await
+            .map_err(|e| HostError::BrokerUnavailable(e.to_string()))
+    }
+
+    async fn credentials_get(&self, channel: String) -> Result<Value, HostError> {
+        Err(HostError::Rpc {
+            code: -32601,
+            message: format!(
+                "credentials_get('{channel}') unavailable in ephemeral lifecycle — switch to long_lived"
+            ),
+        })
+    }
+
+    async fn log(
+        &self,
+        level: LogLevel,
+        message: String,
+        fields: Value,
+    ) -> Result<(), HostError> {
+        match level {
+            LogLevel::Trace => tracing::trace!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+            LogLevel::Debug => tracing::debug!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+            LogLevel::Info => tracing::info!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+            LogLevel::Warn => tracing::warn!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+            LogLevel::Error => tracing::error!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+        }
+        Ok(())
+    }
+
+    async fn metric_inc(&self, name: String, labels: Value) -> Result<(), HostError> {
+        tracing::info!(
+            metric = %name,
+            plugin = %self.plugin_id,
+            job_id = %self.job_id,
+            ?labels,
+            "ephemeral poller metric_inc",
+        );
+        Ok(())
+    }
+
+    async fn llm_invoke(
+        &self,
+        _request: LlmInvokeRequest,
+    ) -> Result<LlmInvokeResponse, HostError> {
+        Err(HostError::Rpc {
+            code: -32601,
+            message:
+                "llm_invoke unavailable in ephemeral lifecycle — switch to long_lived"
+                    .into(),
+        })
+    }
+}
+
+/// Phase 96.E — serve one ephemeral tick. The subprocess `main`:
+///
+/// 1. Reads a single JSON line from stdin (the daemon writes the
+///    `{"method":"poll_tick","params":...}` envelope on spawn).
+/// 2. Constructs an [`EphemeralHost`] (optionally with a broker if
+///    `NEXO_BROKER_URL` is present).
+/// 3. Dispatches to the user's [`PollerHandler`].
+/// 4. Writes a single JSON line to stdout (`{"result":...}` on
+///    success, `{"error":...}` on poller failure).
+/// 5. Exits — the daemon kills the child on reply.
+///
+/// Returns `Ok(())` even on poller errors — error envelopes are
+/// written to stdout. `Err` is reserved for transport-level problems
+/// (stdin closed prematurely, malformed envelope) the subprocess
+/// caller may want to log to stderr before exit.
+pub async fn serve_one_ephemeral_tick(
+    plugin_id: &str,
+    handler: Arc<dyn PollerHandler>,
+    broker: Option<nexo_broker::AnyBroker>,
+) -> Result<(), EphemeralError> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let mut line = String::new();
+    let n = reader
+        .read_line(&mut line)
+        .await
+        .map_err(|e| EphemeralError::Io(e.to_string()))?;
+    if n == 0 {
+        return Err(EphemeralError::StdinClosed);
+    }
+    let envelope: Value = serde_json::from_str(line.trim())
+        .map_err(|e| EphemeralError::ParseEnvelope(e.to_string()))?;
+    let params = envelope
+        .get("params")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let request: TickRequest = serde_json::from_value(params)
+        .map_err(|e| EphemeralError::ParseEnvelope(format!("TickRequest: {e}")))?;
+
+    let mut host = EphemeralHost::new(
+        plugin_id,
+        request.job_id.clone(),
+        request.agent_id.clone(),
+    );
+    if let Some(b) = broker {
+        host = host.with_broker(b);
+    }
+    let host_arc: Arc<dyn PollerHost> = Arc::new(host);
+
+    let reply_envelope = match handler.tick(request, host_arc).await {
+        Ok(ack) => {
+            let reply = TickReply::from_tick_ack(ack);
+            json!({ "result": reply })
+        }
+        Err(e) => {
+            let (code, message) = poller_error_to_rpc(e);
+            json!({ "error": { "code": code, "message": message } })
+        }
+    };
+
+    let mut stdout = tokio::io::stdout();
+    let bytes = serde_json::to_vec(&reply_envelope)
+        .map_err(|e| EphemeralError::SerializeReply(e.to_string()))?;
+    stdout
+        .write_all(&bytes)
+        .await
+        .map_err(|e| EphemeralError::Io(e.to_string()))?;
+    stdout
+        .write_all(b"\n")
+        .await
+        .map_err(|e| EphemeralError::Io(e.to_string()))?;
+    stdout
+        .flush()
+        .await
+        .map_err(|e| EphemeralError::Io(e.to_string()))?;
+    Ok(())
+}
+
+/// Transport-level failure from [`serve_one_ephemeral_tick`].
+#[derive(Debug, thiserror::Error)]
+pub enum EphemeralError {
+    /// Daemon closed stdin without sending a request.
+    #[error("stdin closed before TickRequest arrived")]
+    StdinClosed,
+    /// JSON-RPC envelope parse failed.
+    #[error("envelope parse: {0}")]
+    ParseEnvelope(String),
+    /// Reply serialization failed.
+    #[error("reply serialize: {0}")]
+    SerializeReply(String),
+    /// stdin / stdout IO error.
+    #[error("io: {0}")]
+    Io(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

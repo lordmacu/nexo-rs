@@ -3762,6 +3762,11 @@ async fn main() -> Result<()> {
             lifecycle: poller_sec.lifecycle,
             max_concurrent_ticks: poller_sec.max_concurrent_ticks,
             tick_timeout: std::time::Duration::from_secs(poller_sec.tick_timeout_secs),
+            entrypoint_command: manifest
+                .plugin
+                .entrypoint
+                .command
+                .clone(),
         };
         match plugin_poller_router.register(new_handle) {
             Ok(()) => tracing::info!(
@@ -4106,12 +4111,36 @@ async fn main() -> Result<()> {
                                     for kind in &h.kinds {
                                         let leaked: &'static str =
                                             Box::leak(kind.clone().into_boxed_str());
-                                        let proxy = nexo_pairing::plugin_poller::PluginPollerProxy::new(
-                                            leaked,
-                                            std::sync::Arc::clone(&h),
-                                            broker.clone(),
-                                        );
-                                        runner.register(std::sync::Arc::new(proxy));
+                                        // Phase 96.E — branch on lifecycle.
+                                        // `long_lived` plugins receive ticks
+                                        // via broker JSON-RPC + reverse-RPC
+                                        // for host calls. `ephemeral` plugins
+                                        // are spawned per tick over stdio.
+                                        match h.lifecycle {
+                                            nexo_plugin_manifest::poller::PollerLifecycle::LongLived => {
+                                                let proxy = nexo_pairing::plugin_poller::PluginPollerProxy::new(
+                                                    leaked,
+                                                    std::sync::Arc::clone(&h),
+                                                    broker.clone(),
+                                                );
+                                                runner.register(std::sync::Arc::new(proxy));
+                                            }
+                                            nexo_plugin_manifest::poller::PollerLifecycle::Ephemeral => {
+                                                if h.entrypoint_command.is_none() {
+                                                    tracing::warn!(
+                                                        plugin = %plugin_id,
+                                                        kind = %kind,
+                                                        "ephemeral lifecycle requires [plugin.entrypoint].command; skipping registration",
+                                                    );
+                                                    continue;
+                                                }
+                                                let proxy = nexo_pairing::plugin_poller::EphemeralPollerProxy::new(
+                                                    leaked,
+                                                    std::sync::Arc::clone(&h),
+                                                );
+                                                runner.register(std::sync::Arc::new(proxy));
+                                            }
+                                        }
                                         plugin_poller_count += 1;
                                     }
                                 }

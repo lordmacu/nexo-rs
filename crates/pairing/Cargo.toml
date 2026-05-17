@@ -29,6 +29,7 @@ sha2           = { workspace = true }
 sqlx           = { workspace = true }
 thiserror      = { workspace = true }
 tokio          = { workspace = true }
+tokio-util     = { workspace = true }
 tracing        = { workspace = true }
 # Phase 81.33.b.real — `GenericBrokerPairingAdapter` translates
 # trait method calls into broker JSON-RPC against the plugin's
