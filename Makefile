@@ -1,4 +1,4 @@
-.PHONY: dev build test lint fmt check clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke setup setup-wizard setup-list setup-doctor setup-google setup-google-docker dist-build dist-check
+.PHONY: dev build test lint fmt check ci-local clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke setup setup-wizard setup-list setup-doctor setup-google setup-google-docker dist-build dist-check
 
 # integration-browser is shipped as an example (not a `[[bin]]`) so
 # cargo-dist excludes it from release tarballs while it stays runnable
@@ -26,6 +26,17 @@ fmt-check:
 	cargo fmt --all -- --check
 
 check: fmt-check lint test
+
+# Replicates `.github/workflows/ci.yml` 1:1 — fmt-check + clippy
+# --all-targets under -D warnings + cargo build/test --locked +
+# `--features config-self-edit -- --test-threads=1` + template
+# standalone builds. Catches every gate CI catches without
+# pushing.
+#
+# Pass gate names to run a subset:
+#   make ci-local GATES="fmt clippy"
+ci-local:
+	./scripts/ci-local.sh $(GATES)
 
 clean:
 	cargo clean
