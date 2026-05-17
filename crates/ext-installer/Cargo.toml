@@ -1,7 +1,7 @@
 [package]
 name = "nexo-ext-installer"
 description = "Phase 31.1 — fetch + resolve + download + sha256-verify nexo plugin tarballs against the ext-registry index. Building block for `nexo plugin install <id>` (CLI integration in 31.1.c)."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
