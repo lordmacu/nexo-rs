@@ -318,7 +318,10 @@ pub fn validate_agent_config(
 /// the closure captures into the coordinator's API surface.
 pub struct AgentSpawnerFn(
     pub  Box<
-        dyn Fn(AgentConfig) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
+        dyn Fn(
+                AgentConfig,
+            )
+                -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
             + Send
             + Sync,
     >,
@@ -472,7 +475,10 @@ mod tests {
         for case in cases {
             let s = case.to_string();
             assert!(!s.is_empty(), "error display must produce text");
-            assert!(s.len() > 4, "error display must be operator-readable: {s:?}");
+            assert!(
+                s.len() > 4,
+                "error display must be operator-readable: {s:?}"
+            );
         }
     }
 

@@ -1056,8 +1056,7 @@ mod tests {
         )
         .unwrap();
 
-        let v = read_agent_field_merged(&main, &[persona], "cody", "model.provider")
-            .unwrap();
+        let v = read_agent_field_merged(&main, &[persona], "cody", "model.provider").unwrap();
         assert_eq!(v, Some(Value::String("minimax".into())));
     }
 

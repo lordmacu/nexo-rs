@@ -79,7 +79,10 @@ mod tests {
     #[test]
     fn render_substitutes_string_fields() {
         let item = json!({ "name": "Ana", "phone": "+57" });
-        assert_eq!(render_template("Hi {name} ({phone})", &item), "Hi Ana (+57)");
+        assert_eq!(
+            render_template("Hi {name} ({phone})", &item),
+            "Hi Ana (+57)"
+        );
     }
 
     #[test]

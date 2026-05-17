@@ -266,7 +266,10 @@ mod tests {
         };
         let ack = cap.send(msg).await.unwrap();
         assert_eq!(ack.outbound_message_id.as_deref(), Some("msg-7"));
-        assert_eq!(cap.captured.lock().unwrap().as_ref().unwrap().channel, "email");
+        assert_eq!(
+            cap.captured.lock().unwrap().as_ref().unwrap().channel,
+            "email"
+        );
     }
 
     #[tokio::test]

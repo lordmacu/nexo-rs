@@ -630,7 +630,11 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 // fallback when the daemon was built without `plugin-whatsapp`.
 // Setup-side wipe is unaffected.
 #[allow(dead_code)]
-fn _wipe_channel_session_legacy_stub(_canal_id: &str, _agent_id: &str, _config_dir: &Path) -> Result<()> {
+fn _wipe_channel_session_legacy_stub(
+    _canal_id: &str,
+    _agent_id: &str,
+    _config_dir: &Path,
+) -> Result<()> {
     // Phase 93.12.c.1 — feature off: no whatsapp = nothing to wipe.
     // Telegram / email channels do not own a daemon-side session dir
     // (telegram credentials live in the credential store; email in

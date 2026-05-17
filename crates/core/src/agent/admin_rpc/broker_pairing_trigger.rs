@@ -145,10 +145,7 @@ impl BrokerPairingTrigger {
     }
 
     fn parse_admin_response(payload: &Value) -> Result<(), String> {
-        let ok = payload
-            .get("ok")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let ok = payload.get("ok").and_then(Value::as_bool).unwrap_or(false);
         if ok {
             Ok(())
         } else {
@@ -168,10 +165,7 @@ impl PairingChannelTrigger for BrokerPairingTrigger {
         &self.channel_id
     }
 
-    async fn start(
-        &self,
-        ctx: PairingContext,
-    ) -> Result<PairingHandle, PairingTriggerError> {
+    async fn start(&self, ctx: PairingContext) -> Result<PairingHandle, PairingTriggerError> {
         let params = json!({
             "challenge_id": ctx.challenge_id.to_string(),
             "agent_id": ctx.agent_id,
@@ -260,7 +254,13 @@ pub fn spawn_pairing_inbound_subscriber(
         };
         debug!(channel = %channel, %pattern, "pairing inbound subscriber up");
         while let Some(event) = subscription.next().await {
-            handle_inbound_event(&channel, &event.topic, &event.payload, &*store, notifier.as_deref());
+            handle_inbound_event(
+                &channel,
+                &event.topic,
+                &event.payload,
+                &*store,
+                notifier.as_deref(),
+            );
         }
         debug!(channel = %channel, "pairing inbound subscriber drained");
     })
@@ -417,9 +417,7 @@ fn parse_state(raw: &str) -> Option<PairingState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::admin_rpc::domains::pairing::{
-        PairingChallengeStore, PairingNotifier,
-    };
+    use crate::agent::admin_rpc::domains::pairing::{PairingChallengeStore, PairingNotifier};
     use nexo_broker::{Event, LocalBroker};
     use std::sync::Mutex;
     use tokio::sync::oneshot;
@@ -442,10 +440,7 @@ mod tests {
         ) -> anyhow::Result<(Uuid, u64)> {
             Ok((Uuid::nil(), 0))
         }
-        fn read_challenge(
-            &self,
-            _challenge_id: Uuid,
-        ) -> anyhow::Result<Option<PairingStatus>> {
+        fn read_challenge(&self, _challenge_id: Uuid) -> anyhow::Result<Option<PairingStatus>> {
             Ok(None)
         }
         fn cancel_challenge(&self, _challenge_id: Uuid) -> anyhow::Result<bool> {
@@ -470,7 +465,10 @@ mod tests {
             state: PairingState,
             data: PairingStatusData,
         ) -> anyhow::Result<bool> {
-            self.states.lock().unwrap().push((challenge_id, state, data));
+            self.states
+                .lock()
+                .unwrap()
+                .push((challenge_id, state, data));
             Ok(true)
         }
     }
@@ -548,14 +546,13 @@ mod tests {
         let responder_broker = broker.clone();
         let responder = tokio::spawn(async move {
             if let Some(event) = sub.next().await {
-                if let Some(reply_to) = event
-                    .payload
-                    .get("reply_to")
-                    .and_then(Value::as_str)
-                {
+                if let Some(reply_to) = event.payload.get("reply_to").and_then(Value::as_str) {
                     let reply = Message::new(reply_to, json!({ "ok": true, "result": {} }));
                     let _ = responder_broker
-                        .publish(reply_to, Event::new(reply_to.to_string(), "test", reply.payload))
+                        .publish(
+                            reply_to,
+                            Event::new(reply_to.to_string(), "test", reply.payload),
+                        )
                         .await;
                 }
             }
@@ -755,12 +752,27 @@ mod tests {
 
     #[test]
     fn parse_state_round_trip() {
-        assert!(matches!(parse_state("pending"), Some(PairingState::Pending)));
-        assert!(matches!(parse_state("qr_ready"), Some(PairingState::QrReady)));
-        assert!(matches!(parse_state("awaiting_user"), Some(PairingState::AwaitingUser)));
+        assert!(matches!(
+            parse_state("pending"),
+            Some(PairingState::Pending)
+        ));
+        assert!(matches!(
+            parse_state("qr_ready"),
+            Some(PairingState::QrReady)
+        ));
+        assert!(matches!(
+            parse_state("awaiting_user"),
+            Some(PairingState::AwaitingUser)
+        ));
         assert!(matches!(parse_state("linked"), Some(PairingState::Linked)));
-        assert!(matches!(parse_state("expired"), Some(PairingState::Expired)));
-        assert!(matches!(parse_state("cancelled"), Some(PairingState::Cancelled)));
+        assert!(matches!(
+            parse_state("expired"),
+            Some(PairingState::Expired)
+        ));
+        assert!(matches!(
+            parse_state("cancelled"),
+            Some(PairingState::Cancelled)
+        ));
         assert!(parse_state("nope").is_none());
         assert!(parse_state("").is_none());
     }

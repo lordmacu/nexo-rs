@@ -177,10 +177,12 @@ impl Poller for WebhookPoller {
         let account_id = cred
             .get("account_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| PollerError::Permanent(anyhow::anyhow!(
-                "credentials_get('{}') returned no `account_id`",
-                cfg.deliver.channel
-            )))?
+            .ok_or_else(|| {
+                PollerError::Permanent(anyhow::anyhow!(
+                    "credentials_get('{}') returned no `account_id`",
+                    cfg.deliver.channel
+                ))
+            })?
             .to_string();
         let topic = format!("plugin.outbound.{}.{}", cfg.deliver.channel, account_id);
 
@@ -202,9 +204,8 @@ impl Poller for WebhookPoller {
             }
             let text = render_template(&cfg.message_template, item);
             let payload = json!({ "to": cfg.deliver.to, "text": text });
-            let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
-                PollerError::Transient(anyhow::Error::from(e))
-            })?;
+            let payload_bytes = serde_json::to_vec(&payload)
+                .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
             ctx.host
                 .broker_publish(topic.clone(), payload_bytes)
                 .await

@@ -340,12 +340,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(format!("./data/workspace/{agent_id}")));
         if let Err(e) = spawn_oauth_once_subprocess(
-            &agent_id,
-            &cid_path,
-            &cs_path,
-            &tok_path,
-            &scopes,
-            /* device = */ true,
+            &agent_id, &cid_path, &cs_path, &tok_path, &scopes, /* device = */ true,
             &workspace,
         ) {
             println!("⚠  Device-code falló: {e}");
@@ -408,7 +403,10 @@ pub(crate) fn spawn_oauth_once_subprocess(
     if !status.success() {
         anyhow::bail!(
             "nexo-plugin-google exited with status {}",
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into()),
         );
     }
     Ok(())

@@ -631,12 +631,7 @@ async fn run_job_loop(tctx: TaskCtx) {
 /// Handle a `PollerError` from `tick`: classify, update breaker,
 /// persist state, and (when threshold hit) dispatch the failure
 /// alert.
-async fn handle_tick_error(
-    tctx: &TaskCtx,
-    err: PollerError,
-    next_run_at_ms: i64,
-    elapsed_ms: i64,
-) {
+async fn handle_tick_error(tctx: &TaskCtx, err: PollerError, next_run_at_ms: i64, elapsed_ms: i64) {
     let class = err.classify();
     let msg = err.to_string();
     let status_label = match class {
@@ -718,7 +713,10 @@ async fn send_failure_alert(
                 channel_static
             )
         })?;
-    let topic = format!("plugin.outbound.{channel_static}.{}", handle.account_id_raw());
+    let topic = format!(
+        "plugin.outbound.{channel_static}.{}",
+        handle.account_id_raw()
+    );
     let payload = json!({
         "to": target.to,
         "text": format!(
@@ -849,8 +847,7 @@ mod tests {
             ticks: Arc::clone(&ticks),
             next_outcome: Arc::new(Mutex::new(Ok(ack))),
         });
-        let runner =
-            PollerRunner::new(cfg, Arc::clone(&state), AnyBroker::local(), empty_creds());
+        let runner = PollerRunner::new(cfg, Arc::clone(&state), AnyBroker::local(), empty_creds());
         runner.register(mock);
         let _ = runner.run_once("a").await.unwrap();
         assert_eq!(ticks.load(Ordering::Relaxed), 1);

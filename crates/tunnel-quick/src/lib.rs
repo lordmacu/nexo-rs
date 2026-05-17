@@ -39,11 +39,11 @@ use cloudflare_quick_tunnel::{
 };
 use tokio::sync::Mutex;
 
-pub use cloudflare_quick_tunnel::{
-    QuickTunnelHandle, QuickTunnelManager, TunnelError, TunnelMetrics,
-};
 pub use cloudflare_quick_tunnel::manager::{
     DEFAULT_GRACE_PERIOD, DEFAULT_HANDSHAKE_TIMEOUT, MAX_RECONNECT_ATTEMPTS,
+};
+pub use cloudflare_quick_tunnel::{
+    QuickTunnelHandle, QuickTunnelManager, TunnelError, TunnelMetrics,
 };
 
 pub mod metrics;
@@ -231,8 +231,7 @@ impl TunnelManager {
             Ok(h) => h,
             Err(e) => {
                 metrics::record_start_failure(failure_reason_label(&e));
-                return Err(anyhow::Error::new(e)
-                    .context("cloudflare-quick-tunnel start failed"));
+                return Err(anyhow::Error::new(e).context("cloudflare-quick-tunnel start failed"));
             }
         };
         metrics::record_start_success();
@@ -261,7 +260,10 @@ mod tests {
         let prev = std::env::var_os("NEXO_HOME");
         std::env::set_var("NEXO_HOME", "/tmp/test-nexo-home");
         let p = url_state_path();
-        assert_eq!(p, std::path::PathBuf::from("/tmp/test-nexo-home/state/tunnel.url"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("/tmp/test-nexo-home/state/tunnel.url")
+        );
         if let Some(v) = prev {
             std::env::set_var("NEXO_HOME", v);
         } else {

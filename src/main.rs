@@ -1025,9 +1025,7 @@ fn seed_telegram_subprocess_env_for(
     let get_str = |key: &str| -> Option<String> {
         cfg.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
     };
-    let get_u64 = |key: &str| -> Option<u64> {
-        cfg.get(key).and_then(|v| v.as_u64())
-    };
+    let get_u64 = |key: &str| -> Option<u64> { cfg.get(key).and_then(|v| v.as_u64()) };
     let get_obj = |key: &str| -> Option<&V> { cfg.get(key) };
 
     if let Some(token) = get_str("token") {
@@ -1053,9 +1051,7 @@ fn seed_telegram_subprocess_env_for(
                 interval_ms.to_string(),
             );
         }
-        if let Some(offset_path) =
-            polling.get("offset_path").and_then(|v| v.as_str())
-        {
+        if let Some(offset_path) = polling.get("offset_path").and_then(|v| v.as_str()) {
             env.insert(
                 "NEXO_PLUGIN_TELEGRAM_OFFSET_PATH".into(),
                 offset_path.to_string(),
@@ -1081,7 +1077,10 @@ fn seed_telegram_subprocess_env_for(
         if enabled {
             env.insert("NEXO_PLUGIN_TELEGRAM_AUTO_TRANSCRIBE".into(), "true".into());
             if let Some(cmd) = at.get("command").and_then(|v| v.as_str()) {
-                env.insert("NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND".into(), cmd.to_string());
+                env.insert(
+                    "NEXO_PLUGIN_TELEGRAM_WHISPER_COMMAND".into(),
+                    cmd.to_string(),
+                );
             }
             if let Some(timeout_ms) = at.get("timeout_ms").and_then(|v| v.as_u64()) {
                 env.insert(
@@ -1251,9 +1250,7 @@ fn seed_whatsapp_subprocess_env_for(
                 "NEXO_PLUGIN_WHATSAPP_TRANSCRIBE_ENABLED".into(),
                 "true".into(),
             );
-            if let Some(timeout_ms) =
-                transcriber.get("timeout_ms").and_then(|v| v.as_u64())
-            {
+            if let Some(timeout_ms) = transcriber.get("timeout_ms").and_then(|v| v.as_u64()) {
                 env.insert(
                     "NEXO_PLUGIN_WHATSAPP_WHISPER_TIMEOUT_MS".into(),
                     timeout_ms.to_string(),
@@ -1275,10 +1272,7 @@ fn seed_whatsapp_subprocess_env_for(
 /// during the boot agent loop and never extended; reload picks up
 /// policy changes for EXISTING agents only.
 fn build_cron_bindings_from_snapshots(
-    snapshots: &dashmap::DashMap<
-        String,
-        Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
-    >,
+    snapshots: &dashmap::DashMap<String, Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>>,
     deps: &CronRebuildDeps,
 ) -> std::collections::HashMap<String, CronToolBindingContext> {
     let mut by_binding: std::collections::HashMap<String, CronToolBindingContext> =
@@ -1535,9 +1529,7 @@ fn register_instance_subprocess_factories<C>(
     broker_kind: &str,
     broker_url: &str,
     factory_registry: &mut nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry,
-    extra_subprocess_plugins: &mut Vec<
-        nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
-    >,
+    extra_subprocess_plugins: &mut Vec<nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin>,
     extract_label: impl Fn(&C) -> Option<String>,
     is_enabled: impl Fn(&C) -> bool,
     seed_env: impl Fn(&C, &str, &str) -> std::collections::HashMap<String, String>,
@@ -1563,9 +1555,8 @@ fn register_instance_subprocess_factories<C>(
             format!("{plugin_id}.{trimmed}")
         };
         let env = seed_env(&cfg, broker_kind, broker_url);
-        let synthetic = nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(
-            &base, trimmed,
-        );
+        let synthetic =
+            nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(&base, trimmed);
         let factory = nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
             synthetic.manifest.clone(),
             env,
@@ -2317,38 +2308,39 @@ async fn main() -> Result<()> {
     // `InMemoryPersonaAdmin` cell — running it twice is cheap
     // (just a fs walk + TOML parse per pack) and avoids reshuffling
     // the existing post-bootstrap registration block.
-    let persona_install_roots: Vec<std::path::PathBuf> = if cfg
-        .personas
-        .discovery
-        .search_paths
-        .is_empty()
-        || std::env::var("NEXO_DISABLE_BUNDLED_PERSONAS")
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
-            .unwrap_or(false)
-    {
-        tracing::info!(
-            paths = cfg.personas.discovery.search_paths.len(),
-            "persona admin-side pre-discovery skipped (empty search_paths or kill switch)"
-        );
-        Vec::new()
-    } else {
-        let roots: Vec<std::path::PathBuf> =
-            nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths)
-                .await
-                .into_iter()
-                .filter(|d| cfg.personas.discovery.id_passes_filters(&d.manifest.persona.id))
-                .map(|d| d.install_root)
-                .collect();
-        tracing::info!(
-            roots = roots.len(),
-            paths = cfg.personas.discovery.search_paths.len(),
-            "persona admin-side pre-discovery complete (AgentsYamlPatcher will scan these)"
-        );
-        for r in &roots {
-            tracing::info!(root = %r.display(), "persona root for admin RPC");
-        }
-        roots
-    };
+    let persona_install_roots: Vec<std::path::PathBuf> =
+        if cfg.personas.discovery.search_paths.is_empty()
+            || std::env::var("NEXO_DISABLE_BUNDLED_PERSONAS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "on" | "ON"))
+                .unwrap_or(false)
+        {
+            tracing::info!(
+                paths = cfg.personas.discovery.search_paths.len(),
+                "persona admin-side pre-discovery skipped (empty search_paths or kill switch)"
+            );
+            Vec::new()
+        } else {
+            let roots: Vec<std::path::PathBuf> =
+                nexo_persona_installer::discover_personas(&cfg.personas.discovery.search_paths)
+                    .await
+                    .into_iter()
+                    .filter(|d| {
+                        cfg.personas
+                            .discovery
+                            .id_passes_filters(&d.manifest.persona.id)
+                    })
+                    .map(|d| d.install_root)
+                    .collect();
+            tracing::info!(
+                roots = roots.len(),
+                paths = cfg.personas.discovery.search_paths.len(),
+                "persona admin-side pre-discovery complete (AgentsYamlPatcher will scan these)"
+            );
+            for r in &roots {
+                tracing::info!(root = %r.display(), "persona root for admin RPC");
+            }
+            roots
+        };
 
     // Single Arc<LlmRegistry> shared
     // between the admin bootstrap (used by LivePluginRestarter
@@ -2370,9 +2362,8 @@ async fn main() -> Result<()> {
     // in boot. Empty at construction; entries land after
     // `wire_plugin_registry` returns. Interior mutability makes
     // mid-flight registrations visible to in-flight dispatch.
-    let plugin_admin_router = std::sync::Arc::new(
-        nexo_pairing::plugin_admin::PluginAdminRouter::new(),
-    );
+    let plugin_admin_router =
+        std::sync::Arc::new(nexo_pairing::plugin_admin::PluginAdminRouter::new());
 
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
@@ -3228,7 +3219,10 @@ async fn main() -> Result<()> {
     // generic `[plugin.public_tunnel]` manifest section + daemon
     // iterator below (post-`wire_plugin_registry`).
     for wa_cfg in opaque_plugin_entries(&cfg.plugins, "whatsapp") {
-        let enabled = wa_cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let enabled = wa_cfg
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let instance_label = wa_cfg
             .get("instance")
             .and_then(|v| v.as_str())
@@ -3459,8 +3453,8 @@ async fn main() -> Result<()> {
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
                 .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         );
-        let broker_url = std::env::var("NEXO_BROKER_URL")
-            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_url =
+            std::env::var("NEXO_BROKER_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
         let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
         let outcome = register_instance_subprocess_factories(
             "telegram",
@@ -3505,8 +3499,8 @@ async fn main() -> Result<()> {
             &semver::Version::parse(env!("CARGO_PKG_VERSION"))
                 .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         );
-        let broker_url = std::env::var("NEXO_BROKER_URL")
-            .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_url =
+            std::env::var("NEXO_BROKER_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
         let broker_kind = subprocess_broker_kind_str(cfg.broker.broker.kind);
         let outcome = register_instance_subprocess_factories(
             "whatsapp",
@@ -3521,11 +3515,7 @@ async fn main() -> Result<()> {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
             },
-            |c| {
-                c.get("enabled")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true)
-            },
+            |c| c.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
             seed_whatsapp_subprocess_env_for,
             "81.18.b.2",
         );
@@ -3762,11 +3752,7 @@ async fn main() -> Result<()> {
             lifecycle: poller_sec.lifecycle,
             max_concurrent_ticks: poller_sec.max_concurrent_ticks,
             tick_timeout: std::time::Duration::from_secs(poller_sec.tick_timeout_secs),
-            entrypoint_command: manifest
-                .plugin
-                .entrypoint
-                .command
-                .clone(),
+            entrypoint_command: manifest.plugin.entrypoint.command.clone(),
         };
         match plugin_poller_router.register(new_handle) {
             Ok(()) => tracing::info!(
@@ -3823,18 +3809,14 @@ async fn main() -> Result<()> {
                     continue;
                 }
             };
-            let broker_trigger =
-                nexo_core::agent::admin_rpc::BrokerPairingTrigger::new(
-                    adapter.channel_id.clone(),
-                    broker.clone(),
-                    trigger_section,
-                    &admin_section.method_prefix,
-                    &admin_section.broker_topic_prefix,
-                );
-            pairing_triggers.insert(
+            let broker_trigger = nexo_core::agent::admin_rpc::BrokerPairingTrigger::new(
                 adapter.channel_id.clone(),
-                Arc::new(broker_trigger),
+                broker.clone(),
+                trigger_section,
+                &admin_section.method_prefix,
+                &admin_section.broker_topic_prefix,
             );
+            pairing_triggers.insert(adapter.channel_id.clone(), Arc::new(broker_trigger));
             tracing::info!(
                 plugin = %plugin_id,
                 channel = %adapter.channel_id,
@@ -4071,52 +4053,52 @@ async fn main() -> Result<()> {
     //   4) start runner (spawns one tokio task per job)
     // Failure at any step logs + skips: the daemon keeps running for
     // the rest of the agents.
-    let pollers_runner: Option<Arc<nexo_poller::PollerRunner>> =
-        match (cfg.pollers.clone(), credentials.as_ref().map(Arc::clone)) {
-            (Some(pcfg), Some(bundle)) if pcfg.enabled => {
-                let state_db = std::path::PathBuf::from(&pcfg.state_db);
-                match nexo_poller::PollState::open(&state_db).await {
-                    Ok(state) => {
-                        // Feed the LLM registry + config into
-                        // the runner so the `agent_turn` built-in can build
-                        // clients on demand. Other built-ins (gmail, rss,
-                        // webhook) ignore the field — wiring it
-                        // unconditionally keeps the boot path uniform.
-                        let runner = Arc::new(
-                            nexo_poller::PollerRunner::new(
-                                pcfg,
-                                Arc::new(state),
-                                broker.clone(),
-                                bundle,
-                            )
-                            .with_llm(
-                                Arc::new(LlmRegistry::with_builtins()),
-                                Arc::new(cfg.llm.clone()),
-                            ),
-                        );
-                        nexo_poller::builtins::register_all(&runner);
+    let pollers_runner: Option<Arc<nexo_poller::PollerRunner>> = match (
+        cfg.pollers.clone(),
+        credentials.as_ref().map(Arc::clone),
+    ) {
+        (Some(pcfg), Some(bundle)) if pcfg.enabled => {
+            let state_db = std::path::PathBuf::from(&pcfg.state_db);
+            match nexo_poller::PollState::open(&state_db).await {
+                Ok(state) => {
+                    // Feed the LLM registry + config into
+                    // the runner so the `agent_turn` built-in can build
+                    // clients on demand. Other built-ins (gmail, rss,
+                    // webhook) ignore the field — wiring it
+                    // unconditionally keeps the boot path uniform.
+                    let runner = Arc::new(
+                        nexo_poller::PollerRunner::new(
+                            pcfg,
+                            Arc::new(state),
+                            broker.clone(),
+                            bundle,
+                        )
+                        .with_llm(
+                            Arc::new(LlmRegistry::with_builtins()),
+                            Arc::new(cfg.llm.clone()),
+                        ),
+                    );
+                    nexo_poller::builtins::register_all(&runner);
 
-                        // Phase 96.7 — register one PluginPollerProxy
-                        // per (handle, kind) from the router so every
-                        // subprocess-served kind shows up in the
-                        // runner's kind registry. Multi-kind plugins
-                        // produce one proxy per kind sharing the same
-                        // handle Arc (per-tick broker RPC).
-                        let mut plugin_poller_count = 0usize;
-                        for (plugin_id, handle) in wire.plugin_handles.iter() {
-                            if let Some(_poller_sec) = handle.manifest().plugin.poller.as_ref() {
-                                if let Some(h) = plugin_poller_router
-                                    .handles_for_plugin(plugin_id)
-                                {
-                                    for kind in &h.kinds {
-                                        let leaked: &'static str =
-                                            Box::leak(kind.clone().into_boxed_str());
-                                        // Phase 96.E — branch on lifecycle.
-                                        // `long_lived` plugins receive ticks
-                                        // via broker JSON-RPC + reverse-RPC
-                                        // for host calls. `ephemeral` plugins
-                                        // are spawned per tick over stdio.
-                                        match h.lifecycle {
+                    // Phase 96.7 — register one PluginPollerProxy
+                    // per (handle, kind) from the router so every
+                    // subprocess-served kind shows up in the
+                    // runner's kind registry. Multi-kind plugins
+                    // produce one proxy per kind sharing the same
+                    // handle Arc (per-tick broker RPC).
+                    let mut plugin_poller_count = 0usize;
+                    for (plugin_id, handle) in wire.plugin_handles.iter() {
+                        if let Some(_poller_sec) = handle.manifest().plugin.poller.as_ref() {
+                            if let Some(h) = plugin_poller_router.handles_for_plugin(plugin_id) {
+                                for kind in &h.kinds {
+                                    let leaked: &'static str =
+                                        Box::leak(kind.clone().into_boxed_str());
+                                    // Phase 96.E — branch on lifecycle.
+                                    // `long_lived` plugins receive ticks
+                                    // via broker JSON-RPC + reverse-RPC
+                                    // for host calls. `ephemeral` plugins
+                                    // are spawned per tick over stdio.
+                                    match h.lifecycle {
                                             nexo_plugin_manifest::poller::PollerLifecycle::LongLived => {
                                                 let proxy = nexo_pairing::plugin_poller::PluginPollerProxy::new(
                                                     leaked,
@@ -4141,95 +4123,94 @@ async fn main() -> Result<()> {
                                                 runner.register(std::sync::Arc::new(proxy));
                                             }
                                         }
-                                        plugin_poller_count += 1;
-                                    }
+                                    plugin_poller_count += 1;
                                 }
                             }
-                        }
-                        if plugin_poller_count > 0 {
-                            tracing::info!(
-                                count = plugin_poller_count,
-                                "plugin v2 poller proxies registered (Phase 96.7)",
-                            );
-
-                            // Reverse-RPC handler: subprocess pollers
-                            // call back to the daemon for credential
-                            // resolution, log/metric forwarding, and
-                            // LLM invocation. One subscriber per
-                            // plugin id; replies use the message's
-                            // own `reply_to` topic.
-                            for (plugin_id, _handle) in wire.plugin_handles.iter() {
-                                if _handle.manifest().plugin.poller.is_none() {
-                                    continue;
-                                }
-                                let topic = format!("daemon.rpc.{}", plugin_id);
-                                let broker_clone = broker.clone();
-                                let creds_clone = Arc::clone(&runner.credentials());
-                                let llm_registry = Arc::new(LlmRegistry::with_builtins());
-                                let llm_config = Arc::new(cfg.llm.clone());
-                                let plugin_id_owned = plugin_id.clone();
-                                tokio::spawn(async move {
-                                    spawn_poller_reverse_rpc_subscriber(
-                                        plugin_id_owned,
-                                        topic,
-                                        broker_clone,
-                                        creds_clone,
-                                        llm_registry,
-                                        llm_config,
-                                    )
-                                    .await;
-                                });
-                            }
-                        }
-
-                        // Register extension-provided
-                        // pollers. Walk every loaded stdio extension and
-                        // bridge each declared `kind` into the runner via
-                        // ExtensionPoller. Lets operators ship a poller in
-                        // any language without touching Rust.
-                        let mut ext_poller_count = 0usize;
-                        for (rt, cand) in &extension_runtimes {
-                            let kinds = &cand.manifest.capabilities.pollers;
-                            if !kinds.is_empty() {
-                                let n =
-                                    nexo_poller_ext::register_for_runtime(&runner, rt, kinds).await;
-                                ext_poller_count += n;
-                                tracing::info!(
-                                    ext = %cand.manifest.id(),
-                                    kinds = ?kinds,
-                                    "extension pollers registered"
-                                );
-                            }
-                        }
-                        if ext_poller_count > 0 {
-                            tracing::info!(count = ext_poller_count, "extension pollers ready");
-                        }
-
-                        if let Err(e) = runner.start().await {
-                            tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
-                            None
-                        } else {
-                            Some(runner)
                         }
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            path = %state_db.display(),
-                            error = %format!("{e:#}"),
-                            "pollers: failed to open state DB"
+                    if plugin_poller_count > 0 {
+                        tracing::info!(
+                            count = plugin_poller_count,
+                            "plugin v2 poller proxies registered (Phase 96.7)",
                         );
+
+                        // Reverse-RPC handler: subprocess pollers
+                        // call back to the daemon for credential
+                        // resolution, log/metric forwarding, and
+                        // LLM invocation. One subscriber per
+                        // plugin id; replies use the message's
+                        // own `reply_to` topic.
+                        for (plugin_id, _handle) in wire.plugin_handles.iter() {
+                            if _handle.manifest().plugin.poller.is_none() {
+                                continue;
+                            }
+                            let topic = format!("daemon.rpc.{}", plugin_id);
+                            let broker_clone = broker.clone();
+                            let creds_clone = Arc::clone(&runner.credentials());
+                            let llm_registry = Arc::new(LlmRegistry::with_builtins());
+                            let llm_config = Arc::new(cfg.llm.clone());
+                            let plugin_id_owned = plugin_id.clone();
+                            tokio::spawn(async move {
+                                spawn_poller_reverse_rpc_subscriber(
+                                    plugin_id_owned,
+                                    topic,
+                                    broker_clone,
+                                    creds_clone,
+                                    llm_registry,
+                                    llm_config,
+                                )
+                                .await;
+                            });
+                        }
+                    }
+
+                    // Register extension-provided
+                    // pollers. Walk every loaded stdio extension and
+                    // bridge each declared `kind` into the runner via
+                    // ExtensionPoller. Lets operators ship a poller in
+                    // any language without touching Rust.
+                    let mut ext_poller_count = 0usize;
+                    for (rt, cand) in &extension_runtimes {
+                        let kinds = &cand.manifest.capabilities.pollers;
+                        if !kinds.is_empty() {
+                            let n = nexo_poller_ext::register_for_runtime(&runner, rt, kinds).await;
+                            ext_poller_count += n;
+                            tracing::info!(
+                                ext = %cand.manifest.id(),
+                                kinds = ?kinds,
+                                "extension pollers registered"
+                            );
+                        }
+                    }
+                    if ext_poller_count > 0 {
+                        tracing::info!(count = ext_poller_count, "extension pollers ready");
+                    }
+
+                    if let Err(e) = runner.start().await {
+                        tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
                         None
+                    } else {
+                        Some(runner)
                     }
                 }
+                Err(e) => {
+                    tracing::error!(
+                        path = %state_db.display(),
+                        error = %format!("{e:#}"),
+                        "pollers: failed to open state DB"
+                    );
+                    None
+                }
             }
-            (Some(pcfg), None) if pcfg.enabled => {
-                tracing::warn!(
+        }
+        (Some(pcfg), None) if pcfg.enabled => {
+            tracing::warn!(
                 "pollers: skipped — credential gauntlet failed earlier so no resolver is available"
             );
-                None
-            }
-            _ => None,
-        };
+            None
+        }
+        _ => None,
+    };
 
     let _admin_handle = tokio::spawn(run_admin_server(
         Arc::clone(&tool_policy_registry),
@@ -5038,9 +5019,8 @@ async fn main() -> Result<()> {
     // lock. Wrapping in `Arc` up-front (vs after the loop)
     // collapses two binding sites the cron post-hook + reload
     // coordinator clone from.
-    let tools_per_agent: Arc<
-        dashmap::DashMap<String, Arc<nexo_core::agent::ToolRegistry>>,
-    > = Arc::new(dashmap::DashMap::new());
+    let tools_per_agent: Arc<dashmap::DashMap<String, Arc<nexo_core::agent::ToolRegistry>>> =
+        Arc::new(dashmap::DashMap::new());
     let agent_snapshot_handles: Arc<
         dashmap::DashMap<String, Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>>,
     > = Arc::new(dashmap::DashMap::new());
@@ -6267,14 +6247,10 @@ async fn main() -> Result<()> {
         {
             let defs = tools.to_tool_defs();
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-            nexo_core::agent::spawn::validate_agent_config(
-                &agent_cfg,
-                &cfg.plugins,
-                &names,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e)
-            })?;
+            nexo_core::agent::spawn::validate_agent_config(&agent_cfg, &cfg.plugins, &names)
+                .map_err(|e| {
+                    anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e)
+                })?;
         }
 
         // Cron binding contexts are now built in a single
@@ -6841,41 +6817,39 @@ async fn main() -> Result<()> {
     // would publish `events.runtime.agent.spawned` to a `None`
     // broker (silently dropped).
     let pending_spawner = {
-    // Phase 81.32 c7.b — install the spawner closure invoked by
-    // `ConfigReloadCoordinator` when an unknown agent id appears
-    // in `agents.yaml` (typical: wizard creates a new agent).
-    //
-    // MINIMAL-MODE body: registers only `DelegationTool` in the
-    // per-agent ToolRegistry. The agent receives inbound messages
-    // via the runtime's broker subscribers (full functionality) but
-    // outbound channel/plugin tools (channel_send, whatsapp_*,
-    // telegram_*, email_*, browser_*, mcp.*) require a daemon
-    // restart for full parity. Operators see a WARN line with this
-    // limitation on every hot-spawn. Closing the parity gap is
-    // tracked as Phase 81.32 c7.c follow-up (will lift the
-    // ~865-LOC tools registry build from the boot loop body into
-    // a `build_per_agent_tools` helper).
-    //
-    // Captures: every per-agent runtime dependency the boot loop
-    // body uses. Cloned ONCE into outer-scope locals before the
-    // closure construction so the move-into-closure cost is paid
-    // upfront and the per-spawn `.clone()` chain inside the
-    // closure body keeps each invocation cheap (every field is
-    // Arc-cloned, not deep-copied).
-    let llm_cfg_for_spawn = Arc::new(cfg.llm.clone());
-    // Phase 93.5.e — Arc-share the whole `PluginsConfig` instead
-    // of cloning a typed `Vec<TelegramPluginConfig>`. The
-    // spawn-time validator now walks `plugins.instances_for(id)`
-    // so any array-shape plugin participates without daemon-side
-    // typed access.
-    let plugins_for_spawn = Arc::new(cfg.plugins.clone());
+        // Phase 81.32 c7.b — install the spawner closure invoked by
+        // `ConfigReloadCoordinator` when an unknown agent id appears
+        // in `agents.yaml` (typical: wizard creates a new agent).
+        //
+        // MINIMAL-MODE body: registers only `DelegationTool` in the
+        // per-agent ToolRegistry. The agent receives inbound messages
+        // via the runtime's broker subscribers (full functionality) but
+        // outbound channel/plugin tools (channel_send, whatsapp_*,
+        // telegram_*, email_*, browser_*, mcp.*) require a daemon
+        // restart for full parity. Operators see a WARN line with this
+        // limitation on every hot-spawn. Closing the parity gap is
+        // tracked as Phase 81.32 c7.c follow-up (will lift the
+        // ~865-LOC tools registry build from the boot loop body into
+        // a `build_per_agent_tools` helper).
+        //
+        // Captures: every per-agent runtime dependency the boot loop
+        // body uses. Cloned ONCE into outer-scope locals before the
+        // closure construction so the move-into-closure cost is paid
+        // upfront and the per-spawn `.clone()` chain inside the
+        // closure body keeps each invocation cheap (every field is
+        // Arc-cloned, not deep-copied).
+        let llm_cfg_for_spawn = Arc::new(cfg.llm.clone());
+        // Phase 93.5.e — Arc-share the whole `PluginsConfig` instead
+        // of cloning a typed `Vec<TelegramPluginConfig>`. The
+        // spawn-time validator now walks `plugins.instances_for(id)`
+        // so any array-shape plugin participates without daemon-side
+        // typed access.
+        let plugins_for_spawn = Arc::new(cfg.plugins.clone());
         use nexo_core::agent::spawn::{
             assemble_agent_runtime, resolve_llm_client, validate_agent_config, AgentSpawnerFn,
             RuntimeAssemblyDeps, SpawnError, SpawnedAgent,
         };
-        use nexo_core::agent::{
-            Agent, DelegationTool, LlmAgentBehavior, ToolRegistry,
-        };
+        use nexo_core::agent::{Agent, DelegationTool, LlmAgentBehavior, ToolRegistry};
 
         let broker_c = broker.clone();
         let sessions_c = Arc::clone(&sessions);
@@ -7221,8 +7195,7 @@ async fn main() -> Result<()> {
                 validate_agent_config(&cfg, &plugins, &known_tool_names)?;
 
                 // 4. Behavior + Agent.
-                let behavior =
-                    LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools));
+                let behavior = LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools));
                 let agent_cfg = cfg.clone();
                 let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
@@ -7278,7 +7251,11 @@ async fn main() -> Result<()> {
                 let reload_tx = runtime.reload_sender();
                 let snapshot_handle = runtime.snapshot_handle();
                 let known_tools: Arc<Vec<String>> = Arc::new(
-                    tools.to_tool_defs().iter().map(|d| d.name.clone()).collect(),
+                    tools
+                        .to_tool_defs()
+                        .iter()
+                        .map(|d| d.name.clone())
+                        .collect(),
                 );
 
                 // 8. Insert into shared DashMaps so the cron
@@ -7375,11 +7352,11 @@ async fn main() -> Result<()> {
                     .get(&primary_id)
                     .map(|r| Arc::clone(r.value()))
                     .ok_or_else(|| {
-                    anyhow::anyhow!(
+                        anyhow::anyhow!(
                         "mcp_server.daemon_embed: primary agent `{}` not in tools_per_agent map",
                         primary_id
                     )
-                })?;
+                    })?;
                 let primary_cfg_arc = Arc::new(primary_cfg);
                 let primary_ctx = nexo_core::agent::AgentContext::new(
                     primary_id.clone(),
@@ -10688,7 +10665,9 @@ async fn run_admin_via_plugin(
                  you start the daemon (`nexo start`)."
             );
         }
-        println!("Bringing up a Cloudflare quick tunnel (pure-Rust, no `cloudflared` subprocess) …");
+        println!(
+            "Bringing up a Cloudflare quick tunnel (pure-Rust, no `cloudflared` subprocess) …"
+        );
         match nexo_tunnel::TunnelManager::new(port).start().await {
             Ok(handle) => {
                 let public = handle.url.clone();
@@ -14186,11 +14165,10 @@ async fn start_mcp_autonomous_worker(
     outbound = outbound
         .with_translator(Box::new(EmailTranslator))
         .with_translator(Box::new(TelegramTranslator));
-    outbound = outbound.with_translator(Box::new(
-        nexo_setup::admin_adapters::WhatsAppTranslator,
-    ));
-    let outbound: Arc<dyn nexo_core::agent::admin_rpc::channel_outbound::ChannelOutboundDispatcher> =
-        Arc::new(outbound);
+    outbound = outbound.with_translator(Box::new(nexo_setup::admin_adapters::WhatsAppTranslator));
+    let outbound: Arc<
+        dyn nexo_core::agent::admin_rpc::channel_outbound::ChannelOutboundDispatcher,
+    > = Arc::new(outbound);
 
     let worker_tools = Arc::new(ToolRegistry::new());
     worker_tools.register(
@@ -15146,8 +15124,7 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     // the daemon switches automatically: the direct call above
     // skips + this scrape line takes over.
     body.push_str(
-        &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics)
-            .await,
+        &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics).await,
     );
     // Phase 92.followup.b — surface tunnel lifecycle counters
     // (`tunnel_starts_total`, `tunnel_starts_failed_total`,
@@ -15221,34 +15198,21 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
                 let content_type = reply
                     .header("Content-Type")
                     .unwrap_or("application/octet-stream");
-                write_http_response_bytes(
-                    &mut stream,
-                    reply.status,
-                    content_type,
-                    &body,
-                )
-                .await?;
+                write_http_response_bytes(&mut stream, reply.status, content_type, &body).await?;
                 return Ok(());
             }
             Err(err) => {
                 tracing::warn!(plugin = %plugin_id, error = %err, path = %parsed.path, "plugin HTTP forward failed");
                 let (status, body) = match &err {
-                    nexo_pairing::plugin_http::PluginHttpForwardError::Broker(_) => (
-                        504,
-                        r#"{"error":"plugin gateway timeout"}"#,
-                    ),
-                    nexo_pairing::plugin_http::PluginHttpForwardError::ParseReply(_) => (
-                        502,
-                        r#"{"error":"plugin reply malformed"}"#,
-                    ),
+                    nexo_pairing::plugin_http::PluginHttpForwardError::Broker(_) => {
+                        (504, r#"{"error":"plugin gateway timeout"}"#)
+                    }
+                    nexo_pairing::plugin_http::PluginHttpForwardError::ParseReply(_) => {
+                        (502, r#"{"error":"plugin reply malformed"}"#)
+                    }
                 };
-                write_http_response(
-                    &mut stream,
-                    status,
-                    "application/json; charset=utf-8",
-                    body,
-                )
-                .await?;
+                write_http_response(&mut stream, status, "application/json; charset=utf-8", body)
+                    .await?;
                 return Ok(());
             }
         }
@@ -15264,7 +15228,6 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
     // flow should migrate to the admin-ui plugin's pairing
     // wizard (driven by admin RPC `pairing/start` —
     // `WhatsappPairingTrigger` is unaffected).
-
 
     match path.as_str() {
         "/health" => {
@@ -15438,8 +15401,7 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<ParsedHttpR
         Some(idx) => (&buf[..idx], buf[idx + 4..].to_vec()),
         None => (buf.as_slice(), Vec::new()),
     };
-    let header_str =
-        std::str::from_utf8(header_bytes).context("invalid request header utf8")?;
+    let header_str = std::str::from_utf8(header_bytes).context("invalid request header utf8")?;
     let mut lines = header_str.lines();
     let request_line = lines.next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
@@ -15452,7 +15414,10 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<ParsedHttpR
     let mut headers = Vec::new();
     for line in lines {
         if let Some(i) = line.find(':') {
-            headers.push((line[..i].trim().to_string(), line[i + 1..].trim().to_string()));
+            headers.push((
+                line[..i].trim().to_string(),
+                line[i + 1..].trim().to_string(),
+            ));
         }
     }
     Ok(ParsedHttpRequest {
@@ -15952,12 +15917,7 @@ fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
         match plugin_id.as_str() {
             "whatsapp" => {
                 // Wave 7 — opaque entries.
-                for (i, inst) in cfg
-                    .plugins
-                    .instances_for("whatsapp")
-                    .iter()
-                    .enumerate()
-                {
+                for (i, inst) in cfg.plugins.instances_for("whatsapp").iter().enumerate() {
                     println!("  • whatsapp[{i}] (instance={inst})");
                 }
             }
@@ -16094,8 +16054,15 @@ async fn spawn_poller_reverse_rpc_subscriber(
             }
         };
         let body = msg.payload;
-        let method = body.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let params = body.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let method = body
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let params = body
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let agent_id_field = body
             .get("agent_id")
             .and_then(|v| v.as_str())
@@ -16118,9 +16085,7 @@ async fn spawn_poller_reverse_rpc_subscriber(
                 );
                 Ok(serde_json::json!({}))
             }
-            "llm_invoke" => {
-                handle_llm_invoke(&llm_registry, &llm_config, params.clone()).await
-            }
+            "llm_invoke" => handle_llm_invoke(&llm_registry, &llm_config, params.clone()).await,
             other => Err((-32601, format!("method not found: {other}"))),
         };
         let reply_payload = match result {
@@ -16285,12 +16250,11 @@ async fn handle_llm_invoke(
             return Err((-32602, "llm_invoke: tool calls not supported".into()))
         }
     };
-    let usage = (resp.usage.prompt_tokens > 0 || resp.usage.completion_tokens > 0).then_some(
-        LlmUsage {
+    let usage =
+        (resp.usage.prompt_tokens > 0 || resp.usage.completion_tokens > 0).then_some(LlmUsage {
             input_tokens: resp.usage.prompt_tokens,
             output_tokens: resp.usage.completion_tokens,
-        },
-    );
+        });
     Ok(serde_json::to_value(LlmInvokeResponse {
         content: text,
         model_id: req.model,
@@ -16588,10 +16552,7 @@ mod tests {
         let cfg_map = cfg.as_mapping_mut().expect("mapping root");
         cfg_map.insert(
             serde_yaml::Value::String("transcriber".into()),
-            serde_yaml::from_str(
-                "enabled: true\nskill: \"whisper\"\ntimeout_ms: 30000\n",
-            )
-            .unwrap(),
+            serde_yaml::from_str("enabled: true\nskill: \"whisper\"\ntimeout_ms: 30000\n").unwrap(),
         );
         let env_on = seed_whatsapp_subprocess_env_for(&cfg, "nats", "nats://x");
         assert_eq!(
@@ -16883,7 +16844,8 @@ mcp_server:
             pairing_policy: serde_json::Value::Null,
             language: None,
 
-            locale_prompts: Default::default(),            outbound_allowlist: OutboundAllowlistConfig::default(),
+            locale_prompts: Default::default(),
+            outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),

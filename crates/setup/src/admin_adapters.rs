@@ -5584,9 +5584,8 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for L
 #[derive(Clone)]
 pub struct PairingChannelsReaderImpl {
     handles_cell: SharedPluginHandles,
-    credentials: std::sync::Arc<
-        dyn nexo_core::agent::admin_rpc::domains::credentials::CredentialStore,
-    >,
+    credentials:
+        std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::credentials::CredentialStore>,
 }
 
 impl std::fmt::Debug for PairingChannelsReaderImpl {
@@ -5714,10 +5713,7 @@ impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsRead
             // only when the plugin actually declared it. Empty
             // string is treated as None so the admin falls back to
             // its literal `"instance"` default.
-            let instance_field = pairing
-                .instance_field
-                .clone()
-                .filter(|s| !s.is_empty());
+            let instance_field = pairing.instance_field.clone().filter(|s| !s.is_empty());
 
             channels.push(PairingChannelInfo {
                 channel: plugin_id.clone(),
@@ -5826,15 +5822,12 @@ mod pairing_channels_adapter_tests {
         }
     }
 
-    async fn build_handles(
-        plugins: Vec<(&str, PluginManifest)>,
-    ) -> SharedPluginHandles {
+    async fn build_handles(plugins: Vec<(&str, PluginManifest)>) -> SharedPluginHandles {
         let cell = shared_plugin_handles_cell();
         let mut map = std::collections::BTreeMap::new();
         for (id, manifest) in plugins {
-            let plugin: std::sync::Arc<
-                dyn nexo_core::agent::plugin_host::NexoPlugin,
-            > = std::sync::Arc::new(ManifestOnlyPlugin { manifest });
+            let plugin: std::sync::Arc<dyn nexo_core::agent::plugin_host::NexoPlugin> =
+                std::sync::Arc::new(ManifestOnlyPlugin { manifest });
             map.insert(id.to_string(), plugin);
         }
         *cell.write().await = Some(std::sync::Arc::new(map));
@@ -6078,14 +6071,12 @@ impl FilesystemPersonaStore {
     /// Read the agent block from the located yaml file as a
     /// raw serde_yaml mapping. Used to extract `workspace`,
     /// `system_prompt`, `locale_prompts`, `language`.
-    fn read_agent_yaml(
-        &self,
-        file: &Path,
-        agent_id: &str,
-    ) -> Option<serde_yaml::Value> {
+    fn read_agent_yaml(&self, file: &Path, agent_id: &str) -> Option<serde_yaml::Value> {
         let text = std::fs::read_to_string(file).ok()?;
         let root: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-        let seq = root.get("agents").and_then(serde_yaml::Value::as_sequence)?;
+        let seq = root
+            .get("agents")
+            .and_then(serde_yaml::Value::as_sequence)?;
         seq.iter()
             .find(|it| it.get("id").and_then(serde_yaml::Value::as_str) == Some(agent_id))
             .cloned()
@@ -6175,9 +6166,9 @@ impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemP
             PersonaSnapshotReader, PersonaStoreError,
         };
 
-        let file = self.find_agent_file(&req.agent_id).ok_or_else(|| {
-            PersonaStoreError::NotFound(req.agent_id.clone())
-        })?;
+        let file = self
+            .find_agent_file(&req.agent_id)
+            .ok_or_else(|| PersonaStoreError::NotFound(req.agent_id.clone()))?;
         let agent_yaml = self
             .read_agent_yaml(&file, &req.agent_id)
             .ok_or_else(|| PersonaStoreError::NotFound(req.agent_id.clone()))?;
@@ -6262,22 +6253,22 @@ impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemP
         }
 
         let refreshed = self.read_locales(&req.agent_id).await.unwrap_or_default();
-        Ok(nexo_tool_meta::admin::persona::PersonaSaveLocalizedResponse {
-            written_paths: written
-                .into_iter()
-                .map(|p| p.display().to_string())
-                .collect(),
-            persona_locales: refreshed,
-        })
+        Ok(
+            nexo_tool_meta::admin::persona::PersonaSaveLocalizedResponse {
+                written_paths: written
+                    .into_iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                persona_locales: refreshed,
+            },
+        )
     }
 }
 
 #[cfg(test)]
 mod persona_store_tests {
     use super::*;
-    use nexo_core::agent::admin_rpc::domains::persona::{
-        PersonaSnapshotReader, PersonaStore,
-    };
+    use nexo_core::agent::admin_rpc::domains::persona::{PersonaSnapshotReader, PersonaStore};
     use nexo_tool_meta::admin::persona::PersonaSaveLocalizedRequest;
 
     fn write_agents_yaml(dir: &Path, body: &str) -> PathBuf {
@@ -6291,16 +6282,8 @@ mod persona_store_tests {
         let dir = tempfile::tempdir().unwrap();
         // workspace lives under config_dir for simplicity
         std::fs::create_dir_all(dir.path().join("ws/ana")).unwrap();
-        std::fs::write(
-            dir.path().join("ws/ana/IDENTITY.md"),
-            "default identity",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("ws/ana/IDENTITY.es.md"),
-            "ana identidad",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("ws/ana/IDENTITY.md"), "default identity").unwrap();
+        std::fs::write(dir.path().join("ws/ana/IDENTITY.es.md"), "ana identidad").unwrap();
         write_agents_yaml(
             dir.path(),
             r#"agents:
@@ -6342,10 +6325,7 @@ mod persona_store_tests {
         )
         .unwrap();
 
-        let store = FilesystemPersonaStore::new(
-            dir.path().to_path_buf(),
-            vec![persona.clone()],
-        );
+        let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![persona.clone()]);
         let locales = store.read_locales("cody").await.expect("some");
         assert_eq!(locales.available, vec!["en"]);
         assert_eq!(locales.snapshots[0].snapshot.identity, "cody identity");
@@ -6454,7 +6434,10 @@ mod persona_store_tests {
         // (The workspace dir IS writable since it sits under the
         // root which we chmod'd back; check after restore.)
         let ws = dir.path().join("ws/ana");
-        assert!(!ws.join("IDENTITY.es.md").exists(), "IDENTITY.es.md left behind");
+        assert!(
+            !ws.join("IDENTITY.es.md").exists(),
+            "IDENTITY.es.md left behind"
+        );
         assert!(!ws.join("SOUL.es.md").exists());
         assert!(!ws.join("USER.es.md").exists());
         assert!(!ws.join("AGENTS.es.md").exists());
@@ -6463,10 +6446,7 @@ mod persona_store_tests {
     #[tokio::test]
     async fn save_localized_rejects_invalid_locale() {
         let dir = tempfile::tempdir().unwrap();
-        write_agents_yaml(
-            dir.path(),
-            "agents:\n  - id: ana\n    system_prompt: t\n",
-        );
+        write_agents_yaml(dir.path(), "agents:\n  - id: ana\n    system_prompt: t\n");
         let store = FilesystemPersonaStore::new(dir.path().to_path_buf(), vec![]);
         let err = store
             .save_localized(PersonaSaveLocalizedRequest {

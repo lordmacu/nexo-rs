@@ -58,10 +58,7 @@ pub trait PollerHost: Send + Sync + 'static {
     /// Returns the assistant response as a flat string plus usage.
     /// Pollers requiring structured/streaming output should compose
     /// their own logic over this primitive.
-    async fn llm_invoke(
-        &self,
-        request: LlmInvokeRequest,
-    ) -> Result<LlmInvokeResponse, HostError>;
+    async fn llm_invoke(&self, request: LlmInvokeRequest) -> Result<LlmInvokeResponse, HostError>;
 }
 
 /// What `PollerHost` operations can fail with. Pollers map these into
@@ -260,10 +257,7 @@ mod tests {
 
     #[test]
     fn log_level_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&LogLevel::Warn).unwrap(),
-            "\"warn\""
-        );
+        assert_eq!(serde_json::to_string(&LogLevel::Warn).unwrap(), "\"warn\"");
     }
 
     #[test]
@@ -299,6 +293,9 @@ mod tests {
             usage: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(!json.contains("usage"), "None usage should be omitted: {json}");
+        assert!(
+            !json.contains("usage"),
+            "None usage should be omitted: {json}"
+        );
     }
 }

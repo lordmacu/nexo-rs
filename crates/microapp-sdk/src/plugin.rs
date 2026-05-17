@@ -168,10 +168,7 @@ pub trait ConfigureHandler: Send + Sync + 'static {
     /// Hook called with the operator-supplied YAML slice. Return
     /// `Ok(())` to accept; `Err(msg)` maps to a JSON-RPC `-32603`
     /// error reply.
-    fn handle(
-        &self,
-        value: serde_yaml::Value,
-    ) -> BoxFuture<'static, Result<(), String>>;
+    fn handle(&self, value: serde_yaml::Value) -> BoxFuture<'static, Result<(), String>>;
 }
 
 impl<F, Fut> ConfigureHandler for F
@@ -179,10 +176,7 @@ where
     F: Fn(serde_yaml::Value) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<(), String>> + Send + 'static,
 {
-    fn handle(
-        &self,
-        value: serde_yaml::Value,
-    ) -> BoxFuture<'static, Result<(), String>> {
+    fn handle(&self, value: serde_yaml::Value) -> BoxFuture<'static, Result<(), String>> {
         Box::pin((self)(value))
     }
 }
@@ -1569,9 +1563,8 @@ where
                 if let Some(handler) = &adapter.on_credentials_list {
                     match handler.handle().await {
                         Ok(reply) => {
-                            let value = serde_json::to_value(&reply).unwrap_or_else(|_| {
-                                json!({ "accounts": [], "warnings": [] })
-                            });
+                            let value = serde_json::to_value(&reply)
+                                .unwrap_or_else(|_| json!({ "accounts": [], "warnings": [] }));
                             write_result(&writer, id, value).await?;
                         }
                         Err(e) => write_error(&writer, id, -32603, &e).await?,
@@ -1646,8 +1639,7 @@ where
                     {
                         Ok(bytes) => {
                             use base64::Engine as _;
-                            let b64 =
-                                base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                             write_result(&writer, id, json!({ "bytes_b64": b64 })).await?;
                         }
                         Err(e) => write_error(&writer, id, -32603, &e).await?,
@@ -2806,10 +2798,7 @@ min_nexo_version = ">=0.1.0"
         assert_eq!(reply["id"], 5);
         assert_eq!(reply["result"]["ok"], serde_json::Value::Bool(true));
         let captured = observed.lock().unwrap().clone();
-        assert_eq!(
-            captured,
-            Some(("main".to_string(), "alice".to_string())),
-        );
+        assert_eq!(captured, Some(("main".to_string(), "alice".to_string())),);
     }
 
     /// Phase 93.8.a-sdk — `plugin.credentials.resolve_bytes` returns
@@ -2818,9 +2807,7 @@ min_nexo_version = ">=0.1.0"
     async fn credentials_resolve_bytes_dispatch_returns_base64() {
         let adapter = PluginAdapter::new(TEST_MANIFEST)
             .expect("manifest parses")
-            .on_credentials_resolve_bytes(|_acc, _ag, _fp| async move {
-                Ok(vec![1u8, 2, 3, 4])
-            });
+            .on_credentials_resolve_bytes(|_acc, _ag, _fp| async move { Ok(vec![1u8, 2, 3, 4]) });
         let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
         host_write
             .write_all(

@@ -77,14 +77,10 @@ impl PluginHttpSection {
             return Err("mount_prefix cannot be empty".into());
         }
         if !p.starts_with('/') {
-            return Err(format!(
-                "mount_prefix must start with `/`; got `{p}`"
-            ));
+            return Err(format!("mount_prefix must start with `/`; got `{p}`"));
         }
         if p.contains('?') || p.contains('#') {
-            return Err(format!(
-                "mount_prefix cannot contain `?` or `#`; got `{p}`"
-            ));
+            return Err(format!("mount_prefix cannot contain `?` or `#`; got `{p}`"));
         }
         Ok(())
     }

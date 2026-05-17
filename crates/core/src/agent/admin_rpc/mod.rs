@@ -37,6 +37,7 @@ pub use audit::{
     hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
     AuditTailFilter, AuditTailPage, InMemoryAuditWriter,
 };
+pub use broker_pairing_trigger::{spawn_pairing_inbound_subscriber, BrokerPairingTrigger};
 pub use capabilities::{
     validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError, CapabilityBootReport,
     CapabilityBootWarn, CapabilitySet,
@@ -44,7 +45,6 @@ pub use capabilities::{
 pub use channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
 };
-pub use broker_pairing_trigger::{spawn_pairing_inbound_subscriber, BrokerPairingTrigger};
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};
 pub use pairing_trigger::{
     PairingChannelTrigger, PairingChannelTriggers, PairingContext, PairingHandle,

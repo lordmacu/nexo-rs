@@ -25,9 +25,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use nexo_tool_meta::admin::persona::{
-    PersonaLocaleEntry, PersonaLocales, PersonaSnapshot,
-};
+use nexo_tool_meta::admin::persona::{PersonaLocaleEntry, PersonaLocales, PersonaSnapshot};
 
 /// Workspace files the persona system surfaces. Order is the wire
 /// order of [`PersonaSnapshot`] fields — UI relies on it for
@@ -238,11 +236,7 @@ pub fn write_persona_snapshot(
 
 // ── Internals ──────────────────────────────────────────────────
 
-fn read_file_with_fallback(
-    workspace_dir: &Path,
-    stem: &str,
-    locale: &str,
-) -> (String, bool) {
+fn read_file_with_fallback(workspace_dir: &Path, stem: &str, locale: &str) -> (String, bool) {
     let localized = workspace_dir.join(format!("{stem}.{locale}.md"));
     if let Ok(s) = fs::read_to_string(&localized) {
         return (s, true);
@@ -419,10 +413,21 @@ mod tests {
         let en = locales.snapshots.iter().find(|e| e.locale == "en").unwrap();
         assert_eq!(en.recommended_voice.as_deref(), Some("en-US-AriaNeural"));
         // es-AR → "es-AR-ElenaNeural"
-        let ar = locales.snapshots.iter().find(|e| e.locale == "es-AR").unwrap();
+        let ar = locales
+            .snapshots
+            .iter()
+            .find(|e| e.locale == "es-AR")
+            .unwrap();
         assert_eq!(ar.recommended_voice.as_deref(), Some("es-AR-ElenaNeural"));
         // pt-BR → "pt-BR-FranciscaNeural"
-        let br = locales.snapshots.iter().find(|e| e.locale == "pt-BR").unwrap();
-        assert_eq!(br.recommended_voice.as_deref(), Some("pt-BR-FranciscaNeural"));
+        let br = locales
+            .snapshots
+            .iter()
+            .find(|e| e.locale == "pt-BR")
+            .unwrap();
+        assert_eq!(
+            br.recommended_voice.as_deref(),
+            Some("pt-BR-FranciscaNeural")
+        );
     }
 }

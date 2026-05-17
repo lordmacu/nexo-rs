@@ -225,11 +225,11 @@ impl ChannelDashboardSource for ManifestDashboardSource {
                             }
                             if let Ok(insts) = std::fs::read_dir(&plugin_dir) {
                                 for inst in insts.flatten() {
-                                    let instance = match inst.file_name().to_str().map(str::to_string)
-                                    {
-                                        Some(s) => s,
-                                        None => continue,
-                                    };
+                                    let instance =
+                                        match inst.file_name().to_str().map(str::to_string) {
+                                            Some(s) => s,
+                                            None => continue,
+                                        };
                                     out.push(ChannelEntry {
                                         channel: self.plugin_id.clone(),
                                         instance: format!("{agent}/{instance}"),
@@ -1088,9 +1088,7 @@ fn locate_agent_file(config_dir: &Path, agent_id: &str) -> Option<std::path::Pat
 #[cfg(test)]
 mod manifest_dashboard_tests {
     use super::*;
-    use nexo_plugin_manifest::dashboard::{
-        AuthCheck, InstanceLayout, PluginDashboardSection,
-    };
+    use nexo_plugin_manifest::dashboard::{AuthCheck, InstanceLayout, PluginDashboardSection};
 
     fn write_secret(secrets_dir: &Path, filename: &str, content: &str) {
         std::fs::write(secrets_dir.join(filename), content).expect("write secret");
@@ -1113,8 +1111,7 @@ mod manifest_dashboard_tests {
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::create_dir_all(&secrets_dir).unwrap();
         write_secret(&secrets_dir, "telegram_bot_token.txt", "abc");
-        let src =
-            ManifestDashboardSource::new("telegram", telegram_section());
+        let src = ManifestDashboardSource::new("telegram", telegram_section());
         let out = src.discover(&config_dir, &secrets_dir).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].channel, "telegram");
@@ -1129,8 +1126,7 @@ mod manifest_dashboard_tests {
         let secrets_dir = dir.path().join("secrets");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::create_dir_all(&secrets_dir).unwrap();
-        let src =
-            ManifestDashboardSource::new("telegram", telegram_section());
+        let src = ManifestDashboardSource::new("telegram", telegram_section());
         let out = src.discover(&config_dir, &secrets_dir).unwrap();
         assert!(matches!(out[0].auth, AuthState::NotAuthenticated));
     }
@@ -1189,7 +1185,9 @@ mod manifest_dashboard_tests {
 
     #[test]
     fn dashboard_sources_from_manifests_filters_to_declaring_plugins() {
-        use nexo_plugin_manifest::manifest::{Capabilities, MetaSection, PluginManifest, PluginSection};
+        use nexo_plugin_manifest::manifest::{
+            Capabilities, MetaSection, PluginManifest, PluginSection,
+        };
         use semver::{Version, VersionReq};
         fn skeleton(id: &str, dashboard: Option<PluginDashboardSection>) -> PluginManifest {
             PluginManifest {

@@ -39,9 +39,7 @@ pub struct PluginMetricsSection {
 impl PluginMetricsSection {
     pub fn validate(&self) -> Result<(), String> {
         if self.prometheus && self.broker_topic_prefix.is_empty() {
-            return Err(
-                "broker_topic_prefix cannot be empty when prometheus = true".into(),
-            );
+            return Err("broker_topic_prefix cannot be empty when prometheus = true".into());
         }
         if self.broker_topic_prefix.contains(' ') {
             return Err("broker_topic_prefix cannot contain spaces".into());

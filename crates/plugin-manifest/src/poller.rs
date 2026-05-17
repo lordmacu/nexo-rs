@@ -100,9 +100,7 @@ impl PluginPollerSection {
                 ));
             }
             if !seen.insert(kind.as_str()) {
-                return Err(format!(
-                    "[plugin.poller].kinds contains duplicate '{kind}'"
-                ));
+                return Err(format!("[plugin.poller].kinds contains duplicate '{kind}'"));
             }
         }
 

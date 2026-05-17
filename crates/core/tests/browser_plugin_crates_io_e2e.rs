@@ -322,8 +322,10 @@ fn published_binary_stealth_three_instances_google_brave_github() {
     // different search engine (or repo host) to prove the wire
     // routes by `instance` arg + the three Chromes hold three
     // distinct origins at the same time.
-    let args_value: Vec<Value> =
-        stealth_args().iter().map(|s| Value::String(s.to_string())).collect();
+    let args_value: Vec<Value> = stealth_args()
+        .iter()
+        .map(|s| Value::String(s.to_string()))
+        .collect();
     let cfg = rpc(
         &mut stdin,
         &mut stdout,
@@ -403,7 +405,10 @@ fn published_binary_stealth_three_instances_google_brave_github() {
         "https://www.google.com/search?q=rust+programming",
     );
     if nav_g["error"].is_object() {
-        eprintln!("skipping: google navigate failed (no network?): {}", nav_g["error"]);
+        eprintln!(
+            "skipping: google navigate failed (no network?): {}",
+            nav_g["error"]
+        );
         let _ = rpc(
             &mut stdin,
             &mut stdout,
@@ -471,7 +476,9 @@ fn published_binary_stealth_three_instances_google_brave_github() {
     let webdriver_g = probe(&mut stdin, &mut stdout, 30, "google_stealth");
     let webdriver_b = probe(&mut stdin, &mut stdout, 31, "brave_stealth");
     let webdriver_gh = probe(&mut stdin, &mut stdout, 32, "github_stealth");
-    eprintln!("navigator.webdriver — google:{webdriver_g} brave:{webdriver_b} github:{webdriver_gh}");
+    eprintln!(
+        "navigator.webdriver — google:{webdriver_g} brave:{webdriver_b} github:{webdriver_gh}"
+    );
     for w in [&webdriver_g, &webdriver_b, &webdriver_gh] {
         assert!(
             w == "undefined" || w == "false",
@@ -546,8 +553,10 @@ fn published_binary_compares_search_engine_bot_detection() {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
     );
 
-    let args_value: Vec<Value> =
-        stealth_args().iter().map(|s| Value::String(s.to_string())).collect();
+    let args_value: Vec<Value> = stealth_args()
+        .iter()
+        .map(|s| Value::String(s.to_string()))
+        .collect();
     let cfg = rpc(
         &mut stdin,
         &mut stdout,

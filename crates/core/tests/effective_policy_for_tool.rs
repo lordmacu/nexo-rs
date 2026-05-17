@@ -35,8 +35,7 @@ fn web_search_policy_round_trips_through_json_value() {
         "cache_ttl_secs": 1800,
         "expand_default": true,
     });
-    let parsed: WebSearchPolicy =
-        serde_json::from_value(raw).expect("policy round-trip");
+    let parsed: WebSearchPolicy = serde_json::from_value(raw).expect("policy round-trip");
     assert!(parsed.enabled);
     assert_eq!(parsed.provider, "brave");
     assert_eq!(parsed.default_count, 3);

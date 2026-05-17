@@ -96,13 +96,7 @@ struct Route {
 /// asking for `/health/foo` would still shadow the daemon's
 /// `/health` endpoint, so we reject prefixes that contain
 /// a reserved path as their leading segment too.
-pub const RESERVED_PREFIXES: &[&str] = &[
-    "/health",
-    "/metrics",
-    "/pair",
-    "/admin",
-    "/.well-known",
-];
+pub const RESERVED_PREFIXES: &[&str] = &["/health", "/metrics", "/pair", "/admin", "/.well-known"];
 
 /// Longest-prefix-first matcher. Insertion preserves declaration
 /// order until [`Self::sort`] is called; once sorted, prefix
@@ -135,9 +129,7 @@ impl PluginHttpRouter {
         timeout: Option<Duration>,
     ) -> Result<(), RouteRegistrationError> {
         for reserved in RESERVED_PREFIXES {
-            if mount_prefix == *reserved
-                || mount_prefix.starts_with(&format!("{reserved}/"))
-            {
+            if mount_prefix == *reserved || mount_prefix.starts_with(&format!("{reserved}/")) {
                 return Err(RouteRegistrationError::Reserved {
                     requested: mount_prefix.to_string(),
                     reserved: (*reserved).to_string(),
@@ -230,10 +222,7 @@ pub async fn forward_request(
 #[derive(Debug, thiserror::Error)]
 pub enum RouteRegistrationError {
     #[error("mount_prefix `{requested}` collides with daemon-reserved prefix `{reserved}`")]
-    Reserved {
-        requested: String,
-        reserved: String,
-    },
+    Reserved { requested: String, reserved: String },
 }
 
 /// Typed forwarder errors. Caller renders the right status
@@ -329,7 +318,8 @@ mod tests {
     #[test]
     fn register_applies_custom_timeout() {
         let mut r = PluginHttpRouter::new();
-        r.register("plugin", "/slow", Some(Duration::from_secs(120))).unwrap();
+        r.register("plugin", "/slow", Some(Duration::from_secs(120)))
+            .unwrap();
         let (_, t) = r.match_path("/slow/foo").unwrap();
         assert_eq!(t, Duration::from_secs(120));
     }
@@ -360,7 +350,10 @@ mod tests {
         // `/health/foo` shadows the daemon's `/health` endpoint
         // if matched first — must be rejected.
         let result = r.register("evil_plugin", "/health/foo", None);
-        assert!(matches!(result, Err(RouteRegistrationError::Reserved { .. })));
+        assert!(matches!(
+            result,
+            Err(RouteRegistrationError::Reserved { .. })
+        ));
     }
 
     #[test]

@@ -97,11 +97,9 @@ impl TickRequest {
             Some(s) => base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(s.trim_end_matches('='))
                 .map(Some)
-                .map_err(|e| {
-                    PollerError::Config {
-                        job: self.job_id.clone(),
-                        reason: format!("cursor base64 decode: {e}"),
-                    }
+                .map_err(|e| PollerError::Config {
+                    job: self.job_id.clone(),
+                    reason: format!("cursor base64 decode: {e}"),
                 }),
         }
     }
@@ -125,9 +123,10 @@ impl TickReply {
     /// Encode the runner-facing [`TickAck`] into the wire shape.
     pub fn from_tick_ack(ack: TickAck) -> Self {
         Self {
-            next_cursor: ack.next_cursor.as_deref().map(|b| {
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
-            }),
+            next_cursor: ack
+                .next_cursor
+                .as_deref()
+                .map(|b| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)),
             next_interval_secs: ack.next_interval_hint.map(|d| d.as_secs()),
             metrics: ack.metrics,
         }
@@ -204,11 +203,7 @@ impl BrokerPollerHost {
             return Err(HostError::Rpc { code, message });
         }
 
-        Ok(reply
-            .payload
-            .get("result")
-            .cloned()
-            .unwrap_or(Value::Null))
+        Ok(reply.payload.get("result").cloned().unwrap_or(Value::Null))
     }
 }
 
@@ -235,12 +230,7 @@ impl PollerHost for BrokerPollerHost {
         .await
     }
 
-    async fn log(
-        &self,
-        level: LogLevel,
-        message: String,
-        fields: Value,
-    ) -> Result<(), HostError> {
+    async fn log(&self, level: LogLevel, message: String, fields: Value) -> Result<(), HostError> {
         self.rpc_call(
             "log",
             json!({
@@ -259,12 +249,12 @@ impl PollerHost for BrokerPollerHost {
             .map(|_| ())
     }
 
-    async fn llm_invoke(
-        &self,
-        request: LlmInvokeRequest,
-    ) -> Result<LlmInvokeResponse, HostError> {
+    async fn llm_invoke(&self, request: LlmInvokeRequest) -> Result<LlmInvokeResponse, HostError> {
         let reply = self
-            .rpc_call("llm_invoke", serde_json::to_value(request).unwrap_or(Value::Null))
+            .rpc_call(
+                "llm_invoke",
+                serde_json::to_value(request).unwrap_or(Value::Null),
+            )
             .await?;
         serde_json::from_value::<LlmInvokeResponse>(reply).map_err(|e| HostError::Other(e.into()))
     }
@@ -430,18 +420,23 @@ impl PollerHost for EphemeralHost {
         })
     }
 
-    async fn log(
-        &self,
-        level: LogLevel,
-        message: String,
-        fields: Value,
-    ) -> Result<(), HostError> {
+    async fn log(&self, level: LogLevel, message: String, fields: Value) -> Result<(), HostError> {
         match level {
-            LogLevel::Trace => tracing::trace!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
-            LogLevel::Debug => tracing::debug!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
-            LogLevel::Info => tracing::info!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
-            LogLevel::Warn => tracing::warn!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
-            LogLevel::Error => tracing::error!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log"),
+            LogLevel::Trace => {
+                tracing::trace!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log")
+            }
+            LogLevel::Debug => {
+                tracing::debug!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log")
+            }
+            LogLevel::Info => {
+                tracing::info!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log")
+            }
+            LogLevel::Warn => {
+                tracing::warn!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log")
+            }
+            LogLevel::Error => {
+                tracing::error!(plugin = %self.plugin_id, job_id = %self.job_id, agent_id = %self.agent_id, %message, ?fields, "ephemeral poller log")
+            }
         }
         Ok(())
     }
@@ -457,15 +452,10 @@ impl PollerHost for EphemeralHost {
         Ok(())
     }
 
-    async fn llm_invoke(
-        &self,
-        _request: LlmInvokeRequest,
-    ) -> Result<LlmInvokeResponse, HostError> {
+    async fn llm_invoke(&self, _request: LlmInvokeRequest) -> Result<LlmInvokeResponse, HostError> {
         Err(HostError::Rpc {
             code: -32601,
-            message:
-                "llm_invoke unavailable in ephemeral lifecycle — switch to long_lived"
-                    .into(),
+            message: "llm_invoke unavailable in ephemeral lifecycle — switch to long_lived".into(),
         })
     }
 }
@@ -504,18 +494,11 @@ pub async fn serve_one_ephemeral_tick(
     }
     let envelope: Value = serde_json::from_str(line.trim())
         .map_err(|e| EphemeralError::ParseEnvelope(e.to_string()))?;
-    let params = envelope
-        .get("params")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let params = envelope.get("params").cloned().unwrap_or(Value::Null);
     let request: TickRequest = serde_json::from_value(params)
         .map_err(|e| EphemeralError::ParseEnvelope(format!("TickRequest: {e}")))?;
 
-    let mut host = EphemeralHost::new(
-        plugin_id,
-        request.job_id.clone(),
-        request.agent_id.clone(),
-    );
+    let mut host = EphemeralHost::new(plugin_id, request.job_id.clone(), request.agent_id.clone());
     if let Some(b) = broker {
         host = host.with_broker(b);
     }

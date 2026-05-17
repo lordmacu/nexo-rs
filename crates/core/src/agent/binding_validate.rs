@@ -194,12 +194,7 @@ pub fn collect_binding_errors(
     plugins: &PluginsConfig,
     known_tools: &KnownTools<'_>,
 ) -> Vec<BindingValidationError> {
-    collect_binding_errors_with_providers(
-        agents,
-        plugins,
-        known_tools,
-        &KnownProviders::default(),
-    )
+    collect_binding_errors_with_providers(agents, plugins, known_tools, &KnownProviders::default())
 }
 
 /// Same as [`collect_binding_errors`] but also validates that every
@@ -229,12 +224,7 @@ pub fn validate_agents(
     plugins: &PluginsConfig,
     known_tools: &KnownTools<'_>,
 ) -> anyhow::Result<()> {
-    validate_agents_with_providers(
-        agents,
-        plugins,
-        known_tools,
-        &KnownProviders::default(),
-    )
+    validate_agents_with_providers(agents, plugins, known_tools, &KnownProviders::default())
 }
 
 pub fn validate_agents_with_providers(
@@ -632,7 +622,12 @@ mod tests {
             ..Default::default()
         });
         let tg: Vec<String> = vec!["ana_tg".into()];
-        let err = validate_agent(&a, &plugins_with_telegram(tg.clone()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(tg.clone()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             BindingValidationError::DuplicateBinding { .. }
@@ -648,7 +643,12 @@ mod tests {
             ..Default::default()
         });
         let tg: Vec<String> = vec!["ana_tg".into()];
-        let err = validate_agent(&a, &plugins_with_telegram(tg.clone()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(tg.clone()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("missing"));
         assert!(msg.contains("ana_tg"));
@@ -663,7 +663,12 @@ mod tests {
             ..Default::default()
         });
         let tg: Vec<String> = Vec::new();
-        validate_agent(&a, &plugins_with_telegram(tg.clone()), &KnownTools::default()).expect("wildcard must pass");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(tg.clone()),
+            &KnownTools::default(),
+        )
+        .expect("wildcard must pass");
     }
 
     #[test]
@@ -675,7 +680,8 @@ mod tests {
             ..Default::default()
         });
         let tools = KnownTools::new(["whatsapp_send_message", "weather"]);
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools).unwrap_err();
+        let err =
+            validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools).unwrap_err();
         assert!(matches!(err, BindingValidationError::UnknownTool { .. }));
     }
 
@@ -688,7 +694,8 @@ mod tests {
             ..Default::default()
         });
         let tools = KnownTools::new(["whatsapp_send_message"]);
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools).expect("'*' is always valid");
+        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools)
+            .expect("'*' is always valid");
     }
 
     #[test]
@@ -700,7 +707,8 @@ mod tests {
             ..Default::default()
         });
         let tools = KnownTools::new(["memory_write", "memory_query"]);
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools).expect("prefix glob should match");
+        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &tools)
+            .expect("prefix glob should match");
     }
 
     #[test]
@@ -711,7 +719,12 @@ mod tests {
             allowed_tools: Some(vec!["anything".into()]),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).expect("empty catalogue = check disabled");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("empty catalogue = check disabled");
     }
 
     #[test]
@@ -724,7 +737,12 @@ mod tests {
             skills: Some(vec!["no_such_skill".into()]),
             ..Default::default()
         });
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(matches!(err, BindingValidationError::UnknownSkill { .. }));
     }
 
@@ -738,7 +756,12 @@ mod tests {
             skills: Some(vec!["weather".into()]),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).expect("skill present");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("skill present");
     }
 
     #[test]
@@ -750,7 +773,12 @@ mod tests {
             plugin: "whatsapp".into(),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).expect("must still boot");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("must still boot");
     }
 
     #[test]
@@ -764,7 +792,12 @@ mod tests {
             }),
             ..Default::default()
         });
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             BindingValidationError::ProviderMismatch { .. }
@@ -782,8 +815,12 @@ mod tests {
             }),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default())
-            .expect("same-provider model switch must pass");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("same-provider model switch must pass");
     }
 
     #[test]
@@ -794,7 +831,12 @@ mod tests {
             role: Some("boss-mode".into()),
             ..Default::default()
         });
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(matches!(err, BindingValidationError::InvalidRole { .. }));
     }
 
@@ -817,7 +859,11 @@ mod tests {
             }),
             ..Default::default()
         });
-        let errors = collect_binding_errors(&[a1, a2], &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default());
+        let errors = collect_binding_errors(
+            &[a1, a2],
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        );
         assert_eq!(errors.len(), 2, "both agent errors should be collected");
         assert!(errors
             .iter()
@@ -849,7 +895,8 @@ mod tests {
             ..Default::default()
         });
         let tg: Vec<String> = vec!["ana_tg".into()];
-        let err = validate_agents(&[a], &plugins_with_telegram(tg), &KnownTools::default()).unwrap_err();
+        let err =
+            validate_agents(&[a], &plugins_with_telegram(tg), &KnownTools::default()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("duplicate binding"));
         assert!(msg.contains("provider"));
@@ -865,8 +912,13 @@ mod tests {
         let mut a = agent("ana", "./skills");
         a.model.provider = "anthopic".into();
         let known = KnownProviders::new(["anthropic", "minimax", "openai"]);
-        let err =
-            validate_agents_with_providers(&[a], &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default(), &known).unwrap_err();
+        let err = validate_agents_with_providers(
+            &[a],
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+            &known,
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("anthopic"));
         assert!(msg.contains("anthropic"));
@@ -878,8 +930,12 @@ mod tests {
         // boot path before the LLM registry exists.
         let mut a = agent("ana", "./skills");
         a.model.provider = "bogus".into();
-        validate_agents(&[a], &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default())
-            .expect("empty catalogue disables the check");
+        validate_agents(
+            &[a],
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("empty catalogue disables the check");
     }
 
     #[test]
@@ -929,7 +985,8 @@ mod tests {
         });
         let tg: Vec<String> = vec!["ana_tg".into()];
         let tools = KnownTools::new(["whatsapp_send_message", "weather"]);
-        validate_agent(&a, &plugins_with_telegram(tg.clone()), &tools).expect("happy path must pass");
+        validate_agent(&a, &plugins_with_telegram(tg.clone()), &tools)
+            .expect("happy path must pass");
     }
 
     // ---- coordinator ⊕ proactive mutual exclusion ----
@@ -943,7 +1000,12 @@ mod tests {
             role: Some("coordinator".into()),
             ..Default::default()
         });
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(
             matches!(err, BindingValidationError::CoordinatorWithProactive { .. }),
             "expected CoordinatorWithProactive, got {err:?}"
@@ -963,7 +1025,12 @@ mod tests {
             }),
             ..Default::default()
         });
-        let err = validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default()).unwrap_err();
+        let err = validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .unwrap_err();
         assert!(matches!(
             err,
             BindingValidationError::CoordinatorWithProactive { .. }
@@ -979,8 +1046,12 @@ mod tests {
             role: Some("coordinator".into()),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default())
-            .expect("coordinator without proactive must pass");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("coordinator without proactive must pass");
     }
 
     #[test]
@@ -992,8 +1063,12 @@ mod tests {
             role: Some("proactive".into()),
             ..Default::default()
         });
-        validate_agent(&a, &plugins_with_telegram(Vec::<String>::new()), &KnownTools::default())
-            .expect("role=proactive + proactive.enabled is the canonical happy path");
+        validate_agent(
+            &a,
+            &plugins_with_telegram(Vec::<String>::new()),
+            &KnownTools::default(),
+        )
+        .expect("role=proactive + proactive.enabled is the canonical happy path");
     }
 
     // ---- C1: has_any_override coverage for newly-tracked overrides ----

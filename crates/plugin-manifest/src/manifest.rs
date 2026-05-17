@@ -145,7 +145,10 @@ pub struct PluginSection {
     /// that don't expose a pair-able channel omit the section.
     /// Consumed by the admin `nexo/admin/pairing/channels` RPC
     /// to drive the channel selector + per-channel modal flow.
-    #[serde(default, skip_serializing_if = "crate::pairing::PairingSection::is_unset")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::pairing::PairingSection::is_unset"
+    )]
     pub pairing: crate::pairing::PairingSection,
 
     #[serde(default)]

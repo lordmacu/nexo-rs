@@ -12,9 +12,7 @@ use async_trait::async_trait;
 use nexo_core::agent::admin_rpc::capabilities::CapabilitySet;
 use nexo_core::agent::admin_rpc::dispatcher::AdminRpcDispatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
-use nexo_core::agent::plugin_host::{
-    NexoPlugin, PluginInitContext, PluginInitError,
-};
+use nexo_core::agent::plugin_host::{NexoPlugin, PluginInitContext, PluginInitError};
 use nexo_plugin_manifest::PluginManifest;
 use nexo_setup::admin_adapters::{
     shared_plugin_handles_cell, PairingChannelsReaderImpl, SharedPluginHandles,
@@ -41,10 +39,7 @@ impl NexoPlugin for ManifestOnlyPlugin {
     fn manifest(&self) -> &PluginManifest {
         &self.manifest
     }
-    async fn init(
-        &self,
-        _ctx: &mut PluginInitContext<'_>,
-    ) -> Result<(), PluginInitError> {
+    async fn init(&self, _ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
         unimplemented!("not exercised by e2e")
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -79,11 +74,7 @@ impl CredentialStore for StubCredentials {
     ) -> anyhow::Result<()> {
         unimplemented!()
     }
-    fn delete_credential(
-        &self,
-        _channel: &str,
-        _instance: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    fn delete_credential(&self, _channel: &str, _instance: Option<&str>) -> anyhow::Result<bool> {
         unimplemented!()
     }
 }
@@ -220,11 +211,7 @@ min_nexo_version = ">=0.0.0"
         .with_pairing_channels(reader);
 
     let res = dispatcher
-        .dispatch(
-            TEST_MICROAPP,
-            "nexo/admin/pairing/channels",
-            json!({}),
-        )
+        .dispatch(TEST_MICROAPP, "nexo/admin/pairing/channels", json!({}))
         .await;
     let v = res.result.expect("ok");
     let channels = v.get("channels").unwrap().as_array().unwrap();
@@ -237,14 +224,9 @@ min_nexo_version = ">=0.0.0"
 
 #[tokio::test]
 async fn pairing_channels_returns_domain_not_configured_when_reader_missing() {
-    let dispatcher = AdminRpcDispatcher::new()
-        .with_capabilities(capabilities_for_test());
+    let dispatcher = AdminRpcDispatcher::new().with_capabilities(capabilities_for_test());
     let res = dispatcher
-        .dispatch(
-            TEST_MICROAPP,
-            "nexo/admin/pairing/channels",
-            json!({}),
-        )
+        .dispatch(TEST_MICROAPP, "nexo/admin/pairing/channels", json!({}))
         .await;
     let err = res.error.expect("missing reader → error");
     let msg = format!("{err:?}");

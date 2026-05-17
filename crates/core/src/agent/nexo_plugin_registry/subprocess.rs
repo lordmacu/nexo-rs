@@ -446,12 +446,11 @@ impl SubprocessNexoPlugin {
         inner: &Inner,
     ) -> Result<(), PluginConfigureError> {
         let plugin_id = self.cached_manifest.plugin.id.clone();
-        let value_json: Value = serde_json::to_value(value).map_err(|e| {
-            PluginConfigureError::SubprocessRpc {
+        let value_json: Value =
+            serde_json::to_value(value).map_err(|e| PluginConfigureError::SubprocessRpc {
                 plugin_id: plugin_id.clone(),
                 reason: format!("YAML→JSON conversion failed: {e}"),
-            }
-        })?;
+            })?;
         let configure_id: u64 = 3;
         let req = json!({
             "jsonrpc": "2.0",
@@ -493,7 +492,10 @@ impl SubprocessNexoPlugin {
     /// or `Err(msg)` for transport / timeout / plugin-side error.
     pub(crate) async fn send_credentials_list_rpc(
         &self,
-    ) -> Result<crate::agent::nexo_plugin_registry::remote_credential_store::CredentialsListReply, String> {
+    ) -> Result<
+        crate::agent::nexo_plugin_registry::remote_credential_store::CredentialsListReply,
+        String,
+    > {
         use crate::agent::nexo_plugin_registry::remote_credential_store::CredentialsListReply;
         let inner_guard = self.inner.lock().await;
         let Some(inner) = inner_guard.as_ref() else {
@@ -559,11 +561,7 @@ impl SubprocessNexoPlugin {
             }
             Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
             Ok(Ok(Ok(value))) => {
-                if value
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
+                if value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                     Ok(())
                 } else {
                     Err("issue ack missing ok=true".to_string())
@@ -650,11 +648,7 @@ impl SubprocessNexoPlugin {
             }
             Ok(Err(_)) => Err("oneshot dropped before reply".to_string()),
             Ok(Ok(Ok(value))) => {
-                if value
-                    .get("ok")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
+                if value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                     Ok(())
                 } else {
                     Err("reload ack missing ok=true".to_string())
@@ -2988,9 +2982,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
     /// true` AND the factory populated `weak_self`. Otherwise
     /// `None` (plugin opts out; typed `bundle.stores.X` continues
     /// to serve during the Phase 93.9 deprecation window).
-    fn credential_store(
-        &self,
-    ) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
+    fn credential_store(&self) -> Option<std::sync::Arc<dyn nexo_auth::GenericCredentialStore>> {
         let cs = self.cached_manifest.plugin.credentials_schema.as_ref()?;
         if !cs.enabled {
             return None;
@@ -3015,10 +3007,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
     /// ack succeeds. Hot-reload re-calls overwrite the buffer; if
     /// `inner` is already up the new value is delivered eagerly
     /// instead of buffered.
-    async fn configure(
-        &self,
-        value: &serde_yaml::Value,
-    ) -> Result<(), PluginConfigureError> {
+    async fn configure(&self, value: &serde_yaml::Value) -> Result<(), PluginConfigureError> {
         // Legacy-compat: plugins without [plugin.config_schema]
         // don't participate in 93.2 RPC delivery — they keep
         // reading their config from disk via the existing loader.
@@ -3069,20 +3058,19 @@ impl NexoPlugin for SubprocessNexoPlugin {
         let mut registered = 0usize;
         let mut skipped = 0usize;
         for spec in outbound {
-            let parameters: serde_json::Value =
-                match serde_json::from_str(&spec.input_schema) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(
-                            plugin = %self.cached_manifest.plugin.id,
-                            tool = %spec.name,
-                            error = %e,
-                            "outbound tool input_schema failed to parse; skipping",
-                        );
-                        skipped += 1;
-                        continue;
-                    }
-                };
+            let parameters: serde_json::Value = match serde_json::from_str(&spec.input_schema) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %self.cached_manifest.plugin.id,
+                        tool = %spec.name,
+                        error = %e,
+                        "outbound tool input_schema failed to parse; skipping",
+                    );
+                    skipped += 1;
+                    continue;
+                }
+            };
             let def = nexo_llm::types::ToolDef {
                 name: spec.name.clone(),
                 description: spec.description.clone(),
@@ -3169,9 +3157,7 @@ impl SubprocessNexoPlugin {
                 "args": args,
             },
         });
-        let (tx, rx) = tokio::sync::oneshot::channel::<
-            Result<serde_json::Value, String>,
-        >();
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<serde_json::Value, String>>();
         pending.insert(id, tx);
         if let Err(e) = stdin_tx.send(request).await {
             pending.remove(&id);
@@ -3187,9 +3173,7 @@ impl SubprocessNexoPlugin {
                         parsed.get("code").and_then(|v| v.as_i64()),
                         parsed.get("message").and_then(|v| v.as_str()),
                     ) {
-                        return Err(
-                            crate::agent::generic_rpc_tool::map_rpc_error(code, message),
-                        );
+                        return Err(crate::agent::generic_rpc_tool::map_rpc_error(code, message));
                     }
                 }
                 Err(anyhow::anyhow!("outbound rpc error: {msg}"))
@@ -3258,12 +3242,7 @@ pub fn subprocess_plugin_factory_with_env(
     spawn_env: std::collections::HashMap<String, String>,
     instance_label: String,
 ) -> PluginFactory {
-    subprocess_plugin_factory_with_env_and_manifest_dir(
-        manifest,
-        spawn_env,
-        instance_label,
-        None,
-    )
+    subprocess_plugin_factory_with_env_and_manifest_dir(manifest, spawn_env, instance_label, None)
 }
 
 /// `subprocess_plugin_factory_with_env` + manifest-dir threading.

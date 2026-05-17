@@ -40,18 +40,14 @@ pub trait PairingChannelsReader: Send + Sync + std::fmt::Debug {
     /// BCP-47 `locale` tag. `locale` is `"en"` by default when the
     /// caller omitted it. Implementations resolve missing locales
     /// by falling back to `en` then the first instructions entry.
-    async fn list(&self, locale: &str)
-        -> Result<PairingChannelsResponse, PairingChannelsError>;
+    async fn list(&self, locale: &str) -> Result<PairingChannelsResponse, PairingChannelsError>;
 }
 
 /// `nexo/admin/pairing/channels` — list pair-able channels.
 ///
 /// Capability gate (`pairing_initiate`) is enforced upstream in
 /// the dispatcher; this handler trusts that the caller is allowed.
-pub async fn list_channels(
-    reader: &dyn PairingChannelsReader,
-    locale: &str,
-) -> AdminRpcResult {
+pub async fn list_channels(reader: &dyn PairingChannelsReader, locale: &str) -> AdminRpcResult {
     match reader.list(locale).await {
         Ok(resp) => AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null)),
         Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(

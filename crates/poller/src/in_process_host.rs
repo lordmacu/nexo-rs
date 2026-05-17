@@ -130,18 +130,23 @@ impl PollerHost for InProcessHost {
         Ok(out)
     }
 
-    async fn log(
-        &self,
-        level: LogLevel,
-        message: String,
-        fields: Value,
-    ) -> Result<(), HostError> {
+    async fn log(&self, level: LogLevel, message: String, fields: Value) -> Result<(), HostError> {
         match level {
-            LogLevel::Trace => tracing::trace!(job_id = %self.job_id, %message, ?fields, "poller log"),
-            LogLevel::Debug => tracing::debug!(job_id = %self.job_id, %message, ?fields, "poller log"),
-            LogLevel::Info => tracing::info!(job_id = %self.job_id, %message, ?fields, "poller log"),
-            LogLevel::Warn => tracing::warn!(job_id = %self.job_id, %message, ?fields, "poller log"),
-            LogLevel::Error => tracing::error!(job_id = %self.job_id, %message, ?fields, "poller log"),
+            LogLevel::Trace => {
+                tracing::trace!(job_id = %self.job_id, %message, ?fields, "poller log")
+            }
+            LogLevel::Debug => {
+                tracing::debug!(job_id = %self.job_id, %message, ?fields, "poller log")
+            }
+            LogLevel::Info => {
+                tracing::info!(job_id = %self.job_id, %message, ?fields, "poller log")
+            }
+            LogLevel::Warn => {
+                tracing::warn!(job_id = %self.job_id, %message, ?fields, "poller log")
+            }
+            LogLevel::Error => {
+                tracing::error!(job_id = %self.job_id, %message, ?fields, "poller log")
+            }
         }
         Ok(())
     }
@@ -162,10 +167,7 @@ impl PollerHost for InProcessHost {
         Ok(())
     }
 
-    async fn llm_invoke(
-        &self,
-        request: LlmInvokeRequest,
-    ) -> Result<LlmInvokeResponse, HostError> {
+    async fn llm_invoke(&self, request: LlmInvokeRequest) -> Result<LlmInvokeResponse, HostError> {
         let registry = self.llm_registry.as_ref().ok_or_else(|| HostError::Rpc {
             code: -32602,
             message: "InProcessHost has no LlmRegistry — wire runner with with_llm(...)".into(),
@@ -179,10 +181,12 @@ impl PollerHost for InProcessHost {
             provider: request.provider.clone(),
             model: request.model.clone(),
         };
-        let client = registry.build(config, &model_cfg).map_err(|e| HostError::Rpc {
-            code: -32602,
-            message: format!("LLM client build failed: {e}"),
-        })?;
+        let client = registry
+            .build(config, &model_cfg)
+            .map_err(|e| HostError::Rpc {
+                code: -32602,
+                message: format!("LLM client build failed: {e}"),
+            })?;
 
         let mut messages: Vec<ChatMessage> = Vec::with_capacity(request.messages.len());
         for m in request.messages {

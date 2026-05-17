@@ -66,10 +66,7 @@ impl PluginPollerRouter {
     /// plugin (cross-manifest uniqueness — boot-time fail-fast).
     /// Re-registration of the same `plugin_id` is allowed and
     /// replaces the previous entry (hot-spawn restart).
-    pub fn register(
-        &self,
-        handle: PluginPollerHandle,
-    ) -> Result<(), PollerRouteRegistrationError> {
+    pub fn register(&self, handle: PluginPollerHandle) -> Result<(), PollerRouteRegistrationError> {
         let mut all = self.handles.write().expect("router lock poisoned");
         for existing in all.iter() {
             if existing.plugin_id == handle.plugin_id {
@@ -268,15 +265,17 @@ impl Poller for EphemeralPollerProxy {
     }
 
     async fn tick(&self, ctx: &PollContext) -> Result<TickAck, PollerError> {
-        let command = self.handle.entrypoint_command.as_deref().ok_or_else(|| {
-            PollerError::Config {
-                job: ctx.job_id.clone(),
-                reason: format!(
-                    "ephemeral poller '{}' has no [plugin.entrypoint] command",
-                    self.handle.plugin_id
-                ),
-            }
-        })?;
+        let command =
+            self.handle
+                .entrypoint_command
+                .as_deref()
+                .ok_or_else(|| PollerError::Config {
+                    job: ctx.job_id.clone(),
+                    reason: format!(
+                        "ephemeral poller '{}' has no [plugin.entrypoint] command",
+                        self.handle.plugin_id
+                    ),
+                })?;
         let request = build_tick_request(
             self.kind,
             &ctx.job_id,
@@ -325,9 +324,7 @@ pub async fn spawn_ephemeral_tick(
         .env("NEXO_POLLER_EPHEMERAL", "1")
         .env("NEXO_POLLER_PLUGIN_ID", plugin_id)
         .spawn()
-        .map_err(|e| PollerError::Transient(anyhow::anyhow!(
-            "spawn '{command}' failed: {e}"
-        )))?;
+        .map_err(|e| PollerError::Transient(anyhow::anyhow!("spawn '{command}' failed: {e}")))?;
 
     {
         let mut stdin = child.stdin.take().ok_or_else(|| {
@@ -397,9 +394,8 @@ pub async fn spawn_ephemeral_tick(
         });
     }
     let result = envelope.get("result").cloned().unwrap_or(Value::Null);
-    let reply: TickReply = serde_json::from_value(result).map_err(|e| {
-        PollerError::Transient(anyhow::anyhow!("ephemeral TickReply parse: {e}"))
-    })?;
+    let reply: TickReply = serde_json::from_value(result)
+        .map_err(|e| PollerError::Transient(anyhow::anyhow!("ephemeral TickReply parse: {e}")))?;
     reply
         .into_tick_ack()
         .map_err(|e| PollerError::Transient(anyhow::anyhow!("cursor decode: {e}")))
@@ -529,8 +525,12 @@ mod tests {
     #[test]
     fn register_one_plugin_with_multiple_kinds() {
         let r = PluginPollerRouter::new();
-        r.register(handle("google", &["gmail", "google_calendar"], "plugin.google"))
-            .unwrap();
+        r.register(handle(
+            "google",
+            &["gmail", "google_calendar"],
+            "plugin.google",
+        ))
+        .unwrap();
         assert!(r.handle_for_kind("gmail").is_some());
         assert!(r.handle_for_kind("google_calendar").is_some());
         assert_eq!(r.len(), 1);

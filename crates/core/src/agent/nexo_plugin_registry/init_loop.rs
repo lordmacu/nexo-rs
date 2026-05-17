@@ -136,20 +136,15 @@ async fn validate_operator_value(
         return Ok(());
     };
     let schema_json: serde_json::Value =
-        serde_json::from_str(&spec.schema).map_err(|e| {
-            PluginConfigureError::PluginRejected {
-                plugin_id: plugin_id.to_string(),
-                source: anyhow::anyhow!(
-                    "[plugin.config_schema] schema string is not valid JSON: {e}"
-                ),
-            }
+        serde_json::from_str(&spec.schema).map_err(|e| PluginConfigureError::PluginRejected {
+            plugin_id: plugin_id.to_string(),
+            source: anyhow::anyhow!("[plugin.config_schema] schema string is not valid JSON: {e}"),
         })?;
-    let value_json: serde_json::Value = serde_json::to_value(value).map_err(|e| {
-        PluginConfigureError::PluginRejected {
+    let value_json: serde_json::Value =
+        serde_json::to_value(value).map_err(|e| PluginConfigureError::PluginRejected {
             plugin_id: plugin_id.to_string(),
             source: anyhow::anyhow!("operator YAML failed YAML→JSON conversion: {e}"),
-        }
-    })?;
+        })?;
     let errors = nexo_plugin_manifest::validate_config(&value_json, &schema_json);
     if !errors.is_empty() {
         return Err(PluginConfigureError::SchemaValidation {
@@ -175,9 +170,8 @@ async fn configure_plugin_with_value(
 ) -> Result<(), PluginConfigureError> {
     let plugin_id = manifest.plugin.id.as_str();
     validate_operator_value(plugin_id, plugin_cfg, manifest).await?;
-    if manifest.plugin.config_schema.is_some()
-        && matches!(plugin_cfg, Value::Null)
-            || matches!(plugin_cfg, Value::Mapping(m) if m.is_empty())
+    if manifest.plugin.config_schema.is_some() && matches!(plugin_cfg, Value::Null)
+        || matches!(plugin_cfg, Value::Mapping(m) if m.is_empty())
     {
         tracing::warn!(
             target: "plugins.init.empty_config",
@@ -201,7 +195,9 @@ fn collect_credential_store(
     bundle: Option<&nexo_auth::wire::CredentialsBundle>,
 ) {
     let Some(bundle) = bundle else { return };
-    let Some(store) = handle.credential_store() else { return };
+    let Some(store) = handle.credential_store() else {
+        return;
+    };
     let plugin_id = store.plugin_id().to_string();
     if let Some(_replaced) = bundle.stores_v2.insert(plugin_id.clone(), store) {
         tracing::warn!(
@@ -610,13 +606,14 @@ where
         // reader otherwise. The entries map is rebuilt from the
         // same `<config_dir>/plugins/*.yaml` files so a single
         // operator-supplied flat file feeds both pathways.
-        let plugin_cfg = match resolve_plugin_cfg(&id, &plugin.root_dir, config_dir, &plugin.manifest) {
-            Ok(cfg) => cfg,
-            Err(failed) => {
-                outcomes.insert(id, failed);
-                continue;
-            }
-        };
+        let plugin_cfg =
+            match resolve_plugin_cfg(&id, &plugin.root_dir, config_dir, &plugin.manifest) {
+                Ok(cfg) => cfg,
+                Err(failed) => {
+                    outcomes.insert(id, failed);
+                    continue;
+                }
+            };
         // Auto-subprocess fallback. If no in-tree factory was
         // registered for this id BUT the manifest declares an
         // `[plugin.entrypoint]` with a non-empty `command`, build a
@@ -1221,10 +1218,7 @@ mod tests {
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
             Ok(())
         }
-        async fn configure(
-            &self,
-            value: &Value,
-        ) -> Result<(), PluginConfigureError> {
+        async fn configure(&self, value: &Value) -> Result<(), PluginConfigureError> {
             self.configure_called.store(true, Ordering::SeqCst);
             *self.last_value.lock().await = Some(value.clone());
             match &self.configure_outcome {
@@ -1296,7 +1290,10 @@ mod tests {
         match err {
             PluginConfigureError::SchemaValidation { plugin_id, errors } => {
                 assert_eq!(plugin_id, "beta");
-                assert!(!errors.is_empty(), "validator should report at least one error");
+                assert!(
+                    !errors.is_empty(),
+                    "validator should report at least one error"
+                );
             }
             other => panic!("expected SchemaValidation, got {other:?}"),
         }
@@ -1350,8 +1347,8 @@ mod tests {
     // ── Phase 93.7: collect_credential_store helper ─────────────
 
     use nexo_auth::generic_store::GenericCredentialStore;
-    use nexo_auth::wire::CredentialsBundle;
     use nexo_auth::handle::TELEGRAM;
+    use nexo_auth::wire::CredentialsBundle;
     use nexo_auth::CredentialHandle;
 
     /// Phase 93.7 — minimal credential store impl for init-loop

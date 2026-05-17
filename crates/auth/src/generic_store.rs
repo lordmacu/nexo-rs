@@ -59,10 +59,7 @@ pub trait GenericCredentialStore: Send + Sync + 'static {
     /// interpretation — daemon never deserialises this payload. The
     /// plugin's runtime code calls `serde_json::from_slice` (or
     /// equivalent) on the returned `Vec<u8>`.
-    async fn resolve_bytes(
-        &self,
-        handle: &CredentialHandle,
-    ) -> Result<Vec<u8>, CredentialError>;
+    async fn resolve_bytes(&self, handle: &CredentialHandle) -> Result<Vec<u8>, CredentialError>;
 
     /// Hot-reload — re-read from disk / env / external KMS. Default
     /// no-op for stores that don't support live updates. Returning
@@ -142,10 +139,7 @@ where
         self.inner.issue(account_id, agent_id)
     }
 
-    async fn resolve_bytes(
-        &self,
-        handle: &CredentialHandle,
-    ) -> Result<Vec<u8>, CredentialError> {
+    async fn resolve_bytes(&self, handle: &CredentialHandle) -> Result<Vec<u8>, CredentialError> {
         let account = self.inner.get(handle)?;
         serde_json::to_vec(&account).map_err(|e| CredentialError::InvalidSecret {
             path: PathBuf::from(format!("<typed-store-adapter:{}>", self.plugin_id)),
@@ -286,17 +280,12 @@ mod tests {
     #[tokio::test]
     async fn typed_adapter_serialises_account_via_serde_json() {
         let typed = Arc::new(FakeTypedStore {
-            acc: FakeAcc {
-                id: "acc1".into(),
-            },
+            acc: FakeAcc { id: "acc1".into() },
         });
         let adapter = TypedStoreAdapter::new("fake", typed);
         let handle = CredentialHandle::new(TELEGRAM, "acc1", "agent_x");
         let bytes = adapter.resolve_bytes(&handle).await.unwrap();
-        let expected = serde_json::to_vec(&FakeAcc {
-            id: "acc1".into(),
-        })
-        .unwrap();
+        let expected = serde_json::to_vec(&FakeAcc { id: "acc1".into() }).unwrap();
         assert_eq!(bytes, expected);
         assert_eq!(adapter.plugin_id(), "fake");
     }

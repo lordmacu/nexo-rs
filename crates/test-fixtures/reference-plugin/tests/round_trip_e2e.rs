@@ -122,9 +122,7 @@ async fn pairing_adapter_send_reply_round_trip() {
             normalize_cache_ttl_seconds: None,
         },
     );
-    let result = adapter
-        .send_reply("default", "user.a", "code: 9999")
-        .await;
+    let result = adapter.send_reply("default", "user.a", "code: 9999").await;
     assert!(result.is_ok(), "send_reply round-trip: {result:?}");
 }
 
@@ -166,9 +164,7 @@ async fn http_proxy_get_hello_round_trip() {
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
-    let info = router
-        .match_path("/reference_demo/hello")
-        .expect("match");
+    let info = router.match_path("/reference_demo/hello").expect("match");
     let reply = forward_http(
         &broker,
         info.0,
@@ -199,9 +195,7 @@ async fn http_proxy_post_echo_round_trips_body() {
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
-    let info = router
-        .match_path("/reference_demo/echo")
-        .expect("match");
+    let info = router.match_path("/reference_demo/echo").expect("match");
     let body_in = b"hello-binary-body";
     let reply = forward_http(
         &broker,
@@ -232,9 +226,7 @@ async fn http_proxy_unknown_path_returns_plugin_404() {
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
-    let info = router
-        .match_path("/reference_demo/missing")
-        .expect("match");
+    let info = router.match_path("/reference_demo/missing").expect("match");
     let reply = forward_http(
         &broker,
         info.0,
@@ -273,14 +265,9 @@ async fn admin_list_round_trip_returns_known_instances() {
     let info = router
         .match_method("nexo/admin/reference_demo/list")
         .expect("match");
-    let reply = forward_admin(
-        &broker,
-        info,
-        "nexo/admin/reference_demo/list",
-        json!({}),
-    )
-    .await
-    .expect("forward_admin");
+    let reply = forward_admin(&broker, info, "nexo/admin/reference_demo/list", json!({}))
+        .await
+        .expect("forward_admin");
     assert!(reply.ok);
     let items = reply
         .result
@@ -341,11 +328,8 @@ async fn metrics_scrape_round_trip_returns_prometheus_text() {
         |req| nexo_reference_plugin::metrics::scrape(req),
     )
     .await;
-    let descriptors = vec![PluginMetricsDescriptor::new(
-        "reference_demo",
-        TOPIC_PREFIX,
-    )
-    .with_timeout(Duration::from_secs(2))];
+    let descriptors = vec![PluginMetricsDescriptor::new("reference_demo", TOPIC_PREFIX)
+        .with_timeout(Duration::from_secs(2))];
     let out = scrape_all(&broker, &descriptors).await;
     assert!(
         out.contains("reference_demo_handler_calls_total"),

@@ -32,19 +32,18 @@ pub use config_schema::{
     is_validation_bypassed, validate_config, ConfigSchemaError, SKIP_SCHEMA_ENV,
 };
 pub use error::ManifestError;
+pub use manifest::{
+    AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
+    CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSchemaSection,
+    ConfigSection, ConfigShape, ContractsSection, CredentialsSchemaSection, EntrypointSection,
+    ExtendsSection, GateKind, GateRisk, HttpServerCapability, MetaSection, PluginManifest,
+    PluginSection, RequiresSection, SkillsSection, SupervisorSection, ToolsSection, UiHint,
+    UiSection, CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME,
+    SUPERVISOR_STDERR_TAIL_MAX,
+};
 pub use pairing::{PairingFieldDescriptor, PairingKind, PairingSection};
 pub use poller::{PluginPollerSection, PollerLifecycle};
 pub use public_tunnel::PluginPublicTunnelSection;
-pub use manifest::{
-    AdminCapabilities, AdvisorsSection, AgentsSection, BrokerCapability, Capabilities, Capability,
-    CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection,
-    ConfigSchemaSection, CredentialsSchemaSection,
-    ConfigSection, ConfigShape, ContractsSection, EntrypointSection, ExtendsSection, GateKind,
-    GateRisk, HttpServerCapability,
-    MetaSection, PluginManifest, PluginSection, RequiresSection, SkillsSection, SupervisorSection,
-    ToolsSection, UiHint, UiSection, CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS,
-    PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
-};
 pub use sandbox::{
     contains_state_dir_token, path_under_or_equals_denylist, SandboxNetwork, SandboxPathKind,
     SandboxSection, SANDBOX_DENYLIST_HOME_SUBPATHS, SANDBOX_DENYLIST_HOST_PATHS,
