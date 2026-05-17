@@ -44,6 +44,7 @@
 - [Publishing a plugin](./plugins/publishing.md)
 - [Signing & publishing](./plugins/signing-and-publishing.md)
 - [Plugin supervisor (auto-respawn)](./plugins/supervisor.md)
+- [Web Search plugin (subprocess)](./plugins/web-search.md)
 
 # Personas
 
