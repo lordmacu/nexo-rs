@@ -1105,6 +1105,17 @@ mod drift_tests {
         // for the test to assert. Pure test fixture, no production
         // code path reads it.
         "MOCK_SUBPROCESS_PLUGIN_ECHO_ENV",
+        // Phase 96 — `crates/test-fixtures/poller-echo/` is a
+        // synthetic poller plugin used by the daemon-side ephemeral
+        // lifecycle e2e tests (`tests/ephemeral_e2e.rs`). The fixture
+        // binary's behaviour knobs let one binary cover happy-path
+        // + 3 error classifications + malformed reply + timeout +
+        // crash scenarios. Pure test fixtures — production daemon
+        // never reads these.
+        "POLLER_ECHO_MODE",
+        "POLLER_ECHO_SLEEP_MS",
+        "POLLER_ECHO_CRASH",
+        "POLLER_ECHO_CRASH_EARLY",
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
