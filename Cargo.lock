@@ -5054,6 +5054,7 @@ dependencies = [
 name = "nexo-microapp-sdk"
 version = "0.1.19"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "candle-core",
@@ -5072,6 +5073,7 @@ dependencies = [
  "nexo-memory",
  "nexo-microapp-sdk",
  "nexo-plugin-manifest",
+ "nexo-poller",
  "nexo-sanitize",
  "nexo-tool-meta",
  "ogg",
@@ -5122,6 +5124,7 @@ dependencies = [
  "image",
  "nexo-broker",
  "nexo-plugin-manifest",
+ "nexo-poller",
  "qrcode",
  "rand 0.8.6",
  "serde",
