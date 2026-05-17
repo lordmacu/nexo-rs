@@ -17,7 +17,7 @@ categories    = { workspace = true }
 workspace = true
 
 [dependencies]
-nexo-ext-registry    = { version = "0.1.1", path = "../ext-registry" }
+nexo-ext-registry    = { version = "0.1.2", path = "../ext-registry" }
 nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
 reqwest = { workspace = true, features = ["rustls-tls", "stream", "cookies", "http2"] }
 semver            = { workspace = true }
