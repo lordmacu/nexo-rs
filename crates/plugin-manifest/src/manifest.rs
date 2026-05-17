@@ -195,6 +195,19 @@ pub struct PluginSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<crate::http::PluginHttpSection>,
 
+    /// Phase 96 — scheduled-work declaration. Plugins implementing
+    /// poller kinds (cron / interval / one-shot) declare the kinds
+    /// they handle plus the broker topic prefix the daemon's
+    /// `nexo-poller` runtime publishes ticks to.
+    ///
+    /// Absent / default = the plugin owns no scheduled work. With
+    /// this section the daemon's `PluginPollerRouter` discovers the
+    /// kinds at boot and routes matching `pollers.yaml` jobs through
+    /// broker RPC instead of the deprecated `nexo-poller-ext`
+    /// `StdioRuntime` bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poller: Option<crate::poller::PluginPollerSection>,
+
     /// Phase 81.20.x Stage 7 Phase 2 — public-internet tunnel
     /// declaration. When the plugin sets
     /// `[plugin.public_tunnel] enabled = true` AND the operator

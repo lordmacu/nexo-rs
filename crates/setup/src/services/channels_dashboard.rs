@@ -1219,6 +1219,7 @@ mod manifest_dashboard_tests {
                     metrics: None,
                     admin: None,
                     http: None,
+                    poller: None,
                     public_tunnel: Default::default(),
                     contracts: Default::default(),
                     meta: MetaSection::default(),
