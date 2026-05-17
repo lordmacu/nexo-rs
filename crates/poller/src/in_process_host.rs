@@ -107,8 +107,21 @@ impl PollerHost for InProcessHost {
                         Value::String(acct.client_id_path.to_string_lossy().into_owned()),
                     );
                     m.insert(
+                        "client_secret_path".into(),
+                        Value::String(acct.client_secret_path.to_string_lossy().into_owned()),
+                    );
+                    m.insert(
                         "token_path".into(),
                         Value::String(acct.token_path.to_string_lossy().into_owned()),
+                    );
+                    m.insert(
+                        "scopes".into(),
+                        Value::Array(
+                            acct.scopes
+                                .iter()
+                                .map(|s| Value::String(s.clone()))
+                                .collect(),
+                        ),
                     );
                 }
             }

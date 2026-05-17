@@ -16174,8 +16174,23 @@ fn handle_creds_get(
                     serde_json::Value::String(acct.client_id_path.to_string_lossy().into_owned()),
                 );
                 m.insert(
+                    "client_secret_path".into(),
+                    serde_json::Value::String(
+                        acct.client_secret_path.to_string_lossy().into_owned(),
+                    ),
+                );
+                m.insert(
                     "token_path".into(),
                     serde_json::Value::String(acct.token_path.to_string_lossy().into_owned()),
+                );
+                m.insert(
+                    "scopes".into(),
+                    serde_json::Value::Array(
+                        acct.scopes
+                            .iter()
+                            .map(|s| serde_json::Value::String(s.clone()))
+                            .collect(),
+                    ),
                 );
             }
         }
