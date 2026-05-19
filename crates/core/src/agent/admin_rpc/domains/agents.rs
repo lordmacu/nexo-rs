@@ -236,15 +236,31 @@ fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> 
 /// Bounded 16-attempt re-roll guards against pathological test
 /// stubs that always report "exists"; production collisions are
 /// statistically negligible (1 in a million per attempt).
+///
+/// **Known limitation**: the (read existing_ids → resolve → write)
+/// sequence is a TOCTOU window. Two concurrent admin RPC calls
+/// reading the same existing list can both pick the same
+/// auto-id and silently upsert one on top of the other. Admin
+/// RPC dispatch is async multi-threaded, so the race is
+/// architecturally possible — but the dispatcher serialises
+/// per-tenant in practice and concurrent agent-create traffic
+/// on a single tenant is rare. A future hardening pass can wrap
+/// this critical section in an `Arc<Mutex<()>>` if real
+/// collisions surface in production.
 fn resolve_agent_id(
     input_id: &str,
     auto_id: bool,
     existing: &[String],
 ) -> Result<String, AdminRpcError> {
+    // Trim leading/trailing whitespace so operator-typed values
+    // like " ana " behave the same as "ana" — a wizard form
+    // shouldn't punish trailing-space typos.
+    let input_id = input_id.trim();
+
     if !auto_id {
         if input_id.is_empty() {
             return Err(AdminRpcError::InvalidParams(
-                "id is required when auto_id=false".into(),
+                "id is required when auto_id=false (or set auto_id=true to let the server generate one)".into(),
             ));
         }
         if !is_valid_agent_id(input_id) {
@@ -259,6 +275,11 @@ fn resolve_agent_id(
         for _ in 0..16 {
             let candidate = generate_random_agent_id();
             if !existing.iter().any(|e| e == &candidate) {
+                tracing::info!(
+                    target: "agents.upsert.auto_id",
+                    generated_id = %candidate,
+                    "auto-generated agent id from empty operator input"
+                );
                 return Ok(candidate);
             }
         }
@@ -283,15 +304,24 @@ fn resolve_agent_id(
     for _ in 0..4 {
         let candidate = format!("{input_id}_{}", epoch_ms());
         if !existing.iter().any(|e| e == &candidate) {
+            tracing::info!(
+                target: "agents.upsert.auto_id",
+                requested = %input_id,
+                resolved = %candidate,
+                "agent id collision — appended timestamp suffix"
+            );
             return Ok(candidate);
         }
     }
     // Final fallback: ms+nanos for jitter.
-    Ok(format!(
-        "{input_id}_{}_{}",
-        epoch_ms(),
-        epoch_nanos_low()
-    ))
+    let candidate = format!("{input_id}_{}_{}", epoch_ms(), epoch_nanos_low());
+    tracing::info!(
+        target: "agents.upsert.auto_id",
+        requested = %input_id,
+        resolved = %candidate,
+        "agent id collision survived 4 ms-suffix attempts — widened with nanos"
+    );
+    Ok(candidate)
 }
 
 fn is_valid_agent_id(id: &str) -> bool {
@@ -1108,6 +1138,28 @@ mod tests {
         assert_eq!(count.load(Ordering::Relaxed), 1);
         let original = read_detail(&*yaml, "ana").unwrap().unwrap();
         assert_eq!(original.system_prompt, "You are Ana.");
+    }
+
+    #[test]
+    fn resolve_agent_id_trims_whitespace_before_resolution() {
+        // Surrounding whitespace must NOT change semantics — wizard
+        // forms commonly leak trailing space when the operator
+        // hits tab after typing.
+        let id = resolve_agent_id("  ana  ", true, &["ana".into()]).unwrap();
+        assert!(id.starts_with("ana_"), "trimmed then collided, got `{id}`");
+
+        // Whitespace-only with auto_id=true is treated identical to
+        // empty → auto-gen.
+        let id = resolve_agent_id("   ", true, &[]).unwrap();
+        assert!(id.starts_with("agent_"), "got `{id}`");
+
+        // Whitespace-only with auto_id=false → InvalidParams with
+        // the "required" message (not the format-mismatch one).
+        let err = resolve_agent_id("   ", false, &[]).expect_err("whitespace-only rejected");
+        match err {
+            AdminRpcError::InvalidParams(m) => assert!(m.contains("required"), "msg: `{m}`"),
+            other => panic!("expected InvalidParams/required, got {other:?}"),
+        }
     }
 
     #[test]
