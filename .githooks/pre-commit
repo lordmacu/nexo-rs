@@ -96,6 +96,11 @@ echo ">> clippy..."
 cargo clippy --workspace -- -D warnings
 
 echo ">> tests..."
-cargo test --workspace --quiet
+# nextest per CLAUDE.md project convention. `cargo test --workspace`
+# was flaky under the heavy parallel-scheduling default (e.g.
+# crates/driver-loop/tests/workspace_git_worktree_test.rs raced on
+# tempdir/git-init under load); nextest's runner schedules cleanly.
+# --status-level=fail keeps the hook quiet on green, loud on red.
+cargo nextest run --workspace --status-level=fail
 
 echo ">> ok"

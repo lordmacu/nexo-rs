@@ -43,8 +43,9 @@ tracing-subscriber     = { workspace = true }
 uuid                   = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
-which    = { workspace = true }
+tempfile    = "3"
+which       = { workspace = true }
+serial_test = "3"
 
 [[bin]]
 name = "nexo-driver"
