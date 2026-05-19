@@ -9449,6 +9449,73 @@ informed by 3+ samples + `GenericBrokerPairingAdapter` impl
 + `SubprocessNexoPlugin::build_pairing_adapter()` override
 + canonical-plugin manifest patches + integration tests.
 
+### 🔒 Rotate Anthropic OAuth credential — bundle 906D in git history   ⬜ ACTIVE
+
+Logged 2026-05-19 from rollup commit `5a002abc`.
+
+`.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt` was
+removed from `HEAD` as part of the `.gitignore += .dev-state/`
+hardening, but the file content is still readable via `git log -p`
+/ `git show <prior-sha>:.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt`.
+
+**Action**:
+
+1. Identify the Anthropic OAuth credential matching the bundle
+   (likely a developer/test account, not production — bundle was
+   committed to the open repo so any leak window is already since
+   the original commit).
+2. Rotate the credential in the Anthropic dashboard.
+3. Decide whether to purge the bundle from history with
+   `git filter-repo --invert-paths --path .dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt`
+   — destructive, requires force-push + every clone to re-fetch.
+   Recommended only if the credential cannot be rotated for some
+   reason (e.g. account already destroyed and the bundle reveals
+   PII).
+
+**Effort**: 5 min rotation; 30 min if filter-repo + coordinate
+force-push across collaborators.
+
+### `.githooks/pre-commit` docs-sync gate broken for `-m` / `-F`   ⬜ ACTIVE
+
+Logged 2026-05-19 from commit `81796c59` (committed `--no-verify`
+because gate misfired).
+
+Lines 64-67 of `.githooks/pre-commit`:
+
+```sh
+msg_file=$(git rev-parse --git-path COMMIT_EDITMSG)
+if [ -f "$msg_file" ] && grep -qE '\[no-docs\]' "$msg_file"; then
+```
+
+The `pre-commit` hook stage runs **before** git writes the new
+commit message to `COMMIT_EDITMSG`. With `-m "msg [no-docs]"` or
+`-F file`, the file on disk still contains the PREVIOUS commit's
+message. Net effect:
+
+- `git commit -m "fix [no-docs]"` → gate sees stale message from
+  the previous commit, may fail (or accidentally pass if previous
+  had `[no-docs]`).
+- `git commit` (editor) → gate sees the freshly-written message
+  because the editor flow writes COMMIT_EDITMSG before pre-commit.
+
+**Fix options** (cheapest first):
+
+1. **Move docs-sync to `commit-msg` hook stage** — that hook fires
+   AFTER the message file is written and BEFORE the commit
+   finalises. Same logic, correct stage. ~15 min.
+2. **Read message from stdin** — git passes the message file path
+   as `$1` to commit-msg, not pre-commit. Can't easily do this
+   from pre-commit.
+3. **Detect `-m`/`-F` and skip gate** — query `git rev-parse --is-during-rebase`
+   etc; brittle.
+
+**Recommended**: option 1. Move the `_docs_sync_check` function
+to a new `.githooks/commit-msg` hook (10 lines of glue), keep
+fmt/clippy/tests in `pre-commit` (those don't need the message).
+
+**Effort**: ~15 min + verification via `git commit -m "test [no-docs]"`
+and `git commit -m "test"` against both staged docs and not.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.
