@@ -1,0 +1,101 @@
+#!/bin/sh
+# Commit-msg checks for nexo-rs.
+#
+# Runs after the commit message file is written, regardless of
+# whether the message came from `-m`, `-F`, or the editor — so it
+# can reliably parse the actual message (the pre-commit hook
+# cannot, because `pre-commit` fires BEFORE git writes the
+# message file, and `.git/COMMIT_EDITMSG` still holds the
+# PREVIOUS commit's message at that point).
+#
+# Install once per clone:
+#     git config core.hooksPath .githooks
+# or re-run ./scripts/bootstrap.sh which wires this for you.
+#
+# Note: this gate used to live in `.githooks/pre-commit` (running
+# before fmt/clippy/tests) and faild because it greppped a stale
+# COMMIT_EDITMSG. Moving it here makes it correct but means the
+# fail surfaces AFTER fmt/clippy/tests. Acceptable trade-off:
+# missing-docs commits are rare; correctness > fail-fast.
+
+set -e
+
+msg_file="$1"
+[ -z "$msg_file" ] && exit 0
+[ ! -f "$msg_file" ] && exit 0
+
+# ---------------------------------------------------------------------------
+# Docs-in-sync gate
+# ---------------------------------------------------------------------------
+# Enforces the CLAUDE.md "MANDATORY: Keep docs/ in sync" rule. Any
+# commit that touches production source or config without touching
+# docs/ fails unless the message contains [no-docs].
+
+# Staged files (A/C/M/R), excluding deletions.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+docs_touched=0
+production_count=0
+production_list=""
+
+for f in $staged; do
+  # Docs changes always count.
+  case "$f" in
+    docs/*) docs_touched=1; continue ;;
+  esac
+
+  # Things that never require a docs update.
+  case "$f" in
+    .githooks/*|README.md|LICENSE*|NOTICE|.gitignore|.gitattributes|*.md)
+      continue ;;
+    # GitHub UI chrome (not runtime):
+    .github/ISSUE_TEMPLATE/*|.github/PULL_REQUEST_TEMPLATE.md|\
+    .github/CODEOWNERS|.github/FUNDING.yml|.github/dependabot.yml)
+      continue ;;
+  esac
+
+  # Test-only files.
+  case "$f" in
+    */tests/*|*_test.rs|*_smoke.rs) continue ;;
+  esac
+  base=$(basename "$f")
+  case "$base" in test_*.rs) continue ;; esac
+
+  # Production-facing paths.
+  case "$f" in
+    crates/*|src/*|config/*|extensions/*|scripts/*|.github/*|Cargo.toml|Cargo.lock)
+      production_count=$((production_count + 1))
+      production_list="${production_list}${f}
+"
+      ;;
+  esac
+done
+
+[ "$production_count" -eq 0 ] && exit 0
+[ "$docs_touched" -eq 1 ] && exit 0
+
+# Opt-out via commit message. Reads the ACTUAL message git is
+# about to commit — passed as $1 by the commit-msg hook contract.
+if grep -qE '\[no-docs\]' "$msg_file"; then
+  echo ">> docs-sync: [no-docs] tag accepted (${production_count} production file(s))" >&2
+  exit 0
+fi
+
+printf '\n\033[1;31mDocs out of sync with code.\033[0m\n\n'
+echo "This commit stages ${production_count} production file(s) but nothing under docs/."
+echo 'Nexo-rs rule (CLAUDE.md MANDATORY section): user-visible changes'
+echo 'must update the mdBook in the same commit.'
+echo ''
+echo '  Production files in this commit:'
+printf '%s' "$production_list" | sed 's/^/    /'
+echo ''
+echo '  What to do:'
+echo '    1. Update the relevant page under docs/src/ (SUMMARY.md lists them)'
+echo '    2. Or, if the change is purely internal (private refactor,'
+echo '       test-only, dependency bump that does not alter behavior),'
+echo '       add [no-docs] to your commit message.'
+echo ''
+echo '  Escape hatch:  git commit --no-verify  (bypasses all hooks)'
+echo ''
+exit 1

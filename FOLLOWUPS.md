@@ -9449,9 +9449,12 @@ informed by 3+ samples + `GenericBrokerPairingAdapter` impl
 + `SubprocessNexoPlugin::build_pairing_adapter()` override
 + canonical-plugin manifest patches + integration tests.
 
-### 🔒 Revoke Anthropic OAuth authorization — bundle 906D in git history   ⬜ ACTIVE
+### 🔒 Revoke Anthropic OAuth authorization — bundle 906D in git history   ✅ CLOSED 2026-05-19
 
-Logged 2026-05-19 from rollup commit `5a002abc`.
+Logged 2026-05-19 from rollup commit `5a002abc`. Closed same day:
+OAuth grant revoked in Anthropic console. Bundle in history is now
+inert. History purge declined — no PII concern that outweighs
+collaborator force-push disruption.
 
 `.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt` was
 removed from `HEAD` as part of the `.gitignore += .dev-state/`
@@ -9484,10 +9487,15 @@ token is revoked at the IdP.
 **Effort**: 5 min revoke; 30 min if filter-repo + coordinate
 force-push across collaborators.
 
-### `.githooks/pre-commit` docs-sync gate broken for `-m` / `-F`   ⬜ ACTIVE
+### `.githooks/pre-commit` docs-sync gate broken for `-m` / `-F`   ✅ CLOSED 2026-05-19
 
 Logged 2026-05-19 from commit `81796c59` (committed `--no-verify`
-because gate misfired).
+because gate misfired). Closed same day by moving the gate from
+`.githooks/pre-commit` to a new `.githooks/commit-msg` hook —
+that stage receives the message file path as `$1` AFTER git
+writes it, so the `[no-docs]` opt-out is parsed against the
+actual message regardless of whether it came from `-m`, `-F`,
+or the editor.
 
 Lines 64-67 of `.githooks/pre-commit`:
 

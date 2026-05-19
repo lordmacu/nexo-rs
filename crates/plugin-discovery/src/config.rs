@@ -53,11 +53,13 @@ pub struct DiscoveryConfig {
     pub http_timeout: Duration,
     /// Owner allowlist for `TrustTier::Official`.
     pub official_owners: Vec<String>,
-    /// Daemon's running `nexo-microapp-sdk` semver. Required —
-    /// compat gate compares fetched manifest's
-    /// `[plugin.requires] nexo-sdk` range against this. Daemon
-    /// passes `nexo_microapp_sdk::VERSION` parsed at boot.
-    pub sdk_version: semver::Version,
+    /// Daemon's running version (matches `CARGO_PKG_VERSION` of the
+    /// `nexo-rs` binary, parsed at boot). Required — the compat gate
+    /// in `crate::compat` compares fetched manifests'
+    /// `[plugin] min_nexo_version` (`semver::VersionReq`) against
+    /// this. Older daemons therefore see `NeedsUpgrade` on plugins
+    /// that require a newer host.
+    pub daemon_version: semver::Version,
     /// Optional GitHub PAT for the topic-search source. Lifts the
     /// 10-req/min unauth ceiling to 5000/hr. `None` → unauth mode.
     pub github_token: Option<String>,
@@ -65,8 +67,8 @@ pub struct DiscoveryConfig {
 
 impl DiscoveryConfig {
     /// Build a config with the bake-in defaults and the two
-    /// required overrides (state_dir + sdk_version).
-    pub fn with_defaults(state_dir: PathBuf, sdk_version: semver::Version) -> Self {
+    /// required overrides (state_dir + daemon_version).
+    pub fn with_defaults(state_dir: PathBuf, daemon_version: semver::Version) -> Self {
         Self {
             state_dir,
             cache_ttl: DEFAULT_CACHE_TTL,
@@ -78,7 +80,7 @@ impl DiscoveryConfig {
                 .iter()
                 .map(|s| (*s).to_string())
                 .collect(),
-            sdk_version,
+            daemon_version,
             github_token: None,
         }
     }

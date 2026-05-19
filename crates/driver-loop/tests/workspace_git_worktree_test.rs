@@ -50,7 +50,7 @@ fn goal_with_id(id: uuid::Uuid) -> Goal {
 }
 
 #[tokio::test]
-#[serial_test::serial]
+#[serial_test::file_serial(git_worktree)]
 async fn ensure_creates_worktree_with_branch() {
     if !git_available() {
         return;
@@ -74,7 +74,7 @@ async fn ensure_creates_worktree_with_branch() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
+#[serial_test::file_serial(git_worktree)]
 async fn checkpoint_returns_40_hex_sha() {
     if !git_available() {
         return;
@@ -95,7 +95,7 @@ async fn checkpoint_returns_40_hex_sha() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
+#[serial_test::file_serial(git_worktree)]
 async fn checkpoint_then_rollback_reverts_changes() {
     if !git_available() {
         return;
@@ -129,7 +129,7 @@ async fn checkpoint_then_rollback_reverts_changes() {
 }
 
 #[tokio::test]
-#[serial_test::serial]
+#[serial_test::file_serial(git_worktree)]
 async fn cleanup_removes_worktree_registration() {
     if !git_available() {
         return;

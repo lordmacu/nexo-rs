@@ -1,0 +1,21 @@
+# Nextest config — workspace-wide tuning.
+#
+# Surfaced 2026-05-19: the four `crates/driver-loop/tests/
+# workspace_git_worktree_test.rs` tests fail under parallel scheduling
+# because each spawns `git worktree add` against a fresh tempdir, and
+# concurrent invocations occasionally race on git's index lock. They
+# pass sequentially (`-j 1`). We isolate them in a `git-worktree`
+# test-group with `max-threads = 1` so the rest of the workspace
+# still parallelises freely.
+
+[test-groups]
+git-worktree = { max-threads = 1 }
+
+[[profile.default.overrides]]
+# nextest filter matches binary name (the test file name without
+# `.rs`), not a test-name prefix. The previous
+# `test(workspace_git_worktree_test::)` filter matched zero tests
+# because test names don't include the binary path. `binary(...)`
+# is the correct selector.
+filter = "binary(workspace_git_worktree_test)"
+test-group = "git-worktree"
