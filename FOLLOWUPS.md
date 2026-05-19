@@ -9449,7 +9449,7 @@ informed by 3+ samples + `GenericBrokerPairingAdapter` impl
 + `SubprocessNexoPlugin::build_pairing_adapter()` override
 + canonical-plugin manifest patches + integration tests.
 
-### 🔒 Rotate Anthropic OAuth credential — bundle 906D in git history   ⬜ ACTIVE
+### 🔒 Revoke Anthropic OAuth authorization — bundle 906D in git history   ⬜ ACTIVE
 
 Logged 2026-05-19 from rollup commit `5a002abc`.
 
@@ -9458,21 +9458,30 @@ removed from `HEAD` as part of the `.gitignore += .dev-state/`
 hardening, but the file content is still readable via `git log -p`
 / `git show <prior-sha>:.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt`.
 
+This is an **OAuth bundle**, not a static API key — typically
+contains `access_token` (short-lived) + `refresh_token` (long-lived)
++ scope + account identifiers. Attacker holding the bundle can
+mint fresh access tokens from the refresh token until that refresh
+token is revoked at the IdP.
+
 **Action**:
 
-1. Identify the Anthropic OAuth credential matching the bundle
-   (likely a developer/test account, not production — bundle was
-   committed to the open repo so any leak window is already since
-   the original commit).
-2. Rotate the credential in the Anthropic dashboard.
-3. Decide whether to purge the bundle from history with
+1. Inspect bundle locally: `git show <prior-sha>:.dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt`
+   — note account identifier + expiry timestamps.
+2. If access_token still in expiry window OR refresh_token present:
+   sign in to the Anthropic console under the matching account →
+   **revoke the OAuth grant / authorization** for the client_id
+   that minted the bundle. Revoking the grant invalidates both
+   access and refresh tokens server-side regardless of local expiry.
+3. If both tokens already expired AND no refresh: bundle is inert,
+   no revocation needed but still consider purging history for PII
+   (account ID, email claim).
+4. Optionally purge bundle from history with
    `git filter-repo --invert-paths --path .dev-state/secrets/LLM_ANTHROPIC_906D_OAUTH_BUNDLE.txt`
    — destructive, requires force-push + every clone to re-fetch.
-   Recommended only if the credential cannot be rotated for some
-   reason (e.g. account already destroyed and the bundle reveals
-   PII).
+   Recommended only if PII concern outweighs collaborator disruption.
 
-**Effort**: 5 min rotation; 30 min if filter-repo + coordinate
+**Effort**: 5 min revoke; 30 min if filter-repo + coordinate
 force-push across collaborators.
 
 ### `.githooks/pre-commit` docs-sync gate broken for `-m` / `-F`   ⬜ ACTIVE
