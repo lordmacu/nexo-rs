@@ -165,8 +165,20 @@ pub struct BindingSummary {
 /// field.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentUpsertInput {
-    /// Stable agent id.
+    /// Stable agent id. When `auto_id = true`:
+    ///   - empty string → server generates `agent_NNNNNN`
+    ///     (6-digit decimal, re-roll on collision).
+    ///   - non-empty + collides → server appends `_<epoch_ms>` and
+    ///     creates a new agent (does NOT upsert into the existing).
+    /// When `auto_id = false` (default): legacy behavior — id is
+    /// required, collision = update (upsert semantic).
     pub id: String,
+    /// When true, the server resolves a unique id (see `id` docs).
+    /// Wizard-driven create flows set this to true so the operator
+    /// never has to think about the id; legacy callers leave it
+    /// `false` to preserve upsert-on-collision semantics.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_id: bool,
     /// LLM provider + model.
     pub model: ModelRef,
     /// `None` keeps the existing yaml value (or default if new).

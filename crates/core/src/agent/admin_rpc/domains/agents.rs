@@ -927,4 +927,159 @@ mod tests {
             Some("prompt en espanol")
         );
     }
+
+    // ── auto_id resolution tests ────────────────────────────────────
+
+    #[test]
+    fn resolve_agent_id_legacy_path_requires_non_empty_id() {
+        let err =
+            resolve_agent_id("", false, &[]).expect_err("empty id with auto_id=false rejected");
+        match err {
+            AdminRpcError::InvalidParams(m) => assert!(m.contains("required")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_agent_id_legacy_path_validates_format() {
+        let err = resolve_agent_id("Bad-ID", false, &[]).expect_err("uppercase rejected");
+        match err {
+            AdminRpcError::InvalidParams(m) => assert!(m.contains("must match")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_agent_id_legacy_path_preserves_explicit_id() {
+        let id = resolve_agent_id("ana", false, &["ana".into()]).unwrap();
+        assert_eq!(id, "ana", "legacy path treats existing id as upsert target");
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_empty_generates_agent_prefix() {
+        let id = resolve_agent_id("", true, &[]).unwrap();
+        assert!(id.starts_with("agent_"), "got `{id}`");
+        let suffix = &id["agent_".len()..];
+        assert_eq!(suffix.len(), 6, "6-digit suffix, got `{suffix}`");
+        assert!(suffix.chars().all(|c| c.is_ascii_digit()), "decimal suffix");
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_explicit_unique_preserved() {
+        let id = resolve_agent_id("custom_name", true, &["ana".into(), "bob".into()]).unwrap();
+        assert_eq!(id, "custom_name");
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_explicit_collision_suffixes_timestamp() {
+        let id = resolve_agent_id("ana", true, &["ana".into()]).unwrap();
+        assert!(id.starts_with("ana_"), "got `{id}`");
+        let suffix = &id["ana_".len()..];
+        assert!(
+            suffix.len() >= 13,
+            "epoch-ms is at least 13 digits in 2026, got `{suffix}`"
+        );
+        assert!(suffix.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_invalid_explicit_rejected() {
+        let err = resolve_agent_id("UPPER", true, &[]).expect_err("uppercase rejected");
+        match err {
+            AdminRpcError::InvalidParams(_) => {}
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn is_valid_agent_id_accepts_canonical_shapes() {
+        assert!(is_valid_agent_id("ana"));
+        assert!(is_valid_agent_id("a"));
+        assert!(is_valid_agent_id("agent_334234"));
+        assert!(is_valid_agent_id("multi-word-id"));
+        assert!(is_valid_agent_id(&format!("{:a<41}", "a")));
+    }
+
+    #[test]
+    fn is_valid_agent_id_rejects_bad_shapes() {
+        assert!(!is_valid_agent_id(""));
+        assert!(!is_valid_agent_id("9starts_with_digit"));
+        assert!(!is_valid_agent_id("UPPER"));
+        assert!(!is_valid_agent_id("has space"));
+        assert!(!is_valid_agent_id("has.dot"));
+        assert!(!is_valid_agent_id(&format!("{:a<42}", "a"))); // 42 chars > limit
+    }
+
+    #[test]
+    fn agents_upsert_auto_id_creates_random_when_empty() {
+        let yaml = MockYaml::with_fixture();
+        let (count, reload) = reload_counter();
+        let input = AgentUpsertInput {
+            id: String::new(),
+            auto_id: true,
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            ..Default::default()
+        };
+        let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(detail.id.starts_with("agent_"), "got `{}`", detail.id);
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+        // The fixture's `ana` and `bob` survive; the new agent joins them.
+        let listed = list(&*yaml, Value::Null);
+        let listed_response: AgentsListResponse =
+            serde_json::from_value(listed.result.unwrap()).unwrap();
+        assert_eq!(listed_response.agents.len(), 3);
+    }
+
+    #[test]
+    fn agents_upsert_auto_id_suffixes_timestamp_on_collision() {
+        let yaml = MockYaml::with_fixture();
+        let (count, reload) = reload_counter();
+        let input = AgentUpsertInput {
+            id: "ana".into(), // collides — fixture seeds `ana`
+            auto_id: true,
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            ..Default::default()
+        };
+        let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(detail.id.starts_with("ana_"), "got `{}`", detail.id);
+        // Suffix is decimal epoch-ms.
+        let suffix = &detail.id["ana_".len()..];
+        assert!(suffix.chars().all(|c| c.is_ascii_digit()));
+        // Original `ana` block untouched.
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+        let original = read_detail(&*yaml, "ana").unwrap().unwrap();
+        assert_eq!(original.system_prompt, "You are Ana.");
+    }
+
+    #[test]
+    fn agents_upsert_legacy_path_still_upserts_on_collision() {
+        let yaml = MockYaml::with_fixture();
+        let (_count, reload) = reload_counter();
+        let input = AgentUpsertInput {
+            id: "ana".into(),
+            auto_id: false, // explicit upsert
+            model: ModelRef {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            },
+            language: Some("fr".into()),
+            ..Default::default()
+        };
+        let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
+        // `ana` updated in place — no new agent created.
+        let listed = list(&*yaml, Value::Null);
+        let listed_response: AgentsListResponse =
+            serde_json::from_value(listed.result.unwrap()).unwrap();
+        assert_eq!(listed_response.agents.len(), 2);
+        let updated = read_detail(&*yaml, "ana").unwrap().unwrap();
+        assert_eq!(updated.language.as_deref(), Some("fr"));
+    }
 }
