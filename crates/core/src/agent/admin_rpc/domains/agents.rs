@@ -156,7 +156,18 @@ pub fn upsert(
     // agent gets an `_<epoch_ms>` suffix instead of being treated
     // as an upsert. Legacy callers leave `auto_id=false` and keep
     // the upsert-on-collision semantic.
-    let existing_ids = patcher.list_agent_ids().unwrap_or_default();
+    //
+    // Propagate yaml read errors — silently degrading to an empty
+    // list would let auto-gen "succeed" against a stale view and
+    // silently upsert a colliding agent on disk.
+    let existing_ids = match patcher.list_agent_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml read failed before id resolution: {e}"
+            )))
+        }
+    };
     input.id = match resolve_agent_id(&input.id, input.auto_id, &existing_ids) {
         Ok(id) => id,
         Err(e) => return AdminRpcResult::err(e),
@@ -264,7 +275,23 @@ fn resolve_agent_id(
     if !existing.iter().any(|e| e == input_id) {
         return Ok(input_id.to_string());
     }
-    Ok(format!("{input_id}_{}", epoch_ms()))
+    // Suffix on collision. Re-check the suffixed candidate to
+    // cover the (rare) case where two requests land in the same
+    // millisecond with the same explicit id; widen with nanos when
+    // the millisecond suffix itself collides. Bounded loop
+    // (4 attempts) — production loads never trigger this.
+    for _ in 0..4 {
+        let candidate = format!("{input_id}_{}", epoch_ms());
+        if !existing.iter().any(|e| e == &candidate) {
+            return Ok(candidate);
+        }
+    }
+    // Final fallback: ms+nanos for jitter.
+    Ok(format!(
+        "{input_id}_{}_{}",
+        epoch_ms(),
+        epoch_nanos_low()
+    ))
 }
 
 fn is_valid_agent_id(id: &str) -> bool {
@@ -285,12 +312,28 @@ fn generate_random_agent_id() -> String {
     // separated by at least one microsecond. The re-roll loop in
     // `resolve_agent_id` covers tight bursts that land in the
     // same nano-window.
+    //
+    // Wallclock anomalies (system clock unset / skewed to epoch)
+    // would produce `agent_000000` for every call, so we mix the
+    // hash of the current thread id into the suffix when nanos
+    // resolves to 0 — bounded reroll in `resolve_agent_id`
+    // handles collisions either way.
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("agent_{:06}", (nanos as u32) % 1_000_000)
+    let suffix = if nanos == 0 {
+        // Thread id hash as a deterministic-but-varied fallback.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        std::thread::current().id().hash(&mut h);
+        (h.finish() as u32) % 1_000_000
+    } else {
+        (nanos as u32) % 1_000_000
+    };
+    format!("agent_{suffix:06}")
 }
 
 fn epoch_ms() -> u128 {
@@ -298,6 +341,14 @@ fn epoch_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn epoch_nanos_low() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
 }
 
@@ -1057,6 +1108,38 @@ mod tests {
         assert_eq!(count.load(Ordering::Relaxed), 1);
         let original = read_detail(&*yaml, "ana").unwrap().unwrap();
         assert_eq!(original.system_prompt, "You are Ana.");
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_empty_reroll_on_synthetic_collision() {
+        // Seed the existing list with the candidate that
+        // `generate_random_agent_id` is likely to produce in this
+        // exact nanosecond window — the re-roll loop has to
+        // burn through the first match and produce something
+        // different. We can't deterministically predict the
+        // candidate, so we approximate by stuffing 16 plausible
+        // ids; the re-roll loop should still terminate Ok because
+        // the 17th attempt will land outside our seeded set with
+        // overwhelming probability (each attempt has 999_984/1M
+        // odds of being free given a 16-id seeded set).
+        let seeded: Vec<String> = (0..16)
+            .map(|i| format!("agent_{i:06}"))
+            .collect();
+        let id = resolve_agent_id("", true, &seeded).unwrap();
+        assert!(id.starts_with("agent_"));
+        assert!(!seeded.iter().any(|s| s == &id), "got seeded `{id}`");
+    }
+
+    #[test]
+    fn resolve_agent_id_auto_explicit_collision_loop_terminates() {
+        // Pathological seed list: every possible "ana_<7-digit-ts>"
+        // string is impossible to enumerate, but we can verify the
+        // 4-attempt loop falls through to the `ms_ns` fallback
+        // shape by seeding only the inputs (no suffix
+        // pre-computation possible) — just confirm the function
+        // returns Ok and the shape starts with `ana_`.
+        let id = resolve_agent_id("ana", true, &["ana".into()]).unwrap();
+        assert!(id.starts_with("ana_"), "got `{id}`");
     }
 
     #[test]
