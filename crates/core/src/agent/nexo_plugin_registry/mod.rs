@@ -30,7 +30,7 @@ pub use remote_credential_store::RemoteCredentialStore;
 
 pub use boot::{
     register_plugin_registry_reload_hook, wire_plugin_registry, wire_plugin_registry_with_runtime,
-    SubprocessRuntime, WirePluginRegistryOutput,
+    SubprocessCtxStubs, SubprocessRuntime, WirePluginRegistryOutput,
 };
 pub use capability_aggregator::{
     aggregate_plugin_gates, AggregatedGate, AggregatedGateState, PluginCapabilityAggregation,

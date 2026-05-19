@@ -99,6 +99,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
         },
         true,
     )
@@ -215,6 +216,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
         },
         true,
     )

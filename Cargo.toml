@@ -90,6 +90,7 @@ members = [
     "crates/dream",
     "crates/assistant",
     "crates/plugin-manifest",
+    "crates/plugin-discovery",
     "crates/persona-manifest",
     "crates/ext-registry",
     "crates/ext-installer",

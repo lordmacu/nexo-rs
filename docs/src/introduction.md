@@ -69,7 +69,7 @@ nexo-rs is opinionated toward that shape.
 | Runtime | Multi-agent core, SessionManager, Heartbeat, CircuitBreaker. Boots zero-config; `nexo init` scaffolds 19 commented sample YAMLs |
 | Broker | **NATS** (`async-nats`) + disk queue + DLQ + backpressure, **or `local`** — stdio-bridge for subprocess plugins, no external server. Flip at runtime: `nexo set-broker {local,nats}` |
 | LLMs | MiniMax M2.5 (primary), Anthropic (OAuth + API), OpenAI-compat, Gemini, DeepSeek |
-| Plugins | WhatsApp, Telegram, Email, Browser (CDP), **Google (Gmail/Calendar/Drive/Sheets)**, **Web Search (Brave/Tavily/DuckDuckGo/Perplexity)**. Install with `nexo plugin install <owner>/<repo>` (GitHub Releases tarball) or `cargo install nexo-plugin-{whatsapp,telegram,email,browser,google,web-search}` from crates.io |
+| Plugins | **5 channels** (WhatsApp, Telegram, Email, Browser CDP, Google OAuth+APIs), **1 tool** (Web Search · Brave/Tavily/DDG/Perplexity), **3 pollers** (RSS, Gmail, Google Calendar). Install with `nexo plugin install <owner>/<repo>` (GitHub Releases tarball) or `cargo install nexo-plugin-{whatsapp,telegram,email,browser,google,web-search}` / `cargo install nexo-poller-{rss,gmail,google-calendar}` from crates.io. See the [plugin catalog](./plugins/catalog.md) for repo URLs. |
 | Memory | Short-term in-memory, long-term SQLite, vector via sqlite-vec |
 | Extensions | TOML manifest, stdio + NATS runtimes, CLI, 20+ skills shipped |
 | MCP | Client (stdio + HTTP), agent as MCP server, hot-reload |
@@ -107,8 +107,12 @@ curl -fsSL https://lordmacu.github.io/nexo-rs/install.sh | bash
 
 # 2. Add a channel plugin (GitHub Releases tarball OR crates.io):
 nexo plugin install lordmacu/nexo-plugin-whatsapp
-#    Built-ins: nexo-plugin-{whatsapp,telegram,email,browser,google,web-search}.
+#    5 channels: nexo-plugin-{whatsapp,telegram,email,browser}
+#                + nexo-rs-plugin-google.
+#    1 tool:     nexo-rs-plugin-web-search.
+#    3 pollers:  nexo-rs-poller-{rss,gmail,google-calendar}.
 #    crates.io path: `cargo install nexo-plugin-web-search` (etc.).
+#    Full catalog: docs/plugins/catalog.md.
 
 # 3. Install the Cody programmer-pair persona (or any other v2 pack):
 nexo persona install lordmacu/nexo-persona-cody

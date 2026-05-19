@@ -263,7 +263,7 @@ async fn spawner_returns_err_surfaces_full_reason_in_rejection() {
     let coord = build_coord(dir.path().to_path_buf());
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_c = Arc::clone(&calls);
-    let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg| {
+    let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg, _plugins| {
         let calls = Arc::clone(&calls_c);
         Box::pin(async move {
             calls.fetch_add(1, Ordering::SeqCst);
@@ -298,7 +298,7 @@ async fn spawner_success_registers_id_and_reports_applied() {
     let (spawned, _rx) = fabricated_spawned("hot").await;
     let cell = Arc::new(tokio::sync::Mutex::new(Some(spawned)));
     let cell_c = Arc::clone(&cell);
-    let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |_cfg| {
+    let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |_cfg, _plugins| {
         let cell = Arc::clone(&cell_c);
         Box::pin(async move {
             // Hand out the prebuilt SpawnedAgent on first call.

@@ -1,0 +1,40 @@
+[package]
+name = "nexo-plugin-discovery"
+description = "Plugin catalogue discovery — fetches public plugin metadata from crates.io / GitHub topic / curated index (Phase 98)."
+version = "0.1.0"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+toml        = "0.8"
+semver      = { workspace = true, features = ["serde"] }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+async-trait = { workspace = true }
+chrono      = { workspace = true }
+# rustls-only — per memory rule feedback_rustls_default_features_off.
+# Workspace reqwest base pin already drops default-features; here we
+# additively enable the native rustls cert support.
+reqwest     = { workspace = true, features = ["rustls-tls-native-roots"] }
+tokio       = { workspace = true, features = ["fs", "sync", "time", "rt"] }
+nexo-tool-meta       = { workspace = true }
+nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
+nexo-resilience      = { version = "0.1.4", path = "../resilience" }
+
+[dev-dependencies]
+tokio    = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
+wiremock = "0.6"

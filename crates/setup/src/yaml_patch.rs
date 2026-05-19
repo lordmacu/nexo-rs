@@ -698,6 +698,70 @@ pub fn read_agent_field_merged(
     Ok(None)
 }
 
+/// Phase 97.UI — return the entire `agents.yaml.<id>` block as a
+/// YAML `Value`. Same precedence order as
+/// [`read_agent_field_merged`] (canonical → agents.d/ → persona
+/// install roots). Powers `AgentDetail.raw_config` so the admin UI
+/// can render every capability gate (`config_tool`, `team`, `repl`,
+/// `proactive`, rate limits, …) without one dotted read per field.
+pub fn read_agent_block_merged(
+    path: &Path,
+    extra_persona_roots: &[std::path::PathBuf],
+    agent_id: &str,
+) -> Result<Option<Value>> {
+    if let Some(v) = read_one_block(path, agent_id)? {
+        return Ok(Some(v));
+    }
+    if let Some(parent) = path.parent() {
+        if let Some(v) = read_one_dir_block(&parent.join("agents.d"), agent_id)? {
+            return Ok(Some(v));
+        }
+    }
+    for root in extra_persona_roots {
+        if let Some(v) = read_one_dir_block(&root.join("agents.d"), agent_id)? {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
+}
+
+fn read_one_block(path: &Path, agent_id: &str) -> Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let agents = match root.get("agents").and_then(Value::as_sequence) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    Ok(agents
+        .iter()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+        .cloned())
+}
+
+fn read_one_dir_block(dir: &Path, agent_id: &str) -> Result<Option<Value>> {
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("yaml") {
+            continue;
+        }
+        if let Some(v) = read_one_block(&p, agent_id)? {
+            return Ok(Some(v));
+        }
+    }
+    Ok(None)
+}
+
 fn read_one(path: &Path, agent_id: &str, dotted: &str) -> Result<Option<Value>> {
     if !path.exists() {
         return Ok(None);

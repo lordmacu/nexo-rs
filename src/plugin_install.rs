@@ -145,36 +145,7 @@ fn resolve_target(cli_override: Option<String>) -> String {
     nexo_ext_installer::current_target_triple()
 }
 
-fn resolve_dest_root(
-    cfg: &nexo_config::AppConfig,
-    cli_override: Option<PathBuf>,
-    json: bool,
-) -> Result<PathBuf> {
-    if let Some(dest) = cli_override {
-        std::fs::create_dir_all(&dest)
-            .with_context(|| format!("create --dest {}", dest.display()))?;
-        return Ok(dest);
-    }
-    if let Some(first) = cfg.plugins.discovery.search_paths.first() {
-        std::fs::create_dir_all(first).with_context(|| {
-            format!(
-                "create plugins.discovery.search_paths[0] {}",
-                first.display()
-            )
-        })?;
-        return Ok(first.clone());
-    }
-    let fallback = nexo_project_tracker::state::nexo_state_dir().join("plugins");
-    std::fs::create_dir_all(&fallback)
-        .with_context(|| format!("create fallback plugin root {}", fallback.display()))?;
-    if !json {
-        eprintln!(
-            "! plugins.discovery.search_paths empty in config; defaulting to {}",
-            fallback.display()
-        );
-    }
-    Ok(fallback)
-}
+// `resolve_dest_root` retired — silent variant is the only caller.
 
 fn build_reqwest_client() -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -266,6 +237,7 @@ fn truncate_sha(sha: &str) -> String {
     }
 }
 
+#[allow(dead_code)] // Kept for tests + future progress-stream callback API.
 fn human_bytes(n: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
@@ -333,47 +305,67 @@ async fn emit_lifecycle_installed_event(
 
 // ── Public orchestration ───────────────────────────────────────────
 
-pub async fn run_plugin_install(
+/// Phase 97.1 — pure orchestration. Returns a typed
+/// [`PluginInstallReport`] / [`PluginInstallErrorReport`] without
+/// touching stdout/stderr. Lets the admin RPC dispatcher (and
+/// future callers like the wizard "install plugin" flow) drive the
+/// same pipeline the `nexo plugin install` CLI uses, without
+/// scraping process stdout. The thin [`run_plugin_install`]
+/// wrapper below calls this + formats human / JSON output for the
+/// CLI use case.
+pub async fn install_plugin_silent(
     config_dir: &Path,
-    coords_str: String,
+    coords_str: &str,
     dest_override: Option<PathBuf>,
     target_override: Option<String>,
-    json: bool,
     require_signature: bool,
     skip_signature_verify: bool,
-) -> Result<i32> {
+) -> Result<PluginInstallReport, PluginInstallErrorReport> {
     if require_signature && skip_signature_verify {
-        let report = PluginInstallErrorReport {
+        return Err(PluginInstallErrorReport {
             ok: false,
             kind: "FlagsConflict",
             error: "--require-signature and --skip-signature-verify are mutually exclusive"
                 .to_string(),
             available: None,
-        };
-        if json {
-            println!("{}", serde_json::to_string(&report).unwrap_or_default());
-        } else {
-            eprintln!("✗ {}", report.error);
-        }
-        return Ok(1);
+        });
     }
 
-    let cfg = nexo_config::AppConfig::load(config_dir)
-        .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
+    let cfg = match nexo_config::AppConfig::load(config_dir) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(PluginInstallErrorReport {
+                ok: false,
+                kind: "ConfigLoad",
+                error: format!("failed to load config from {}: {e}", config_dir.display()),
+                available: None,
+            });
+        }
+    };
 
     let trusted = match TrustedKeysConfig::load(config_dir) {
         Ok(t) => t,
-        Err(e) => return Ok(emit_verify_error_and_exit(&e, json)),
+        Err(e) => return Err(verify_error_to_report(&e)),
     };
 
     let target = resolve_target(target_override);
-    let dest_root = resolve_dest_root(&cfg, dest_override, json)?;
+    let dest_root = match resolve_dest_root_silent(&cfg, dest_override) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(PluginInstallErrorReport {
+                ok: false,
+                kind: "DestResolution",
+                error: e.to_string(),
+                available: None,
+            });
+        }
+    };
     let state_dir = nexo_project_tracker::state::nexo_state_dir();
 
     // Coords parse.
-    let coords = match RepoCoords::parse(&coords_str) {
+    let coords = match RepoCoords::parse(coords_str) {
         Ok(c) => c,
-        Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
+        Err(e) => return Err(install_error_to_report(&e)),
     };
 
     let (effective_mode, matched_policy) = resolve_effective_mode(
@@ -383,17 +375,18 @@ pub async fn run_plugin_install(
         skip_signature_verify,
     );
 
-    if !json {
-        eprintln!(
-            "→ Resolving {}/{}@{} (target: {})",
-            coords.owner, coords.repo, coords.tag, target
-        );
-    }
+    tracing::info!(
+        owner = %coords.owner,
+        repo = %coords.repo,
+        tag = %coords.tag,
+        target = %target,
+        "plugin install: resolving release"
+    );
     let client = build_reqwest_client();
     let resolved: ResolvedInstall =
         match resolve_release(&client, &coords, &target, DEFAULT_GITHUB_API_BASE).await {
             Ok(r) => r,
-            Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
+            Err(e) => return Err(install_error_to_report(&e)),
         };
 
     let entry = &resolved.entry;
@@ -401,26 +394,22 @@ pub async fn run_plugin_install(
     let id = entry.id.clone();
     let version = entry.version.clone();
 
-    if !json {
-        eprintln!(
-            "✓ Found release v{} ({}, {}, sha256 {})",
-            version,
-            target,
-            human_bytes(download.size_bytes),
-            truncate_sha(&download.sha256)
-        );
-        eprintln!("→ Downloading");
-    }
+    tracing::info!(
+        id = %id,
+        version = %version,
+        target = %target,
+        size_bytes = download.size_bytes,
+        sha256 = %truncate_sha(&download.sha256),
+        "plugin install: found release; downloading"
+    );
 
     let cache_path = cache_tarball_path(&state_dir, &id, &version.to_string(), &target);
     let installed = match download_and_verify(&client, &resolved, &cache_path).await {
         Ok(t) => t,
-        Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
+        Err(e) => return Err(install_error_to_report(&e)),
     };
 
-    if !json {
-        eprintln!("✓ sha256 verified");
-    }
+    tracing::info!(id = %id, "plugin install: sha256 verified");
 
     // ── cosign signature verification hook ───────
     let mut signature_verified = false;
@@ -435,37 +424,27 @@ pub async fn run_plugin_install(
         (mode, None, _) => {
             if mode == TrustMode::Require {
                 let _ = std::fs::remove_file(&installed.tarball_path);
-                return Ok(emit_verify_error_and_exit(
-                    &VerifyError::PolicyRequiresSig {
-                        owner: coords.owner.clone(),
-                    },
-                    json,
-                ));
+                return Err(verify_error_to_report(&VerifyError::PolicyRequiresSig {
+                    owner: coords.owner.clone(),
+                }));
             }
-            if !json {
-                eprintln!(
-                    "! No signature in release; trust mode is `{}` — proceeding unverified.",
-                    mode.as_str()
-                );
-            }
+            tracing::warn!(
+                trust_mode = mode.as_str(),
+                "plugin install: no signature in release; proceeding unverified"
+            );
             None
         }
         (mode, Some(_), None) => {
             if mode == TrustMode::Require {
                 let _ = std::fs::remove_file(&installed.tarball_path);
-                return Ok(emit_verify_error_and_exit(
-                    &VerifyError::PolicyRequiresSig {
-                        owner: coords.owner.clone(),
-                    },
-                    json,
-                ));
+                return Err(verify_error_to_report(&VerifyError::PolicyRequiresSig {
+                    owner: coords.owner.clone(),
+                }));
             }
-            if !json {
-                eprintln!(
-                    "! No `[[authors]]` entry for `{}` in trusted_keys.toml; proceeding unverified.",
-                    coords.owner
-                );
-            }
+            tracing::warn!(
+                owner = %coords.owner,
+                "plugin install: no [[authors]] entry in trusted_keys.toml; proceeding unverified"
+            );
             None
         }
         (_mode, Some(signing), Some(policy)) => {
@@ -476,18 +455,15 @@ pub async fn run_plugin_install(
                 download_to_cache(&client, &signing.cosign_signature_url, &sig_path).await
             {
                 let _ = std::fs::remove_file(&installed.tarball_path);
-                return Ok(emit_verify_error_and_exit(&e, json));
+                return Err(verify_error_to_report(&e));
             }
             if let Err(e) =
                 download_to_cache(&client, &signing.cosign_certificate_url, &cert_path).await
             {
                 let _ = std::fs::remove_file(&installed.tarball_path);
                 let _ = std::fs::remove_file(&sig_path);
-                return Ok(emit_verify_error_and_exit(&e, json));
+                return Err(verify_error_to_report(&e));
             }
-            // bundle is optional — best-effort fetch if the resolver
-            // surfaced it (currently ExtSigning carries only sig+cert,
-            // bundle URL inference deferred). Skip for v1.
             let bundle_used: Option<PathBuf> = if bundle_path.exists() {
                 Some(bundle_path.clone())
             } else {
@@ -500,13 +476,11 @@ pub async fn run_plugin_install(
                     let _ = std::fs::remove_file(&installed.tarball_path);
                     let _ = std::fs::remove_file(&sig_path);
                     let _ = std::fs::remove_file(&cert_path);
-                    return Ok(emit_verify_error_and_exit(&e, json));
+                    return Err(verify_error_to_report(&e));
                 }
             };
 
-            if !json {
-                eprintln!("→ Verifying signature against trusted_keys.toml");
-            }
+            tracing::info!("plugin install: verifying signature against trusted_keys.toml");
             let verified = match verify_plugin_signature(VerifyInput {
                 cosign_bin: &cosign_bin,
                 tarball_path: &installed.tarball_path,
@@ -522,7 +496,7 @@ pub async fn run_plugin_install(
                     let _ = std::fs::remove_file(&installed.tarball_path);
                     let _ = std::fs::remove_file(&sig_path);
                     let _ = std::fs::remove_file(&cert_path);
-                    return Ok(emit_verify_error_and_exit(&e, json));
+                    return Err(verify_error_to_report(&e));
                 }
             };
 
@@ -533,10 +507,7 @@ pub async fn run_plugin_install(
         }
     };
 
-    if !json {
-        eprintln!("→ Extracting to {}", dest_root.display());
-    }
-
+    tracing::info!(dest = %dest_root.display(), "plugin install: extracting");
     let extracted = match extract_verified_tarball(ExtractInput {
         tarball_path: &installed.tarball_path,
         dest_root: &dest_root,
@@ -546,7 +517,7 @@ pub async fn run_plugin_install(
     .await
     {
         Ok(p) => p,
-        Err(e) => return Ok(emit_extract_error_and_exit(&e, json)),
+        Err(e) => return Err(extract_error_to_report(&e)),
     };
 
     // Cleanup cached tarball + signing material on success — extracted tree is source of truth.
@@ -576,10 +547,10 @@ pub async fn run_plugin_install(
             "github-releases".to_string(),
         );
         if let Err(e) = crate::plugin_admin::write_install_metadata(&extracted.plugin_dir, &meta) {
-            eprintln!(
-                "! Failed to write .nexo-install.json at {}: {} (plugin still installed; `plugin upgrade` will treat it as orphan)",
-                extracted.plugin_dir.display(),
-                e
+            tracing::warn!(
+                dir = %extracted.plugin_dir.display(),
+                error = %e,
+                "plugin install: failed to write .nexo-install.json (plugin still installed; upgrade treats as orphan)"
             );
         }
     }
@@ -593,9 +564,9 @@ pub async fn run_plugin_install(
     )
     .await;
 
-    let report = PluginInstallReport {
+    Ok(PluginInstallReport {
         ok: true,
-        id: id.clone(),
+        id,
         version: version.to_string(),
         target,
         plugin_dir: extracted.plugin_dir.clone(),
@@ -605,125 +576,158 @@ pub async fn run_plugin_install(
         was_already_present: extracted.was_already_present,
         lifecycle_event_emitted: lifecycle_emitted,
         signature_verified,
-        signature_identity: signature_identity.clone(),
+        signature_identity,
         signature_issuer,
         trust_mode: effective_mode.as_str(),
         trust_policy_matched: matched_policy.as_ref().map(|p| p.owner.clone()),
-    };
+    })
+}
 
-    if json {
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
-    } else if extracted.was_already_present {
-        eprintln!(
-            "✓ {}@{} already installed at {} — nothing to do",
-            id,
-            version,
-            extracted.plugin_dir.display()
-        );
-    } else {
-        eprintln!("✓ Plugin installed at {}", extracted.plugin_dir.display());
-        if signature_verified {
-            if let Some(identity) = &signature_identity {
-                eprintln!("✓ Signature verified (identity: {})", identity);
+/// CLI entry point. Wrapper that delegates to
+/// [`install_plugin_silent`] for the real work, then formats the
+/// outcome as human-readable progress (eprintln) or JSON (stdout),
+/// returning the process exit code the legacy `main.rs` dispatch
+/// loop expects (`0` success / `1` error).
+pub async fn run_plugin_install(
+    config_dir: &Path,
+    coords_str: String,
+    dest_override: Option<PathBuf>,
+    target_override: Option<String>,
+    json: bool,
+    require_signature: bool,
+    skip_signature_verify: bool,
+) -> Result<i32> {
+    // The silent variant moved every eprintln! to tracing::info so
+    // a `nexo plugin install` CLI invocation needs a quick stderr
+    // breadcrumb when json mode is off — mirrors the previous
+    // user-facing progress lines without re-implementing the
+    // pipeline.
+    if !json {
+        eprintln!("→ Installing plugin {coords_str}");
+    }
+    match install_plugin_silent(
+        config_dir,
+        &coords_str,
+        dest_override,
+        target_override,
+        require_signature,
+        skip_signature_verify,
+    )
+    .await
+    {
+        Ok(report) => {
+            if json {
+                println!("{}", serde_json::to_string(&report).unwrap_or_default());
+            } else if report.was_already_present {
+                eprintln!(
+                    "✓ {}@{} already installed at {} — nothing to do",
+                    report.id,
+                    report.version,
+                    report.plugin_dir.display()
+                );
             } else {
-                eprintln!("✓ Signature verified");
+                eprintln!("✓ Plugin installed at {}", report.plugin_dir.display());
+                if report.signature_verified {
+                    if let Some(identity) = report.signature_identity.as_ref() {
+                        eprintln!("✓ Signature verified (identity: {})", identity);
+                    } else {
+                        eprintln!("✓ Signature verified");
+                    }
+                }
+                if report.lifecycle_event_emitted {
+                    eprintln!("✓ Lifecycle event emitted (broker)");
+                } else {
+                    eprintln!("! Lifecycle event not emitted (broker offline or non-NATS)");
+                }
             }
+            Ok(0)
         }
-        if lifecycle_emitted {
-            eprintln!("✓ Lifecycle event emitted (broker)");
-        } else {
-            eprintln!("! Lifecycle event not emitted (broker offline or non-NATS)");
-        }
-    }
-
-    Ok(0)
-}
-
-fn emit_install_error_and_exit(err: &InstallError, json: bool) -> i32 {
-    let kind = install_error_kind(err);
-    let available = install_error_available(err);
-    if json {
-        let report = PluginInstallErrorReport {
-            ok: false,
-            kind,
-            error: err.to_string(),
-            available,
-        };
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
-    } else {
-        eprintln!("✗ Install failed: {}", err);
-        match err {
-            InstallError::TargetNotFound { available, .. } => {
-                eprintln!("  Available targets: {}", available.join(", "));
-                eprintln!("  Hint: pass --target=<other-triple> or set NEXO_INSTALL_TARGET, or");
-                eprintln!("  ask the plugin author to publish a build for your target.");
+        Err(err_report) => {
+            if json {
+                println!("{}", serde_json::to_string(&err_report).unwrap_or_default());
+            } else {
+                eprintln!("✗ Install failed: {}", err_report.error);
+                if let Some(av) = err_report.available.as_ref() {
+                    eprintln!("  Available targets: {}", av.join(", "));
+                    eprintln!(
+                        "  Hint: pass --target=<other-triple> or set NEXO_INSTALL_TARGET, or"
+                    );
+                    eprintln!("  ask the plugin author to publish a build for your target.");
+                }
+                if err_report.error.contains("rate limit") {
+                    eprintln!("  Hint: set NEXO_GITHUB_TOKEN env to bypass anonymous rate limit.");
+                }
             }
-            InstallError::Http(msg) if msg.contains("rate limit") => {
-                eprintln!("  Hint: set NEXO_GITHUB_TOKEN env to bypass anonymous rate limit.");
-            }
-            InstallError::Http(_) => {
-                eprintln!("  Hint: verify <owner>/<repo>@<tag> exists on GitHub.");
-            }
-            _ => {}
+            Ok(1)
         }
     }
-    1
 }
 
-fn emit_extract_error_and_exit(err: &ExtractError, json: bool) -> i32 {
-    let kind = extract_error_kind(err);
-    if json {
-        let report = PluginInstallErrorReport {
-            ok: false,
-            kind,
-            error: err.to_string(),
-            available: None,
-        };
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
-    } else {
-        eprintln!("✗ Extract failed: {}", err);
+/// Phase 97.1 — typed mapping from `InstallError` to the JSON-shaped
+/// report so admin RPC callers can render the error without scraping
+/// CLI stdout.
+fn install_error_to_report(err: &InstallError) -> PluginInstallErrorReport {
+    PluginInstallErrorReport {
+        ok: false,
+        kind: install_error_kind(err),
+        error: err.to_string(),
+        available: install_error_available(err),
     }
-    1
 }
 
-fn emit_verify_error_and_exit(err: &VerifyError, json: bool) -> i32 {
-    let kind = verify_error_kind(err);
-    if json {
-        let report = PluginInstallErrorReport {
-            ok: false,
-            kind,
-            error: err.to_string(),
-            available: None,
-        };
-        println!("{}", serde_json::to_string(&report).unwrap_or_default());
-    } else {
-        eprintln!("✗ Signature verification failed: {}", err);
-        match err {
-            VerifyError::CosignNotFound { .. } => {
-                eprintln!(
-                    "  Hint: install cosign (brew install cosign / apt install cosign / dnf install cosign),"
-                );
-                eprintln!(
-                    "  or set --skip-signature-verify if you accept unverified bytes for this install."
-                );
-            }
-            VerifyError::PolicyRequiresSig { .. } => {
-                eprintln!(
-                    "  Hint: ask the plugin author to publish cosign signing material, or relax"
-                );
-                eprintln!("  trusted_keys.toml `mode` for this owner to `warn`.");
-            }
-            VerifyError::CosignFailed { .. } => {
-                eprintln!("  Hint: the certificate's identity did not match `identity_regexp` in");
-                eprintln!(
-                    "  trusted_keys.toml. Check the publisher workflow URL or update the regex."
-                );
-            }
-            _ => {}
-        }
+fn extract_error_to_report(err: &ExtractError) -> PluginInstallErrorReport {
+    PluginInstallErrorReport {
+        ok: false,
+        kind: extract_error_kind(err),
+        error: err.to_string(),
+        available: None,
     }
-    1
 }
+
+fn verify_error_to_report(err: &VerifyError) -> PluginInstallErrorReport {
+    PluginInstallErrorReport {
+        ok: false,
+        kind: verify_error_kind(err),
+        error: err.to_string(),
+        available: None,
+    }
+}
+
+/// Silent variant of [`resolve_dest_root`]. Same path resolution
+/// (CLI override → search_paths[0] → state-dir fallback) but no
+/// eprintln when falling through to the state-dir default — the
+/// caller logs via tracing if it cares.
+fn resolve_dest_root_silent(
+    cfg: &nexo_config::AppConfig,
+    cli_override: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(dest) = cli_override {
+        std::fs::create_dir_all(&dest)
+            .with_context(|| format!("create --dest {}", dest.display()))?;
+        return Ok(dest);
+    }
+    if let Some(first) = cfg.plugins.discovery.search_paths.first() {
+        std::fs::create_dir_all(first).with_context(|| {
+            format!(
+                "create plugins.discovery.search_paths[0] {}",
+                first.display()
+            )
+        })?;
+        return Ok(first.clone());
+    }
+    let fallback = nexo_project_tracker::state::nexo_state_dir().join("plugins");
+    std::fs::create_dir_all(&fallback)
+        .with_context(|| format!("create fallback plugin root {}", fallback.display()))?;
+    tracing::info!(
+        dest = %fallback.display(),
+        "plugin install: plugins.discovery.search_paths empty; using state-dir fallback"
+    );
+    Ok(fallback)
+}
+
+// Phase 97.1 — legacy CLI emit_*_and_exit helpers retired. The
+// silent variant returns typed reports; `run_plugin_install`
+// (CLI wrapper) maps them to eprintln + exit code inline.
 
 // Used by main.rs to satisfy the Arc-once import; suppresses a
 // dead-code warning when the broker emit path is not exercised.

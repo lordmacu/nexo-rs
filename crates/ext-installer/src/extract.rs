@@ -132,8 +132,13 @@ pub async fn extract_verified_tarball(
     }
 
     // Ensure dest_root exists; cleanup stale staging dirs.
+    // Phase 98.3 — age-gated to 1 hour so concurrent extracts (each
+    // with its own random staging suffix) don't reap each other's
+    // in-flight dirs. Failed-or-abandoned staging from prior
+    // sessions stays bounded — gets reclaimed on the next install
+    // round once it crosses 1 hour.
     fs::create_dir_all(dest_root).map_err(|e| ExtractError::Io(e.to_string()))?;
-    cleanup_stale_staging(dest_root)?;
+    cleanup_stale_staging(dest_root, std::time::Duration::from_secs(3600))?;
 
     // Allocate unique staging dir.
     let suffix: u64 = rand::thread_rng().gen();
@@ -180,11 +185,36 @@ pub async fn extract_verified_tarball(
     chmod_executable(&staging_binary);
 
     // Atomic rename staging → final.
-    if let Err(e) = fs::rename(&staging_dir, &final_dir) {
+    //
+    // Phase 98.3 — race-tolerant. `fs::rename` requires the target
+    // either not exist OR be an empty dir. Concurrent extracts of
+    // the same crate@version both reach this point; the first one
+    // populates `final_dir`, the second's rename fails with
+    // ENOTEMPTY. Treat that as a successful idempotent install
+    // (manifest validated below) so both callers return Ok.
+    if let Err(rename_err) = fs::rename(&staging_dir, &final_dir) {
+        // Did another extract win the race? Final dir must exist
+        // AND its manifest must match our expected payload — if
+        // either fails we surface the original rename error
+        // unmolested (something genuinely wrong with the target).
+        let manifest_path = final_dir.join(MANIFEST_FILE);
+        if manifest_path.exists() {
+            if let Ok(existing_manifest) = parse_manifest(&manifest_path) {
+                if check_manifest_matches(&existing_manifest, expected).is_ok() {
+                    let _ = fs::remove_dir_all(&staging_dir);
+                    return Ok(ExtractedPlugin {
+                        plugin_dir: final_dir,
+                        manifest: existing_manifest,
+                        binary_path,
+                        was_already_present: true,
+                    });
+                }
+            }
+        }
         let _ = fs::remove_dir_all(&staging_dir);
         return Err(ExtractError::Io(format!(
             "rename staging → final failed: {}",
-            e
+            rename_err
         )));
     }
 
@@ -244,7 +274,18 @@ fn validate_entry_path(p: &Path) -> Result<(), ExtractError> {
     Ok(())
 }
 
-fn cleanup_stale_staging(dest_root: &Path) -> Result<(), ExtractError> {
+/// Reap staging dirs older than `stale_after`. The age gate is
+/// load-bearing: concurrent extracts share `dest_root`, each
+/// allocates a unique random-suffix staging dir, and an unconditional
+/// reap would delete in-flight neighbours mid-extract (race surfaced
+/// by `concurrent_install_same_version_both_succeed` test). Production
+/// calls pass 1 hour — failed/abandoned staging from prior sessions
+/// gets reclaimed eventually without endangering live extracts.
+fn cleanup_stale_staging(
+    dest_root: &Path,
+    stale_after: std::time::Duration,
+) -> Result<(), ExtractError> {
+    let now = std::time::SystemTime::now();
     let read = match fs::read_dir(dest_root) {
         Ok(r) => r,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -259,7 +300,20 @@ fn cleanup_stale_staging(dest_root: &Path) -> Result<(), ExtractError> {
         let Some(name_str) = name.to_str() else {
             continue;
         };
-        if name_str.starts_with(STAGING_PREFIX) {
+        if !name_str.starts_with(STAGING_PREFIX) {
+            continue;
+        }
+        // Age check: skip in-flight neighbours. Filesystem-level
+        // mtime is precise enough; even sub-second tasks won't trip
+        // a 1-hour threshold.
+        let stale = match entry.metadata().and_then(|m| m.modified()) {
+            Ok(modified) => now
+                .duration_since(modified)
+                .map(|d| d >= stale_after)
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if stale {
             let _ = fs::remove_dir_all(entry.path());
         }
     }
@@ -541,10 +595,29 @@ min_nexo_version = ">=0.1.0"
         let keep = tmp.path().join("real-plugin-1.0.0");
         fs::create_dir_all(&keep).unwrap();
 
-        cleanup_stale_staging(tmp.path()).unwrap();
+        // Use Duration::ZERO so freshly-created dirs are considered
+        // stale; mirrors prior unconditional behaviour for this
+        // assertion.
+        cleanup_stale_staging(tmp.path(), std::time::Duration::ZERO).unwrap();
 
         assert!(!stale.exists(), "stale staging dir should be removed");
         assert!(keep.exists(), "non-staging dirs must be preserved");
+    }
+
+    /// Phase 98.3 — verify the age gate. With a 1-hour `stale_after`,
+    /// a freshly-created staging dir must NOT be removed.
+    #[test]
+    fn cleanup_stale_staging_preserves_recent_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let fresh = tmp.path().join(".staging-bar-cafebabe");
+        fs::create_dir_all(&fresh).unwrap();
+
+        cleanup_stale_staging(tmp.path(), std::time::Duration::from_secs(3600)).unwrap();
+
+        assert!(
+            fresh.exists(),
+            "fresh staging dir must survive the age gate (concurrent-extract safety)"
+        );
     }
 
     // ── Public-API tests (step 7) ──────────────────────────────────
@@ -611,6 +684,94 @@ min_nexo_version = ">=0.1.0"
 
         assert!(result.was_already_present);
         assert_eq!(result.manifest.plugin.id, "slack");
+    }
+
+    /// Phase 98.3 — concurrent install regression test.
+    ///
+    /// Two `extract_verified_tarball` calls fire in parallel against
+    /// the same `dest_root` + `expected` (same crate@version). Three
+    /// invariants must hold:
+    ///   1. Both calls return Ok (no error, no partial state).
+    ///   2. Final dir exists with a valid manifest + binary.
+    ///   3. No staging leftovers (each call cleans its own random
+    ///      suffix; atomic rename is the only race window).
+    ///
+    /// Race anatomy: each call allocates a UNIQUE staging dir
+    /// (`STAGING_PREFIX + id + random u64 suffix`). Both extract into
+    /// their own staging tree, then race to `fs::rename(staging,
+    /// final)`. On Linux/macOS `rename` is atomic + replaces target
+    /// — last writer wins, identical content. No corruption window.
+    /// Both calls return `was_already_present=false` (each saw the
+    /// missing-dir branch at entry) — the sequential idempotency
+    /// path is exercised by `idempotent_skip_when_dir_exists` above.
+    ///
+    /// If this test ever flakes or reports stale staging leftovers,
+    /// the audit-memo follow-up `concurrent-install mutex` activates.
+    #[tokio::test]
+    async fn concurrent_install_same_version_both_succeed() {
+        let tmp = TempDir::new().unwrap();
+        let dest_root = tmp.path().to_path_buf();
+        let tarball = build_happy_tarball("slack", "0.2.0");
+        let tarball_path = tarball.path().to_path_buf();
+        let expected = make_expected("slack", "0.2.0");
+
+        let dest_a = dest_root.clone();
+        let dest_b = dest_root.clone();
+        let tar_a = tarball_path.clone();
+        let tar_b = tarball_path.clone();
+        let exp_a = expected.clone();
+        let exp_b = expected.clone();
+
+        let (a, b) = tokio::join!(
+            async move {
+                extract_verified_tarball(ExtractInput {
+                    tarball_path: &tar_a,
+                    dest_root: &dest_a,
+                    expected: &exp_a,
+                    limits: ExtractLimits::default(),
+                })
+                .await
+            },
+            async move {
+                extract_verified_tarball(ExtractInput {
+                    tarball_path: &tar_b,
+                    dest_root: &dest_b,
+                    expected: &exp_b,
+                    limits: ExtractLimits::default(),
+                })
+                .await
+            },
+        );
+
+        let a = a.expect("concurrent extract A must succeed");
+        let b = b.expect("concurrent extract B must succeed");
+
+        // Final state intact: dir exists, binary exists + executable,
+        // manifest parses cleanly.
+        let final_dir = dest_root.join("slack-0.2.0");
+        assert!(
+            final_dir.exists(),
+            "final dir must exist after both succeed"
+        );
+        assert_eq!(a.plugin_dir, final_dir);
+        assert_eq!(b.plugin_dir, final_dir);
+        assert!(a.binary_path.exists(), "binary must exist for both");
+        assert_eq!(a.manifest.plugin.id, "slack");
+        assert_eq!(b.manifest.plugin.id, "slack");
+
+        // No staging leftovers — each call must clean up its own
+        // staging dir (atomic rename consumes it).
+        let leftovers: Vec<_> = fs::read_dir(&dest_root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with(STAGING_PREFIX))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "expected zero staging leftovers, found {}: {:?}",
+            leftovers.len(),
+            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

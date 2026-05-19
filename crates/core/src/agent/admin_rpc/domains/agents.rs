@@ -33,6 +33,16 @@ pub trait YamlPatcher: Send + Sync {
     fn upsert_agent_field(&self, agent_id: &str, dotted: &str, value: Value) -> anyhow::Result<()>;
     /// Remove the entire `agents.yaml.<id>` block.
     fn remove_agent(&self, agent_id: &str) -> anyhow::Result<()>;
+    /// Phase 97.UI — read the entire agent block as a JSON value.
+    /// Powers `AgentDetail.raw_config` so admin UIs can render the
+    /// long-tail capability gates (`config_tool`, `team`, `repl`,
+    /// `proactive`, rate limits, `remote_triggers`, …) without
+    /// every one needing a dotted-path read. Default impl returns
+    /// `None` so legacy in-memory stubs in tests keep compiling;
+    /// the production filesystem impl in nexo-setup overrides.
+    fn read_agent_block(&self, _agent_id: &str) -> anyhow::Result<Option<Value>> {
+        Ok(None)
+    }
 }
 
 /// `nexo/admin/agents/list` — return agents matching `filter`.
@@ -318,6 +328,16 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
         }),
     };
 
+    // Phase 97.UI — slurp the entire agent block as JSON so the
+    // admin UI can render every capability gate without per-field
+    // dotted reads. Soft-fails to `Value::Null` so the UI keeps
+    // working against legacy patchers that don't implement the
+    // optional method.
+    let raw_config = patcher
+        .read_agent_block(agent_id)
+        .unwrap_or(None)
+        .unwrap_or(Value::Null);
+
     Ok(Some(AgentDetail {
         id: agent_id.to_string(),
         model: ModelRef { provider, model },
@@ -334,6 +354,7 @@ fn read_detail(patcher: &dyn YamlPatcher, agent_id: &str) -> anyhow::Result<Opti
         // `None` and the admin renders the wizard's single-locale
         // fallback path.
         persona_locales: None,
+        raw_config,
     }))
 }
 
@@ -433,6 +454,77 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
         }
         patcher.upsert_agent_field(&input.id, "locale_prompts", Value::Object(obj))?;
     }
+
+    // ── Phase 97.UI — extended capability gates ─────────────────
+    //
+    // Tier-1 typed scalars / vecs.
+    if let Some(tenant_id) = &input.tenant_id {
+        patcher.upsert_agent_field(&input.id, "tenant_id", Value::String(tenant_id.clone()))?;
+    }
+    if let Some(description) = &input.description {
+        patcher.upsert_agent_field(&input.id, "description", Value::String(description.clone()))?;
+    }
+    if let Some(plugins) = &input.plugins {
+        let arr = Value::Array(plugins.iter().map(|s| Value::String(s.clone())).collect());
+        patcher.upsert_agent_field(&input.id, "plugins", arr)?;
+    }
+    if let Some(delegates) = &input.allowed_delegates {
+        let arr = Value::Array(delegates.iter().map(|s| Value::String(s.clone())).collect());
+        patcher.upsert_agent_field(&input.id, "allowed_delegates", arr)?;
+    }
+    if let Some(delegates) = &input.accept_delegates_from {
+        let arr = Value::Array(delegates.iter().map(|s| Value::String(s.clone())).collect());
+        patcher.upsert_agent_field(&input.id, "accept_delegates_from", arr)?;
+    }
+    if let Some(skills) = &input.skills {
+        let arr = Value::Array(skills.iter().map(|s| Value::String(s.clone())).collect());
+        patcher.upsert_agent_field(&input.id, "skills", arr)?;
+    }
+    if let Some(skills_dir) = &input.skills_dir {
+        patcher.upsert_agent_field(&input.id, "skills_dir", Value::String(skills_dir.clone()))?;
+    }
+
+    // Tier-2 / Tier-3 opaque policy blocks. Each is a single
+    // dotted-path write replacing the entire block; the patcher
+    // serialises the JSON value to YAML preserving nested shapes.
+    // `Some(Value::Null)` clears the block (writes `null`);
+    // `Some(...)` replaces; `None` leaves yaml unchanged.
+    macro_rules! upsert_opaque {
+        ($($field:ident as $dotted:literal),* $(,)?) => {
+            $(
+                if let Some(v) = &input.$field {
+                    patcher.upsert_agent_field(&input.id, $dotted, v.clone())?;
+                }
+            )*
+        };
+    }
+    upsert_opaque!(
+        config_tool as "config_tool",
+        team as "team",
+        repl as "repl",
+        proactive as "proactive",
+        lsp as "lsp",
+        dispatch_policy as "dispatch_policy",
+        auto_dream as "auto_dream",
+        assistant_mode as "assistant_mode",
+        away_summary as "away_summary",
+        channels as "channels",
+        brief as "brief",
+        tool_rate_limits as "tool_rate_limits",
+        sender_rate_limit as "sender_rate_limit",
+        tool_args_validation as "tool_args_validation",
+        remote_triggers as "remote_triggers",
+        dreaming as "dreaming",
+        workspace_git as "workspace_git",
+        context_optimization as "context_optimization",
+        outbound_allowlist as "outbound_allowlist",
+        pairing_policy as "pairing_policy",
+        link_understanding as "link_understanding",
+        web_search as "web_search",
+        credentials as "credentials",
+        google_auth as "google_auth",
+    );
+
     Ok(())
 }
 
@@ -604,16 +696,8 @@ mod tests {
                 provider: "minimax".into(),
                 model: "MiniMax-M2.5".into(),
             },
-            active: None,
-            allowed_tools: None,
-            inbound_bindings: None,
-            system_prompt: None,
             language: Some("en".into()),
-            transcripts_dir: None,
-            workspace: None,
-            extra_docs: None,
-            heartbeat: None,
-            locale_prompts: None,
+            ..Default::default()
         };
         let result = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail: AgentDetail = serde_json::from_value(result.result.unwrap()).unwrap();
@@ -673,19 +757,11 @@ mod tests {
                 provider: "minimax".into(),
                 model: "MiniMax-M2.5".into(),
             },
-            active: None,
-            allowed_tools: None,
-            inbound_bindings: None,
-            system_prompt: None,
-            language: None,
-            transcripts_dir: None,
-            workspace: None,
-            extra_docs: None,
             heartbeat: Some(HeartbeatWire {
                 enabled: true,
                 interval: "30m".into(),
             }),
-            locale_prompts: None,
+            ..Default::default()
         };
         let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
@@ -709,19 +785,11 @@ mod tests {
                 provider: "minimax".into(),
                 model: "MiniMax-M2.5".into(),
             },
-            active: None,
-            allowed_tools: None,
-            inbound_bindings: None,
-            system_prompt: None,
-            language: None,
-            transcripts_dir: None,
-            workspace: None,
-            extra_docs: None,
             heartbeat: Some(HeartbeatWire {
                 enabled: false,
                 interval: String::new(),
             }),
-            locale_prompts: None,
+            ..Default::default()
         };
         let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let detail = read_detail(&*yaml, "ana").unwrap().unwrap();
@@ -746,16 +814,8 @@ mod tests {
                 provider: "minimax".into(),
                 model: "MiniMax-M2.5".into(),
             },
-            active: None,
-            allowed_tools: None,
-            inbound_bindings: None,
-            system_prompt: None,
-            language: None,
-            transcripts_dir: None,
-            workspace: None,
-            extra_docs: None,
-            heartbeat: None,
             locale_prompts: Some(prompts),
+            ..Default::default()
         };
         let _ = upsert(&*yaml, serde_json::to_value(&input).unwrap(), &reload);
         let raw = yaml

@@ -40,6 +40,7 @@ use tokio_util::sync::CancellationToken;
 /// because the subprocess path doesn't touch them. `config_dir`
 /// + `state_root` are passed so the SDK's `plugin_config_dir(id)`
 /// helper resolves correctly.
+#[derive(Clone)]
 pub struct SubprocessRuntime {
     pub broker: AnyBroker,
     pub shutdown: CancellationToken,
@@ -199,6 +200,45 @@ pub async fn wire_plugin_registry_with_runtime(
         snap
     } else {
         let mut owned: super::NexoPluginRegistrySnapshot = (*snap).clone();
+        // Drop the base discovered plugin entry whenever the
+        // caller registered at least one synthesised `<base>.<inst>`
+        // instance for the same id. Without this filter the init
+        // loop spawns BOTH subprocesses (auto-subprocess fallback
+        // for the bare base + factory-driven synthesised) — both
+        // poll the same channel, both publish inbound events, both
+        // run their own typing-presence ticker, and the dispatcher
+        // can only abort the one whose `pending` map it owns. The
+        // other ticker keeps firing forever, leaving the chat
+        // stuck on "typing…". Synthesised instances are the
+        // contract; the base is only useful when no synthesised
+        // instance was registered.
+        // Drop the discovered entry whenever an extra (factory-
+        // driven) entry uses the same base channel — either as an
+        // exact id match (`whatsapp` ↔ `whatsapp`, empty instance
+        // label) OR as a `<base>.<instance>` rename (`telegram`
+        // ↔ `telegram.cody_nexo_bot`). Both shapes leak a duplicate
+        // subprocess otherwise: the discovered manifest path
+        // auto-spawns a second copy via the no-factory fallback
+        // (init_loop.rs ~624), which tries to log in as the same
+        // WA device / poll the same Telegram bot — the upstream
+        // server keeps one connection alive and kicks the other,
+        // producing an endless reconnect loop the operator can't
+        // diagnose.
+        let collided_bases: std::collections::HashSet<String> = extra_plugins
+            .iter()
+            .map(|p| {
+                let id = p.manifest.plugin.id.as_str();
+                id.split_once('.')
+                    .map(|(base, _)| base.to_string())
+                    .unwrap_or_else(|| id.to_string())
+            })
+            .collect();
+        if !collided_bases.is_empty() {
+            owned.plugins.retain(|p| {
+                let id = p.manifest.plugin.id.as_str();
+                !collided_bases.contains(id)
+            });
+        }
         owned.plugins.extend(extra_plugins.iter().cloned());
         Arc::new(owned)
     };
@@ -462,7 +502,11 @@ pub async fn wire_plugin_registry_with_runtime(
 /// `wire_plugin_registry_with_runtime` and dropped when boot
 /// completes — they live just long enough for `init()` to clone
 /// the broker handle.
-struct SubprocessCtxStubs {
+/// Phase 97.1.β — exposed for runtime hot-install (`LivePluginInstaller`).
+/// The boot path builds these stubs implicitly; the admin RPC adapter
+/// constructs the same shape so a hot-spawned plugin gets an
+/// identical [`PluginInitContext`] without daemon restart.
+pub struct SubprocessCtxStubs {
     tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
     advisor_registry: Arc<tokio::sync::RwLock<nexo_driver_permission::AdvisorRegistry>>,
     hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
@@ -481,7 +525,7 @@ impl SubprocessCtxStubs {
     /// Variant that accepts pre-built channel +
     /// hook + vector backend registries so all three (stubs +
     /// post-init hook + wire output) share the same Arcs.
-    fn build_with_shared_registries(
+    pub fn build_with_shared_registries(
         rt: &SubprocessRuntime,
         channel_adapter_registry: Arc<ChannelAdapterRegistry>,
         hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
@@ -494,6 +538,19 @@ impl SubprocessCtxStubs {
         stubs.vector_backend_registry = vector_backend_registry;
         stubs.tool_registry = tool_registry;
         stubs
+    }
+
+    /// Build a [`PluginInitContext`] borrowing from this stub bundle.
+    /// Phase 97.1.β — promoted to `pub` so the admin RPC installer
+    /// can drive `Plugin::init` for a hot-spawned plugin without
+    /// duplicating the wiring logic in the boot loop.
+    pub fn context_for_plugin<'env>(
+        &'env self,
+        manifest: &nexo_plugin_manifest::PluginManifest,
+        rt: &'env SubprocessRuntime,
+        plugin_config: &Arc<serde_yaml::Value>,
+    ) -> crate::agent::plugin_host::PluginInitContext<'env> {
+        self.context_for(manifest, rt, plugin_config)
     }
 
     fn build(rt: &SubprocessRuntime) -> Self {

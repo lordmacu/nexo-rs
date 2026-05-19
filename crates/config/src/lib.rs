@@ -621,7 +621,25 @@ pub fn load_plugin_entries(plugins_dir: &Path) -> BTreeMap<String, serde_yaml::V
                 continue;
             }
         };
-        let parsed: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+        // Resolve `${ENV_VAR}` + `${file:./secrets/x.txt}` placeholders
+        // so plugin-side env-var seeders see the actual secret value
+        // rather than the literal template string. Without this pass
+        // operators must inline secrets in the yaml, which defeats
+        // the purpose of the `secrets/` dir + the admin UI's
+        // credential-write flow.
+        let resolved = match crate::env::resolve_placeholders(&raw, &path.display().to_string()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    target: "plugins.config",
+                    file = %path.display(),
+                    error = %e,
+                    "skipping plugins/*.yaml with unresolved placeholders",
+                );
+                continue;
+            }
+        };
+        let parsed: serde_yaml::Value = match serde_yaml::from_str(&resolved) {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(

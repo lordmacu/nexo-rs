@@ -20,7 +20,7 @@
 - [Agents (agents.yaml)](./config/agents.md)
 - [LLM providers](./llm/minimax.md)
 - [Memory · short-term](./memory/short-term.md)
-- [Channels overview](./plugins/whatsapp.md)
+- [Plugin catalog](./plugins/catalog.md)
 - [Skills catalog](./skills/catalog.md)
 
 # Plugin SDKs
@@ -44,7 +44,6 @@
 - [Publishing a plugin](./plugins/publishing.md)
 - [Signing & publishing](./plugins/signing-and-publishing.md)
 - [Plugin supervisor (auto-respawn)](./plugins/supervisor.md)
-- [Web Search plugin (subprocess)](./plugins/web-search.md)
 
 # Personas
 
@@ -121,6 +120,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Broker shapes (local / NATS / embedded)](./architecture/broker-shapes.md)
 - [Phase 93.11 compile-time plugin decoupling audit](./architecture/phase-93-decoupling-audit.md)
 - [Plugin auto-discovery design memo](./architecture/plugin-auto-discovery.md)
+- [Plugin install pipeline audit (Phase 98)](./architecture/plugin-install-audit-2026-05-19.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
@@ -163,12 +163,17 @@ part of day-to-day usage. Skim only when you need it.
 - [OAuth flows (Phase 82.10.u)](./llm/oauth-flows.md)
 - [Rate limiting & retry](./llm/retry.md)
 
-# Built-in channels — provider guides
+# Plugin catalog — install + provider guides
 
+- [WhatsApp](./plugins/whatsapp.md)
 - [Telegram](./plugins/telegram.md)
 - [Email](./plugins/email.md)
 - [Browser (CDP)](./plugins/browser.md)
-- [Google / Gmail](./plugins/google.md)
+- [Google (OAuth · Gmail · Calendar · Drive)](./plugins/google.md)
+- [Web Search (Brave · Tavily · DDG · Perplexity)](./plugins/web-search.md)
+- [Poller · RSS / Atom](./plugins/poller-rss.md)
+- [Poller · Gmail](./plugins/poller-gmail.md)
+- [Poller · Google Calendar](./plugins/poller-google-calendar.md)
 
 # Memory subsystems
 

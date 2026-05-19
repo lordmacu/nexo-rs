@@ -369,7 +369,7 @@
         <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Official plugins</div>
         <h2 class="text-4xl md:text-5xl font-bold mb-6">Channels + ops, already shipped.</h2>
         <p class="text-xl text-ink-300 leading-relaxed">
-          Five plugins maintained out-of-tree on their own GitHub repos. One command: <code class="bg-ink-900 px-2 py-0.5 rounded text-base">nexo plugin install &lt;owner&gt;/&lt;repo&gt;</code> grabs the release tarball and drops it under <code class="bg-ink-900 px-2 py-0.5 rounded text-base">plugins.discovery.search_paths</code> (or build from source with <code class="bg-ink-900 px-2 py-0.5 rounded text-base">cargo install --git</code>). Pure-Rust + rustls on every cross-compile target (Linux musl, macOS, Windows MSVC, Android NDK / Termux).
+          Ten plugins maintained out-of-tree on their own GitHub repos — five channels (WhatsApp, Telegram, Email, Browser, Google), one tool (Web Search), three pollers (RSS, Gmail, Google Calendar), and the Admin RPC + UI. One command: <code class="bg-ink-900 px-2 py-0.5 rounded text-base">nexo plugin install &lt;owner&gt;/&lt;repo&gt;</code> grabs the release tarball and drops it under <code class="bg-ink-900 px-2 py-0.5 rounded text-base">plugins.discovery.search_paths</code> (or build from source with <code class="bg-ink-900 px-2 py-0.5 rounded text-base">cargo install --git</code>). Pure-Rust + rustls on every cross-compile target (Linux musl, macOS, Windows MSVC, Android NDK / Termux).
         </p>
       </div>
 
@@ -467,6 +467,101 @@
           <div class="flex items-center justify-between text-xs">
             <span class="text-accent-400 font-medium">github.com/lordmacu/nexo-rs-plugin-admin →</span>
             <span class="text-ink-500">ops + tenancy</span>
+          </div>
+        </a>
+
+        <!-- Google (OAuth + Gmail + Calendar + Drive) -->
+        <a href="https://github.com/lordmacu/nexo-rs-plugin-google" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-yellow-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">🔑</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-yellow-400 transition">Google</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-google</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Per-agent OAuth client + generic <code>google_call</code> tool: hit any Google API the granted scopes allow. Gmail, Calendar, Drive, Sheets — same wire shape.
+          </p>
+          <code class="block bg-ink-950 border border-ink-800 rounded px-3 py-2 text-xs text-yellow-300 mb-4 overflow-x-auto"><span class="text-ink-600 select-none">$ </span>nexo plugin install lordmacu/nexo-rs-plugin-google</code>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-yellow-400 font-medium">github.com/lordmacu/nexo-rs-plugin-google →</span>
+            <span class="text-ink-500">OAuth · all OS</span>
+          </div>
+        </a>
+
+        <!-- Web Search -->
+        <a href="https://github.com/lordmacu/nexo-rs-plugin-web-search" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-cyan-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">🔎</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-cyan-400 transition">Web Search</div>
+              <div class="text-sm text-ink-400"><code>nexo-plugin-web-search</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Multi-provider <code>web_search</code> tool: Brave, Tavily, DuckDuckGo, Perplexity. Per-binding policy + multi-instance × multi-agent isolation.
+          </p>
+          <code class="block bg-ink-950 border border-ink-800 rounded px-3 py-2 text-xs text-cyan-300 mb-4 overflow-x-auto"><span class="text-ink-600 select-none">$ </span>nexo plugin install lordmacu/nexo-rs-plugin-web-search</code>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-cyan-400 font-medium">github.com/lordmacu/nexo-rs-plugin-web-search →</span>
+            <span class="text-ink-500">4 providers · all OS</span>
+          </div>
+        </a>
+
+        <!-- Poller: RSS -->
+        <a href="https://github.com/lordmacu/nexo-rs-poller-rss" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-orange-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">📡</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-orange-400 transition">Poller · RSS / Atom</div>
+              <div class="text-sm text-ink-400"><code>nexo-poller-rss</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Cron-style poller for RSS / Atom feeds. Cursor-driven dedupe, configurable filters, dispatches new items as messages to your agent.
+          </p>
+          <code class="block bg-ink-950 border border-ink-800 rounded px-3 py-2 text-xs text-orange-300 mb-4 overflow-x-auto"><span class="text-ink-600 select-none">$ </span>nexo plugin install lordmacu/nexo-rs-poller-rss</code>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-orange-400 font-medium">github.com/lordmacu/nexo-rs-poller-rss →</span>
+            <span class="text-ink-500">Phase 96 poller v2</span>
+          </div>
+        </a>
+
+        <!-- Poller: Gmail -->
+        <a href="https://github.com/lordmacu/nexo-rs-poller-gmail" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-red-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">📥</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-red-400 transition">Poller · Gmail</div>
+              <div class="text-sm text-ink-400"><code>nexo-poller-gmail</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Gmail API poller — sweeps an inbox via OAuth, extracts addresses + body via regex, dispatches matches as agent prompts. Reuses the <code>google</code> plugin's credential store.
+          </p>
+          <code class="block bg-ink-950 border border-ink-800 rounded px-3 py-2 text-xs text-red-300 mb-4 overflow-x-auto"><span class="text-ink-600 select-none">$ </span>nexo plugin install lordmacu/nexo-rs-poller-gmail</code>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-red-400 font-medium">github.com/lordmacu/nexo-rs-poller-gmail →</span>
+            <span class="text-ink-500">OAuth · Phase 96</span>
+          </div>
+        </a>
+
+        <!-- Poller: Google Calendar -->
+        <a href="https://github.com/lordmacu/nexo-rs-poller-google-calendar" target="_blank" rel="noopener" class="block bg-ink-900/50 border border-ink-800 rounded-xl p-6 hover:border-teal-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="text-3xl">📅</div>
+            <div>
+              <div class="font-bold text-lg group-hover:text-teal-400 transition">Poller · Calendar</div>
+              <div class="text-sm text-ink-400"><code>nexo-poller-google-calendar</code></div>
+            </div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-4">
+            Google Calendar v3 poller — incremental sync, new + updated events as prompts. Lead-time templates, attendee-aware routing, reuses Google OAuth credentials.
+          </p>
+          <code class="block bg-ink-950 border border-ink-800 rounded px-3 py-2 text-xs text-teal-300 mb-4 overflow-x-auto"><span class="text-ink-600 select-none">$ </span>nexo plugin install lordmacu/nexo-rs-poller-google-calendar</code>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-teal-400 font-medium">github.com/lordmacu/nexo-rs-poller-google-calendar →</span>
+            <span class="text-ink-500">OAuth · Phase 96</span>
           </div>
         </a>
 

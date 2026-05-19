@@ -183,7 +183,9 @@ Shipped, end-to-end:
 - Multi-agent runtime — SessionManager, Heartbeat, CircuitBreaker, agent-to-agent routing + delegation
 - Broker — NATS (disk queue + DLQ + backpressure + single-instance lock) **or** `local` stdio-bridge; `nexo set-broker` flips at runtime; zero-config boot, `nexo init` scaffolds
 - LLM stack — MiniMax M2.5 (primary), Anthropic (API + OAuth PKCE / Claude subscription), OpenAI-compatible, Gemini, DeepSeek; per-provider rate limit + retry
-- Channels — WhatsApp (Signal Protocol, QR pairing), Telegram (full bot API), Email (Gmail poller + outbound), Browser (Chrome DevTools Protocol), Google (Gmail / Calendar / Drive / Sheets) — extracted to standalone plugin repos, `nexo plugin install <owner>/<repo>`
+- Channels — WhatsApp (Signal Protocol, QR pairing), Telegram (full bot API), Email (IMAP/SMTP, multi-account), Browser (Chrome DevTools Protocol), Google (OAuth + Gmail/Calendar/Drive/Sheets) — extracted to standalone plugin repos, `nexo plugin install <owner>/<repo>`
+- Tools — Web Search (Brave / Tavily / DuckDuckGo / Perplexity), multi-instance × multi-agent isolation
+- Pollers — RSS / Atom feeds, Gmail inbox sweeps, Google Calendar event sync; cron-style, cursor-driven dedupe (Phase 96 poller v2)
 - Memory — short-term in-memory, long-term SQLite, vector via sqlite-vec; snapshots
 - Extensions — TOML manifest, stdio + NATS runtimes, CLI, 20+ skills, plugin SDKs in Rust / Python / TypeScript / PHP
 - MCP — client (stdio + HTTP) **and** agent-as-server (`nexo mcp-server`), hot-reload

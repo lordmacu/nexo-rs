@@ -143,6 +143,13 @@ impl YamlPatcher for AgentsYamlPatcher {
         yaml_patch::remove_agent_block(&self.path, agent_id)?;
         Ok(())
     }
+
+    fn read_agent_block(&self, agent_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
+        match yaml_patch::read_agent_block_merged(&self.path, &self.persona_roots, agent_id)? {
+            Some(yaml_value) => Ok(Some(yaml_to_json(yaml_value)?)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// `llm.yaml` adapter for the llm_providers admin domain. Same
@@ -5707,7 +5714,31 @@ impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsRead
                 None
             };
 
-            let linked_instances = by_channel.remove(plugin_id).unwrap_or_default();
+            // Channel id MUST be the base channel (e.g. `"telegram"`),
+            // NOT the synthesised per-instance subprocess id
+            // (e.g. `"telegram.cody_nexo_bot"`). Prefer the manifest's
+            // `[plugin.pairing.adapter] channel_id` when declared;
+            // fall back to the plugin id with any `.<instance>` suffix
+            // stripped. Without this, the admin wizard writes
+            // `inbound_bindings[].plugin = "telegram.cody_nexo_bot"`
+            // into agents.yaml — the daemon's binding validator then
+            // rejects it because no plugin advertises that compound
+            // id at runtime, and the agent never receives inbound.
+            let base_channel_id: String = pairing
+                .adapter
+                .as_ref()
+                .map(|a| a.channel_id.clone())
+                .unwrap_or_else(|| {
+                    plugin_id
+                        .split_once('.')
+                        .map(|(base, _)| base.to_string())
+                        .unwrap_or_else(|| plugin_id.clone())
+                });
+
+            let linked_instances = by_channel
+                .remove(&base_channel_id)
+                .or_else(|| by_channel.remove(plugin_id))
+                .unwrap_or_default();
 
             // Phase 81.30 follow-up #4 — surface `instance_field`
             // only when the plugin actually declared it. Empty
@@ -5716,7 +5747,7 @@ impl nexo_core::agent::admin_rpc::domains::pairing_channels::PairingChannelsRead
             let instance_field = pairing.instance_field.clone().filter(|s| !s.is_empty());
 
             channels.push(PairingChannelInfo {
-                channel: plugin_id.clone(),
+                channel: base_channel_id,
                 kind: wire_kind,
                 label,
                 instructions,
@@ -6262,6 +6293,109 @@ impl nexo_core::agent::admin_rpc::domains::persona::PersonaStore for FilesystemP
                 persona_locales: refreshed,
             },
         )
+    }
+}
+
+/// Persona TEMPLATE catalog backed by the on-disk install_roots
+/// the persona installer wrote to. Each entry surfaces as a
+/// row in the admin wizard's "use as template" dropdown; the
+/// template payload is the raw `agents.d/<id>.yaml` parsed to
+/// JSON so the wizard can prefill its form scaffold.
+#[derive(Clone)]
+pub struct FilesystemPersonaCatalog {
+    /// Disk roots written by `nexo-persona-installer::install_persona`
+    /// (typically `~/.nexo/state/personas/<id>-<ver>/`). One entry
+    /// per installed persona. Order matters only for tie-breaking
+    /// when two roots declare the same id — first wins.
+    roots: Vec<PathBuf>,
+}
+
+impl std::fmt::Debug for FilesystemPersonaCatalog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilesystemPersonaCatalog")
+            .field("roots", &self.roots.len())
+            .finish()
+    }
+}
+
+impl FilesystemPersonaCatalog {
+    /// Wrap a slice of install_roots discovered at boot.
+    pub fn new(roots: Vec<PathBuf>) -> Arc<Self> {
+        Arc::new(Self { roots })
+    }
+
+    /// Read + parse one install_root's `persona.toml` to harvest
+    /// the metadata fields the admin lists. Returns `None` on any
+    /// failure path so a broken pack on disk doesn't poison the
+    /// whole catalog (logged at warn).
+    fn entry_from_root(
+        root: &Path,
+    ) -> Option<nexo_core::agent::admin_rpc::domains::persona::PersonaCatalogEntry> {
+        let manifest_path = root.join("persona.toml");
+        let text = std::fs::read_to_string(&manifest_path).ok()?;
+        let manifest = nexo_persona_manifest::parse_str(&text).ok()?;
+        let source_repo = std::fs::read_to_string(root.join(".source_repo"))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        Some(
+            nexo_core::agent::admin_rpc::domains::persona::PersonaCatalogEntry {
+                id: manifest.persona.id.clone(),
+                version: manifest.persona.version.to_string(),
+                install_root: root.display().to_string(),
+                source_repo,
+            },
+        )
+    }
+
+    /// Locate `<root>/agents.d/<persona_id>.yaml` and return its
+    /// contents parsed to JSON. `None` when no install_root owns
+    /// `persona_id` or its template file is missing/malformed.
+    fn template_payload(&self, persona_id: &str) -> Option<serde_json::Value> {
+        for root in &self.roots {
+            let manifest_path = root.join("persona.toml");
+            let text = match std::fs::read_to_string(&manifest_path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let manifest = match nexo_persona_manifest::parse_str(&text) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if manifest.persona.id != persona_id {
+                continue;
+            }
+            let tpl_path = root.join("agents.d").join(format!("{persona_id}.yaml"));
+            let raw = std::fs::read_to_string(&tpl_path).ok()?;
+            let yaml: serde_yaml::Value = serde_yaml::from_str(&raw).ok()?;
+            return serde_json::to_value(yaml).ok();
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl nexo_core::agent::admin_rpc::domains::persona::PersonaCatalogReader
+    for FilesystemPersonaCatalog
+{
+    async fn list(
+        &self,
+    ) -> Vec<nexo_core::agent::admin_rpc::domains::persona::PersonaCatalogEntry> {
+        let mut out = Vec::with_capacity(self.roots.len());
+        for root in &self.roots {
+            match Self::entry_from_root(root) {
+                Some(e) => out.push(e),
+                None => tracing::warn!(
+                    target: "persona.catalog",
+                    root = %root.display(),
+                    "skipping install_root — persona.toml missing or invalid"
+                ),
+            }
+        }
+        out
+    }
+
+    async fn template_for(&self, id: &str) -> Option<serde_json::Value> {
+        self.template_payload(id)
     }
 }
 

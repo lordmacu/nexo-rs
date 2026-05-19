@@ -522,6 +522,37 @@ pub fn set_circuit_breaker_state(breaker: &str, open: bool) {
         .store(if open { 1 } else { 0 }, Ordering::Relaxed);
 }
 
+/// Phase 98.2 — plugin install boot-window race counter. Tracks
+/// admin RPC calls to `plugins/{scan,install,uninstall}` that arrived
+/// before the installer was fully wired during daemon boot. Two
+/// phases:
+///   - `cell_unset`: outer `LivePluginInstallerCell` not yet populated
+///     (very early boot, before `LivePluginInstaller::new`).
+///   - `hot_install_unset`: cell populated but hot-install fixtures
+///     not yet attached (later in boot, between `new` and
+///     `with_hot_install`).
+/// Operators use this to decide whether the "still booting" bail is
+/// rare-enough to keep, or frequent-enough to switch to a
+/// `wait_with_timeout` UX (Phase 98 follow-up).
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct PluginInstallBootRaceKey {
+    method: String,
+    phase: String,
+}
+
+static PLUGIN_INSTALL_BOOT_RACE: LazyLock<DashMap<PluginInstallBootRaceKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+
+pub fn inc_plugin_install_boot_race(method: &str, phase: &str) {
+    PLUGIN_INSTALL_BOOT_RACE
+        .entry(PluginInstallBootRaceKey {
+            method: method.to_string(),
+            phase: phase.to_string(),
+        })
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Count an MCP-server boot registration by tool name + tier.
 pub fn inc_mcp_server_tool_registered(name: &str, tier: &str) {
     MCP_SERVER_TOOL_REGISTERED
@@ -563,6 +594,7 @@ pub fn reset_for_test() {
     RUNTIME_CONFIG_VERSION.clear();
     MCP_SERVER_TOOL_REGISTERED.clear();
     MCP_SERVER_TOOL_SKIPPED.clear();
+    PLUGIN_INSTALL_BOOT_RACE.clear();
     PROACTIVE_EVENTS.clear();
 }
 
@@ -955,6 +987,30 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     // `plugin.web_search.metrics.scrape`; daemon's `/metrics`
     // aggregator appends the scrape output, no in-process call.
     nexo_pairing::telemetry::render(&mut out);
+
+    out.push_str(
+        "# HELP plugin_install_boot_race_total Admin RPC plugin-install calls that hit the boot-window bail, labelled by method and missing-fixture phase.\n",
+    );
+    out.push_str("# TYPE plugin_install_boot_race_total counter\n");
+    if PLUGIN_INSTALL_BOOT_RACE.is_empty() {
+        out.push_str("plugin_install_boot_race_total{method=\"\",phase=\"\"} 0\n");
+    } else {
+        let mut rows: Vec<_> = PLUGIN_INSTALL_BOOT_RACE
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.0.method.clone(), a.0.phase.clone()).cmp(&(b.0.method.clone(), b.0.phase.clone()))
+        });
+        for (key, v) in rows {
+            out.push_str(&format!(
+                "plugin_install_boot_race_total{{method=\"{}\",phase=\"{}\"}} {}\n",
+                escape(&key.method),
+                escape(&key.phase),
+                v
+            ));
+        }
+    }
 
     out.push_str("# HELP circuit_breaker_state Circuit breaker state (0=closed,1=open).\n");
     out.push_str("# TYPE circuit_breaker_state gauge\n");

@@ -204,10 +204,17 @@ if [[ $INSTALL_PLUGINS -eq 1 ]]; then
 fi
 
 # ── 3c. install Cody persona (optional) ────────────────────────
+# Personas are TEMPLATES, not live agents. We provision the
+# persona pack at the framework's standard install_root so
+# `persona discovery` registers it; we do NOT copy its
+# `agents.d/cody.yaml` into `<config>/agents.d/` because the
+# daemon would then merge it into `cfg.agents` and treat the
+# template as an active agent. The admin wizard reads the
+# template via `nexo/admin/personas/template_get` at create-
+# agent time.
 if [[ $WITH_CODY -eq 1 && -d "$PERSONA_CODY_REPO" ]]; then
   echo "[persona/cody] installing..."
-  mkdir -p "$CONFIG/agents.d" "$STATE/secrets" "$CONFIG/data/workspace/cody"
-  cp -f "$PERSONA_CODY_REPO/agents.d/cody.yaml" "$CONFIG/agents.d/cody.yaml"
+  mkdir -p "$STATE/secrets" "$CONFIG/data/workspace/cody"
   TOKEN_FILE="$STATE/secrets/cody_nexo_bot_telegram_token.txt"
   if [[ ! -f "$TOKEN_FILE" ]] || [[ ! -s "$TOKEN_FILE" ]]; then
     echo "placeholder-not-a-real-token" > "$TOKEN_FILE"
@@ -276,15 +283,22 @@ broker:
 schema_version: 11
 YAML
 
-cat > "$CONFIG/llm.yaml" <<'YAML'
+# llm.yaml + agents.yaml are operator-managed (admin UI / manual
+# edits). Only seed empty defaults on first boot or after
+# --reset-state to avoid wiping mid-session config.
+if [[ ! -f "$CONFIG/llm.yaml" ]]; then
+  cat > "$CONFIG/llm.yaml" <<'YAML'
 providers: {}
 schema_version: 11
 YAML
+fi
 
-cat > "$CONFIG/agents.yaml" <<'YAML'
+if [[ ! -f "$CONFIG/agents.yaml" ]]; then
+  cat > "$CONFIG/agents.yaml" <<'YAML'
 agents: []
 schema_version: 11
 YAML
+fi
 
 mkdir -p "$STATE/data"
 cat > "$CONFIG/memory.yaml" <<YAML
@@ -312,32 +326,23 @@ discovery:
 schema_version: 11
 YAML
 
-if [[ $INSTALL_PLUGINS -eq 1 ]]; then
-  cat > "$CONFIG/plugins/whatsapp.yaml" <<YAML
-whatsapp:
-  enabled: true
-  session_dir: $STATE/data/whatsapp/session
-  media_dir: $STATE/data/whatsapp/media
-  acl: { allow_list: [], from_env: "" }
-  behavior: { ignore_chat_meta: true, ignore_from_me: true, ignore_groups: false }
-  rate_limit: { global_per_sec: 2.0, per_jid_per_sec: 1.0, burst: 5 }
-  bridge: { response_timeout_ms: 30000, on_timeout: noop }
-  transcriber: { enabled: false }
-  daemon: { prefer_existing: true }
-schema_version: 11
-YAML
-fi
+# whatsapp.yaml is wizard-managed. The admin UI's
+# `nexo/admin/pairing/start` fires the
+# `WhatsappPersister.on_pair_success` hook which upserts the
+# instance entry with the operator-chosen label. We previously
+# seeded a default entry without an `instance:` field here for
+# legacy single-account dev convenience; that default leaked
+# back over the wizard's entry on every dev-admin restart and
+# the plugin published on the wrong topic.
 
-if [[ $WITH_CODY -eq 1 && $INSTALL_PLUGINS -eq 1 ]]; then
-  cat > "$CONFIG/plugins/telegram.yaml" <<YAML
-telegram:
-- instance: cody_nexo_bot
-  token: \${file:./secrets/cody_nexo_bot_telegram_token.txt}
-  polling: { enabled: true, interval_ms: 1000 }
-  allow_agents: [cody]
-schema_version: 11
-YAML
-fi
+# telegram.yaml is wizard-managed (admin UI's
+# `nexo/admin/credentials/register` calls TelegramPersister which
+# upserts the instance entry). We previously seeded a `cody_nexo_bot`
+# default here so the legacy persona could boot without any UI
+# interaction; that default collided with the wizard's pair-and-
+# create-agent flow (binding pointed at `nexotest1_bot`, telegram.yaml
+# only had `cody_nexo_bot`, plugin published on the wrong topic).
+# Now the wizard owns this file end-to-end.
 
 mkdir -p "$CONFIG/personas"
 

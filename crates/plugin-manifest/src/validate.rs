@@ -223,15 +223,20 @@ fn validate_pairing(pairing: &crate::pairing::PairingSection, errors: &mut Vec<M
                 });
             }
         }
-        PairingKind::Qr | PairingKind::Info => {
+        PairingKind::Qr => {
+            // Phase 97 — fields are allowed for QR kind so the
+            // admin wizard can ask for a discriminator label
+            // (e.g. `instance: "ventas"`) BEFORE generating the
+            // QR. Without this the operator can't disambiguate
+            // multiple WhatsApp accounts and every pair lands
+            // on the same default topic. The frontend QrFlow
+            // renders declared fields as a form gate that
+            // unlocks the "Generar QR" button.
+        }
+        PairingKind::Info => {
             if !pairing.fields.is_empty() {
-                let kind_str = match kind {
-                    PairingKind::Qr => "qr",
-                    PairingKind::Info => "info",
-                    _ => unreachable!(),
-                };
                 errors.push(ManifestError::PairingFieldsWithoutFormKind {
-                    kind: kind_str.into(),
+                    kind: "info".into(),
                 });
             }
         }
@@ -1463,20 +1468,21 @@ expose = ["wrong_prefix"]
     }
 
     #[test]
-    fn pairing_qr_with_fields_rejected() {
+    fn pairing_qr_with_fields_accepted() {
+        // Phase 97 — QR pairing supports pre-QR form fields so
+        // the admin wizard can capture a discriminator label
+        // (e.g. WhatsApp `instance: "ventas"`) before generating
+        // the QR. The validator MUST allow this shape.
         let m = manifest_with_pairing(
             "kind = \"qr\"\n\
+             instance_field = \"instance\"\n\
              [[plugin.pairing.fields]]\n\
-             name = \"token\"\n\
-             label = \"X\"\n",
+             name = \"instance\"\n\
+             label = \"Nombre de cuenta\"\n",
         );
-        let errs = m.validate(&current()).unwrap_err();
         assert!(
-            errs.iter().any(|e| matches!(
-                e,
-                ManifestError::PairingFieldsWithoutFormKind { kind } if kind == "qr"
-            )),
-            "expected PairingFieldsWithoutFormKind(qr), got: {errs:?}"
+            m.validate(&current()).is_ok(),
+            "QR pairing should accept pre-QR fields for instance discriminator"
         );
     }
 

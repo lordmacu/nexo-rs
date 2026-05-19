@@ -264,7 +264,23 @@ impl ConfigReloadCoordinator {
         let new_version = *version_guard;
         drop(version_guard);
 
-        for agent_cfg in &cfg.agents.agents {
+        // Phase 97 — agent enable/disable toggle. `active: false` in
+        // agents.yaml is the operator's way of saying "this agent
+        // should not be running right now". We treat inactive agents
+        // as if they were absent from the config for the rest of the
+        // reload cycle:
+        //   - spawn/apply loop skips them (no broker subs, no
+        //     heartbeat task, no LLM client cost),
+        //   - the removed-agents detection branch (step 4 below) sees
+        //     the runtime handle without a matching active entry and
+        //     drives `ReloadCommand::Shutdown` + `unregister(...)` so
+        //     the subprocess plugin teardown matches a yaml-delete
+        //     exactly. Flipping the toggle back to true re-enters the
+        //     hot-spawn branch via the wizard's spawner.
+        let active_agents: Vec<_> = cfg.agents.agents.iter().filter(|a| a.active).collect();
+
+        for agent_cfg in &active_agents {
+            let agent_cfg = *agent_cfg;
             // Phase 81.32 c8 — unknown agent id (wizard create
             // path). Try the installed spawner first; fall back to
             // the legacy rejection only when no spawner was wired
@@ -283,7 +299,10 @@ impl ConfigReloadCoordinator {
                     });
                     continue;
                 };
-                match spawner.call(agent_cfg.clone()).await {
+                match spawner
+                    .call(agent_cfg.clone(), Arc::new(cfg.plugins.clone()))
+                    .await
+                {
                     Ok(spawned) => {
                         self.register(
                             spawned.agent_id.clone(),
@@ -383,12 +402,16 @@ impl ConfigReloadCoordinator {
         // Collect removed ids first (can't mutate the map while
         // iterating it; DashMap reentrant remove panics on the same
         // shard).
+        // Match against `active_agents` (not the raw yaml set) so an
+        // agent flipped to `active: false` is hot-removed identically
+        // to one deleted from the yaml. The yaml entry stays so the
+        // operator can flip it back on without losing config.
         let removed_ids: Vec<String> = self
             .runtimes
             .iter()
             .filter_map(|entry| {
                 let id = entry.key();
-                if !cfg.agents.agents.iter().any(|a| &a.id == id) {
+                if !active_agents.iter().any(|a| &a.id == id) {
                     Some(id.clone())
                 } else {
                     None

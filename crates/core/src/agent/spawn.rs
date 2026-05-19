@@ -320,6 +320,7 @@ pub struct AgentSpawnerFn(
     pub  Box<
         dyn Fn(
                 AgentConfig,
+                std::sync::Arc<nexo_config::types::plugins::PluginsConfig>,
             )
                 -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
             + Send
@@ -330,11 +331,21 @@ pub struct AgentSpawnerFn(
 impl AgentSpawnerFn {
     /// Convenience: invoke the wrapped closure directly without
     /// touching the `.0` field at every call site.
+    ///
+    /// Phase 97.3 — `plugins` is the fresh `cfg.plugins` snapshot
+    /// from the coordinator's current reload cycle (NOT the boot-
+    /// time capture). Lets the spawner's `validate_agent_config`
+    /// see plugin entries that were added mid-runtime by the
+    /// wizard's `credentials/register` flow — without this, an
+    /// agent created in the same flow as a fresh pair was
+    /// rejected with "plugin `<channel>` not configured" against
+    /// the stale boot snapshot.
     pub fn call(
         &self,
         cfg: AgentConfig,
+        plugins: std::sync::Arc<nexo_config::types::plugins::PluginsConfig>,
     ) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>> {
-        (self.0)(cfg)
+        (self.0)(cfg, plugins)
     }
 }
 

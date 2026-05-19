@@ -26,6 +26,7 @@ pub mod pairing;
 pub mod pairing_channels;
 pub mod persona;
 pub mod plugin_doctor;
+pub mod plugin_install;
 pub mod plugin_restart;
 pub mod processing;
 pub mod secrets;

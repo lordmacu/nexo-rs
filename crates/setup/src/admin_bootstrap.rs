@@ -328,6 +328,16 @@ pub struct AdminBootstrapInputs<'a> {
     /// around the daemon's plugin handles snapshot.
     pub plugin_restarter:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter>>,
+    /// Phase 97.1 — runtime plugin install / scan / uninstall.
+    /// `None` keeps `nexo/admin/plugins/{scan,install,uninstall}`
+    /// returning the typed `plugin install domain not configured`
+    /// -32603. Production wires a late-bind installer behind a
+    /// shared cell so `LivePluginInstaller` can be constructed
+    /// AFTER `wire_plugin_registry` returns + injected once the
+    /// per-plugin Arc fixtures (factory registry, handles cell,
+    /// router shares) are populated.
+    pub plugin_installer:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_install::PluginInstaller>>,
     /// Long-term memory query reader. `None`
     /// keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603. Production wires
@@ -607,10 +617,16 @@ impl AdminRpcBootstrap {
             audit_sqlite.as_ref().map(|arc| arc.clone() as _);
 
         // Filesystem-side adapters — singletons.
-        let agents_yaml = Arc::new(
-            AgentsYamlPatcher::new(inputs.config_dir.join("agents.yaml"))
-                .with_persona_roots(inputs.persona_install_roots.clone()),
-        );
+        // Persona install_roots intentionally NOT threaded here.
+        // Personas are TEMPLATES for the create-agent wizard, not
+        // live agents; surfacing their `agents.d/` files via
+        // `agents/list` and `agents/get` conflated installs with
+        // instances and produced ghost "agent" entries the
+        // operator never created. Templates are exposed instead
+        // via `nexo/admin/personas/*` (see persona admin domain).
+        let agents_yaml = Arc::new(AgentsYamlPatcher::new(
+            inputs.config_dir.join("agents.yaml"),
+        ));
         let llm_yaml = Arc::new(LlmYamlPatcherFs::new(inputs.config_dir.join("llm.yaml")));
         let credential_store = Arc::new(FilesystemCredentialStore::new(inputs.secrets_root));
         let pairing_store = Arc::new(InMemoryPairingChallengeStore::new(Duration::from_secs(
@@ -857,6 +873,18 @@ impl AdminRpcBootstrap {
                 .with_persona_snapshot_reader(persona_store.clone())
                 .with_persona_store(persona_store);
 
+            // Persona TEMPLATE catalog (read-only). Distinct from
+            // the locale store above: this surface exposes the
+            // installed persona packs as "use as template" rows
+            // for the create-agent wizard. Powered by the same
+            // `persona_install_roots` snapshot the daemon
+            // discovered at boot. Personas listed here are NEVER
+            // auto-merged into `cfg.agents`.
+            let persona_catalog = crate::admin_adapters::FilesystemPersonaCatalog::new(
+                inputs.persona_install_roots.clone(),
+            );
+            dispatcher = dispatcher.with_persona_catalog(persona_catalog);
+
             // Install the pairing-channels descriptor reader,
             // built here so we can reuse the `credential_store`
             // already wired into the credentials domain. Cell is
@@ -877,6 +905,13 @@ impl AdminRpcBootstrap {
             // `plugin restart domain not configured` -32603.
             if let Some(restarter) = inputs.plugin_restarter.clone() {
                 dispatcher = dispatcher.with_plugin_restarter(restarter);
+            }
+            // Phase 97.1 — install/scan/uninstall adapter.
+            // Mirror shape: `None` keeps the three RPC verbs
+            // returning the typed -32603; production wires the
+            // late-bind `LivePluginInstaller`.
+            if let Some(installer) = inputs.plugin_installer.clone() {
+                dispatcher = dispatcher.with_plugin_installer(installer);
             }
             // Install the memory query reader.
             // Without it, `nexo/admin/memory/query` returns the
@@ -1189,6 +1224,7 @@ mod tests {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1234,6 +1270,7 @@ mod tests {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1280,6 +1317,7 @@ mod tests {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1341,6 +1379,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1394,6 +1433,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1447,6 +1487,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1508,6 +1549,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1575,6 +1617,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1637,6 +1680,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1698,6 +1742,7 @@ mod tests {
             plugin_handles_cell: None,
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
+            plugin_installer: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1780,6 +1825,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1844,6 +1890,7 @@ mod tests {
                 plugin_handles_cell: None,
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
+                plugin_installer: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,

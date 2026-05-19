@@ -17,18 +17,28 @@ follow the link.
 > `nexo plugin install <owner>/<repo>`:
 >
 > ```bash
+> # Channels (5)
 > nexo plugin install lordmacu/nexo-plugin-whatsapp
 > nexo plugin install lordmacu/nexo-plugin-telegram
 > nexo plugin install lordmacu/nexo-plugin-email
 > nexo plugin install lordmacu/nexo-plugin-browser
-> nexo plugin install lordmacu/nexo-plugin-google      # Gmail/Calendar/Drive/Sheets
-> nexo plugin install lordmacu/nexo-plugin-web-search  # Brave/Tavily/DuckDuckGo/Perplexity
+> nexo plugin install lordmacu/nexo-rs-plugin-google         # Gmail/Calendar/Drive/Sheets
+>
+> # Tool (1)
+> nexo plugin install lordmacu/nexo-rs-plugin-web-search     # Brave/Tavily/DDG/Perplexity
+>
+> # Pollers (3) — cron-style scheduled tasks
+> nexo plugin install lordmacu/nexo-rs-poller-rss            # RSS / Atom feeds
+> nexo plugin install lordmacu/nexo-rs-poller-gmail          # Gmail API sweeps
+> nexo plugin install lordmacu/nexo-rs-poller-google-calendar # Calendar event sync
+>
 > nexo plugin list
 > ```
 >
-> All six also ship to crates.io: `cargo install nexo-plugin-web-search`
-> (etc.) drops the binary in `$HOME/.cargo/bin/` and the daemon's
-> discovery walker picks it up automatically.
+> All nine also ship to crates.io — `cargo install
+> nexo-plugin-web-search` (etc., and `cargo install nexo-poller-rss`
+> for pollers) drops the binary in `$HOME/.cargo/bin/` and the
+> daemon's discovery walker picks it up automatically.
 >
 > (Or build from source: `cargo install --git
 > https://github.com/lordmacu/nexo-plugin-whatsapp`.) Then reference
@@ -92,7 +102,7 @@ endpoint. Token state lives in the agent's workspace; access
 tokens auto-refresh.
 
 ```bash
-cargo install nexo-plugin-google
+cargo install nexo-plugin-google   # crate name unchanged; repo is nexo-rs-plugin-google
 nexo                                        # daemon discovers + spawns
 nexo-plugin-google --oauth-once <agent_id> \
     --client-id-file ./secrets/google_client_id.txt \

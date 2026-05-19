@@ -104,6 +104,22 @@ pub struct AgentDetail {
     /// extra roundtrip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_locales: Option<crate::admin::persona::PersonaLocales>,
+    /// Phase 97.UI — full agent yaml block as JSON value. Lets the
+    /// admin UI render the long-tail of capability gates
+    /// (`config_tool`, `team`, `repl`, `proactive`, `lsp`,
+    /// `dispatch_policy`, rate limits, `remote_triggers`,
+    /// `workspace_git`, `outbound_allowlist`, …) without the wire
+    /// crate having to mirror every typed shape. The dispatcher
+    /// populates this from a fresh yaml read so the operator
+    /// always sees the on-disk truth, including fields written by
+    /// out-of-band yaml edits.
+    ///
+    /// Always present (defaults to an empty object when the agent
+    /// has only required fields). UI side parses field by field
+    /// against the TypeScript policy shapes in
+    /// `frontend/src/api/agent_policies.ts`.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub raw_config: serde_json::Value,
 }
 
 /// Wire mirror of `nexo_config::types::agents::HeartbeatConfig`.
@@ -121,7 +137,7 @@ pub struct HeartbeatWire {
 }
 
 /// LLM provider + model pointer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelRef {
     /// Provider id from `llm.yaml.providers.*`.
     pub provider: String,
@@ -147,7 +163,7 @@ pub struct BindingSummary {
 /// the corresponding yaml block. Fields set to `None` inherit the
 /// existing yaml value. New agent creation sets every required
 /// field.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct AgentUpsertInput {
     /// Stable agent id.
     pub id: String,
@@ -203,6 +219,121 @@ pub struct AgentUpsertInput {
     /// `-32602 invalid_params`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locale_prompts: Option<std::collections::BTreeMap<String, String>>,
+
+    // ── Phase 97.UI — extended config surface ───────────────────
+    //
+    // Tier-1 typed fields. Direct strings / lists, validated
+    // server-side at the upsert boundary.
+    /// Multi-tenant scope owner. `None` = global agent (not
+    /// tenant-owned). UI exposes this as a dropdown of known
+    /// tenants + a "global" option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// One-line role description used in the auto-generated
+    /// `# PEERS` block other agents see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Soft plugin allowlist (inbound plugin ids the agent
+    /// acknowledges). `None` keeps existing; empty vec clears it
+    /// (agent sees no plugins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<Vec<String>>,
+    /// Agents this one may delegate TO. Glob `*` suffix supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_delegates: Option<Vec<String>>,
+    /// Agents allowed to delegate INTO this one. Inverse gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_delegates_from: Option<Vec<String>>,
+    /// Local skills to inject into the system prompt
+    /// (`<skills_dir>/<skill>/SKILL.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
+    /// Base directory for local skills. Relative paths resolved
+    /// from process CWD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills_dir: Option<String>,
+
+    // ── Tier-2 + Tier-3 opaque policy blocks ────────────────────
+    //
+    // Each is serialised through to yaml as-is by the dispatcher.
+    // tool-meta deliberately keeps these as Value to avoid pulling
+    // nexo-config into the wire crate; admin UI ships a TypeScript
+    // shape per policy. Daemon yaml-load parses the strong shape
+    // on the next reload cycle (validators surface errors via
+    // `agents/upsert` failure path).
+    /// `config_tool: { self_edit, require_approval, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_tool: Option<serde_json::Value>,
+    /// `team: { enabled, max_spawned, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<serde_json::Value>,
+    /// `repl: { enabled, languages, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repl: Option<serde_json::Value>,
+    /// `proactive: { enabled, sleep_default_ms, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proactive: Option<serde_json::Value>,
+    /// `lsp: { enabled, workspace_dir, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lsp: Option<serde_json::Value>,
+    /// `dispatch_policy: { mode }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_policy: Option<serde_json::Value>,
+    /// `auto_dream: { enabled, … }`. Wrap `None` as
+    /// `Some(Value::Null)` if the operator wants to clear the block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_dream: Option<serde_json::Value>,
+    /// `assistant_mode: { enabled, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_mode: Option<serde_json::Value>,
+    /// `away_summary: { enabled, threshold_hours }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub away_summary: Option<serde_json::Value>,
+    /// `channels: { enabled, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<serde_json::Value>,
+    /// `brief: { enabled, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<serde_json::Value>,
+    /// `tool_rate_limits: { per_tool: {...} }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_rate_limits: Option<serde_json::Value>,
+    /// `sender_rate_limit: { per_sender_per_minute, burst }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_rate_limit: Option<serde_json::Value>,
+    /// `tool_args_validation: { enabled }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_args_validation: Option<serde_json::Value>,
+    /// `remote_triggers: [{name, topic, …}, …]`. Vec literal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_triggers: Option<serde_json::Value>,
+    /// `dreaming: { enabled, interval_secs, weights, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dreaming: Option<serde_json::Value>,
+    /// `workspace_git: { enabled }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_git: Option<serde_json::Value>,
+    /// `context_optimization: { compaction, prompt_cache, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_optimization: Option<serde_json::Value>,
+    /// `outbound_allowlist: { whatsapp: [...], telegram: [...] }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_allowlist: Option<serde_json::Value>,
+    /// `pairing_policy: { auto_challenge, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing_policy: Option<serde_json::Value>,
+    /// `link_understanding: { enabled, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_understanding: Option<serde_json::Value>,
+    /// `web_search: { enabled, provider, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<serde_json::Value>,
+    /// `credentials: { google: ..., whatsapp_outbound: ..., … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<serde_json::Value>,
+    /// `google_auth: { client_id, … }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_auth: Option<serde_json::Value>,
 }
 
 /// Params for `nexo/admin/agents/delete`. Soft-delete:
@@ -265,6 +396,7 @@ mod tests {
             extra_docs: vec![],
             heartbeat: None,
             persona_locales: None,
+            raw_config: serde_json::Value::Null,
         };
         let v = serde_json::to_value(&d).unwrap();
         let obj = v.as_object().unwrap();
@@ -294,6 +426,7 @@ mod tests {
                 interval: "30m".into(),
             }),
             persona_locales: None,
+            raw_config: serde_json::Value::Null,
         };
         let v = serde_json::to_value(&d).unwrap();
         let back: AgentDetail = serde_json::from_value(v).unwrap();
@@ -308,16 +441,7 @@ mod tests {
                 provider: "minimax".into(),
                 model: "MiniMax-M2.5".into(),
             },
-            allowed_tools: None,
-            inbound_bindings: None,
-            system_prompt: None,
-            language: None,
-            active: None,
-            transcripts_dir: None,
-            workspace: None,
-            extra_docs: None,
-            heartbeat: None,
-            locale_prompts: None,
+            ..Default::default()
         };
         let v = serde_json::to_value(&i).unwrap();
         let obj = v.as_object().unwrap();

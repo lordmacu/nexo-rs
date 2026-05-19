@@ -26,6 +26,11 @@ secrets/*
 # Runtime data
 data/
 logs/
+# `.dev-state/` — per-developer runtime install state for the daemon
+# (extension binaries, plugin subprocess binaries, locally-edited
+# config yaml, OAuth bundles, etc). Re-seeded by `agent doctor` /
+# `cargo install` / pairing flows. Operator-specific; never ships.
+.dev-state/
 # Cache of resolved peer devices per JID. Contains contacts' phone
 # numbers (PII) and only makes sense for a specific paired account.
 device_cache.json

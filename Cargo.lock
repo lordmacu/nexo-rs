@@ -363,7 +363,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "ring",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.3",
  "rustls-pemfile 2.2.0",
  "rustls-webpki 0.102.8",
  "serde",
@@ -1169,7 +1169,7 @@ dependencies = [
  "quinn",
  "reqwest",
  "rustls 0.23.40",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.3",
  "rustls-pemfile 2.2.0",
  "serde",
  "serde_json",
@@ -3233,6 +3233,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls 0.23.40",
+ "rustls-native-certs 0.8.3",
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
@@ -4716,7 +4717,7 @@ dependencies = [
  "nexo-auth",
  "once_cell",
  "rustls 0.23.40",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.3",
  "secrecy",
  "serde",
  "serde_bytes",
@@ -5175,6 +5176,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-plugin-discovery"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "nexo-plugin-manifest",
+ "nexo-resilience",
+ "nexo-tool-meta",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
 name = "nexo-plugin-manifest"
 version = "0.1.7"
 dependencies = [
@@ -5408,13 +5431,14 @@ dependencies = [
  "nexo-memory",
  "nexo-memory-snapshot",
  "nexo-pairing",
+ "nexo-persona-manifest",
  "nexo-plugin-manifest",
  "nexo-tool-meta",
  "rand 0.8.6",
  "regex",
  "reqwest",
  "rustls 0.23.40",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.3",
  "secrecy",
  "semver",
  "serde",
@@ -6895,6 +6919,7 @@ dependencies = [
  "pin-project-lite",
  "quinn",
  "rustls 0.23.40",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -7106,6 +7131,18 @@ dependencies = [
  "rustls-pki-types",
  "schannel",
  "security-framework 2.11.1",
+]
+
+[[package]]
+name = "rustls-native-certs"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+dependencies = [
+ "openssl-probe 0.2.1",
+ "rustls-pki-types",
+ "schannel",
+ "security-framework 3.7.0",
 ]
 
 [[package]]
@@ -8556,7 +8593,7 @@ dependencies = [
  "futures-util",
  "log",
  "rustls 0.22.4",
- "rustls-native-certs",
+ "rustls-native-certs 0.7.3",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.25.0",

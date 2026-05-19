@@ -4,6 +4,7 @@ mod init_cli;
 mod persona_cli;
 mod plugin_admin;
 mod plugin_install;
+mod plugin_install_adapter;
 mod plugin_new;
 mod plugin_run;
 
@@ -2269,6 +2270,23 @@ async fn main() -> Result<()> {
         "broker ready",
     );
 
+    // Phase 97 — make broker kind/url visible to subprocess
+    // plugins spawned via the discovery-walker auto-fallback
+    // (init_loop.rs `auto_factory` path). Multi-instance plugins
+    // already get explicit env via `seed_*_subprocess_env_for`,
+    // but plugins WITHOUT a registered factory (`whatsapp` at
+    // boot when no yaml entry exists yet — fresh wizard flow)
+    // fall through to the auto-subprocess fallback which
+    // inherits the daemon's process env. Without these vars
+    // the plugin's `auto_discovery_broker()` fails with
+    // "NEXO_BROKER_URL not set" → subscribers never bind →
+    // pairing/start broker.request times out.
+    let broker_kind_str = subprocess_broker_kind_str(cfg.broker.broker.kind);
+    std::env::set_var("NEXO_BROKER_KIND", broker_kind_str);
+    if broker_kind_str != "stdio_bridge" {
+        std::env::set_var("NEXO_BROKER_URL", &cfg.broker.broker.url);
+    }
+
     // Snapshot.b — shared cell handed to the
     // admin RPC reader pre-bootstrap. main.rs writes the real
     // snapshotter into it later in boot once the late-stage
@@ -2365,6 +2383,46 @@ async fn main() -> Result<()> {
     let plugin_admin_router =
         std::sync::Arc::new(nexo_pairing::plugin_admin::PluginAdminRouter::new());
 
+    // Phase 97 — admin RPC reload coordinator cell. Declared at
+    // outer scope so the `set(...)` site after the coordinator is
+    // built (further down in boot) can reach it regardless of
+    // whether the admin_bootstrap branch ran. When admin RPC is
+    // disabled, the cell exists but nobody fires `reload_signal()`
+    // so the unused warning is the only side-effect.
+    let admin_reload_cell: std::sync::Arc<
+        tokio::sync::OnceCell<std::sync::Arc<nexo_core::ConfigReloadCoordinator>>,
+    > = std::sync::Arc::new(tokio::sync::OnceCell::new());
+
+    // Phase 97.1 — late-bind plugin installer. Admin RPC dispatcher
+    // gets the wrapper at bootstrap time; main.rs constructs the
+    // real `LivePluginInstaller` AFTER `wire_plugin_registry`
+    // returns + populates the wrapper's cell so admin RPC routes
+    // immediately resolve to the live adapter. Calls arriving in
+    // the boot-window between bootstrap and cell-set get a clean
+    // "still booting" InvalidParams that the UI renders as a
+    // transient retry toast.
+    let plugin_installer_late_bind =
+        std::sync::Arc::new(plugin_install_adapter::LivePluginInstallerCell::new());
+
+    // Phase 97.2 — live plugin restarter built at outer scope so
+    // BOTH the admin RPC dispatcher (via `plugin_restarter:
+    // Some(...)`) and the WhatsApp persister (via `with_restarter`)
+    // share the SAME Arc. The persister's post-pair restart hook
+    // fires through this same path admin operators use for the
+    // manual `plugins/restart` RPC — single implementation, single
+    // failure surface. The `CancellationToken` here is a fresh
+    // local — same pragmatic compromise as the
+    // `subprocess_shutdown` token (see comment further down).
+    let live_plugin_restarter: std::sync::Arc<nexo_setup::admin_adapters::LivePluginRestarter> =
+        nexo_setup::admin_adapters::LivePluginRestarter::new(
+            plugin_handles_cell.clone(),
+            tokio_util::sync::CancellationToken::new(),
+            broker.clone(),
+            None,
+            llm_registry.clone(),
+            std::sync::Arc::new(cfg.llm.clone()),
+        );
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -2372,8 +2430,65 @@ async fn main() -> Result<()> {
         .unwrap_or(false)
         && !admin_capabilities.is_empty()
     {
-        let reload_noop: nexo_core::agent::admin_rpc::dispatcher::ReloadSignal =
-            std::sync::Arc::new(|| {});
+        // Phase 97 — admin RPC reload signal. `reload_coord` is
+        // built ~5k lines below this block, so we capture it via
+        // the outer-scope `admin_reload_cell` (declared right
+        // before this `if`) and resolve lazily on each fire. Admin
+        // RPC handlers (`agents/upsert`, `agents/delete`,
+        // `llm_providers/{upsert,delete}`, …) write yaml then call
+        // `reload_signal()`; the closure spawns a task that drives
+        // `coord.reload().await`. Result: every CRUD on agents +
+        // LLM providers + heartbeat config hot-reloads the running
+        // runtime without a daemon restart, picking up new
+        // credentials, model swaps, and per-agent prompt edits on
+        // the next turn. Until the cell is set (a narrow window
+        // during boot before the coordinator exists), the closure
+        // logs at debug and no-ops — the daemon hasn't accepted
+        // its first admin RPC by then in practice.
+        let admin_reload_signal: nexo_core::agent::admin_rpc::dispatcher::ReloadSignal = {
+            let cell = std::sync::Arc::clone(&admin_reload_cell);
+            std::sync::Arc::new(move || {
+                let cell = std::sync::Arc::clone(&cell);
+                tokio::spawn(async move {
+                    let Some(coord) = cell.get() else {
+                        tracing::debug!(
+                            "admin RPC reload_signal fired before coordinator ready; \
+                             ignoring (boot race)"
+                        );
+                        return;
+                    };
+                    let outcome = coord.reload().await;
+                    if !outcome.rejected.is_empty() {
+                        // Don't fail the RPC — the yaml write
+                        // already succeeded. Log so operators see
+                        // why an agent didn't pick up the change
+                        // (e.g. a deleted LLM provider that an
+                        // agent still binds to).
+                        tracing::warn!(
+                            rejected = ?outcome
+                                .rejected
+                                .iter()
+                                .map(|r| format!(
+                                    "{}: {}",
+                                    r.agent_id.as_deref().unwrap_or("workspace"),
+                                    r.reason
+                                ))
+                                .collect::<Vec<_>>(),
+                            applied = ?outcome.applied,
+                            version = outcome.version,
+                            "admin RPC reload had per-agent rejections"
+                        );
+                    } else {
+                        tracing::info!(
+                            applied = ?outcome.applied,
+                            version = outcome.version,
+                            elapsed_ms = outcome.elapsed_ms,
+                            "admin RPC reload applied"
+                        );
+                    }
+                });
+            })
+        };
         let extensions_cfg_ref = cfg.extensions.as_ref().unwrap();
         // Db — durable audit log at the
         // canonical state path (`$NEXO_HOME/admin_audit.db`),
@@ -2486,7 +2601,7 @@ async fn main() -> Result<()> {
                 extensions_cfg: extensions_cfg_ref,
                 admin_capabilities: &admin_capabilities,
                 http_server_capabilities: &http_server_capabilities,
-                reload_signal: reload_noop,
+                reload_signal: admin_reload_signal,
                 transcript_reader: None,
                 // Wire the broker so the
                 // `processing/intervention` admin RPC can reach
@@ -2526,27 +2641,18 @@ async fn main() -> Result<()> {
                 // silent divergence if a plugin-registered LLM
                 // factory lands between this and the runtime
                 // registry build at main.rs:2347).
-                plugin_restarter: Some(nexo_setup::admin_adapters::LivePluginRestarter::new(
-                    plugin_handles_cell.clone(),
-                    // Same pragmatic compromise as the
-                    // `subprocess_shutdown` token at the
-                    // wire_plugin_registry call site
-                    // (main.rs:3161): the daemon's main
-                    // shutdown CancellationToken isn't yet
-                    // a shared resource at this scope. A
-                    // fresh local token is fine because the
-                    // subprocess adapter spawns children
-                    // with `kill_on_drop(true)`; daemon exit
-                    // tears the children down regardless of
-                    // whether this token cancelled. A
-                    // graceful-supervisor rework is the
-                    // proper fix; deferred.
-                    tokio_util::sync::CancellationToken::new(),
-                    broker.clone(),
-                    None,
-                    llm_registry.clone(),
-                    std::sync::Arc::new(cfg.llm.clone()),
-                )),
+                plugin_restarter: Some(live_plugin_restarter.clone()),
+                // Phase 97.1 — late-bind plugin installer. The
+                // real `LivePluginInstaller` requires `factory_registry`,
+                // `subprocess_runtime`, `plugin_handles_cell`,
+                // `plugin_admin_router`, `pairing_triggers` which are
+                // either built or populated AFTER `wire_plugin_registry`
+                // returns. We pass a wrapper that consults a shared
+                // OnceCell + main.rs sets the cell post-wire so
+                // dispatcher routes resolve to the live adapter from
+                // boot-cell-set onward (admin RPC fired before that
+                // window returns the boot-window InvalidParams).
+                plugin_installer: Some(plugin_installer_late_bind.clone()),
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
@@ -2674,7 +2780,15 @@ async fn main() -> Result<()> {
                         config_dir.join("plugins").join("email.yaml"),
                         secrets_dir.clone(),
                     ),
-                    nexo_setup::persisters::WhatsappPersister::new(),
+                    nexo_setup::persisters::WhatsappPersister::new(
+                        config_dir.clone(),
+                        config_dir
+                            .parent()
+                            .map(|p| p.join("data"))
+                            .unwrap_or_else(|| config_dir.join("data")),
+                        plugin_handles_cell.clone(),
+                    )
+                    .with_restarter(live_plugin_restarter.clone()),
                 ],
                 pairing_triggers: pairing_triggers.clone(),
                 // Phase 81.33.b.real Stage 4 — manifest-driven
@@ -3632,6 +3746,14 @@ async fn main() -> Result<()> {
         &extra_subprocess_plugins,
     )
     .await;
+    // Phase 97.1.β — share the factory registry with the live
+    // plugin installer adapter so `nexo/admin/plugins/scan` can
+    // build hot-spawned plugins through the same factories the
+    // boot path used (in-tree overrides + auto-subprocess fallback
+    // for manifests with `[plugin.entrypoint]`).
+    let factory_registry: std::sync::Arc<
+        nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry,
+    > = std::sync::Arc::new(factory_registry);
     // `wire.registry` + `wire.skill_roots` +
     // `wire.channel_adapter_registry` stay in scope for hot-reload
     // registration + per-agent threading without
@@ -3785,8 +3907,15 @@ async fn main() -> Result<()> {
     // `channel_id`, so the broker trigger replaces the legacy entry
     // for any plugin that ships the manifest section. Plugins that
     // skip the section keep the legacy hardcoded path.
-    if let Some(bootstrap_ref) = admin_bootstrap.as_ref() {
-        let pairing_store = bootstrap_ref.pairing_store();
+    // Phase 97.1.β — hoist `pairing_store` to outer scope so the
+    // hot-install adapter constructor below this block can clone
+    // the same Arc into its `HotPluginCtx` without re-resolving it
+    // from `admin_bootstrap` (which moves into `dispatcher` later).
+    let pairing_store_for_hot: Option<
+        std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore>,
+    > = admin_bootstrap.as_ref().map(|b| b.pairing_store());
+    if let Some(_bootstrap_ref) = admin_bootstrap.as_ref() {
+        let pairing_store = pairing_store_for_hot.clone().expect("just set");
         for (plugin_id, handle) in wire.plugin_handles.iter() {
             let manifest = handle.manifest();
             let adapter = match manifest.plugin.pairing.adapter.as_ref() {
@@ -6891,13 +7020,21 @@ async fn main() -> Result<()> {
         let tools_per_agent_c = Arc::clone(&tools_per_agent);
         let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
 
-        let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg| {
+        let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg, plugins_fresh| {
             let broker = broker_c.clone();
             let sessions = Arc::clone(&sessions_c);
             let memory = memory_c.clone();
             let llm_registry = Arc::clone(&llm_registry_c);
             let llm_cfg = Arc::clone(&llm_cfg_c);
-            let plugins = Arc::clone(&plugins_c);
+            // Phase 97.3 — prefer the fresh `cfg.plugins` from the
+            // coordinator's current reload cycle (carries entries
+            // added mid-runtime via `credentials/register`). Falls
+            // back to the boot snapshot only if the coordinator
+            // somehow handed us a default-empty config — that
+            // path doesn't exist today; the explicit selection
+            // documents intent.
+            let _plugins_boot_snapshot = Arc::clone(&plugins_c);
+            let plugins = plugins_fresh;
             let peer_directory = Arc::clone(&peer_directory_c);
             let transcripts_redactor = Arc::clone(&transcripts_redactor_c);
             let transcripts_index = transcripts_index_c.clone();
@@ -7465,6 +7602,47 @@ async fn main() -> Result<()> {
     if let Some(cell) = reload_cell.as_ref() {
         let _ = cell.set(Arc::clone(&reload_coord));
     }
+    // Phase 97 — late-bind the SAME coordinator into the admin RPC
+    // reload-signal cell so handlers can hot-reload after CRUD
+    // on agents + LLM providers + heartbeat config. Idempotent —
+    // OnceCell `set` returns Err if already populated (impossible
+    // here in practice; we only set in this one site).
+    let _ = admin_reload_cell.set(Arc::clone(&reload_coord));
+
+    // Phase 97.1 — late-bind the real plugin installer. Same
+    // shape as the reload-coord cell above: the dispatcher is
+    // already wired with the wrapper; this fills the wrapper's
+    // OnceCell so the next admin RPC `plugins/install` reaches
+    // the real adapter. Cell is per-process so a second `set` is
+    // a no-op error (impossible in practice — single call site).
+    // Phase 97.1.β — build the hot-install fixtures and thread
+    // them into the installer wrapper. This is what unlocks
+    // `nexo/admin/plugins/scan` + `…/uninstall` driving real
+    // hot-spawn / hot-remove. Until this set fires, those verbs
+    // returned a clean "still booting" -32602.
+    let hot_install_ctx = plugin_install_adapter::HotInstallCtx {
+        factory_registry: std::sync::Arc::clone(&factory_registry),
+        subprocess_runtime: subprocess_runtime.clone(),
+        channel_adapter_registry: wire.channel_adapter_registry.clone(),
+        llm_registry: llm_registry.clone(),
+        hook_registry: wire.hook_registry.clone(),
+        vector_backend_registry: wire.vector_backend_registry.clone(),
+        tool_registry: wire.tool_registry.clone(),
+        discovery_cfg: discovery_cfg_clone.clone(),
+        current_version: semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        hot_plugin_ctx: nexo_setup::hot_spawn::HotPluginCtx {
+            plugin_handles: plugin_handles_cell.clone(),
+            plugin_admin_router: plugin_admin_router.clone(),
+            plugin_poller_router: plugin_poller_router.clone(),
+            pairing_triggers: pairing_triggers.clone(),
+            pairing_store: pairing_store_for_hot.clone(),
+            broker: broker.clone(),
+        },
+    };
+    let installer_base = plugin_install_adapter::LivePluginInstaller::new(config_dir.clone());
+    let installer = installer_base.with_hot_install(hot_install_ctx);
+    let _ = plugin_installer_late_bind.set(installer);
 
     // Spawn ONE cron runner per process.
     // Polls the SQLite cron store every 5s. Dispatches through a

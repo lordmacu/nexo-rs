@@ -16,6 +16,7 @@ use nexo_tool_meta::admin::pairing::{
 use uuid::Uuid;
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
+use crate::agent::admin_rpc::domains::credentials::ChannelCredentialPersister;
 
 /// Notification topic the daemon emits on. SDK-side subscriber
 /// matches against this exact string.
@@ -165,6 +166,12 @@ pub async fn start_with_trigger(
     handles: std::sync::Arc<dashmap::DashMap<Uuid, super::super::pairing_trigger::PairingHandle>>,
     cancel_root: &tokio_util::sync::CancellationToken,
     params: Value,
+    persisters: Option<&super::credentials::PersisterRegistry>,
+    // Phase 97 — reload_signal fired AFTER the persister wrote
+    // the new instance entry and BEFORE `trigger.start()` runs.
+    // Re-delivers `plugin.configure` to live subprocesses so
+    // the pairing pump resolves the new instance's session_dir.
+    reload_signal: Option<&super::super::dispatcher::ReloadSignal>,
 ) -> AdminRpcResult {
     use super::super::pairing_trigger::{
         PairingContext, PairingTriggerError, PAIRING_DEFAULT_TIMEOUT,
@@ -202,6 +209,39 @@ pub async fn start_with_trigger(
         }
     };
 
+    // Phase 97 — persister runs BEFORE trigger.start so the
+    // plugin's `configured_state` (refreshed via plugin.configure
+    // below) carries the new instance entry by the time the
+    // pairing pump reads it for session_dir / media_dir. Without
+    // this ordering the pump would resolve against the legacy
+    // entry and write Signal session data into the wrong path.
+    // If the persister refuses (e.g. WhatsApp rejects empty
+    // instance label), we abort BEFORE creating the live pump
+    // so the operator sees a clean error.
+    let persisted_for_rollback: Option<(&dyn ChannelCredentialPersister, Option<String>)> =
+        match persisters.and_then(|r| r.get(&input.channel)) {
+            Some(persister) => {
+                if let Err(e) = persister.on_pair_success(input.instance.as_deref()).await {
+                    let _ = store.cancel_challenge(challenge_id);
+                    return AdminRpcResult::err(e);
+                }
+                // Push the new yaml entry to live plugin
+                // subprocesses BEFORE the pump fires. Without
+                // this the plugin's `configured_state` lags
+                // and the pairing pump resolves the wrong
+                // session_dir.
+                if let Some(reload) = reload_signal {
+                    reload();
+                    // Give the reload task a tick to land —
+                    // it dispatches plugin.configure inline so
+                    // 50ms is generous on a healthy daemon.
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                Some((persister.as_ref(), input.instance.clone()))
+            }
+            None => None,
+        };
+
     let cancel = cancel_root.child_token();
     let ctx = PairingContext {
         challenge_id,
@@ -226,6 +266,19 @@ pub async fn start_with_trigger(
         Err(e) => {
             // Roll back the row — trigger refused before spawn.
             let _ = store.cancel_challenge(challenge_id);
+            // Phase 97 — also roll back the persister write so
+            // we don't leave an orphan yaml entry. Best-effort:
+            // a failed rollback is logged, not propagated.
+            if let Some((persister, inst)) = persisted_for_rollback {
+                if let Err(rb_err) = persister.rollback_pair(inst.as_deref()).await {
+                    tracing::warn!(
+                        channel = %input.channel,
+                        instance = ?inst,
+                        error = %rb_err,
+                        "persister.rollback_pair failed; yaml may have orphan entry"
+                    );
+                }
+            }
             let admin_err = match e {
                 PairingTriggerError::ChannelNotSupported(c) => {
                     AdminRpcError::InvalidParams(format!("channel `{c}` not supported"))
@@ -699,6 +752,8 @@ mod tests {
             handles.clone(),
             &root,
             whatsapp_start_params("ana"),
+            None,
+            None,
         )
         .await;
         assert!(
@@ -724,6 +779,8 @@ mod tests {
             handles.clone(),
             &root,
             whatsapp_start_params("ana"),
+            None,
+            None,
         )
         .await;
         assert!(matches!(
@@ -755,6 +812,8 @@ mod tests {
             handles.clone(),
             &root,
             whatsapp_start_params("ana"),
+            None,
+            None,
         )
         .await;
         assert!(matches!(
@@ -787,6 +846,8 @@ mod tests {
             handles.clone(),
             &root,
             whatsapp_start_params("ana"),
+            None,
+            None,
         )
         .await;
         let challenge_id = *handles.iter().next().unwrap().key();

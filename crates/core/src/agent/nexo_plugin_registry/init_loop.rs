@@ -135,6 +135,17 @@ async fn validate_operator_value(
     let Some(spec) = manifest.plugin.config_schema.as_ref() else {
         return Ok(());
     };
+    // Empty operator config is a legitimate "not configured yet"
+    // state — plugin gets `Null` and decides whether to refuse
+    // or idle. Validating shape=array against an absent
+    // mapping would reject every plugin until the operator
+    // writes a YAML, which prevents the admin wizard from
+    // surfacing the channel in the first place (catch-22:
+    // pairing/channels walks live plugin_handles; init failure
+    // means no handle; user can't pair → can't write yaml).
+    if matches!(value, Value::Null) || matches!(value, Value::Mapping(m) if m.is_empty()) {
+        return Ok(());
+    }
     let schema_json: serde_json::Value =
         serde_json::from_str(&spec.schema).map_err(|e| PluginConfigureError::PluginRejected {
             plugin_id: plugin_id.to_string(),
@@ -145,7 +156,46 @@ async fn validate_operator_value(
             plugin_id: plugin_id.to_string(),
             source: anyhow::anyhow!("operator YAML failed YAML→JSON conversion: {e}"),
         })?;
-    let errors = nexo_plugin_manifest::validate_config(&value_json, &schema_json);
+    // shape="array" ⇒ schema describes one element; iterate and
+    // validate per-element. shape="object" ⇒ validate as-is.
+    let errors = match spec.shape {
+        nexo_plugin_manifest::ConfigShape::Array => {
+            let arr = match value_json.as_array() {
+                Some(a) => a,
+                None => {
+                    return Err(PluginConfigureError::SchemaValidation {
+                        plugin_id: plugin_id.to_string(),
+                        errors: vec![nexo_plugin_manifest::ConfigSchemaError {
+                            pointer: "/".to_string(),
+                            message: format!(
+                                "[plugin.config_schema] declares shape=array but operator YAML is `{}`",
+                                match &value_json {
+                                    serde_json::Value::Null => "null",
+                                    serde_json::Value::Bool(_) => "boolean",
+                                    serde_json::Value::Number(_) => "number",
+                                    serde_json::Value::String(_) => "string",
+                                    serde_json::Value::Array(_) => "array",
+                                    serde_json::Value::Object(_) => "object",
+                                }
+                            ),
+                        }],
+                    });
+                }
+            };
+            let mut acc = Vec::new();
+            for (i, item) in arr.iter().enumerate() {
+                let mut per = nexo_plugin_manifest::validate_config(item, &schema_json);
+                for e in &mut per {
+                    e.pointer = format!("/{i}{}", e.pointer);
+                }
+                acc.extend(per);
+            }
+            acc
+        }
+        nexo_plugin_manifest::ConfigShape::Object => {
+            nexo_plugin_manifest::validate_config(&value_json, &schema_json)
+        }
+    };
     if !errors.is_empty() {
         return Err(PluginConfigureError::SchemaValidation {
             plugin_id: plugin_id.to_string(),
@@ -254,6 +304,14 @@ fn resolve_plugin_cfg(
             );
         }
         return Ok(Arc::new(value.clone()));
+    }
+    // Synthesised per-instance plugin id `<base>.<instance>`
+    // inherits its config from the base entry. Plugin's
+    // `on_configure` filters the array by `instance` internally.
+    if let Some((base, _)) = plugin_id.split_once('.') {
+        if let Some(value) = entries.get(base) {
+            return Ok(Arc::new(value.clone()));
+        }
     }
     try_load_plugin_config(plugin_id, plugin_root, config_dir, manifest)
 }
@@ -1282,8 +1340,15 @@ mod tests {
         let manifest = manifest_with_schema("beta", Some("host"));
         let plugin = Arc::new(TestPlugin::new(manifest.clone()));
         let handle: Arc<dyn NexoPlugin> = plugin.clone();
-        // Required field "host" missing → schema validation fails.
-        let value = Value::Mapping(serde_yaml::Mapping::new());
+        // Required field "host" missing but mapping is non-empty
+        // so it bypasses the "empty config = not configured yet"
+        // leniency added to validate_operator_value and reaches
+        // the schema validator, which rejects.
+        let value = Value::Mapping({
+            let mut m = serde_yaml::Mapping::new();
+            m.insert(Value::String("other".into()), Value::String("v".into()));
+            m
+        });
         let err = configure_plugin_with_value(&handle, &manifest, &value)
             .await
             .expect_err("schema must fail");

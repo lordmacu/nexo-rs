@@ -35,6 +35,7 @@ use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::pairing_channels::PairingChannelsReader;
 use super::domains::persona::{PersonaSnapshotReader, PersonaStore};
 use super::domains::plugin_doctor::PluginDoctorReader;
+use super::domains::plugin_install::PluginInstaller;
 use super::domains::plugin_restart::PluginRestarter;
 use super::domains::processing::ProcessingControlStore;
 use super::domains::skills::SkillsStore;
@@ -290,11 +291,24 @@ pub struct AdminRpcDispatcher {
     /// `nexo/admin/persona/save_localized` returning typed
     /// `persona domain not configured` -32603.
     persona_store: Option<Arc<dyn PersonaStore>>,
+    /// Read-only persona TEMPLATE catalog. `None` keeps
+    /// `nexo/admin/personas/list` + `…/template_get` returning a
+    /// typed `persona catalog domain not configured` -32603.
+    /// Personas are install_root-backed templates the admin
+    /// wizard renders as "use as template" — they are NEVER
+    /// merged into `cfg.agents`.
+    persona_catalog: Option<Arc<dyn super::domains::persona::PersonaCatalogReader>>,
     /// Manual plugin restart adapter.
     /// `None` keeps `nexo/admin/plugins/restart` returning a typed
     /// `plugin restart domain not configured` -32603. Production
     /// wires `nexo_setup::admin_adapters::LivePluginRestarter`.
     plugin_restarter: Option<Arc<dyn PluginRestarter>>,
+    /// Phase 97.1 — runtime plugin install / scan / uninstall.
+    /// `None` keeps `nexo/admin/plugins/{scan,install,uninstall}`
+    /// returning typed `plugin install domain not configured`
+    /// -32603. Production wires
+    /// `nexo_setup::admin_adapters::LivePluginInstaller`.
+    plugin_installer: Option<Arc<dyn PluginInstaller>>,
     /// Long-term memory query reader.
     /// `None` keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603.
@@ -401,7 +415,9 @@ impl AdminRpcDispatcher {
             pairing_channels_reader: None,
             persona_snapshot_reader: None,
             persona_store: None,
+            persona_catalog: None,
             plugin_restarter: None,
+            plugin_installer: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             transcript_appender: None,
@@ -721,6 +737,15 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 97.1 — install the live plugin install adapter so
+    /// `nexo/admin/plugins/{scan,install,uninstall}` route to the
+    /// daemon's discovery walker + cargo / release download
+    /// pipeline. Builder-style mirror of [`Self::with_plugin_restarter`].
+    pub fn with_plugin_installer(mut self, installer: Arc<dyn PluginInstaller>) -> Self {
+        self.plugin_installer = Some(installer);
+        self
+    }
+
     /// Install the plugin doctor reader.
     /// Production wires the live `wire_plugin_registry` +
     /// `doctor_render::render_json` pipeline. `None` disables
@@ -755,6 +780,19 @@ impl AdminRpcDispatcher {
     /// `persona domain not configured` -32603.
     pub fn with_persona_store(mut self, store: Arc<dyn PersonaStore>) -> Self {
         self.persona_store = Some(store);
+        self
+    }
+
+    /// Install the persona TEMPLATE catalog. Powers
+    /// `nexo/admin/personas/list` + `…/template_get`. Without it
+    /// the wizard sees an empty template list. Personas listed
+    /// here are install_root-backed; the daemon never auto-merges
+    /// them into `cfg.agents`.
+    pub fn with_persona_catalog(
+        mut self,
+        catalog: Arc<dyn super::domains::persona::PersonaCatalogReader>,
+    ) -> Self {
+        self.persona_catalog = Some(catalog);
         self
     }
 
@@ -909,11 +947,23 @@ impl AdminRpcDispatcher {
             // Phase 81.31 — persona localised write
             // is operator-edit territory; reuses `agents_crud`.
             "nexo/admin/persona/save_localized" => Some("agents_crud"),
+            // Persona TEMPLATE catalog (read-only). Same `agents_crud`
+            // gate as the agent CRUD it feeds — the wizard needs both
+            // to render a "create from template" flow end-to-end.
+            "nexo/admin/personas/list" | "nexo/admin/personas/template_get" => Some("agents_crud"),
             // Manual plugin restart
             // is write+destructive; distinct capability from the
             // read-only `plugin_doctor` so security review can
             // grant them independently.
             "nexo/admin/plugins/restart" => Some("plugin_restart"),
+            // Phase 97.1 — runtime plugin install/scan/uninstall.
+            // All three share `plugin_install` capability so security
+            // review can grant the whole lifecycle as one unit; the
+            // operator can scan-only later by gating on something
+            // tighter if the threat model expands.
+            "nexo/admin/plugins/scan"
+            | "nexo/admin/plugins/install"
+            | "nexo/admin/plugins/uninstall" => Some("plugin_install"),
             // Long-term memory query.
             // Capability `memory_query` so an operator can grant
             // read-only memory inspection independently of broader
@@ -1192,6 +1242,8 @@ impl AdminRpcDispatcher {
                         self.pairing_handles.clone(),
                         &self.pairing_cancel_root,
                         params,
+                        Some(&self.persisters),
+                        self.reload_signal.as_ref(),
                     )
                     .await
                 }
@@ -1558,6 +1610,26 @@ impl AdminRpcDispatcher {
                     "plugin restart domain not configured".into(),
                 )),
             },
+            "nexo/admin/plugins/scan" => match &self.plugin_installer {
+                Some(i) => super::domains::plugin_install::scan_plugins(i.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin install domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/install" => match &self.plugin_installer {
+                Some(i) => super::domains::plugin_install::install_plugin(i.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin install domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/uninstall" => match &self.plugin_installer {
+                Some(i) => {
+                    super::domains::plugin_install::uninstall_plugin(i.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin install domain not configured".into(),
+                )),
+            },
             "nexo/admin/plugins/doctor" => match &self.plugin_doctor {
                 Some(reader) => super::domains::plugin_doctor::doctor(reader.as_ref()).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
@@ -1570,6 +1642,20 @@ impl AdminRpcDispatcher {
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "persona domain not configured".into(),
+                )),
+            },
+            "nexo/admin/personas/list" => match &self.persona_catalog {
+                Some(catalog) => super::domains::persona::list_personas(catalog.as_ref()).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "persona catalog domain not configured".into(),
+                )),
+            },
+            "nexo/admin/personas/template_get" => match &self.persona_catalog {
+                Some(catalog) => {
+                    super::domains::persona::get_persona_template(catalog.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "persona catalog domain not configured".into(),
                 )),
             },
             "nexo/admin/pairing/channels" => match &self.pairing_channels_reader {

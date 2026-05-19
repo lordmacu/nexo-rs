@@ -118,6 +118,38 @@ pub trait ChannelCredentialPersister: Send + Sync {
             reason_code: Some(nexo_tool_meta::admin::credentials::reason_code::NOT_PROBED.into()),
         }
     }
+
+    /// Phase 97 — pre-pair persistence hook. Channels whose
+    /// pairing flow runs OUTSIDE `credentials/register` (today:
+    /// WhatsApp's QR pump) get this hook fired by `pairing/start`
+    /// BEFORE `trigger.start()` so the persister can upsert
+    /// plugin-side runtime state (yaml accounts list, secret
+    /// file) with the operator-chosen instance label. The
+    /// pairing pump then reads the freshly-written entry to
+    /// find its `session_dir` / `media_dir` — without this
+    /// ordering the pump would fall back to legacy defaults
+    /// and the session lands in the wrong directory.
+    ///
+    /// Despite the name `on_pair_success`, this fires BEFORE
+    /// pair-success is known — keep idempotent. If `trigger.start()`
+    /// then fails, the dispatcher calls [`Self::rollback_pair`]
+    /// to remove the just-written entry.
+    ///
+    /// Receiving `instance = None` means the operator did not
+    /// supply a label — the persister can default to a stable
+    /// label or refuse. WhatsApp's impl rejects None so the
+    /// daemon never writes an unnamed entry.
+    async fn on_pair_success(&self, _instance: Option<&str>) -> Result<(), AdminRpcError> {
+        Ok(())
+    }
+
+    /// Phase 97 — undo a prior [`Self::on_pair_success`] write
+    /// when the pairing pump refuses to start. Idempotent — an
+    /// unknown instance returns `Ok(false)`. Default no-op for
+    /// channels whose persister did nothing in `on_pair_success`.
+    async fn rollback_pair(&self, _instance: Option<&str>) -> Result<bool, AdminRpcError> {
+        Ok(false)
+    }
 }
 
 /// Registry of per-channel persisters keyed by

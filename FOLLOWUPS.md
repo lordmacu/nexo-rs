@@ -2,6 +2,324 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 98 — Plugin discovery + install hardening deferreds   ⬜ ACTIVE
+
+Logged 2026-05-19 from the audit memo
+`docs/src/architecture/plugin-install-audit-2026-05-19.md`. These
+are scoped *out* of Phase 98 itself; they ride next-session waves
+once Phase 98 ships.
+
+1. ~~**Extend `PluginsInstallResponse` with signature metadata**~~ —
+   ✅ CLOSED by 98.4 (bundled with trust parity). 6 new fields shipped:
+   `trust_enforcement`, `signature_verified`, `signature_identity`,
+   `signature_issuer`, `trust_mode`, `trust_policy_matched`.
+
+2. ~~**Concurrent-install mutex**~~ — ✅ NOT NEEDED. 98.3
+   regression test surfaced 2 real races + fixed them in
+   `extract_verified_tarball` (age-gated cleanup + race-tolerant
+   rename). 44/44 ext-installer tests verde without any
+   per-plugin mutex.
+
+3. **Boot-window wait-with-timeout** — if 98.2 metric shows the
+   "still booting" bail fires meaningfully often, switch
+   `LivePluginInstallerCell` from immediate bail to
+   `OnceCell::wait_with_timeout(5s)` UX. Defer until data justifies.
+
+4. **`nexo-plugin-discovery` crates.io publish** — first publish
+   blocked until API stabilises post-98.18. Tier A publishable per
+   memory rule `project_publishable_helper_crates`.
+
+5. **Plugin signing in curated index entries** — index entry could
+   pin an Ed25519 pub key, validated client-side. Defer until
+   typosquat surfaces real concern.
+
+6. **Microapp UI catalogue mirror** — per-tenant view in SaaS
+   dashboard. Defer until microapp UI matures.
+
+7. **Auto-refresh background poller** — currently 24h disk cache +
+   manual refresh. Live SSE/webhook from index repo defer.
+
+8. **One-click install bypassing modal** — pre-fill modal stays
+   v1 default; one-click direct install behind a confirm dialog
+   defer until UX feedback.
+
+### Phase 97 — Runtime hot operations (plugin install + pair re-launch + agent-spawn-on-bind)   🔄 PARTIAL
+
+Surfaced during the dev-admin / Telegram + WhatsApp debug session
+on 2026-05-19. Three runtime gaps that today still require a
+daemon restart and break the SaaS-style "click in admin UI, it
+just works" promise.
+
+**Shipped 2026-05-19:**
+
+- **Agent enable/disable toggle** — `ConfigReloadCoordinator::reload()`
+  filters `active=false` agents from the spawn/apply set so they
+  match the removed-agents detection and trigger
+  `ReloadCommand::Shutdown` + `unregister(...)` identically to a
+  yaml-delete. Operator sees a Switch inline on /m/agents that
+  flips state without a daemon restart. Re-enable hits the
+  unknown-id branch and hot-spawns via the existing spawner.
+  i18n keys: `agents.toggle.{enable,disable}_title`,
+  `agents.toggle.error`. (`crates/core/src/config_reload.rs` +
+  `nexo-rs-plugin-admin/frontend/src/modules/agents/Agents.tsx`)
+
+- **Admin RPC `reload_signal` wired to coordinator** —
+  Previously `reload_noop` so `llm_providers/{upsert,delete}`,
+  `channels/{approve,revoke}`, `agents/upsert+delete` all wrote
+  yaml but the live runtime never picked up the change.
+  `src/main.rs` now holds an outer-scope `OnceCell` that
+  admin_bootstrap captures via its closure and we set after
+  building `reload_coord`. Result: full CRUD on agents + LLM
+  providers + heartbeat config hot-reloads. `RuntimeSnapshot::build`
+  re-resolves `LlmRegistry.build_for_tenant(...)` on every reload
+  → next agent turn picks up new credentials, swapped models,
+  edited prompts without restart.
+
+- **Phase 97.3 — Hot-spawn agent with fresh plugins cfg** —
+  `AgentSpawnerFn::call` signature now takes
+  `(AgentConfig, Arc<PluginsConfig>)`. `ConfigReloadCoordinator`
+  passes the freshly-loaded `cfg.plugins` from its current
+  reload cycle so the spawner's `validate_agent_config` sees
+  plugin entries added mid-runtime by `credentials/register`.
+  Pair-then-create-agent in the same wizard flow now converges
+  to a running agent without a daemon restart — previously
+  rejected with "plugin `<channel>` not configured" against the
+  boot snapshot. 4/4 hot_spawn tests verde.
+  (`crates/core/src/agent/spawn.rs:319-345` +
+  `crates/core/src/config_reload.rs:286-289` +
+  `src/main.rs:6985-6997`)
+
+- **Phase 97.2 — WhatsApp plugin re-launch on pair** —
+  `WhatsappPersister` gains `with_restarter(Arc<dyn PluginRestarter>)`
+  builder + fires `restarter.restart("whatsapp")` in
+  `on_pair_success` AFTER the configure push. Subprocess
+  re-reads `whatsapp.yaml` on respawn so the new Signal
+  session goes live for the freshly-paired device — without
+  this the subprocess kept the old session looping with
+  `reason=401` even after a successful pair. `LivePluginRestarter`
+  hoisted to outer scope in `src/main.rs` so both the admin
+  RPC dispatcher AND the persister share the same Arc → one
+  implementation, one failure surface. Restart failure is
+  warn-logged (not propagated) so the yaml write isn't lost.
+  (`crates/setup/src/persisters/whatsapp.rs:37-103,225-265` +
+  `src/main.rs:2395-2418,2616,2782-2793`)
+
+**Phase 97.1.α shipped 2026-05-19** — Runtime plugin install via
+admin RPC + UI.
+
+  - **Wire types** (`crates/tool-meta/src/admin/plugin_install.rs`):
+    `InstallSource::{Release, Cargo}` enum + Params/Response for
+    `scan` / `install` / `uninstall`. cargo-dist convention
+    (`<org>/<repo>` → release artefact named
+    `<crate>-<TARGET>.tar.gz`) is the primary delivery channel.
+  - **Trait + handlers + validators**
+    (`crates/core/src/agent/admin_rpc/domains/plugin_install.rs`):
+    `PluginInstaller` trait with `scan` / `install` / `uninstall`
+    + char-class validators for `crate_name` (`[a-z0-9_-]+`),
+    `version` (`[0-9A-Za-z.+-]+`), `repo` slug
+    (`<org>/<name>` alphanumerics + `_.-`). 8/8 tests verde.
+  - **Dispatcher routing**
+    (`crates/core/src/agent/admin_rpc/dispatcher.rs`):
+    `nexo/admin/plugins/{scan,install,uninstall}` gated on
+    `plugin_install` capability. `with_plugin_installer` builder.
+    363/363 admin_rpc tests verde post-change.
+  - **CLI refactor** (`src/plugin_install.rs`):
+    `run_plugin_install` split into `install_plugin_silent`
+    (pure Result<Report,ErrReport>, no eprintln) + a thin CLI
+    wrapper that formats output. Lets the admin RPC adapter reuse
+    the GitHub release / sha256 / cosign / extract pipeline
+    without scraping stdout. CLI UX preserved.
+  - **Live adapter** (`src/plugin_install_adapter.rs`):
+    `LivePluginInstallerCell` (boot-time OnceCell wrapper) +
+    `LivePluginInstaller`:
+      - `install(Release)`: delegates to `install_plugin_silent`.
+      - `install(Cargo)`: tokio `cargo install <crate>` subprocess
+        with stdout/stderr clipping (16 KiB) + `installed_version`
+        parsed from `Installed package` cargo line.
+      - `scan` + `uninstall`: typed deferred error pointing to
+        Phase 97.1.β.
+    5/5 tests verde.
+  - **main.rs wire**: outer-scope `LivePluginInstallerCell` clone
+    passed to `admin_bootstrap` via new
+    `AdminBootstrapInputs.plugin_installer` field. Cell set after
+    `wire_plugin_registry` with the real adapter pointing at
+    `config_dir`.
+  - **UI** (`nexo-rs-plugin-admin/frontend/src/modules/plugins/InstallPluginModal.tsx`):
+    "Instalar plugin" button on `/m/plugins` opens a modal with
+    Release / Cargo source picker + `crate_name` + `version` +
+    `repo` + `force` fields. Client + server validation on each
+    char class. Success view shows cargo stdout/stderr details on
+    expand. i18n keys: `plugins.install.{title,subtitle,...}` ES+EN.
+  - **Manifest**: `plugin_install` capability added to
+    `nexo-rs-plugin-admin/plugin.toml` optional list.
+
+**Phase 97.1.β shipped 2026-05-19** — Hot-spawn integration for
+`scan` + `uninstall` + auto-scan post-install.
+
+  - `SubprocessCtxStubs` promoted to `pub` so admin RPC adapter
+    builds the same `PluginInitContext` shape the boot loop does.
+    New `context_for_plugin` public method delegates to the
+    existing private `context_for`.
+    (`crates/core/src/agent/nexo_plugin_registry/boot.rs:504-580`)
+  - `SubprocessRuntime` derives `Clone` so the hot-install ctx can
+    own a copy alongside the boot-time consumer.
+  - `LivePluginInstaller` gains a `HotInstallCtx` struct +
+    `with_hot_install` builder threading Arc-clones of:
+    `factory_registry`, `subprocess_runtime`, `channel_adapter_registry`,
+    `llm_registry`, `hook_registry`, `vector_backend_registry`,
+    `tool_registry`, `discovery_cfg`, `current_version`, and the
+    Phase 97.1.α `HotPluginCtx` (handles cell + admin / poller /
+    pairing routers + broker).
+    (`src/plugin_install_adapter.rs:33-100`)
+  - `scan()` real impl: `discover()` → diff against
+    `plugin_handles_cell` → build filtered `NexoPluginRegistrySnapshot`
+    of only the new plugins → drive `run_plugin_init_loop_with_factory`
+    with `SubprocessCtxStubs::build_with_shared_registries` for
+    ctx construction → per-handle call
+    `register_plugin_in_live_runtime` from
+    `nexo_setup::hot_spawn`. Returns spawned + stale + warnings
+    lists. Init failures and registration failures surface as
+    warnings without aborting the scan.
+  - `install()` calls `scan()` automatically after a successful
+    Release / Cargo install so the new plugin goes live in the
+    same RPC round-trip. Scan failure is warn-logged and the
+    install RPC still succeeds (binary is on disk).
+  - `uninstall()` real impl: `unregister_plugin_from_live_runtime`
+    drops the handle from the shared cell (the subprocess's
+    `kill_on_drop(true)` tears the child down on next tick) +
+    optional `cargo uninstall <crate>` subprocess.
+  - main.rs `factory_registry` wrapped in `Arc` post-wire so the
+    installer ctx can clone it. `pairing_store` hoisted to outer
+    scope so the post-wire installer construction reuses it.
+  - UI: "Escanear" button on `/m/plugins` next to "Instalar plugin",
+    surfaces spawned / stale / warnings inline as a dismissible
+    banner. Install modal success view now reports
+    `spawned[]` from the auto-scan + drops the "restart required"
+    message in favour of "Plugin instalado y hot-spawneado".
+
+End-to-end test path: operator opens `/m/plugins` → "Instalar plugin"
+modal → fills `crate_name` + `version` + picks Release → submit.
+Daemon downloads the release tarball, validates SHA + cosign,
+extracts to `plugins.discovery.search_paths[0]`, runs
+`plugins/scan` internally, hot-spawns the new subprocess plugin,
+registers it in `plugin_handles_cell` + admin router + poller
+router + pairing trigger registry + spawns the inbound subscriber.
+Modal closes with the new plugin already pairable via the wizard.
+**Zero daemon restart in the full flow.**
+
+**Remaining gaps (lower priority follow-ups):**
+  - Telegram + Email persister restart-on-persist (bot token
+    rotation / SMTP creds) — follow WhatsApp `with_restarter`
+    pattern from Phase 97.2.
+  - `http_router` + `plugin_metrics_descriptors` interior
+    mutability so dashboard / metric-emitting plugins can also
+    hot-install. Today they're immutable post-boot — channel
+    plugins don't need them so the gap is informational.
+
+**Pending (Phase 97 follow-ups, lower priority):**
+  - Telegram + Email persister restart-on-persist (bot token
+    rotation / SMTP creds) — follow WhatsApp `with_restarter`
+    pattern from Phase 97.2.
+  - `http_router` + `plugin_metrics_descriptors` interior
+    mutability so dashboard / metric-emitting plugins can also
+    hot-install. Today they're immutable post-boot — channel
+    plugins don't need them so the gap is informational.
+
+**Scope.**
+
+1. **Plugin hot-install.** Admin UI button "Install plugin from
+   crates.io" must scaffold the plugin at runtime — no daemon
+   restart. New plugins surface in `nexo/admin/pairing/channels`
+   immediately and the wizard can pair them straight away.
+
+   Sub-steps:
+   - fs watcher on `cfg.plugins.discovery.search_paths` detects
+     new manifest files (notify crate)
+   - `hot_spawn_plugin(plugin_id, manifest, ...)` helper:
+     spawn subprocess via factory → `plugin.configure` →
+     `start(broker)` → update `wire.plugin_handles` (Arc<DashMap>) →
+     re-run post-wire registrations (broker pairing trigger,
+     admin route, HTTP route, metrics scrape, pairing adapter,
+     inbound subscriber)
+   - `hot_remove_plugin(plugin_id)` mirror for uninstall:
+     `handle.shutdown()` → remove from handles → unregister
+     surface entries
+   - Admin RPC `nexo/admin/plugins/install` + `…/uninstall`
+     wrapping `cargo install` / `cargo uninstall`
+
+2. **Plugin re-launch on pair change.** Today the WhatsApp /
+   Telegram plugin's `start()` only runs once. After the
+   wizard's `credentials/register` rewrites `<config>/plugins/
+   <id>.yaml` with a new device or instance, the plugin
+   subprocess keeps using the old session — observed during
+   the dev-admin debug: device `:83` kept reconnect-looping
+   with `reason=401` even after the operator paired device
+   `:84` via the UI. The plugin needs a configure-driven
+   re-launch path so the subprocess swaps to the new session
+   without an external restart.
+
+   Sub-steps:
+   - SDK: define `on_configure` semantics where a NEW instance
+     entry triggers `Plugin::stop()` + `Plugin::start()` cycle
+     for that instance (or full subprocess respawn)
+   - Daemon: when `plugin.configure` delivers a value whose
+     instance set differs from the buffered last-config,
+     dispatch via the existing supervisor restart hook (Phase
+     81.21.b.b infrastructure) instead of leaving stale state
+
+2b. **Persister must stamp `instance: default` explicitly.**
+   The WhatsappPersister (and any future single-instance plugin
+   persister) writes `<id>.yaml` without an `instance:` field
+   when the operator pairs the first device. Plugin runtime then
+   publishes inbound to `plugin.inbound.whatsapp` (no suffix)
+   because `cfg.instance` is None. But the admin wizard
+   creates the agent binding with `instance: default` (filled
+   by `resolve_default_instance`), and the daemon subscribes
+   to `plugin.inbound.whatsapp.default`. Topic mismatch →
+   bridge_step waits 30s for a reply that nobody can deliver
+   → typing-presence shows briefly then dies.
+
+   Fix: persister must write `instance: "default"` literal so
+   the plugin's `inbound_topic_for(Some("default"))` matches
+   the binding subscription. Alternative: daemon dispatcher
+   subscribes to BOTH `plugin.inbound.<channel>` AND
+   `plugin.inbound.<channel>.<instance>` and lets the routing
+   match either, treating the bare topic as instance=default.
+
+3. **Hot-spawn agent when binding to newly-paired channel.**
+   Phase 81.32 hot-spawns agents with bindings to channels that
+   already had a live plugin handle at boot. When the operator
+   pairs a new channel in the wizard AND creates an agent in
+   the same session, the agent yaml is written but
+   `ConfigReloadCoordinator` rejects the hot-spawn because the
+   channel handle didn't exist yet. Observed: agent `dsf` was
+   never started after pair `:84` + new agent creation; only a
+   daemon restart picked it up.
+
+   Sub-steps:
+   - Coordinator must accept "binding to channel whose handle
+     arrives later in the same reload window" — defer the
+     agent spawn until the plugin's pairing trigger registers
+   - OR: when `BrokerPairingTrigger` registers a new channel
+     mid-runtime, replay any deferred agent spawns whose
+     binding referenced it
+   - Tests: pair-then-create-agent + create-agent-then-pair
+     (both must converge to a running agent without restart)
+
+**Why not now.** Each sub-feature is ~1-2 days of framework
+work plus tests. The dev / SaaS workflow runs end-to-end today
+with one explicit `pkill -f nexo` after each pair/create cycle
+— operator-visible but functional. Phase 97 lifts that
+ergonomic limitation, not a correctness gap. Stabilising the
+existing channel + LLM provider + persona-template flow first
+keeps the surface area small.
+
+**Effort.** ~3-4 days total. ~800-1200 LOC across `crates/core`
+(hot-spawn helpers + fs watcher), `crates/setup` (admin
+adapters + bootstrap wiring), `nexo-plugin-admin` (UI + RPC
+routes), each canonical plugin (`Plugin::stop()` hook +
+configure-driven respawn).
+
 ### Phase 96 — Poller Laravel refactor + builtins extraction   🔄 OPERATOR ACTIONS ONLY
 
 Phase 96 Blocks A through F + ephemeral lifecycle + CI workflows +
