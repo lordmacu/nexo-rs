@@ -25,6 +25,7 @@ pub mod microapp_audit;
 pub mod pairing;
 pub mod pairing_channels;
 pub mod persona;
+pub mod plugin_discovery;
 pub mod plugin_doctor;
 pub mod plugin_install;
 pub mod plugin_restart;

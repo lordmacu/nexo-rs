@@ -143,11 +143,23 @@ pub fn upsert(
     params: Value,
     reload_signal: &dyn Fn(),
 ) -> AdminRpcResult {
-    let input: AgentUpsertInput = match serde_json::from_value(params) {
+    let mut input: AgentUpsertInput = match serde_json::from_value(params) {
         Ok(i) => i,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string()));
         }
+    };
+
+    // Resolve final agent id. `auto_id=true` enables the
+    // wizard-friendly path: empty `id` triggers `agent_NNNNNN`
+    // generation; a non-empty `id` that collides with an existing
+    // agent gets an `_<epoch_ms>` suffix instead of being treated
+    // as an upsert. Legacy callers leave `auto_id=false` and keep
+    // the upsert-on-collision semantic.
+    let existing_ids = patcher.list_agent_ids().unwrap_or_default();
+    input.id = match resolve_agent_id(&input.id, input.auto_id, &existing_ids) {
+        Ok(id) => id,
+        Err(e) => return AdminRpcResult::err(e),
     };
 
     if let Err(e) = upsert_yaml(patcher, &input) {
@@ -205,6 +217,88 @@ pub fn delete(
 
 fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> T {
     serde_json::from_value(v).unwrap_or_default()
+}
+
+/// Resolves the final `id` an `agents/upsert` will commit. See
+/// [`AgentUpsertInput::id`] docs for the matrix this implements.
+///
+/// Bounded 16-attempt re-roll guards against pathological test
+/// stubs that always report "exists"; production collisions are
+/// statistically negligible (1 in a million per attempt).
+fn resolve_agent_id(
+    input_id: &str,
+    auto_id: bool,
+    existing: &[String],
+) -> Result<String, AdminRpcError> {
+    if !auto_id {
+        if input_id.is_empty() {
+            return Err(AdminRpcError::InvalidParams(
+                "id is required when auto_id=false".into(),
+            ));
+        }
+        if !is_valid_agent_id(input_id) {
+            return Err(AdminRpcError::InvalidParams(format!(
+                "id `{input_id}` must match ^[a-z][a-z0-9_-]{{1,40}}$"
+            )));
+        }
+        return Ok(input_id.to_string());
+    }
+
+    if input_id.is_empty() {
+        for _ in 0..16 {
+            let candidate = generate_random_agent_id();
+            if !existing.iter().any(|e| e == &candidate) {
+                return Ok(candidate);
+            }
+        }
+        return Err(AdminRpcError::Internal(
+            "could not allocate a unique agent id after 16 attempts".into(),
+        ));
+    }
+
+    if !is_valid_agent_id(input_id) {
+        return Err(AdminRpcError::InvalidParams(format!(
+            "id `{input_id}` must match ^[a-z][a-z0-9_-]{{1,40}}$"
+        )));
+    }
+    if !existing.iter().any(|e| e == input_id) {
+        return Ok(input_id.to_string());
+    }
+    Ok(format!("{input_id}_{}", epoch_ms()))
+}
+
+fn is_valid_agent_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 41 {
+        return false;
+    }
+    let mut chars = id.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+fn generate_random_agent_id() -> String {
+    // No `rand` dep in nexo-core; epoch-nanos mod 1M gives a
+    // 6-digit decimal that's effectively unique per call when
+    // separated by at least one microsecond. The re-roll loop in
+    // `resolve_agent_id` covers tight bursts that land in the
+    // same nano-window.
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("agent_{:06}", (nanos as u32) % 1_000_000)
+}
+
+fn epoch_ms() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 /// Read `agents.yaml.<id>.tenant_id`. Returns

@@ -34,6 +34,7 @@ use super::domains::memory::{MemoryReader, MemorySnapshotReader};
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::pairing_channels::PairingChannelsReader;
 use super::domains::persona::{PersonaSnapshotReader, PersonaStore};
+use super::domains::plugin_discovery::DiscoveryReader;
 use super::domains::plugin_doctor::PluginDoctorReader;
 use super::domains::plugin_install::PluginInstaller;
 use super::domains::plugin_restart::PluginRestarter;
@@ -309,6 +310,14 @@ pub struct AdminRpcDispatcher {
     /// -32603. Production wires
     /// `nexo_setup::admin_adapters::LivePluginInstaller`.
     plugin_installer: Option<Arc<dyn PluginInstaller>>,
+    /// Plugin discovery reader (Phase 98.10). Surfaces the
+    /// `nexo/admin/plugins/{search,compat_check,refresh_index}`
+    /// trio. `None` keeps the three verbs returning typed
+    /// `plugin discovery domain not configured` -32603. Production
+    /// wires `nexo_setup::discovery_adapter::DefaultDiscoveryAdapter`
+    /// (98.11), which delegates to
+    /// `nexo_plugin_discovery::client::DefaultDiscoveryClient`.
+    plugin_discovery: Option<Arc<dyn DiscoveryReader>>,
     /// Long-term memory query reader.
     /// `None` keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603.
@@ -418,6 +427,7 @@ impl AdminRpcDispatcher {
             persona_catalog: None,
             plugin_restarter: None,
             plugin_installer: None,
+            plugin_discovery: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             transcript_appender: None,
@@ -746,6 +756,16 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Install the plugin discovery reader (Phase 98.10).
+    /// Production wires
+    /// `nexo_setup::discovery_adapter::DefaultDiscoveryAdapter`
+    /// which delegates to
+    /// `nexo_plugin_discovery::client::DefaultDiscoveryClient`.
+    pub fn with_plugin_discovery(mut self, reader: Arc<dyn DiscoveryReader>) -> Self {
+        self.plugin_discovery = Some(reader);
+        self
+    }
+
     /// Install the plugin doctor reader.
     /// Production wires the live `wire_plugin_registry` +
     /// `doctor_render::render_json` pipeline. `None` disables
@@ -964,6 +984,16 @@ impl AdminRpcDispatcher {
             "nexo/admin/plugins/scan"
             | "nexo/admin/plugins/install"
             | "nexo/admin/plugins/uninstall" => Some("plugin_install"),
+            // Phase 98.10 — read-mostly discovery surface. Reuses
+            // `plugin_install` capability since both verbs let an
+            // operator influence which plugins exist on the host;
+            // the discovery layer just surfaces the catalogue
+            // *before* the install action. Keeping them on the same
+            // gate avoids a second tier of cap-toggles for what is
+            // effectively the same operator role.
+            "nexo/admin/plugins/search"
+            | "nexo/admin/plugins/compat_check"
+            | "nexo/admin/plugins/refresh_index" => Some("plugin_install"),
             // Long-term memory query.
             // Capability `memory_query` so an operator can grant
             // read-only memory inspection independently of broader
@@ -1634,6 +1664,30 @@ impl AdminRpcDispatcher {
                 Some(reader) => super::domains::plugin_doctor::doctor(reader.as_ref()).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugins domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/search" => match &self.plugin_discovery {
+                Some(reader) => {
+                    super::domains::plugin_discovery::search(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin discovery domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/compat_check" => match &self.plugin_discovery {
+                Some(reader) => {
+                    super::domains::plugin_discovery::compat_check(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin discovery domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/refresh_index" => match &self.plugin_discovery {
+                Some(reader) => {
+                    super::domains::plugin_discovery::refresh_index(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin discovery domain not configured".into(),
                 )),
             },
             "nexo/admin/persona/save_localized" => match &self.persona_store {
