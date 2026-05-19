@@ -17,6 +17,7 @@
 #![warn(rust_2018_idioms, unreachable_pub)]
 
 pub mod cache;
+pub mod client;
 pub mod compat;
 pub mod config;
 pub mod manifest_fetcher;
