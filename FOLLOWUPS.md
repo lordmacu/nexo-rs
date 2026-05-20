@@ -41,16 +41,19 @@ Second wrap-up (2026-05-20):
   hot-installed plugin appears on the next wizard run automatically —
   nothing to hot-reload.
 
-Still deferred (one item):
-1. **3c hot-spawn plugin-contributed agents** — `[plugin.agents]` exists
-   in the manifest but NO plugin ships contributed agents today, and
-   `AgentSpawnerFn` is a non-`Clone` closure deep in `main` boot, not
-   reachable from the install adapter without an invasive refactor.
-   Building it now = speculative + untestable (no consumer). The
-   registry snapshot is already live (3a), so when the first plugin
-   contributes an agent, the install path can run
-   `merge_plugin_contributed_agents` over the new plugin + spawn via an
-   `Arc`-wrapped `AgentSpawnerFn`. Deferred until that consumer exists.
+- **3c hot-spawn plugin-contributed agents** ✅ RESOLVED — instead of
+  threading the raw `AgentSpawnerFn`, the `ConfigReloadCoordinator` now
+  holds the live registry (`set_plugin_registry`) and every `reload()`
+  folds plugin-contributed agents (`merge_plugin_contributed_agents`
+  over the current snapshot) into the config. `scan`/`uninstall`/
+  `set_enabled` trigger a reload after the 3a snapshot swap, so a
+  hot-installed plugin's agents spawn (and a hot-uninstalled plugin's
+  fall out of the merged set + hot-remove) — reusing the entire reload
+  spawn/despawn/track machinery, no restart. Tested at the coordinator
+  level with a fixture plugin + spawner stub.
+
+**Phase 97.1.γ is now fully resolved** — every follow-up either shipped
+or has a documented N/A (dashboards) resolution. No open items.
 
 ### Phase 99 — admin UI Mode B (embedded iframe) — DEFERRED to v2   ⬜ DEFERRED
 

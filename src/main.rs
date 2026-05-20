@@ -7802,6 +7802,9 @@ async fn main() -> Result<()> {
     // OnceCell `set` returns Err if already populated (impossible
     // here in practice; we only set in this one site).
     let _ = admin_reload_cell.set(Arc::clone(&reload_coord));
+    // Phase 97.1.γ 3c — give the coordinator the live registry so each
+    // reload folds plugin-contributed agents from the current snapshot.
+    reload_coord.set_plugin_registry(wire.registry.clone());
 
     // Phase 97.1 — late-bind the real plugin installer. Same
     // shape as the reload-coord cell above: the dispatcher is
@@ -7842,6 +7845,9 @@ async fn main() -> Result<()> {
             // admin-UI + discovery read.
             registry: wire.registry.clone(),
         },
+        // 3c — trigger reloads after install/uninstall so the
+        // coordinator spawns/hot-removes plugin-contributed agents.
+        reload_coord: Some(std::sync::Arc::clone(&reload_coord)),
     };
     let installer_base = plugin_install_adapter::LivePluginInstaller::new(config_dir.clone());
     let installer = installer_base.with_hot_install(hot_install_ctx);

@@ -85,6 +85,13 @@ pub struct ConfigReloadCoordinator {
     /// [`Self::set_spawner`] once `src/main.rs` has finished
     /// constructing all per-agent dependencies.
     spawner: ArcSwapOption<AgentSpawnerFn>,
+    /// Phase 97.1.γ 3c — live plugin registry. When set, every
+    /// `reload()` folds plugin-contributed agents
+    /// (`[plugin.agents] contributes_dir`) from the CURRENT snapshot
+    /// into the config, so a hot-installed plugin's agents spawn (and
+    /// a hot-uninstalled plugin's agents hot-remove) on the reload the
+    /// install path triggers — no daemon restart.
+    plugin_registry: ArcSwapOption<crate::agent::nexo_plugin_registry::NexoPluginRegistry>,
     shutdown: CancellationToken,
 }
 
@@ -119,8 +126,19 @@ impl ConfigReloadCoordinator {
             post_hooks: Mutex::new(Vec::new()),
             shared_ctx: ArcSwapOption::from(None),
             spawner: ArcSwapOption::from(None),
+            plugin_registry: ArcSwapOption::from(None),
             shutdown,
         }
+    }
+
+    /// Phase 97.1.γ 3c — attach the live plugin registry so `reload()`
+    /// merges plugin-contributed agents from its current snapshot.
+    /// Late-bindable (set after `wire_plugin_registry` returns).
+    pub fn set_plugin_registry(
+        &self,
+        registry: Arc<crate::agent::nexo_plugin_registry::NexoPluginRegistry>,
+    ) {
+        self.plugin_registry.store(Some(registry));
     }
 
     /// Phase 81.32 — install the [`SharedRuntimeContext`] the
@@ -207,7 +225,7 @@ impl ConfigReloadCoordinator {
         let mut rejected: Vec<ReloadRejection> = Vec::new();
 
         // 1. Load + env-resolve.
-        let cfg = match AppConfig::load(&self.config_dir) {
+        let mut cfg = match AppConfig::load(&self.config_dir) {
             Ok(c) => c,
             Err(e) => {
                 telemetry::inc_config_reload_rejected();
@@ -225,6 +243,18 @@ impl ConfigReloadCoordinator {
                 };
             }
         };
+
+        // 1b. Phase 97.1.γ 3c — fold plugin-contributed agents from the
+        // CURRENT registry snapshot into the config, so a hot-installed
+        // plugin's agents spawn here (and a hot-uninstalled plugin's
+        // agents fall out of the set + hot-remove below).
+        if let Some(registry) = self.plugin_registry.load_full() {
+            let snap = registry.snapshot();
+            let _ = crate::agent::nexo_plugin_registry::merge_plugin_contributed_agents(
+                &snap,
+                &mut cfg.agents,
+            );
+        }
 
         // 2. Structural + provider validation (aggregate errors).
         // Providers are LLM yaml instance ids
@@ -618,6 +648,68 @@ mod tests {
             outcome.applied.is_empty(),
             "default config has no agents to apply: {:?}",
             outcome.applied
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_spawns_plugin_contributed_agents_from_snapshot() {
+        // Phase 97.1.γ 3c — a plugin that contributes an agent via
+        // `[plugin.agents] contributes_dir` is folded into the reload's
+        // config from the live registry snapshot, so its agent reaches
+        // the spawner without appearing in agents.yaml.
+        use crate::agent::nexo_plugin_registry::{
+            DiscoveredPlugin, NexoPluginRegistry, NexoPluginRegistrySnapshot,
+        };
+        use crate::agent::spawn::SpawnError;
+        use std::sync::Mutex;
+
+        let dir = tempfile::tempdir().unwrap();
+        let agents_dir = dir.path().join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(
+            agents_dir.join("a.yaml"),
+            "agents:\n  - id: plugin_bot\n    active: true\n    \
+             model:\n      provider: minimax\n      model: minimax-m2\n",
+        )
+        .unwrap();
+        let manifest: nexo_plugin_manifest::PluginManifest = toml::from_str(
+            "[plugin]\nid = \"p\"\nversion = \"0.1.0\"\nname = \"p\"\n\
+             description = \"x\"\nmin_nexo_version = \">=0.0.1\"\n\
+             [plugin.agents]\ncontributes_dir = \"agents\"\n",
+        )
+        .unwrap();
+        let dp = DiscoveredPlugin {
+            manifest,
+            root_dir: dir.path().to_path_buf(),
+            manifest_path: dir.path().join("nexo-plugin.toml"),
+        };
+        let registry = NexoPluginRegistry::empty();
+        registry.swap(Arc::new(NexoPluginRegistrySnapshot {
+            plugins: vec![dp],
+            ..Default::default()
+        }));
+
+        let coord = Arc::new(ConfigReloadCoordinator::new(
+            PathBuf::from("/nonexistent-config-xyz-3c"),
+            Arc::new(LlmRegistry::with_builtins()),
+            CancellationToken::new(),
+        ));
+        coord.set_plugin_registry(registry);
+
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let rec = Arc::clone(&seen);
+        coord.set_spawner(Arc::new(AgentSpawnerFn(Box::new(move |cfg, _plugins| {
+            let rec = Arc::clone(&rec);
+            Box::pin(async move {
+                rec.lock().unwrap().push(cfg.id.clone());
+                Err(SpawnError::Validation("test stub".into()))
+            })
+        }))));
+
+        let _ = coord.reload().await;
+        assert!(
+            seen.lock().unwrap().iter().any(|id| id == "plugin_bot"),
+            "plugin-contributed agent reached the spawner via the merged snapshot"
         );
     }
 

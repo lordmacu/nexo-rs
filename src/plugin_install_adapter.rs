@@ -149,6 +149,11 @@ pub struct HotInstallCtx {
     pub discovery_cfg: PluginDiscoveryConfig,
     pub current_version: semver::Version,
     pub hot_plugin_ctx: HotPluginCtx,
+    /// Phase 97.1.γ 3c — config reload coordinator. After updating the
+    /// registry snapshot, `scan`/`uninstall`/`set_enabled` trigger a
+    /// reload so the coordinator spawns (or hot-removes) the plugin's
+    /// contributed agents. `None` leaves plugin agents restart-bound.
+    pub reload_coord: Option<Arc<nexo_core::config_reload::ConfigReloadCoordinator>>,
 }
 
 impl std::fmt::Debug for HotInstallCtx {
@@ -489,6 +494,12 @@ impl PluginInstaller for LivePluginInstaller {
             &ctx.hot_plugin_ctx.plugin_skills,
             &ctx.hot_plugin_ctx.registry,
         );
+        // Phase 97.1.γ 3c — trigger a reload so the coordinator spawns
+        // (or hot-removes) the plugin's contributed agents from the
+        // updated snapshot. No-op when no coordinator is wired.
+        if let Some(coord) = &ctx.reload_coord {
+            let _ = coord.reload().await;
+        }
 
         tracing::info!(
             spawned_count = spawned.len(),
@@ -564,6 +575,12 @@ impl PluginInstaller for LivePluginInstaller {
             &ctx.hot_plugin_ctx.plugin_skills,
             &ctx.hot_plugin_ctx.registry,
         );
+        // Phase 97.1.γ 3c — trigger a reload so the coordinator spawns
+        // (or hot-removes) the plugin's contributed agents from the
+        // updated snapshot. No-op when no coordinator is wired.
+        if let Some(coord) = &ctx.reload_coord {
+            let _ = coord.reload().await;
+        }
 
         // 2. Optional `cargo uninstall`. Only fires when explicitly
         // requested; the binary may have come from a Release tarball
@@ -642,6 +659,11 @@ impl PluginInstaller for LivePluginInstaller {
                 &ctx.hot_plugin_ctx.plugin_skills,
                 &ctx.hot_plugin_ctx.registry,
             );
+            // Phase 97.1.γ 3c — reload to hot-remove the disabled
+            // plugin's contributed agents.
+            if let Some(coord) = &ctx.reload_coord {
+                let _ = coord.reload().await;
+            }
             tracing::info!(
                 plugin_id = %params.plugin_id,
                 config_changed,
@@ -773,6 +795,12 @@ impl PluginInstaller for LivePluginInstaller {
             &ctx.hot_plugin_ctx.plugin_skills,
             &ctx.hot_plugin_ctx.registry,
         );
+        // Phase 97.1.γ 3c — trigger a reload so the coordinator spawns
+        // (or hot-removes) the plugin's contributed agents from the
+        // updated snapshot. No-op when no coordinator is wired.
+        if let Some(coord) = &ctx.reload_coord {
+            let _ = coord.reload().await;
+        }
 
         tracing::info!(
             plugin_id = %params.plugin_id,

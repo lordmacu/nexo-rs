@@ -127,6 +127,7 @@ into the running daemon **without a restart**:
 | **Skills** (`[plugin.skills] contributes_dir`) | ✅ re-walked + merged into the shared live handle every agent reads next turn |
 | **Metrics** (`[plugin.metrics]`) | ✅ appended to the live descriptor list the `/metrics` scrape reads |
 | **Registry snapshot** (admin-UI / discovery / capabilities) | ✅ swapped so a hot-installed plugin's `[plugin.admin_ui]` screen + catalogue entry appear live |
+| **Agents** (`[plugin.agents] contributes_dir`) | ✅ install triggers a config reload; the coordinator folds plugin agents from the snapshot + spawns them (uninstall hot-removes) |
 
 Enabling/disabling (`set_enabled`) and uninstalling apply the inverse
 live — every contribution above is added on enable/install and dropped
@@ -138,11 +139,12 @@ the **Skills** screen alongside operator skills, tagged with a
 `source_plugin` field). They are read-only there — remove them by
 uninstalling the plugin. Operator skills win on a name collision.
 
-Still restart-bound: plugin-contributed **agents** (`[plugin.agents]` —
-no plugin ships these yet, so the hot-spawn path is unbuilt). Setup-
-wizard channel **dashboards** are not affected — they re-read from disk
-on every `nexo setup` run, so a hot-installed plugin shows up on the
-next invocation without any restart.
+Everything a plugin contributes now goes live on install — tools,
+channels, hooks, LLM providers, vector backends, HTTP routes, skills,
+metrics, admin-UI screens, and agents. Setup-wizard channel
+**dashboards** re-read from disk on every `nexo setup` run, so they
+need no hot-reload either. A daemon restart is no longer required to
+pick up an installed plugin's contributions.
 
 ## Architecture pointers
 
