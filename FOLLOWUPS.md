@@ -2,6 +2,70 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 99 — admin UI Mode B (embedded iframe) — DEFERRED to v2   ⬜ DEFERRED
+
+Logged 2026-05-20 during Phase 99 brainstorm/plan. Decision: ship
+Mode A (declarative) first — a dynamic Mode A descriptor (rpc
+options + per-screen `load`/`refresh` + `visible_when`) covers ~95%
+of plugin config UIs. Mode B is ~40% of the work (COEP/COOP,
+dedicated subdomain, postMessage bridge, ~8 attack vectors) for the
+~10% complex cases (multi-step wizards, charts, drag-drop, SSE
+viewers).
+
+**Scope when triggered:**
+- `[plugin.admin_ui] mode = "embedded"` + `entry = "ui/..."` accepted
+  by the manifest validator (v1 rejects `embedded` with a "v2" error).
+- Daemon auto-route `GET /plugins/<id>/ui/*` serving the plugin's ESM
+  bundle from `$plugin_dir/ui/` via `[plugin.http]` (Stage 2). MIME
+  whitelist + path-traversal guard (`canonicalize` + `starts_with`).
+- `EmbeddedScreen.tsx` mounts `<iframe sandbox="allow-scripts
+  allow-forms">` (no `allow-same-origin` for community tier).
+  Dedicated subdomain `nexo-plugins.<host>` for cookie isolation.
+- `postMessage` RPC bridge: parent validates `method.startsWith(
+  plugin.admin.method_prefix)`, forwards via admin RPC, replies.
+  `nexoAdmin.rpc()` ESM helper module imported by the plugin bundle.
+- Theme tokens pushed to iframe on `load` ({--bg,--fg,--accent,--radius}).
+- Capability `NEXO_PLUGIN_ADMIN_UI_EMBEDDED_ALLOW` (INVENTORY) gates
+  Mode B; default off; unknown-trust plugins blocked outright.
+- COEP/COOP header requirements documented.
+
+**Trigger:** first concrete plugin whose config UI cannot be
+expressed as a Mode A declarative descriptor. Until then Mode A is
+the only contribution path.
+
+### Phase 99 — Mode A v1 deferreds   ⬜ ACTIVE
+
+Logged 2026-05-20 during 99.5 execution. Scoped out of v1; each is
+non-blocking.
+
+1. **`99.x.community-indexed-trust`** — `PluginTrustResolver` v1
+   resolves only `Official` (meta.author ∈ `TrustedKeysConfig.authors`)
+   vs `Unverified`. `CommunityIndexed` needs curated-index membership
+   (`lordmacu/nexo-plugin-index`) which isn't loaded at runtime.
+   Trigger: when the curated index is queryable daemon-side, extend
+   `TrustedKeysPluginTrustResolver` (`src/plugin_ui_adapter.rs`).
+2. **`99.x.reload-version`** — `config_set` returns
+   `reload_version: None` because `ReloadSignal = Arc<dyn Fn()>`
+   returns `()`. To surface the real applied version, thread a
+   reload variant returning `ConfigReloadCoordinator::reload()`'s
+   `ReloadOutcome.version` into `PluginUiDomain`.
+3. **`99.x.sse-multi-site-emit` + coalescer** — 99.6 v1 emits
+   `PluginUiChanged{ConfigChanged}` only (from `config_set`, via the
+   dispatcher's `event_emitter`). The other 4 kinds
+   (`Installed`/`Uninstalled` from the 97.1.β installer adapter,
+   `Enabled`/`Disabled` from 97.A `config_reload`) are NOT emitted —
+   those pipelines hold no `AgentEventEmitter` handle, so threading
+   one in is a separate change. The 250ms per-plugin coalescer is
+   deferred with them (only burst sites need it). Until then, the
+   admin shell refetches `plugin_ui/list` on mount/focus as the
+   fallback for install/uninstall/enable/disable.
+4. **`99.x.visible-when-health-context`** — server-side `visible_when`
+   eval uses a best-effort context (`plugin.{installed,enabled,
+   healthy}=true` + live `config`). Real per-plugin enabled/health
+   state (supervisor uptime telemetry) is not plumbed into the
+   `plugin_ui/list` aggregator yet; the client re-evaluates with live
+   state. Trigger: when health needs to gate server-side.
+
 ### Phase 100 — OpenRouter LLM provider deferreds   ⬜ ACTIVE
 
 Logged 2026-05-20 alongside Phase 100 close-out. Scoped *out* of

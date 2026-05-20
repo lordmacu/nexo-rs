@@ -29,6 +29,7 @@ pub mod plugin_discovery;
 pub mod plugin_doctor;
 pub mod plugin_install;
 pub mod plugin_restart;
+pub mod plugin_ui;
 pub mod processing;
 pub mod secrets;
 pub mod skills;

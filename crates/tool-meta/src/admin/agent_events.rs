@@ -234,6 +234,42 @@ pub enum AgentEventKind {
         /// Epoch ms when the daemon received the chunk.
         at_ms: u64,
     },
+    /// Phase 99.6 — a plugin's admin-UI contribution surface
+    /// changed (installed / uninstalled / enabled / disabled /
+    /// config edited). Admin shells re-fetch
+    /// `nexo/admin/plugin_ui/list` (or `describe`) on receipt so
+    /// the rail + open screens reflect the change without a
+    /// manual reload.
+    PluginUiChanged {
+        /// What happened.
+        event_kind: PluginUiChangeKind,
+        /// Affected plugin id.
+        plugin_id: String,
+        /// Whether the plugin still declares `[plugin.admin_ui]`
+        /// after the change (`false` on uninstall / no-admin-ui).
+        admin_ui_present: bool,
+        /// Provenance-derived trust tier at emit time.
+        trust_tier: crate::admin::plugin_discovery::TrustTier,
+        /// Epoch ms of the change.
+        at_ms: u64,
+    },
+}
+
+/// Discriminator for [`AgentEventKind::PluginUiChanged`].
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginUiChangeKind {
+    /// Plugin installed (new admin-UI contributions may appear).
+    Installed,
+    /// Plugin uninstalled (its contributions disappear).
+    Uninstalled,
+    /// Plugin enabled.
+    Enabled,
+    /// Plugin disabled (contributions hidden).
+    Disabled,
+    /// A plugin's config was edited via `plugin_ui/config_set`.
+    ConfigChanged,
 }
 
 /// Security-domain audit events. Nested under
@@ -395,6 +431,34 @@ pub struct SearchHit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_ui_changed_round_trips_with_kind_tag() {
+        let evt = AgentEventKind::PluginUiChanged {
+            event_kind: PluginUiChangeKind::Installed,
+            plugin_id: "google".into(),
+            admin_ui_present: true,
+            trust_tier: crate::admin::plugin_discovery::TrustTier::Official,
+            at_ms: 1_700_000_000_000,
+        };
+        let s = serde_json::to_string(&evt).unwrap();
+        assert!(s.contains("\"kind\":\"plugin_ui_changed\""));
+        assert!(s.contains("\"event_kind\":\"installed\""));
+        let back: AgentEventKind = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, evt);
+    }
+
+    #[test]
+    fn plugin_ui_change_kind_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&PluginUiChangeKind::ConfigChanged).unwrap(),
+            "\"config_changed\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PluginUiChangeKind::Uninstalled).unwrap(),
+            "\"uninstalled\""
+        );
+    }
 
     #[test]
     fn transcript_appended_round_trip_includes_optional_sender() {

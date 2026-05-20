@@ -198,6 +198,16 @@ pub struct PluginSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<crate::http::PluginHttpSection>,
 
+    /// Phase 99 Stage 1 — admin UI contribution descriptor (Mode A).
+    /// Plugins declare sidebar / command-palette entries (menus +
+    /// submenus via `parent`) plus declarative config screens the
+    /// admin React shell renders generically. Absent / default =
+    /// the plugin contributes no admin UI (operator configures it
+    /// via YAML). The plugin's UI lives inside the plugin and the
+    /// daemon injects it into the admin via `nexo/admin/plugin_ui/*`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_ui: Option<crate::admin_ui::PluginAdminUiSection>,
+
     /// Phase 96 — scheduled-work declaration. Plugins implementing
     /// poller kinds (cron / interval / one-shot) declare the kinds
     /// they handle plus the broker topic prefix the daemon's

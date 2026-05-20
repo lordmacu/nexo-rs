@@ -530,6 +530,20 @@ const INVENTORY: &[CapabilityToggle] = &[
                  only the daemon's in-memory catalog is suppressed.",
         hint: "export NEXO_DISABLE_BUNDLED_PERSONAS=1  # to disable",
     },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_PLUGIN_ADMIN_UI_ALLOW_COMMUNITY_CORE_SLOTS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Phase 99 — let non-official (community-indexed) plugins \
+                 inject `[plugin.admin_ui]` contributions into RESERVED \
+                 core slots (core.sidebar.{channels,integrations,settings} \
+                 + core.agent_detail.tabs). Default OFF: community plugins \
+                 may only create their own top-level / submenu entries + \
+                 command-palette actions. Unverified plugins are never \
+                 allowed into core slots regardless of this flag.",
+        hint: "export NEXO_PLUGIN_ADMIN_UI_ALLOW_COMMUNITY_CORE_SLOTS=1",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {

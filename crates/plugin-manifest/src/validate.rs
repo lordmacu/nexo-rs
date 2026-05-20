@@ -124,6 +124,23 @@ pub fn run_all_with_sandbox_env(
     validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
     validate_pairing(&manifest.plugin.pairing, errors);
     validate_public_tunnel(&manifest.plugin.public_tunnel, errors);
+    validate_admin_ui(manifest, errors);
+}
+
+/// Phase 99 Stage 1 — `[plugin.admin_ui]` validator. Delegates to
+/// the section's self-contained `validate(plugin_id)` (which
+/// collects every contract violation in one pass) and surfaces
+/// each as a typed [`ManifestError::AdminUiInvalid`].
+fn validate_admin_ui(manifest: &PluginManifest, errors: &mut Vec<ManifestError>) {
+    let Some(section) = &manifest.plugin.admin_ui else {
+        return;
+    };
+    for reason in section.validate(&manifest.plugin.id) {
+        errors.push(ManifestError::AdminUiInvalid {
+            plugin_id: manifest.plugin.id.clone(),
+            reason,
+        });
+    }
 }
 
 /// `[plugin.public_tunnel]` validator. `close_on_event` must be

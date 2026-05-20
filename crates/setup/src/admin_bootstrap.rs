@@ -474,6 +474,13 @@ pub struct AdminBootstrapInputs<'a> {
     /// legacy `.with_<plugin>_handle()` typed path; production
     /// always passes `Some`.
     pub plugin_admin_router: Option<std::sync::Arc<nexo_pairing::plugin_admin::PluginAdminRouter>>,
+    /// Phase 99.5 — pre-built plugin admin-UI domain
+    /// (`nexo/admin/plugin_ui/*`). `None` keeps the 3 RPC verbs
+    /// returning the typed -32603; production wires it from
+    /// `src/plugin_ui_adapter.rs` (registry late-bind cell + config
+    /// store + credential store + broker forwarder + trust resolver).
+    pub plugin_ui:
+        Option<std::sync::Arc<nexo_core::agent::admin_rpc::domains::plugin_ui::PluginUiDomain>>,
 }
 
 impl AdminRpcBootstrap {
@@ -920,6 +927,12 @@ impl AdminRpcBootstrap {
             if let Some(installer) = inputs.plugin_installer.clone() {
                 dispatcher = dispatcher.with_plugin_installer(installer);
             }
+            // Phase 99.5 — plugin admin-UI domain. `None` keeps
+            // `nexo/admin/plugin_ui/*` returning the typed -32601;
+            // production wires the pre-built `PluginUiDomain`.
+            if let Some(domain) = inputs.plugin_ui.clone() {
+                dispatcher = dispatcher.with_plugin_ui_domain(domain);
+            }
             // Phase 98.10/98.11 — discovery reader. `None` keeps
             // the 3 RPC verbs (`search`/`compat_check`/`refresh_index`)
             // returning the typed -32603; production wires
@@ -1255,6 +1268,7 @@ mod tests {
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
             plugin_admin_router: None,
+            plugin_ui: None,
         })
         .await
         .unwrap();
@@ -1302,6 +1316,7 @@ mod tests {
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
             plugin_admin_router: None,
+            plugin_ui: None,
         })
         .await
         .unwrap_err();
@@ -1350,6 +1365,7 @@ mod tests {
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
             plugin_admin_router: None,
+            plugin_ui: None,
         })
         .await
         .unwrap()
@@ -1413,6 +1429,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1468,6 +1485,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1523,6 +1541,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1586,6 +1605,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1655,6 +1675,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1719,6 +1740,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )
@@ -1782,6 +1804,7 @@ mod tests {
             persisters: Vec::new(),
             pairing_triggers: Default::default(),
             plugin_admin_router: None,
+            plugin_ui: None,
         })
         .await
         .unwrap()
@@ -1866,6 +1889,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             false,
         )
@@ -1932,6 +1956,7 @@ mod tests {
                 persisters: Vec::new(),
                 pairing_triggers: Default::default(),
                 plugin_admin_router: None,
+                plugin_ui: None,
             },
             true,
         )

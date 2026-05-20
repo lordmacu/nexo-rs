@@ -11,6 +11,7 @@
 //! channels + advisors + capability gates).
 
 pub mod admin;
+pub mod admin_ui;
 pub mod compat_v1;
 pub mod config_schema;
 pub mod dashboard;
@@ -25,9 +26,15 @@ pub mod poller;
 pub mod public_tunnel;
 pub mod sandbox;
 pub mod validate;
+pub mod visible_when;
 
 pub use discover::{discover_in_root, PLUGIN_MANIFEST_FILENAMES};
 
+pub use admin_ui::{
+    Action, AdminUiMode, Contribution, Field, FieldType, I18nLabel, OnSuccess, OptionsSource,
+    PluginAdminUiSection, RefreshSpec, Screen, SelectOption, ADMIN_RPC_PREFIX, CORE_SLOTS,
+    CURRENT_ADMIN_UI_SCHEMA_VERSION, LUCIDE_SUBSET, VISIBLE_WHEN_MAX_LEN,
+};
 pub use config_schema::{
     is_validation_bypassed, validate_config, ConfigSchemaError, SKIP_SCHEMA_ENV,
 };
@@ -48,4 +55,8 @@ pub use sandbox::{
     contains_state_dir_token, path_under_or_equals_denylist, SandboxNetwork, SandboxPathKind,
     SandboxSection, SANDBOX_DENYLIST_HOME_SUBPATHS, SANDBOX_DENYLIST_HOST_PATHS,
     SANDBOX_STATE_DIR_TOKEN,
+};
+pub use visible_when::{
+    eval as eval_visible_when, parse as parse_visible_when, CmpOp, Expr as VisibleWhenExpr,
+    Literal as VisibleWhenLiteral, VisibleWhenError,
 };

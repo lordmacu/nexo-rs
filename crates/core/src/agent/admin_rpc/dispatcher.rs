@@ -196,6 +196,12 @@ pub struct AdminRpcDispatcher {
     /// dispatcher can issue the forward request. `None` when the
     /// router is also `None`.
     plugin_admin_broker: Option<nexo_broker::AnyBroker>,
+    /// Phase 99.5 — plugin admin-UI domain
+    /// (`nexo/admin/plugin_ui/{list,describe,config_set}`). `None`
+    /// disables the domain (returns -32601). Production wires it in
+    /// `main.rs` boot with the plugin registry + plugins-yaml store
+    /// + credential store + broker forwarder + trust resolver.
+    plugin_ui: Option<Arc<super::domains::plugin_ui::PluginUiDomain>>,
     /// Push channel for
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
@@ -438,6 +444,7 @@ impl AdminRpcDispatcher {
             auth_rotator: None,
             plugin_admin_router: None,
             plugin_admin_broker: None,
+            plugin_ui: None,
         }
     }
 
@@ -607,6 +614,16 @@ impl AdminRpcDispatcher {
 
     pub fn with_wa_bot_handle(mut self, handle: Arc<dyn super::wa_bot::WaBotHandle>) -> Self {
         self.wa_bot_handle = Some(handle);
+        self
+    }
+
+    /// Phase 99.5 — install the plugin admin-UI domain. `None`
+    /// (default) leaves `nexo/admin/plugin_ui/*` returning -32601.
+    pub fn with_plugin_ui_domain(
+        mut self,
+        domain: Arc<super::domains::plugin_ui::PluginUiDomain>,
+    ) -> Self {
+        self.plugin_ui = Some(domain);
         self
     }
 
@@ -995,6 +1012,14 @@ impl AdminRpcDispatcher {
             "nexo/admin/plugins/search"
             | "nexo/admin/plugins/compat_check"
             | "nexo/admin/plugins/refresh_index" => Some("plugin_install"),
+            // Phase 99.5 — plugin admin-UI contribution surface.
+            // `list`/`describe` are read-mostly; `config_set` mutates
+            // a plugin's config + secrets. All three share
+            // `plugin_admin_ui` so the operator grants the admin-UI
+            // role as one unit (mirrors the plugin_install pattern).
+            "nexo/admin/plugin_ui/list"
+            | "nexo/admin/plugin_ui/describe"
+            | "nexo/admin/plugin_ui/config_set" => Some("plugin_admin_ui"),
             // Long-term memory query.
             // Capability `memory_query` so an operator can grant
             // read-only memory inspection independently of broader
@@ -1163,6 +1188,25 @@ impl AdminRpcDispatcher {
                 "echoed": params,
                 "microapp_id": microapp_id,
             })),
+            // Phase 99.5 — plugin admin-UI domain.
+            "nexo/admin/plugin_ui/list" => match &self.plugin_ui {
+                Some(d) => d.list(),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin_ui domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugin_ui/describe" => match &self.plugin_ui {
+                Some(d) => d.describe(params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin_ui domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugin_ui/config_set" => match &self.plugin_ui {
+                Some(d) => d.config_set(params, self.event_emitter.clone()).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin_ui domain not configured".into(),
+                )),
+            },
             "nexo/admin/agents/list" => match &self.agents_yaml {
                 Some(yaml) => super::domains::agents::list(yaml.as_ref(), params),
                 None => AdminRpcResult::err(AdminRpcError::Internal(

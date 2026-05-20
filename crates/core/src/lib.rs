@@ -1,3 +1,4 @@
+pub mod admin_ui;
 pub mod agent;
 pub mod config_changes_store;
 pub mod config_reload;

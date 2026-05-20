@@ -7,6 +7,7 @@ mod plugin_install;
 mod plugin_install_adapter;
 mod plugin_new;
 mod plugin_run;
+mod plugin_ui_adapter;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2437,6 +2438,14 @@ async fn main() -> Result<()> {
     let plugin_installer_late_bind =
         std::sync::Arc::new(plugin_install_adapter::LivePluginInstallerCell::new());
 
+    // Phase 99.5 — shared late-bind cell for the plugin registry.
+    // The plugin admin-UI domain's registry + trust adapters read
+    // it; main.rs fills it after `wire_plugin_registry` returns
+    // (same pattern as `plugin_installer_late_bind`). Before the
+    // fill, `plugin_ui/list` is empty + trust is `Unverified`.
+    let plugin_ui_registry_cell: plugin_ui_adapter::PluginUiRegistryCell =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+
     // Phase 97.2 — live plugin restarter built at outer scope so
     // BOTH the admin RPC dispatcher (via `plugin_restarter:
     // Some(...)`) and the WhatsApp persister (via `with_restarter`)
@@ -2626,6 +2635,47 @@ async fn main() -> Result<()> {
         // loop in the post-`wire_plugin_registry` block populates
         // the registry from `nexo-plugin-whatsapp` v0.4.4+'s
         // `[plugin.pairing.trigger]` section instead.
+        // Phase 99.5 — build the plugin admin-UI domain. Registry +
+        // trust read the late-bind cell (filled post-wire); config
+        // store + credential store + broker forwarder are ready now.
+        // Clone `admin_reload_signal` before it is moved into the
+        // inputs literal below so the domain can fire hot-reload.
+        let plugin_ui_domain = {
+            use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
+            use nexo_core::agent::admin_rpc::domains::plugin_ui::{
+                PluginConfigStore, PluginRpcForwarder, PluginTrustResolver, PluginUiDomain,
+                PluginUiRegistry,
+            };
+            let registry: std::sync::Arc<dyn PluginUiRegistry> = std::sync::Arc::new(
+                plugin_ui_adapter::LivePluginUiRegistry::new(plugin_ui_registry_cell.clone()),
+            );
+            let config_store: std::sync::Arc<dyn PluginConfigStore> = std::sync::Arc::new(
+                plugin_ui_adapter::FsPluginConfigStore::new(config_dir.as_path()),
+            );
+            let creds: std::sync::Arc<dyn CredentialStore> = std::sync::Arc::new(
+                nexo_setup::admin_adapters::FilesystemCredentialStore::new(secrets_dir.as_path()),
+            );
+            let forwarder: std::sync::Arc<dyn PluginRpcForwarder> = std::sync::Arc::new(
+                plugin_ui_adapter::BrokerPluginRpcForwarder::new(broker.clone()),
+            );
+            let trust: std::sync::Arc<dyn PluginTrustResolver> = std::sync::Arc::new(
+                plugin_ui_adapter::TrustedKeysPluginTrustResolver::from_config_dir(
+                    config_dir.as_path(),
+                    plugin_ui_registry_cell.clone(),
+                ),
+            );
+            std::sync::Arc::new(PluginUiDomain::new(
+                registry,
+                config_store,
+                creds,
+                forwarder,
+                trust,
+                Some(admin_reload_signal.clone()),
+                false,
+                "en",
+            ))
+        };
+
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
                 config_dir: &config_dir,
@@ -2686,6 +2736,8 @@ async fn main() -> Result<()> {
                 // boot-cell-set onward (admin RPC fired before that
                 // window returns the boot-window InvalidParams).
                 plugin_installer: Some(plugin_installer_late_bind.clone()),
+                // Phase 99.5 — pre-built plugin admin-UI domain.
+                plugin_ui: Some(plugin_ui_domain),
                 // Phase 98.11 — discovery reader. Builds the
                 // standard catalogue client (rustls-only HTTP, 24h
                 // disk cache under state_dir) and threads it
@@ -7713,6 +7765,11 @@ async fn main() -> Result<()> {
     let installer_base = plugin_install_adapter::LivePluginInstaller::new(config_dir.clone());
     let installer = installer_base.with_hot_install(hot_install_ctx);
     let _ = plugin_installer_late_bind.set(installer);
+
+    // Phase 99.5 — fill the plugin admin-UI registry cell now that
+    // the live registry exists. From here `plugin_ui/list` resolves
+    // against the real snapshot + trust derivation works.
+    let _ = plugin_ui_registry_cell.set(std::sync::Arc::clone(&wire.registry));
 
     // Spawn ONE cron runner per process.
     // Polls the SQLite cron store every 5s. Dispatches through a
