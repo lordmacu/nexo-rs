@@ -23,6 +23,7 @@
 pub mod admin_adapters;
 pub mod admin_bootstrap;
 pub mod admin_capability_collect;
+pub mod discovery_adapter;
 pub mod agent_wizard;
 pub mod auth_rotator;
 pub mod capabilities;

@@ -190,6 +190,23 @@ enum Mode {
         yes: bool,
         json: bool,
     },
+    /// Phase 98.11 — `nexo plugin search [QUERY] [...]`. Local-only
+    /// catalogue browse via `nexo-plugin-discovery::DefaultDiscoveryClient`.
+    /// Hits crates.io + GitHub topic + curated index in parallel,
+    /// merges by name, returns a table (or JSON via `--json`).
+    /// Daemon not required — runs against the operator's
+    /// state_dir cache directly.
+    PluginSearch {
+        query: Option<String>,
+        compat_only: bool,
+        category: Option<String>,
+        source: Option<String>,
+        json: bool,
+    },
+    /// Phase 98.11 — `nexo plugin refresh`. Invalidates the
+    /// discovery cache so the next `plugin search` re-fetches
+    /// every source.
+    PluginRefresh { json: bool },
     /// `nexo persona install
     /// <owner>/<repo>[@<tag>] [--dest <dir>] [--target
     /// <triple>] [--json]`. Mirror of `Mode::PluginInstall`
@@ -1933,6 +1950,20 @@ async fn main() -> Result<()> {
             plugin_install::print_plugin_help();
             return Ok(());
         }
+        Mode::PluginSearch {
+            query,
+            compat_only,
+            category,
+            source,
+            json,
+        } => {
+            let code = run_plugin_search(query, compat_only, category, source, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PluginRefresh { json } => {
+            let code = run_plugin_refresh(json).await?;
+            std::process::exit(code);
+        }
         Mode::PluginNew {
             id,
             lang,
@@ -2653,6 +2684,25 @@ async fn main() -> Result<()> {
                 // boot-cell-set onward (admin RPC fired before that
                 // window returns the boot-window InvalidParams).
                 plugin_installer: Some(plugin_installer_late_bind.clone()),
+                // Phase 98.11 — discovery reader. Builds the
+                // standard catalogue client (rustls-only HTTP, 24h
+                // disk cache under state_dir) and threads it
+                // through the admin RPC. `daemon_version` parsed
+                // from `CARGO_PKG_VERSION` so the compat gate
+                // compares against the running binary's semver.
+                plugin_discovery: {
+                    let daemon_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+                    let state_dir = nexo_project_tracker::state::nexo_state_dir();
+                    let discovery_cfg =
+                        nexo_plugin_discovery::config::DiscoveryConfig::with_defaults(
+                            state_dir,
+                            daemon_version,
+                        );
+                    Some(nexo_setup::discovery_adapter::DefaultDiscoveryAdapter::from_default_client(
+                        discovery_cfg,
+                    ))
+                },
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
                     nexo_setup::admin_adapters::LiveMemorySnapshotReader::new(
@@ -10207,6 +10257,28 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
+        // Phase 98.11 — `nexo plugin search [QUERY] [--compat-only]
+        // [--category=...] [--source=...] [--json]`.
+        [cmd, sub] if cmd == "plugin" && sub == "search" => Mode::PluginSearch {
+            query: None,
+            compat_only: positional.iter().any(|a| a == "--compat-only"),
+            category: parse_kv_flag(&positional, "--category"),
+            source: parse_kv_flag(&positional, "--source"),
+            json: has_json_flag,
+        },
+        [cmd, sub, q] if cmd == "plugin" && sub == "search" && !q.starts_with("--") => {
+            Mode::PluginSearch {
+                query: Some(q.clone()),
+                compat_only: positional.iter().any(|a| a == "--compat-only"),
+                category: parse_kv_flag(&positional, "--category"),
+                source: parse_kv_flag(&positional, "--source"),
+                json: has_json_flag,
+            }
+        }
+        // `nexo plugin refresh [--json]`.
+        [cmd, sub] if cmd == "plugin" && sub == "refresh" => Mode::PluginRefresh {
+            json: has_json_flag,
+        },
         // `nexo persona <sub>` family.
         [cmd, sub, coords] if cmd == "persona" && sub == "install" => Mode::PersonaInstall {
             coords: coords.clone(),
@@ -10562,6 +10634,10 @@ fn print_usage() {
     println!(
         "  agent [--config <dir>] plugin remove <id> [--purge-cache] [--yes] [--json]   Remove plugin"
     );
+    println!(
+        "  agent plugin search [QUERY] [--compat-only] [--category=...] [--source=...] [--json]  Browse public catalogue (Phase 98)"
+    );
+    println!("  agent plugin refresh [--json]           Invalidate plugin discovery cache (Phase 98)");
     println!("  agent plugin help                      Show plugin subcommand help");
     println!(
         "  agent doctor capabilities [--json]     List write/reveal env toggles and their state"
@@ -16455,6 +16531,183 @@ async fn handle_llm_invoke(
         usage,
     })
     .unwrap_or(serde_json::Value::Null))
+}
+
+// ── Phase 98.11 — `nexo plugin {search,refresh}` CLI helpers ────
+
+async fn run_plugin_search(
+    query: Option<String>,
+    compat_only: bool,
+    category: Option<String>,
+    source_filter: Option<String>,
+    json: bool,
+) -> Result<i32> {
+    use nexo_plugin_discovery::client::{DefaultDiscoveryClient, DiscoveryClient};
+    use nexo_plugin_discovery::config::DiscoveryConfig;
+
+    let daemon_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let state_dir = nexo_project_tracker::state::nexo_state_dir();
+    let cfg = DiscoveryConfig::with_defaults(state_dir, daemon_version);
+    let client = DefaultDiscoveryClient::new(cfg);
+
+    let outcome = match client.search(query.as_deref()).await {
+        Ok(o) => o,
+        Err(e) => {
+            if json {
+                let body = serde_json::json!({ "ok": false, "error": e.to_string() });
+                println!("{}", serde_json::to_string(&body).unwrap_or_default());
+            } else {
+                eprintln!("✗ Plugin search failed: {e}");
+            }
+            return Ok(1);
+        }
+    };
+
+    let category_lower = category.as_deref().map(str::to_ascii_lowercase);
+    let source_lower = source_filter.as_deref().map(str::to_ascii_lowercase);
+    let filtered: Vec<_> = outcome
+        .items
+        .into_iter()
+        .filter(|p| {
+            if compat_only {
+                use nexo_tool_meta::admin::plugin_discovery::CompatStatus::*;
+                if !matches!(p.compat, Compatible | Unknown) {
+                    return false;
+                }
+            }
+            if let Some(ref c) = category_lower {
+                let label = match p.category {
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Channel => "channel",
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Poller => "poller",
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Webhook => "webhook",
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Persona => "persona",
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Tool => "tool",
+                    nexo_tool_meta::admin::plugin_discovery::PluginCategory::Unknown => "unknown",
+                };
+                if label != c {
+                    return false;
+                }
+            }
+            if let Some(ref s) = source_lower {
+                let any = p.sources.iter().any(|src| {
+                    matches!(
+                        (src.clone(), s.as_str()),
+                        (nexo_tool_meta::admin::plugin_discovery::PluginSource::CratesIo, "crates_io")
+                            | (nexo_tool_meta::admin::plugin_discovery::PluginSource::CuratedIndex, "curated_index")
+                            | (nexo_tool_meta::admin::plugin_discovery::PluginSource::GithubTopic { .. }, "github_topic")
+                    )
+                });
+                if !any {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    if json {
+        let body = serde_json::json!({
+            "ok": true,
+            "items": filtered,
+            "fetched_at_ms": outcome.fetched_at_ms,
+            "partial_failures": outcome.partial_failures,
+        });
+        println!("{}", serde_json::to_string(&body).unwrap_or_default());
+        return Ok(0);
+    }
+
+    if filtered.is_empty() {
+        eprintln!("(no matching plugins)");
+        if !outcome.partial_failures.is_empty() {
+            eprintln!("! Some sources failed:");
+            for f in outcome.partial_failures.iter() {
+                eprintln!("  - {}: {}", f.source, f.message);
+            }
+        }
+        return Ok(0);
+    }
+
+    println!(
+        "{:<32} {:<10} {:<16} {:<14} {:<14} {}",
+        "NAME", "VERSION", "OWNER", "TRUST", "COMPAT", "INSTALL"
+    );
+    for p in filtered.iter() {
+        use nexo_tool_meta::admin::plugin_discovery::{CompatStatus, TrustTier};
+        let trust = match p.trust_tier {
+            TrustTier::Official => "official",
+            TrustTier::CommunityIndexed => "community",
+            TrustTier::Unverified => "unverified",
+        };
+        let compat = match &p.compat {
+            CompatStatus::Compatible => "compatible".to_string(),
+            CompatStatus::NeedsUpgrade { required, .. } => format!("needs:{required}"),
+            CompatStatus::Incompatible { .. } => "incompatible".to_string(),
+            CompatStatus::Unknown => "unknown".to_string(),
+        };
+        println!(
+            "{:<32} {:<10} {:<16} {:<14} {:<14} {}",
+            truncate_for_table(&p.name, 32),
+            truncate_for_table(p.version.as_deref().unwrap_or("-"), 10),
+            truncate_for_table(&p.owner, 16),
+            trust,
+            compat,
+            p.install_cmd
+        );
+    }
+    if !outcome.partial_failures.is_empty() {
+        eprintln!("\n! Partial failures (catalogue may be incomplete):");
+        for f in outcome.partial_failures.iter() {
+            eprintln!("  - {}: {}", f.source, f.message);
+        }
+    }
+    Ok(0)
+}
+
+async fn run_plugin_refresh(json: bool) -> Result<i32> {
+    use nexo_plugin_discovery::client::{DefaultDiscoveryClient, DiscoveryClient};
+    use nexo_plugin_discovery::config::DiscoveryConfig;
+
+    let daemon_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let state_dir = nexo_project_tracker::state::nexo_state_dir();
+    let cfg = DiscoveryConfig::with_defaults(state_dir, daemon_version);
+    let client = DefaultDiscoveryClient::new(cfg);
+    match client.refresh().await {
+        Ok(()) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({ "ok": true })).unwrap_or_default()
+                );
+            } else {
+                eprintln!("✓ Plugin discovery cache invalidated");
+            }
+            Ok(0)
+        }
+        Err(e) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({ "ok": false, "error": e.to_string() }))
+                        .unwrap_or_default()
+                );
+            } else {
+                eprintln!("✗ Plugin refresh failed: {e}");
+            }
+            Ok(1)
+        }
+    }
+}
+
+fn truncate_for_table(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut out = s.chars().take(max.saturating_sub(1)).collect::<String>();
+        out.push('…');
+        out
+    }
 }
 
 #[cfg(test)]

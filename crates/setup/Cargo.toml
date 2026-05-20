@@ -36,6 +36,7 @@ nexo-email-probe = "0.1.0"
 nexo-core = { version = "0.2.1", path = "../core" }
 nexo-extensions = { version = "0.1.5", path = "../extensions" }
 nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
+nexo-plugin-discovery = { version = "0.1.0", path = "../plugin-discovery" }
 # Persona TEMPLATE catalog reader needs the manifest parser to
 # pluck `[persona]` metadata off each install_root's
 # `persona.toml`. Templates are read-only at this layer.

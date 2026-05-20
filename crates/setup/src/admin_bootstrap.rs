@@ -338,6 +338,13 @@ pub struct AdminBootstrapInputs<'a> {
     /// router shares) are populated.
     pub plugin_installer:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_install::PluginInstaller>>,
+    /// Phase 98.10/98.11 — plugin discovery reader.
+    /// `None` keeps `nexo/admin/plugins/{search,compat_check,
+    /// refresh_index}` returning the typed `plugin discovery domain
+    /// not configured` -32603. Production wires
+    /// `crate::discovery_adapter::DefaultDiscoveryAdapter`.
+    pub plugin_discovery:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::plugin_discovery::DiscoveryReader>>,
     /// Long-term memory query reader. `None`
     /// keeps `nexo/admin/memory/query` returning the typed
     /// `memory domain not configured` -32603. Production wires
@@ -913,6 +920,13 @@ impl AdminRpcBootstrap {
             if let Some(installer) = inputs.plugin_installer.clone() {
                 dispatcher = dispatcher.with_plugin_installer(installer);
             }
+            // Phase 98.10/98.11 — discovery reader. `None` keeps
+            // the 3 RPC verbs (`search`/`compat_check`/`refresh_index`)
+            // returning the typed -32603; production wires
+            // `DefaultDiscoveryAdapter`.
+            if let Some(reader) = inputs.plugin_discovery.clone() {
+                dispatcher = dispatcher.with_plugin_discovery(reader);
+            }
             // Install the memory query reader.
             // Without it, `nexo/admin/memory/query` returns the
             // typed `memory domain not configured` -32603.
@@ -1225,6 +1239,7 @@ mod tests {
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
             plugin_installer: None,
+            plugin_discovery: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1271,6 +1286,7 @@ mod tests {
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
             plugin_installer: None,
+            plugin_discovery: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1318,6 +1334,7 @@ mod tests {
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
             plugin_installer: None,
+            plugin_discovery: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1380,6 +1397,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1434,6 +1452,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1488,6 +1507,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1550,6 +1570,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1618,6 +1639,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1681,6 +1703,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1743,6 +1766,7 @@ mod tests {
             persona_install_roots: Vec::new(),
             plugin_restarter: None,
             plugin_installer: None,
+            plugin_discovery: None,
             memory_reader: None,
             memory_snapshot_reader: None,
             secrets_store: None,
@@ -1826,6 +1850,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
@@ -1891,6 +1916,7 @@ mod tests {
                 persona_install_roots: Vec::new(),
                 plugin_restarter: None,
                 plugin_installer: None,
+            plugin_discovery: None,
                 memory_reader: None,
                 memory_snapshot_reader: None,
                 secrets_store: None,
