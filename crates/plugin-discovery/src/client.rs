@@ -145,6 +145,7 @@ impl DefaultDiscoveryClient {
         )));
         srcs.push(Box::new(GithubTopicSource::new(
             self.config.github_endpoint.clone(),
+            self.config.raw_github_endpoint.clone(),
             timeout,
             self.config.github_token.clone(),
         )));
@@ -319,18 +320,34 @@ impl DiscoveryClient for DefaultDiscoveryClient {
         };
         // Re-fetch manifest fresh so the operator's compat dialog
         // can't show a stale 24h-cached answer.
-        let fallbacks = derive_fallback_urls(&plugin);
-        let manifest = match plugin.manifest_url.as_deref() {
-            Some(url) => {
-                fetch_manifest(&self.http, url, &fallbacks, self.config.http_timeout).await
+        //
+        // Phase 98 follow-up #5 — when `version` is provided, try
+        // tag-pinned URLs FIRST (`<raw>/<repo>/v<version>/nexo-plugin.toml`
+        // + `<raw>/<repo>/<version>/nexo-plugin.toml`) before falling
+        // back to the plugin's HEAD-pointing manifest URL. This lets
+        // the admin UI show "version X needs SDK Y" without re-
+        // fetching every prior release.
+        let head_fallbacks = derive_fallback_urls(&plugin);
+        let mut candidates: Vec<String> = Vec::new();
+        if let Some(v) = version {
+            for tag in [format!("v{v}"), v.to_string()] {
+                candidates.extend(derive_tagged_urls(
+                    &plugin,
+                    &self.config.raw_github_endpoint,
+                    &tag,
+                ));
             }
-            None => match fallbacks.first() {
-                Some(first) => {
-                    fetch_manifest(&self.http, first, &fallbacks[1..], self.config.http_timeout)
-                        .await
-                }
-                None => None,
-            },
+        }
+        if let Some(url) = plugin.manifest_url.as_deref() {
+            candidates.push(url.to_string());
+        }
+        candidates.extend(head_fallbacks);
+        let manifest = match candidates.first() {
+            Some(first) => {
+                let rest: Vec<String> = candidates.iter().skip(1).cloned().collect();
+                fetch_manifest(&self.http, first, &rest, self.config.http_timeout).await
+            }
+            None => None,
         };
         let Some(f) = manifest else {
             return Ok(CompatCheckOutcome {
@@ -339,22 +356,41 @@ impl DiscoveryClient for DefaultDiscoveryClient {
             });
         };
         let compat = compat::compat_check(Some(&f.min_nexo_version), &self.config.daemon_version);
-        // `version` param currently informational — manifest fetch
-        // always targets the repo's HEAD; pinning to a tag is a
-        // follow-up. We still echo it back to the caller via a
-        // `tracing::debug` for observability.
-        if let Some(v) = version {
-            tracing::debug!(
-                target: "plugin_discovery::client",
-                version = %v,
-                "compat_check version pin currently informational (HEAD fetched)"
-            );
-        }
         Ok(CompatCheckOutcome {
             compat,
             manifest_summary: Some(f.summary),
         })
     }
+}
+
+/// Phase 98 follow-up #5 — build a raw-github manifest URL pinned
+/// to a specific tag (or branch). The fetcher tries this BEFORE
+/// falling back to the plugin's HEAD-pointing `manifest_url`, so
+/// `compat_check { crate_name, version: Some(v) }` actually sees
+/// the manifest the operator is about to install rather than HEAD.
+/// Empty Vec when `repo_url` is missing.
+fn derive_tagged_urls(
+    plugin: &DiscoveredPlugin,
+    raw_github_endpoint: &str,
+    tag: &str,
+) -> Vec<String> {
+    let Some(repo_url) = plugin.repo_url.as_deref() else {
+        return Vec::new();
+    };
+    let prefix = "https://github.com/";
+    let Some(rest) = repo_url.strip_prefix(prefix) else {
+        return Vec::new();
+    };
+    let mut parts = rest.split('/');
+    let (Some(org), Some(name)) = (parts.next(), parts.next()) else {
+        return Vec::new();
+    };
+    let name = name.trim_end_matches(".git");
+    if org.is_empty() || name.is_empty() || tag.is_empty() {
+        return Vec::new();
+    }
+    let base = raw_github_endpoint.trim_end_matches('/');
+    vec![format!("{base}/{org}/{name}/{tag}/nexo-plugin.toml")]
 }
 
 /// Derive raw-github manifest URLs from a `DiscoveredPlugin`'s

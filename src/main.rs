@@ -2694,11 +2694,32 @@ async fn main() -> Result<()> {
                     let daemon_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
                         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
                     let state_dir = nexo_project_tracker::state::nexo_state_dir();
-                    let discovery_cfg =
+                    let mut discovery_cfg =
                         nexo_plugin_discovery::config::DiscoveryConfig::with_defaults(
                             state_dir,
                             daemon_version,
                         );
+                    // Phase 98 follow-up #7 — seed `official_owners`
+                    // from `trusted_keys.toml` so the trust-tier
+                    // badge in the catalogue surfaces the same
+                    // allowlist Phase 97.1's cosign pipeline enforces
+                    // at install time. The baked-in default
+                    // (`lordmacu` + `nexo-rs`) survives as a fallback
+                    // when the file is absent OR carries zero
+                    // authors. Operators control trust through ONE
+                    // file instead of two.
+                    if let Ok(trusted) =
+                        nexo_ext_installer::TrustedKeysConfig::load(&config_dir)
+                    {
+                        let owners: Vec<String> = trusted
+                            .authors
+                            .iter()
+                            .map(|a| a.owner.clone())
+                            .collect();
+                        if !owners.is_empty() {
+                            discovery_cfg.official_owners = owners;
+                        }
+                    }
                     Some(nexo_setup::discovery_adapter::DefaultDiscoveryAdapter::from_default_client(
                         discovery_cfg,
                     ))

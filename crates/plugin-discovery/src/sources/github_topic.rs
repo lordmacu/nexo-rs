@@ -29,12 +29,23 @@ const TOPIC: &str = "nexo-plugin";
 pub struct GithubTopicSource {
     http: reqwest::Client,
     endpoint: String,
+    /// GitHub raw-content host (`https://raw.githubusercontent.com`
+    /// by default). Phase 98 follow-up #8 lifts the prior hardcoded
+    /// constant so GitHub Enterprise / air-gapped mirrors can
+    /// route manifest fetches through their own raw host.
+    raw_github_endpoint: String,
 }
 
 impl GithubTopicSource {
     /// Build a fresh source. `token` lifts the rate ceiling; `None`
-    /// = unauth.
-    pub fn new(endpoint: impl Into<String>, http_timeout: Duration, token: Option<String>) -> Self {
+    /// = unauth. `raw_github_endpoint` becomes the prefix the
+    /// source uses when constructing `nexo-plugin.toml` URLs.
+    pub fn new(
+        endpoint: impl Into<String>,
+        raw_github_endpoint: impl Into<String>,
+        http_timeout: Duration,
+        token: Option<String>,
+    ) -> Self {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             reqwest::header::ACCEPT,
@@ -57,6 +68,7 @@ impl GithubTopicSource {
         Self {
             http,
             endpoint: endpoint.into(),
+            raw_github_endpoint: raw_github_endpoint.into(),
         }
     }
 }
@@ -96,7 +108,12 @@ impl Source for GithubTopicSource {
             .json()
             .await
             .map_err(|e| source_error(SOURCE_NAME, format!("parse {url}: {e}")))?;
-        Ok(parsed.items.into_iter().filter_map(map_repo).collect())
+        let raw_base = self.raw_github_endpoint.trim_end_matches('/').to_string();
+        Ok(parsed
+            .items
+            .into_iter()
+            .filter_map(|repo| map_repo(repo, &raw_base))
+            .collect())
     }
 }
 
@@ -130,7 +147,7 @@ struct GithubOwner {
     login: String,
 }
 
-fn map_repo(raw: GithubRepo) -> Option<DiscoveredPlugin> {
+fn map_repo(raw: GithubRepo, raw_github_base: &str) -> Option<DiscoveredPlugin> {
     let GithubRepo {
         full_name,
         name,
@@ -154,7 +171,7 @@ fn map_repo(raw: GithubRepo) -> Option<DiscoveredPlugin> {
     let crate_name = derive_crate_name(&name);
     let branch = default_branch.as_deref().unwrap_or("main");
     let manifest_url =
-        format!("https://raw.githubusercontent.com/{full_name}/{branch}/nexo-plugin.toml");
+        format!("{raw_github_base}/{full_name}/{branch}/nexo-plugin.toml");
     let install_params = PluginsInstallParams {
         crate_name: crate_name.clone(),
         version: None,
@@ -240,7 +257,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(happy_body()))
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
         let items = src.fetch().await.expect("fetch ok");
         assert_eq!(items.len(), 2);
         let tele = items
@@ -248,12 +265,11 @@ mod tests {
             .find(|p| p.name == "nexo-plugin-telegram")
             .expect("telegram name derived from nexo-rs-plugin-…");
         assert_eq!(tele.owner, "lordmacu");
-        assert_eq!(
-            tele.manifest_url.as_deref(),
-            Some(
-                "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-telegram/main/nexo-plugin.toml"
-            )
+        let expected = format!(
+            "{}/raw/lordmacu/nexo-rs-plugin-telegram/main/nexo-plugin.toml",
+            server.uri()
         );
+        assert_eq!(tele.manifest_url.as_deref(), Some(expected.as_str()));
         // GithubTopic source uses the `full_name` repo on the
         // source variant.
         match &tele.sources[0] {
@@ -272,7 +288,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(403))
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
         let err = src.fetch().await.expect_err("403 must surface");
         assert_eq!(err.source, SOURCE_NAME);
         assert!(
@@ -292,7 +308,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
         let items = src.fetch().await.expect("ok");
         assert!(items.is_empty());
     }

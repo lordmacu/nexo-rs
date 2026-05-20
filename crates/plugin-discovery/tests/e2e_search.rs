@@ -140,6 +140,10 @@ fn config_for(
         cache_ttl: Duration::from_secs(60),
         crates_io_endpoint: crates_io.uri(),
         github_endpoint: github.uri(),
+        // Phase 98 follow-up #8 — point raw-github fetches at the
+        // same mock server so the test exercises the
+        // `raw_github_endpoint` parameter end-to-end.
+        raw_github_endpoint: github.uri(),
         index_url,
         http_timeout: Duration::from_secs(5),
         official_owners: vec!["lordmacu".into()],

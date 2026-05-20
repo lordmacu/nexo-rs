@@ -12,6 +12,12 @@ pub const DEFAULT_CRATES_IO_ENDPOINT: &str = "https://crates.io";
 /// Default GitHub REST API root.
 pub const DEFAULT_GITHUB_ENDPOINT: &str = "https://api.github.com";
 
+/// Default GitHub raw-content host. Used by the `github_topic`
+/// source to construct manifest URLs + by the discovery client's
+/// `derive_fallback_urls` helper. Overridable for GitHub Enterprise
+/// + air-gapped mirrors (Phase 98 follow-up #8).
+pub const DEFAULT_RAW_GITHUB_ENDPOINT: &str = "https://raw.githubusercontent.com";
+
 /// Default curated index location. Repo seeded by Phase 98.16.
 pub const DEFAULT_INDEX_URL: &str =
     "https://raw.githubusercontent.com/lordmacu/nexo-plugin-index/main/index.json";
@@ -47,6 +53,11 @@ pub struct DiscoveryConfig {
     pub crates_io_endpoint: String,
     /// GitHub REST root.
     pub github_endpoint: String,
+    /// GitHub raw-content host. The `github_topic` source builds
+    /// manifest URLs as `<raw>/<repo>/<branch>/nexo-plugin.toml`.
+    /// Override for GitHub Enterprise (`raw.github.enterprise.com`)
+    /// or air-gapped mirrors.
+    pub raw_github_endpoint: String,
     /// Curated index `index.json` URL.
     pub index_url: String,
     /// Per-source HTTP timeout.
@@ -74,6 +85,7 @@ impl DiscoveryConfig {
             cache_ttl: DEFAULT_CACHE_TTL,
             crates_io_endpoint: DEFAULT_CRATES_IO_ENDPOINT.into(),
             github_endpoint: DEFAULT_GITHUB_ENDPOINT.into(),
+            raw_github_endpoint: DEFAULT_RAW_GITHUB_ENDPOINT.into(),
             index_url: DEFAULT_INDEX_URL.into(),
             http_timeout: DEFAULT_HTTP_TIMEOUT,
             official_owners: DEFAULT_OFFICIAL_OWNERS

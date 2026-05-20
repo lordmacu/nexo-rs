@@ -2,6 +2,70 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 100 — OpenRouter LLM provider deferreds   ⬜ ACTIVE
+
+Logged 2026-05-20 alongside Phase 100 close-out. Scoped *out* of
+v1; ride next-session waves once data or downstream features make
+each one load-bearing.
+
+1. ~~**`100.x.cache-control` — Anthropic `cache_control` markers
+   passthrough via OpenRouter**~~ ✅ CLOSED 2026-05-20. Added
+   `BodyTransformer` type to `OpenAiClient` + new constructor
+   `with_extra_headers_and_transformer`. `OpenRouterClient` gains
+   `is_cache_marker_enabled()` proxy. Transformer
+   `anthropic_via_or_cache_transformer` mirrors
+   `crates/llm/src/anthropic.rs::render_system_blocks` (≤ 4
+   breakpoints, last-of-run placement, empty-text skip). Gating
+   matches attribution: `is_canonical_host(base_url) &&
+   is_anthropic_slug(model)` — proxies + non-Anthropic vendors get
+   `None` transformer (zero-impact). `cache_tools=true` stamps a
+   long-TTL marker on the LAST `tools[]` entry. 13 new tests
+   (slug detection, marker shape, breakpoint cap, system rewrite,
+   no-op gating, tools cache, factory enable/disable matrix).
+   Workspace nextest 260/260 verde. Docs `docs/src/llm/openrouter.md`
+   gained "Cache markers passthrough" section with wire example.
+
+2. ~~**`100.x.provider-routing` — `provider: { order, allow_fallbacks }`
+   body extension**~~ ✅ CLOSED 2026-05-20. Added
+   `ProviderRoutingPolicy` struct in `crates/llm/src/types.rs`
+   (order / allow_fallbacks / require_parameters / sort, all
+   independently optional). Added
+   `ChatRequest.provider_routing: Option<ProviderRoutingPolicy>`
+   (additive default `None`); 24 existing ChatRequest literal
+   sites updated workspace-wide. OpenRouter master transformer
+   serialises the policy into `body["provider"]` via
+   `serialize_provider_routing` when the client targets the
+   canonical OR host AND the request carries a non-empty policy.
+   Empty policy or `None` ships unannotated. Other providers
+   ignore the field. 10 new tests (default null,
+   per-field emission, empty-sort skip, full-policy roundtrip,
+   transformer compose with cache markers, no-emit on None,
+   no-emit on empty). 260/260 nexo-llm + 2470/2470 affected
+   crates nextest verde. Docs gained "Provider routing" section
+   in `docs/src/llm/openrouter.md`.
+
+3. **`100.x.usage-cost` — `usage.cost` USD tracking → SaaS
+   billing** — OpenRouter returns `usage.cost` in USD per request.
+   Hook this into the microapp billing pipeline (Phase 83 territory)
+   so SaaS tenants get accurate per-tenant cost attribution
+   regardless of underlying vendor. Trigger: agent-creator
+   microapp implements per-tenant billing dashboards
+   ([[project_microapp_is_saas_meta_creator]]). Cross-check
+   `research/CHANGELOG.md:1877` for the recursion footgun
+   OpenClaw hit ("`openrouter/auto` pricing refresh infinite
+   loop on bootstrap") — gate behind cache + lazy fetch.
+
+4. **`100.x.models-probe` — live `/api/v1/models` endpoint →
+   dynamic catalog** — `OpenRouterFactory::supports_models_probe()`
+   already returns `true`; downstream admin RPC wizard could call
+   `GET https://openrouter.ai/api/v1/models` and surface the live
+   catalogue instead of (or in addition to) the curated
+   `KNOWN_MODELS` list. Trigger: operator complains that
+   curated list is stale or missing models they need. Cache
+   response for ~15 min to avoid hammering OR; respect
+   `LivePluginInstallerCell` patterns from Phase 97.1 for
+   on-demand network calls.
+
 ### Phase 98 — Plugin discovery + install hardening deferreds   ⬜ ACTIVE
 
 Logged 2026-05-19 from the audit memo
@@ -42,6 +106,77 @@ once Phase 98 ships.
 8. **One-click install bypassing modal** — pre-fill modal stays
    v1 default; one-click direct install behind a confirm dialog
    defer until UX feedback.
+
+9. **Operator: create `lordmacu/nexo-plugin-index` public repo** —
+   scaffold prepared in `proyecto/nexo-plugin-index-scaffold/`
+   (index.json seeded with 6 plugins + README + LICENSE-MIT).
+   `gh repo create lordmacu/nexo-plugin-index --public --source=…`
+   then push. Daemon works fine without it (CuratedIndexSource's
+   404 soft-fail path); the curated tier just stays empty until
+   the repo lands.
+
+10. **Operator: browser smoke test `/m/plugins`** — vitest passes
+    but the real UX (tabs + grid + debounced search + install
+    pre-fill + partial-failure banner dismiss) hasn't been
+    validated in a live admin against a real daemon. Typical
+    catches: overflow on long descriptions, dropdown z-index,
+    debounce ergonomics. Run `pnpm dev` + `nexo plugin search` in
+    parallel to compare CLI vs UI parity.
+
+11. **Operator: revisit mixed commit `cb3ff3c`** — Phase 98.12
+    landed alongside ~10 user WIP files (AgentAdvancedFields +731,
+    PairingModal +101, InstallPluginModal +338 rewrite,
+    onboarding/routes new). The commit message names plugin-discovery
+    but blame includes the WIP. Cosmetic concern; keep as-is unless
+    a clean separation matters for a future revert.
+
+12. ~~**`PluginsSearchBar` category dropdown rendered i18n key
+    alongside value**~~ — ✅ CLOSED 2026-05-20. Replaced the
+    `{t("plugins.badge.source.…")}{c}` hack with dedicated
+    `plugins.search.category.{channel,poller,tool,webhook,persona}`
+    keys (EN + ES). 5 new keys per locale; dropdown now shows
+    "Channel" / "Canal" etc.
+
+13. ~~**`compat_check` version pin informational**~~ — ✅ CLOSED
+    2026-05-20. `derive_tagged_urls(plugin, raw_endpoint, tag)`
+    builds `<raw>/<org>/<name>/<tag>/nexo-plugin.toml` and the
+    fetcher tries `v{version}` + `{version}` BEFORE the plugin's
+    HEAD `manifest_url`. Operators see the manifest THEY are about
+    to install rather than `main`.
+
+14. ~~**`PluginsMain` integration test missing**~~ — ✅ CLOSED
+    2026-05-20. New `tests/components/plugins-main.test.tsx` with
+    3 cases: title + 3 header buttons + 2 tabs render; tab switch
+    Installed → Available; header Install opens modal. Mocks the
+    plugin_doctor + plugin_discovery + admin RPC clients so the
+    test stays hermetic. 18/18 frontend tests verde (5 tabs + 6
+    card + 4 banner + 3 main).
+
+15. ~~**`official_owners` hardcoded constants**~~ — ✅ CLOSED
+    2026-05-20. `src/main.rs` daemon bootstrap now reads
+    `TrustedKeysConfig::load(&config_dir)` and overrides
+    `DiscoveryConfig.official_owners` with `trusted.authors[].owner`
+    when non-empty. Baked-in `DEFAULT_OFFICIAL_OWNERS` survives as
+    a fallback when `trusted_keys.toml` is absent or carries zero
+    authors. Trust tier surfaces in the catalogue UI now match
+    what Phase 97.1's cosign pipeline enforces at install time —
+    single source of truth.
+
+16. ~~**`github_topic` hardcoded `raw.githubusercontent.com`**~~ —
+    ✅ CLOSED 2026-05-20. `DiscoveryConfig.raw_github_endpoint`
+    field (default `DEFAULT_RAW_GITHUB_ENDPOINT =
+    "https://raw.githubusercontent.com"`) plumbed through
+    `GithubTopicSource::new(endpoint, raw_github_endpoint, …)` +
+    `derive_tagged_urls` in `client.rs::compat_check`. GitHub
+    Enterprise / air-gapped mirrors can now override per
+    deployment.
+
+17. **Adapter post-cache filter optimization** — `DefaultDiscoveryAdapter::search`
+    applies `category` / `source` / `compat_only` filters AFTER the
+    cache hit. ❌ WONTFIX as premature optimization: 200-300 plugins
+    × 3 string compares is sub-millisecond. Push filters into
+    `DiscoveryClient::search` only when catalog grows past 5k
+    entries and the latency is measurable.
 
 ### Phase 97 — Runtime hot operations (plugin install + pair re-launch + agent-spawn-on-bind)   🔄 PARTIAL
 
