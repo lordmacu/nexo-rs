@@ -31,6 +31,19 @@ pub trait PluginRestarter: Send + Sync + std::fmt::Debug {
     /// Force-restart the named plugin. See module-level docs for
     /// the error → `AdminRpcError` mapping the handler applies.
     async fn restart(&self, plugin_id: &str) -> anyhow::Result<PluginsRestartResponse>;
+
+    /// Push a fresh `plugin.configure` to the live subprocess of a
+    /// channel (and all its `channel.<instance>` handles) from the
+    /// just-persisted config on disk. This is what makes a channel
+    /// configured AFTER boot start working without a restart: a
+    /// subprocess plugin only eager-starts (telegram `getUpdates`,
+    /// etc.) inside its `on_configure` handler, so the daemon must
+    /// re-deliver the config slice once the operator writes it. Default
+    /// is a no-op (tests / minimal embeddings); production wires
+    /// `LivePluginRestarter`.
+    async fn reconfigure(&self, _channel: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// `nexo/admin/plugins/restart` — operator-driven subprocess

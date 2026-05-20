@@ -1310,30 +1310,34 @@ impl AdminRpcDispatcher {
                         )
                         .await;
                         // Phase 97.x — after a successful credential
-                        // register, restart the channel's plugin so
-                        // the subprocess re-reads its yaml and
-                        // (re)starts polling/connecting for the
+                        // register, push a fresh `plugin.configure` to
+                        // the channel's LIVE subprocess so it
+                        // eager-starts polling/connecting for the
                         // just-configured instance WITHOUT a daemon
-                        // restart. Generic across telegram / email /
-                        // any future credential-flow channel (whatsapp
-                        // restarts via its pairing `on_pair_success`
-                        // path). Idempotent; a missing restarter skips
-                        // silently; a restart failure is logged but
-                        // does NOT fail the register — the yaml write
-                        // already succeeded.
+                        // restart. A subprocess channel plugin only
+                        // begins `getUpdates` (telegram) etc. inside
+                        // its `on_configure` handler — so re-delivering
+                        // the config slice (not a restart, which would
+                        // just kill the idle child) is what brings it
+                        // online. Generic across telegram / email / any
+                        // future channel (whatsapp also configures via
+                        // its pairing `on_pair_success` path).
+                        // Idempotent; missing restarter skips; a failure
+                        // is logged but does NOT fail the register —
+                        // the yaml write already succeeded.
                         if outcome.error.is_none() {
                             if let (Some(restarter), Some(channel)) =
                                 (&self.plugin_restarter, channel.as_deref())
                             {
-                                match restarter.restart(channel).await {
-                                    Ok(_) => tracing::info!(
+                                match restarter.reconfigure(channel).await {
+                                    Ok(()) => tracing::info!(
                                         channel,
-                                        "post-register channel plugin restart fired"
+                                        "post-register channel reconfigure pushed"
                                     ),
                                     Err(e) => tracing::warn!(
                                         channel,
                                         error = %e,
-                                        "post-register channel plugin restart failed; \
+                                        "post-register channel reconfigure failed; \
                                          configured instance may need a manual restart"
                                     ),
                                 }

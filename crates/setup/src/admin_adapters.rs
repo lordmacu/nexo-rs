@@ -5590,6 +5590,10 @@ pub struct LivePluginRestarter {
     memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
     llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
     llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+    /// Daemon config dir — `reconfigure` reads
+    /// `<config_dir>/plugins/<channel>.yaml` to re-deliver the live
+    /// config slice.
+    config_dir: std::path::PathBuf,
     /// Pre-restart hook (channel id → re-seed daemon process env).
     /// A channel configured AFTER boot was registered via the
     /// auto-fallback path with `spawn_env = None`, so its subprocess
@@ -5622,6 +5626,7 @@ impl LivePluginRestarter {
         memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
         llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
         llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+        config_dir: std::path::PathBuf,
     ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             handles_cell,
@@ -5630,6 +5635,7 @@ impl LivePluginRestarter {
             memory,
             llm_registry,
             llm_config,
+            config_dir,
             reseed_env: None,
         })
     }
@@ -5648,6 +5654,7 @@ impl LivePluginRestarter {
             memory: self.memory.clone(),
             llm_registry: self.llm_registry.clone(),
             llm_config: self.llm_config.clone(),
+            config_dir: self.config_dir.clone(),
             reseed_env: Some(reseed),
         })
     }
@@ -5709,6 +5716,58 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for L
                 llm,
             )
             .await
+    }
+
+    async fn reconfigure(&self, channel: &str) -> anyhow::Result<()> {
+        // Read the just-persisted per-channel yaml + push its config
+        // slice to every live handle for this channel via
+        // `plugin.configure`. A subprocess channel plugin only
+        // eager-starts (e.g. telegram `getUpdates`) inside its
+        // `on_configure` handler, so this is what brings a channel
+        // configured AFTER boot online without a restart. Generalises
+        // `WhatsappPersister::push_configure_to_live_plugin` to any
+        // channel keyed by its top-level yaml key.
+        let yaml_path = self
+            .config_dir
+            .join("plugins")
+            .join(format!("{channel}.yaml"));
+        let raw = std::fs::read_to_string(&yaml_path)
+            .map_err(|e| anyhow::anyhow!("read {}: {e}", yaml_path.display()))?;
+        let resolved =
+            nexo_config::env::resolve_placeholders(&raw, &yaml_path.display().to_string())?;
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&resolved)?;
+        let inner = parsed.get(channel).cloned().ok_or_else(|| {
+            anyhow::anyhow!("{channel}.yaml missing top-level `{channel}` key")
+        })?;
+
+        let handles = {
+            let guard = self.handles_cell.read().await;
+            guard.as_ref().cloned()
+        };
+        let Some(handles) = handles else {
+            anyhow::bail!("plugin handles not yet populated; daemon still booting")
+        };
+        let prefix = format!("{channel}.");
+        let mut pushed = 0usize;
+        for (id, handle) in handles.iter() {
+            if id == channel || id.starts_with(&prefix) {
+                if let Err(e) = handle.configure(&inner).await {
+                    tracing::warn!(
+                        plugin_id = %id,
+                        error = %e,
+                        "reconfigure: handle.configure rejected"
+                    );
+                } else {
+                    pushed += 1;
+                }
+            }
+        }
+        tracing::info!(
+            channel,
+            pushed,
+            "reconfigure: pushed plugin.configure to live channel handles"
+        );
+        Ok(())
     }
 }
 
@@ -6835,6 +6894,7 @@ nexo_capabilities = ["broker"]
             None,
             llm_registry,
             llm_config,
+            std::path::PathBuf::from("/tmp"),
         )
     }
 
@@ -6851,6 +6911,7 @@ nexo_capabilities = ["broker"]
             None,
             llm_registry,
             llm_config,
+            std::path::PathBuf::from("/tmp"),
         )
     }
 

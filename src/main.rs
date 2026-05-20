@@ -2534,6 +2534,7 @@ async fn main() -> Result<()> {
             None,
             llm_registry.clone(),
             std::sync::Arc::new(cfg.llm.clone()),
+            config_dir_abs.clone(),
         )
         .with_reseed_env(reseed)
     };
