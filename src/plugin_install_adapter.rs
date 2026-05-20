@@ -852,22 +852,7 @@ impl PluginInstaller for LivePluginInstaller {
         };
 
         // derived_id (`<channel>` | `<channel>.<instance>`) → resolved slice.
-        let mut desired: std::collections::BTreeMap<String, serde_yaml::Value> =
-            std::collections::BTreeMap::new();
-        for entry in &resolved_entries {
-            let label = entry
-                .get("instance")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let id = if label.is_empty() {
-                channel.to_string()
-            } else {
-                format!("{channel}.{label}")
-            };
-            desired.insert(id, entry.clone());
-        }
+        let desired = parse_desired_instances(channel, &resolved_entries);
 
         // 2. Live handles for this channel (`channel` | `channel.<inst>`).
         // When the operator configured NAMED instances the bare
@@ -894,9 +879,15 @@ impl PluginInstaller for LivePluginInstaller {
             Err(_) => "stdio_bridge",
         };
 
+        // Classify desired vs live into add / drop / keep. `drop`
+        // includes the bare auto-fallback base once named instances
+        // exist (it falls out of `desired`) — the boot.rs:210 dedup at
+        // runtime.
+        let desired_ids: std::collections::BTreeSet<String> = desired.keys().cloned().collect();
+        let (add_ids, drop_ids, keep_ids) = classify_reconcile(&desired_ids, &live_ids);
+
         // Discover the base manifest once (only needed for adds).
-        let needs_add = desired.keys().any(|id| !live_ids.contains(id));
-        let snap = if needs_add {
+        let snap = if !add_ids.is_empty() {
             Some(discover(&ctx.discovery_cfg, &ctx.current_version))
         } else {
             None
@@ -911,10 +902,8 @@ impl PluginInstaller for LivePluginInstaller {
         let (mut added, mut removed, mut reconfigured) = (0usize, 0usize, 0usize);
 
         // ── ADD: desired ∖ live → register factory + spawn + configure ──
-        for (id, entry) in &desired {
-            if live_ids.contains(id) {
-                continue;
-            }
+        for id in &add_ids {
+            let entry = &desired[id];
             let (Some(snap), Some(base)) = (snap.as_ref(), base.as_ref()) else {
                 tracing::warn!(channel, instance = %id, "reconcile: base manifest not discovered; cannot spawn instance");
                 continue;
@@ -928,9 +917,15 @@ impl PluginInstaller for LivePluginInstaller {
                     crate::seed_whatsapp_subprocess_env_for(entry, broker_kind, &broker_url)
                 }
                 _ => {
-                    tracing::warn!(
+                    // Channels without a per-instance env seeder
+                    // (email = one subprocess, multi-account internal,
+                    // configured via the configure-push above) are not
+                    // per-instance spawned here. Their live subprocess
+                    // still gets re-configured via the KEEP path; only
+                    // the per-instance ADD-spawn is skipped.
+                    tracing::debug!(
                         channel,
-                        "reconcile: no subprocess env seeder for channel; skipping add"
+                        "reconcile: channel has no per-instance env seeder; relying on configure-push (no per-instance spawn)"
                     );
                     continue;
                 }
@@ -993,10 +988,7 @@ impl PluginInstaller for LivePluginInstaller {
         }
 
         // ── DROP: live ∖ desired → kill subprocess + drop factory ──
-        for id in &live_ids {
-            if desired.contains_key(id) {
-                continue;
-            }
+        for id in &drop_ids {
             match unregister_plugin_from_live_runtime(id, &ctx.hot_plugin_ctx).await {
                 Ok(_) => {
                     ctx.factory_registry.unregister_runtime(id);
@@ -1011,10 +1003,8 @@ impl PluginInstaller for LivePluginInstaller {
         }
 
         // ── KEEP: desired ∩ live → re-push configure (eager-start / refresh) ──
-        for (id, entry) in &desired {
-            if !live_ids.contains(id) {
-                continue;
-            }
+        for id in &keep_ids {
+            let entry = &desired[id];
             push_instance_configure(&ctx.hot_plugin_ctx, id, entry).await;
             reconfigured += 1;
         }
@@ -1057,6 +1047,97 @@ async fn push_instance_configure(
     let value = serde_yaml::Value::Sequence(vec![entry.clone()]);
     if let Err(e) = handle.configure(&value).await {
         tracing::warn!(plugin_id = %id, error = %e, "reconcile: handle.configure rejected");
+    }
+}
+
+/// Desired derived ids (`<channel>` | `<channel>.<instance>`) → resolved
+/// config slice, from the resolved per-channel yaml entries.
+fn parse_desired_instances(
+    channel: &str,
+    entries: &[serde_yaml::Value],
+) -> std::collections::BTreeMap<String, serde_yaml::Value> {
+    let mut out = std::collections::BTreeMap::new();
+    for entry in entries {
+        let label = entry
+            .get("instance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        let id = if label.is_empty() {
+            channel.to_string()
+        } else {
+            format!("{channel}.{label}")
+        };
+        out.insert(id, entry.clone());
+    }
+    out
+}
+
+/// Split desired vs live channel-instance ids into `(add, drop, keep)`.
+/// `drop` naturally includes the bare `<channel>` auto-fallback once
+/// named instances are desired (it isn't in `desired`) — the runtime
+/// edition of the boot.rs:210 dedup.
+fn classify_reconcile(
+    desired_ids: &std::collections::BTreeSet<String>,
+    live_ids: &std::collections::BTreeSet<String>,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let add = desired_ids.difference(live_ids).cloned().collect();
+    let drop = live_ids.difference(desired_ids).cloned().collect();
+    let keep = desired_ids.intersection(live_ids).cloned().collect();
+    (add, drop, keep)
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::{classify_reconcile, parse_desired_instances};
+    use std::collections::BTreeSet;
+
+    fn named(instance: &str) -> serde_yaml::Value {
+        serde_yaml::from_str(&format!("instance: {instance}\ntoken: t")).unwrap()
+    }
+
+    #[test]
+    fn parse_bare_and_named_instances() {
+        let bare: serde_yaml::Value = serde_yaml::from_str("token: t").unwrap();
+        let d = parse_desired_instances("telegram", &[bare]);
+        assert!(d.contains_key("telegram"), "absent label → bare channel id");
+
+        let d = parse_desired_instances("telegram", &[named("boss"), named("sales")]);
+        assert_eq!(d.len(), 2);
+        assert!(d.contains_key("telegram.boss"));
+        assert!(d.contains_key("telegram.sales"));
+    }
+
+    #[test]
+    fn classify_add_drop_keep() {
+        let desired: BTreeSet<String> = ["telegram.a".into(), "telegram.b".into()].into();
+        let live: BTreeSet<String> = ["telegram.a".into(), "telegram.c".into()].into();
+        let (add, drop, keep) = classify_reconcile(&desired, &live);
+        assert_eq!(add, vec!["telegram.b".to_string()]);
+        assert_eq!(drop, vec!["telegram.c".to_string()]);
+        assert_eq!(keep, vec!["telegram.a".to_string()]);
+    }
+
+    #[test]
+    fn classify_drops_bare_base_when_named_instance_appears() {
+        // Live auto-fallback `telegram`; operator configures named
+        // `telegram.boss` → base dropped, named added (runtime dedup).
+        let desired: BTreeSet<String> = ["telegram.boss".into()].into();
+        let live: BTreeSet<String> = ["telegram".into()].into();
+        let (add, drop, keep) = classify_reconcile(&desired, &live);
+        assert_eq!(add, vec!["telegram.boss".to_string()]);
+        assert_eq!(drop, vec!["telegram".to_string()]);
+        assert!(keep.is_empty());
+    }
+
+    #[test]
+    fn classify_removes_all_when_yaml_gone() {
+        let desired: BTreeSet<String> = BTreeSet::new();
+        let live: BTreeSet<String> = ["telegram.a".into()].into();
+        let (add, drop, keep) = classify_reconcile(&desired, &live);
+        assert!(add.is_empty());
+        assert_eq!(drop, vec!["telegram.a".to_string()]);
+        assert!(keep.is_empty());
     }
 }
 
