@@ -34,7 +34,10 @@ push = true
 # message crate-agnostic; the per-crate identity is captured by
 # the tag (`<crate>-v<version>`) and is unambiguous.
 consolidate-commits = true
-pre-release-commit-message = "chore(release): publish wave"
+# `[no-docs]` because a version-bump commit only ever touches
+# Cargo.toml / Cargo.lock — the commit-msg docs-sync gate counts
+# those as production files, so every release commit needs the tag.
+pre-release-commit-message = "chore(release): publish wave [no-docs]"
 
 # Per-crate independent versioning (don't sync workspace.package.version).
 shared-version = false

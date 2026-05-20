@@ -29,6 +29,17 @@
 
 set -uo pipefail
 
+# Clear the git env vars a parent git operation (e.g. the pre-push
+# hook fired by `git push`) exports into this process. Without this,
+# the `test` gate's `cargo test --workspace` runs
+# crates/driver-loop/tests/workspace_git_worktree_test.rs with an
+# inherited GIT_DIR / GIT_INDEX_FILE pointing at the outer repo, and
+# its `git worktree add` against a tempdir repo fails with
+# `fatal: .git/index: index file open failed: Not a directory`.
+# No-op under GitHub Actions (no inherited git env there).
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX \
+      GIT_AUTHOR_DATE GIT_COMMITTER_DATE GIT_REFLOG_ACTION 2>/dev/null || true
+
 # Default: run every gate. Override by passing gate names as args.
 ALL_GATES=(fmt locale ts-types clippy build test test-cse template-plugin template-microapp)
 GATES=("${@:-${ALL_GATES[@]}}")
