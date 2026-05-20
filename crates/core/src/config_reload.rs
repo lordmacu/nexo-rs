@@ -702,13 +702,15 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let rec = Arc::clone(&seen);
-        coord.set_spawner(Arc::new(AgentSpawnerFn(Box::new(move |cfg, _plugins, _llm| {
-            let rec = Arc::clone(&rec);
-            Box::pin(async move {
-                rec.lock().unwrap().push(cfg.id.clone());
-                Err(SpawnError::Validation("test stub".into()))
-            })
-        }))));
+        coord.set_spawner(Arc::new(AgentSpawnerFn(Box::new(
+            move |cfg, _plugins, _llm| {
+                let rec = Arc::clone(&rec);
+                Box::pin(async move {
+                    rec.lock().unwrap().push(cfg.id.clone());
+                    Err(SpawnError::Validation("test stub".into()))
+                })
+            },
+        ))));
 
         let _ = coord.reload().await;
         assert!(

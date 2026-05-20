@@ -241,8 +241,6 @@ impl LivePluginInstaller {
             }
             None => "latest".to_string(),
         };
-        let coords = format!("{repo}@{tag}");
-
         // Phase 97.1 — admin RPC always passes None for
         // dest_override + target_override so the CLI's standard
         // resolution applies (config search_paths[0] → state-dir
@@ -256,16 +254,42 @@ impl LivePluginInstaller {
             "policy_applied"
         }
         .to_string();
-        match install_plugin_silent(
-            &self.config_dir,
-            &coords,
-            None,
-            None,
-            params.require_signature,
-            params.skip_signature_verify,
-        )
-        .await
-        {
+        // A specific crates.io version often has NO matching GitHub
+        // release: the release workflow trails the registry publish and
+        // tags carry a `v` prefix, so `repo@0.6.2` 404s while the latest
+        // release is `v0.5.2`. For Release installs the GitHub release —
+        // not the crates.io version — is the source of truth, so fall
+        // back to `@latest` on a not-found rather than failing.
+        let mut attempt_tag = tag.clone();
+        let install_result = loop {
+            let coords = format!("{repo}@{attempt_tag}");
+            match install_plugin_silent(
+                &self.config_dir,
+                &coords,
+                None,
+                None,
+                params.require_signature,
+                params.skip_signature_verify,
+            )
+            .await
+            {
+                Err(e)
+                    if attempt_tag != "latest"
+                        && e.kind == "Http"
+                        && (e.error.contains("404") || e.error.contains("Not Found")) =>
+                {
+                    tracing::warn!(
+                        repo = %repo,
+                        requested = %attempt_tag,
+                        "release tag not found; retrying with @latest"
+                    );
+                    attempt_tag = "latest".to_string();
+                    continue;
+                }
+                other => break other,
+            }
+        };
+        match install_result {
             Ok(report) => Ok(PluginsInstallResponse {
                 crate_name: params.crate_name.clone(),
                 installed_version: Some(report.version),

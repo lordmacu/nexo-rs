@@ -5736,9 +5736,10 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for L
         let resolved =
             nexo_config::env::resolve_placeholders(&raw, &yaml_path.display().to_string())?;
         let parsed: serde_yaml::Value = serde_yaml::from_str(&resolved)?;
-        let inner = parsed.get(channel).cloned().ok_or_else(|| {
-            anyhow::anyhow!("{channel}.yaml missing top-level `{channel}` key")
-        })?;
+        let inner = parsed
+            .get(channel)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("{channel}.yaml missing top-level `{channel}` key"))?;
 
         let handles = {
             let guard = self.handles_cell.read().await;

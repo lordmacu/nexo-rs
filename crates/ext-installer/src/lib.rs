@@ -328,29 +328,45 @@ pub async fn resolve_release_with_contract<C: ExtractContract>(
     // acts as a fallback target name so portable plugins
     // (Python, TypeScript) can publish a single asset that all
     // daemons accept.
-    let per_target_name = format!("{pkg_id}-{version_str}-{target}.tar.gz");
+    // Candidate target triples, in preference order. The exact host
+    // target first; then a `musl` fallback for glibc/`gnu` linux hosts
+    // — musl tarballs are statically linked and run fine on gnu
+    // systems, and plugins commonly ship ONLY musl for linux (smaller
+    // matrix, one portable artifact). Without this a gnu daemon 404s on
+    // a musl-only release even though the binary would run.
+    let mut target_candidates = vec![target.to_string()];
+    if let Some(stem) = target.strip_suffix("-gnu") {
+        target_candidates.push(format!("{stem}-musl"));
+    }
     let noarch_name = format!("{pkg_id}-{version_str}-noarch.tar.gz");
-    let (tarball_asset, tarball_name, matched_target) =
-        match release.assets.iter().find(|a| a.name == per_target_name) {
-            Some(a) => (a, per_target_name, target.to_string()),
-            None => match release.assets.iter().find(|a| a.name == noarch_name) {
-                Some(a) => (a, noarch_name, "noarch".to_string()),
-                None => {
-                    let available: Vec<String> = release
-                        .assets
-                        .iter()
-                        .filter(|a| a.name.ends_with(".tar.gz"))
-                        .map(|a| a.name.clone())
-                        .collect();
-                    return Err(InstallError::TargetNotFound {
-                        id: pkg_id.clone(),
-                        version: version.clone(),
-                        target: target.to_string(),
-                        available,
-                    });
-                }
-            },
-        };
+    let matched = target_candidates.iter().find_map(|cand| {
+        let name = format!("{pkg_id}-{version_str}-{cand}.tar.gz");
+        release
+            .assets
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| (a, name, cand.clone()))
+    });
+    let (tarball_asset, tarball_name, matched_target) = match matched {
+        Some(t) => t,
+        None => match release.assets.iter().find(|a| a.name == noarch_name) {
+            Some(a) => (a, noarch_name, "noarch".to_string()),
+            None => {
+                let available: Vec<String> = release
+                    .assets
+                    .iter()
+                    .filter(|a| a.name.ends_with(".tar.gz"))
+                    .map(|a| a.name.clone())
+                    .collect();
+                return Err(InstallError::TargetNotFound {
+                    id: pkg_id.clone(),
+                    version: version.clone(),
+                    target: target.to_string(),
+                    available,
+                });
+            }
+        },
+    };
 
     // Find the matching .sha256 asset.
     let sha256_name = format!("{tarball_name}.sha256");
