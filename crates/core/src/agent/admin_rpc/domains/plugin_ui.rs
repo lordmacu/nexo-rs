@@ -428,9 +428,25 @@ impl PluginUiDomain {
             }
         }
 
-        // Validate the non-secret block against the plugin schema.
+        // Merge submitted (non-secret) values into the EXISTING
+        // config first, so a PARTIAL edit validates against the full
+        // config — required fields the operator already set (e.g. a
+        // channel token / array of accounts) stay present instead of
+        // tripping `required` on a single-field save.
+        let mut merged = self
+            .config
+            .read(&view.id)
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        for (k, v) in &normal {
+            merged.insert(k.clone(), v.clone());
+        }
+
+        // Validate the MERGED config against the plugin schema.
         if let Some(schema) = &view.config_schema {
-            let errors = validate_config(&Value::Object(normal.clone()), schema);
+            let errors = validate_config(&Value::Object(merged.clone()), schema);
             if !errors.is_empty() {
                 let response = ConfigSetResponse {
                     ok: false,
@@ -454,18 +470,6 @@ impl PluginUiDomain {
                     "credential write `{k}` failed: {e}"
                 )));
             }
-        }
-
-        // Merge non-secret values into the existing config + persist.
-        let mut merged = self
-            .config
-            .read(&view.id)
-            .ok()
-            .flatten()
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        for (k, v) in normal {
-            merged.insert(k, v);
         }
         if let Err(e) = self.config.write(&view.id, &Value::Object(merged)) {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -1073,6 +1077,67 @@ mod tests {
             .await;
         ok_value(resp);
         assert!(forwarder.calls.lock().unwrap()[0].contains("admin_ui/config_set"));
+    }
+
+    #[tokio::test]
+    async fn config_set_partial_edit_validates_merged_config() {
+        // Schema REQUIRES `token`; the form edits only `instance`.
+        // The merged config keeps the existing token → valid (a
+        // partial edit must not trip `required`).
+        let view = PluginUiManifestView {
+            id: "telegram".into(),
+            name: "Telegram".into(),
+            admin_ui: toml::from_str(
+                r#"
+                describe = false
+                [[contributions]]
+                id = "telegram"
+                slot = "plugin.telegram.root"
+                label = "Telegram"
+                screen = "s"
+                [[screens]]
+                id = "s"
+                title = "Telegram"
+                [[screens.fields]]
+                key = "instance"
+                type = "text"
+                label = "Instance"
+                "#,
+            )
+            .unwrap(),
+            admin: None,
+            config_schema: Some(json!({
+                "type": "object",
+                "properties": { "token": {"type": "string"}, "instance": {"type": "string"} },
+                "required": ["token"]
+            })),
+        };
+        let config = Arc::new(FakeConfig::default());
+        config.write("telegram", &json!({"token": "abc"})).unwrap();
+        let d = domain_with(
+            vec![view],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            config.clone(),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        );
+        let resp = d
+            .config_set(
+                json!({"plugin": "telegram", "screen": "s", "values": {"instance": "main"}}),
+                None,
+            )
+            .await;
+        let out: ConfigSetResponse = serde_json::from_value(ok_value(resp)).unwrap();
+        assert!(
+            out.ok,
+            "partial edit should validate against merged: {:?}",
+            out.errors
+        );
+        let stored = config.read("telegram").unwrap().unwrap();
+        assert_eq!(stored.get("token"), Some(&json!("abc")));
+        assert_eq!(stored.get("instance"), Some(&json!("main")));
     }
 
     #[tokio::test]
