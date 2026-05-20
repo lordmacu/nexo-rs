@@ -13,6 +13,7 @@ use crate::deepseek::DeepSeekFactory;
 use crate::gemini::GeminiFactory;
 use crate::minimax::MiniMaxClient;
 use crate::openai_compat::OpenAiClient;
+use crate::openrouter::OpenRouterFactory;
 
 /// Reusable [`CredentialFieldDescriptor`]
 /// constructors so each factory's schema stays declarative + DRY.
@@ -285,6 +286,8 @@ impl LlmRegistry {
             .expect("builtin gemini factory");
         r.register(Box::new(DeepSeekFactory))
             .expect("builtin deepseek factory");
+        r.register(Box::new(OpenRouterFactory))
+            .expect("builtin openrouter factory");
         r
     }
 
@@ -610,6 +613,31 @@ mod tests {
         assert!(names.iter().any(|n| n == "anthropic"));
         assert!(names.iter().any(|n| n == "gemini"));
         assert!(names.iter().any(|n| n == "deepseek"));
+        assert!(names.iter().any(|n| n == "openrouter"));
+    }
+
+    #[test]
+    fn with_builtins_openrouter_default_env_is_openrouter_api_key() {
+        let cat = LlmRegistry::with_builtins().catalog();
+        let or = cat
+            .iter()
+            .find(|e| e.id == "openrouter")
+            .expect("openrouter present in catalog");
+        assert_eq!(or.default_env_var, "OPENROUTER_API_KEY");
+    }
+
+    #[test]
+    fn with_builtins_openrouter_known_models_includes_auto() {
+        let cat = LlmRegistry::with_builtins().catalog();
+        let or = cat
+            .iter()
+            .find(|e| e.id == "openrouter")
+            .expect("openrouter present in catalog");
+        assert!(
+            or.models.iter().any(|m| m == "openrouter/auto"),
+            "known_models must surface the auto alias"
+        );
+        assert!(or.models.iter().any(|m| m == "anthropic/claude-opus-4-7"));
     }
 
     #[test]

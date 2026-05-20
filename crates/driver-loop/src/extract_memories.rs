@@ -1220,6 +1220,7 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
                     usage: TokenUsage::default(),
                     finish_reason: FinishReason::Stop,
                     cache_usage: None,
+                    cost_usd: None,
                 })
             }
             fn model_id(&self) -> &str {
@@ -1266,6 +1267,7 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
                     usage: TokenUsage::default(),
                     finish_reason: FinishReason::ToolUse,
                     cache_usage: None,
+                    cost_usd: None,
                 })
             }
             fn model_id(&self) -> &str {

@@ -131,6 +131,7 @@ pub async fn run_turn_loop(params: TurnLoopParams) -> Result<TurnLoopResult, For
             tool_choice: nexo_llm::types::ToolChoice::Auto,
             system_blocks: cache_safe.system_blocks.clone(),
             cache_tools: cache_safe.cache_tools,
+            provider_routing: None,
         };
 
         let response: ChatResponse = tokio::select! {
@@ -280,6 +281,7 @@ mod tests {
             tool_choice: nexo_llm::types::ToolChoice::Auto,
             system_blocks: vec![],
             cache_tools: false,
+            provider_routing: None,
         })
     }
 
@@ -340,6 +342,7 @@ mod tests {
             },
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         }
     }
 
@@ -356,6 +359,7 @@ mod tests {
             },
             finish_reason: FinishReason::ToolUse,
             cache_usage: None,
+            cost_usd: None,
         }
     }
 
@@ -524,6 +528,7 @@ mod tests {
                 input_tokens: 25,
                 output_tokens: 20,
             }),
+            cost_usd: None,
         };
         let llm = MockLlm::new(vec![with_cache]);
         let result = run_turn_loop(TurnLoopParams {

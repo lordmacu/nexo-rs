@@ -865,6 +865,7 @@ mod tests {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
         fn model_id(&self) -> &str {

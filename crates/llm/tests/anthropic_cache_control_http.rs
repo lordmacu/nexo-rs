@@ -76,6 +76,7 @@ fn req_with_blocks_and_tools() -> ChatRequest {
             },
         ],
         cache_tools: true,
+        provider_routing: None,
     }
 }
 

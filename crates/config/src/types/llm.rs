@@ -1249,4 +1249,54 @@ providers:
         assert_eq!(p.api_key_secret_id.as_deref(), Some("cliente-a-key"));
         assert!(p.api_key.is_empty());
     }
+
+    #[test]
+    fn yaml_provider_openrouter_simple_form_parses() {
+        // Phase 100: simplest possible operator config — just an
+        // API key. base_url defaults via factory; no factory_type
+        // needed because instance id matches factory id.
+        let yaml = r#"
+providers:
+  openrouter:
+    api_key: sk-or-v1-test
+    base_url: ""
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        let p = cfg.providers.get("openrouter").unwrap();
+        assert_eq!(p.api_key, "sk-or-v1-test");
+        assert_eq!(p.base_url, "");
+        assert!(p.factory_type.is_none());
+    }
+
+    #[test]
+    fn yaml_provider_openrouter_with_factory_type_multi_instance_parses() {
+        // Phase 100: multi-instance shape — operator runs two
+        // OpenRouter accounts side by side, each with its own
+        // secret. `factory_type` routes both instances against the
+        // single OpenRouterFactory.
+        let yaml = r#"
+providers:
+  openrouter-tenant-a:
+    base_url: https://openrouter.ai/api/v1
+    factory_type: openrouter
+    api_key_secret_id: openrouter-tenant-a-key
+  openrouter-tenant-b:
+    base_url: https://openrouter.ai/api/v1
+    factory_type: openrouter
+    api_key_secret_id: openrouter-tenant-b-key
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        let a = cfg.providers.get("openrouter-tenant-a").unwrap();
+        let b = cfg.providers.get("openrouter-tenant-b").unwrap();
+        assert_eq!(a.factory_type.as_deref(), Some("openrouter"));
+        assert_eq!(b.factory_type.as_deref(), Some("openrouter"));
+        assert_eq!(
+            a.api_key_secret_id.as_deref(),
+            Some("openrouter-tenant-a-key")
+        );
+        assert_eq!(
+            b.api_key_secret_id.as_deref(),
+            Some("openrouter-tenant-b-key")
+        );
+    }
 }

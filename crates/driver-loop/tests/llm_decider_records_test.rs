@@ -26,6 +26,7 @@ impl LlmClient for MockLlmClient {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         })
     }
 }

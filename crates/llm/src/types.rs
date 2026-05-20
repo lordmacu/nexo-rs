@@ -204,6 +204,60 @@ pub struct ChatRequest {
     /// `system_blocks` path turns this on automatically; raw callers can
     /// flip it explicitly.
     pub cache_tools: bool,
+    /// Optional per-request gateway routing hints. Honoured ONLY by
+    /// providers that expose a routing layer (currently
+    /// [`crate::openrouter::OpenRouterClient`]). `None` ships an
+    /// unannotated request — the gateway picks its default route.
+    /// Other providers ignore this field, so it is safe to populate
+    /// at the agent layer without breaking single-vendor routes.
+    pub provider_routing: Option<ProviderRoutingPolicy>,
+}
+
+/// Gateway routing hint mapped to OpenRouter's `provider: {…}` body
+/// extension. Each field is independently optional so callers can
+/// express partial intent without speccing the whole policy.
+///
+/// Wire shape (OpenRouter accepts unknown fields server-side; other
+/// providers receive nothing because the wrapper only emits the
+/// field on OpenRouter routes):
+///
+/// ```jsonc
+/// "provider": {
+///   "order": ["anthropic", "google"],
+///   "allow_fallbacks": true,
+///   "require_parameters": ["tools"],
+///   "sort": "throughput"
+/// }
+/// ```
+///
+/// Reference: <https://openrouter.ai/docs/provider-routing>.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderRoutingPolicy {
+    /// Preferred provider order. Empty = gateway default.
+    pub order: Vec<String>,
+    /// `Some(true)` allows the gateway to fall back when the
+    /// preferred providers cannot serve the request; `Some(false)`
+    /// fails fast on miss; `None` defers to the gateway default.
+    pub allow_fallbacks: Option<bool>,
+    /// Required parameter names — providers that do not implement
+    /// every listed parameter are skipped. Useful for guaranteeing
+    /// e.g. `tools` or `response_format` support.
+    pub require_parameters: Vec<String>,
+    /// Optional sort key — `"price"`, `"throughput"`, `"latency"`.
+    /// Empty / `None` leaves the gateway default in place.
+    pub sort: Option<String>,
+}
+
+impl ProviderRoutingPolicy {
+    /// `true` when this policy is effectively a no-op (every field
+    /// empty / `None`). The OpenRouter wrapper uses this to skip
+    /// emitting the `provider:` body field on default policies.
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+            && self.allow_fallbacks.is_none()
+            && self.require_parameters.is_empty()
+            && self.sort.as_deref().map(str::is_empty).unwrap_or(true)
+    }
 }
 
 impl ChatRequest {
@@ -219,6 +273,7 @@ impl ChatRequest {
             stop_sequences: Vec::new(),
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         }
     }
 }
@@ -232,6 +287,15 @@ pub struct ChatResponse {
     /// `None` for providers without caching, or when the response did
     /// not include cache fields (cache disabled or first-write turn).
     pub cache_usage: Option<CacheUsage>,
+    /// Provider-reported billable cost in USD for this turn, when
+    /// available. Currently only OpenRouter populates this field
+    /// (via `usage.cost` in the response body); other providers leave
+    /// it `None`. Routes through OpenRouter pay a small uplift on top
+    /// of the underlying vendor price — the value here reflects the
+    /// uplift-inclusive billable amount. Downstream tenant-billing
+    /// pipelines (Phase 83 microapp territory) consume this to attribute
+    /// per-tenant cost without scraping vendor invoices.
+    pub cost_usd: Option<f64>,
 }
 
 /// Prompt-cache accounting returned by the provider after a request.

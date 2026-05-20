@@ -299,6 +299,7 @@ mod tests {
             tool_choice: nexo_llm::types::ToolChoice::Auto,
             system_blocks: vec![],
             cache_tools: false,
+            provider_routing: None,
         })
     }
 
@@ -354,6 +355,7 @@ mod tests {
             },
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         }
     }
 

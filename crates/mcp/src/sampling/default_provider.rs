@@ -171,6 +171,7 @@ mod tests {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         }
     }
 
@@ -252,6 +253,7 @@ mod tests {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::ToolUse,
             cache_usage: None,
+            cost_usd: None,
         };
         let provider = DefaultSamplingProvider::new(
             fake(resp),
@@ -269,6 +271,7 @@ mod tests {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Length,
             cache_usage: None,
+            cost_usd: None,
         };
         let provider = DefaultSamplingProvider::new(
             fake(resp),

@@ -288,6 +288,7 @@ pub async fn microcompact_large_tool_results(
             tool_choice: nexo_llm::ToolChoice::None,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
 
         let summary = match llm.chat(req).await {
@@ -383,6 +384,7 @@ impl LlmCompactor {
             tool_choice: nexo_llm::ToolChoice::None,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let response = self
             .llm
@@ -558,6 +560,7 @@ mod tests {
                 },
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
         fn provider(&self) -> &str {

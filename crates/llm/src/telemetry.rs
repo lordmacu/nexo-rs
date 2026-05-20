@@ -44,6 +44,11 @@ impl Histogram {
 
 static STREAM_TTFT: LazyLock<DashMap<String, Histogram>> = LazyLock::new(DashMap::new);
 static STREAM_CHUNKS: LazyLock<DashMap<ChunkKey, AtomicU64>> = LazyLock::new(DashMap::new);
+/// Accumulated billable cost per provider, stored as integer
+/// micro-USD (`usd * 1_000_000`) so it can live in an `AtomicU64`
+/// without f64 CAS loops. Rendered back to USD on scrape. Only
+/// providers that report cost (OpenRouter today) ever populate this.
+static COST_MICRO_USD: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
 pub fn observe_stream_ttft_ms(provider: &str, duration_ms: u64) {
     STREAM_TTFT
@@ -62,10 +67,35 @@ pub fn inc_stream_chunks_total(provider: &str, kind: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Accumulate billable cost (USD) for a provider. Negative / NaN /
+/// non-finite values are dropped (the parse layer already filters,
+/// but defend here too). Sub-micro-dollar amounts round to the
+/// nearest micro-USD.
+pub fn add_cost_usd(provider: &str, usd: f64) {
+    if !usd.is_finite() || usd <= 0.0 {
+        return;
+    }
+    let micro = (usd * 1_000_000.0).round();
+    if micro < 1.0 {
+        return;
+    }
+    // Saturate at u64::MAX rather than wrapping on absurd inputs.
+    let add = if micro >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        micro as u64
+    };
+    COST_MICRO_USD
+        .entry(provider.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(add, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 pub fn reset_for_test() {
     STREAM_TTFT.clear();
     STREAM_CHUNKS.clear();
+    COST_MICRO_USD.clear();
 }
 
 fn escape(s: &str) -> String {
@@ -86,14 +116,18 @@ fn fmt_secs(ms: u64) -> String {
 }
 
 pub fn render_prometheus() -> String {
-    render_into(&STREAM_TTFT, &STREAM_CHUNKS)
+    render_into(&STREAM_TTFT, &STREAM_CHUNKS, &COST_MICRO_USD)
 }
 
 /// Pure renderer — takes the telemetry maps explicitly so tests can
 /// pass their own isolated `DashMap`s and never touch the global
 /// static. Production callers go through `render_prometheus()` which
 /// reads the global.
-fn render_into(ttft: &DashMap<String, Histogram>, chunks: &DashMap<ChunkKey, AtomicU64>) -> String {
+fn render_into(
+    ttft: &DashMap<String, Histogram>,
+    chunks: &DashMap<ChunkKey, AtomicU64>,
+    cost: &DashMap<String, AtomicU64>,
+) -> String {
     let mut out = String::new();
 
     out.push_str(
@@ -164,6 +198,27 @@ fn render_into(ttft: &DashMap<String, Histogram>, chunks: &DashMap<ChunkKey, Ato
         }
     }
 
+    out.push_str(
+        "# HELP nexo_llm_cost_usd_total Accumulated provider-reported billable cost in USD.\n",
+    );
+    out.push_str("# TYPE nexo_llm_cost_usd_total counter\n");
+    if cost.is_empty() {
+        out.push_str("nexo_llm_cost_usd_total{provider=\"\"} 0\n");
+    } else {
+        let mut rows: Vec<(String, u64)> = cost
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (provider, micro) in rows {
+            out.push_str(&format!(
+                "nexo_llm_cost_usd_total{{provider=\"{}\"}} {:.6}\n",
+                escape(&provider),
+                micro as f64 / 1_000_000.0
+            ));
+        }
+    }
+
     out
 }
 
@@ -218,7 +273,8 @@ mod tests {
     fn render_empty_series_when_no_samples() {
         let ttft: DashMap<String, Histogram> = DashMap::new();
         let chunks: DashMap<ChunkKey, AtomicU64> = DashMap::new();
-        let body = render_into(&ttft, &chunks);
+        let cost: DashMap<String, AtomicU64> = DashMap::new();
+        let body = render_into(&ttft, &chunks, &cost);
         assert!(contains_line(
             &body,
             "nexo_llm_stream_ttft_seconds_count{provider=\"\"} 0"
@@ -226,6 +282,10 @@ mod tests {
         assert!(contains_line(
             &body,
             "nexo_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0"
+        ));
+        assert!(contains_line(
+            &body,
+            "nexo_llm_cost_usd_total{provider=\"\"} 0"
         ));
     }
 
@@ -246,7 +306,8 @@ mod tests {
             .or_insert_with(|| AtomicU64::new(0))
             .fetch_add(1, Ordering::Relaxed);
 
-        let body = render_into(&ttft, &chunks);
+        let cost: DashMap<String, AtomicU64> = DashMap::new();
+        let body = render_into(&ttft, &chunks, &cost);
         assert!(contains_line(
             &body,
             "nexo_llm_stream_ttft_seconds_count{provider=\"openai\"} 1"
@@ -255,5 +316,40 @@ mod tests {
             &body,
             "nexo_llm_stream_chunks_total{provider=\"openai\",kind=\"text_delta\"} 1"
         ));
+    }
+
+    #[test]
+    fn render_cost_usd_total_accumulates_and_formats() {
+        let ttft: DashMap<String, Histogram> = DashMap::new();
+        let chunks: DashMap<ChunkKey, AtomicU64> = DashMap::new();
+        let cost: DashMap<String, AtomicU64> = DashMap::new();
+        // 0.00012345 USD = 123 micro-USD (rounded) → render as 0.000123.
+        cost.entry("openrouter".into())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(123, Ordering::Relaxed);
+        let body = render_into(&ttft, &chunks, &cost);
+        assert!(contains_line(
+            &body,
+            "nexo_llm_cost_usd_total{provider=\"openrouter\"} 0.000123"
+        ));
+    }
+
+    #[test]
+    fn add_cost_usd_global_accumulates_and_drops_invalid() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_for_test();
+        add_cost_usd("openrouter", 0.001);
+        add_cost_usd("openrouter", 0.002);
+        // Invalid inputs dropped.
+        add_cost_usd("openrouter", -1.0);
+        add_cost_usd("openrouter", f64::NAN);
+        add_cost_usd("openrouter", 0.0);
+        let body = render_prometheus();
+        // 0.001 + 0.002 = 0.003 USD.
+        assert!(contains_line(
+            &body,
+            "nexo_llm_cost_usd_total{provider=\"openrouter\"} 0.003000"
+        ));
+        reset_for_test();
     }
 }

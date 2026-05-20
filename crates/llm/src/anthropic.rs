@@ -1122,6 +1122,7 @@ fn to_chat_response(resp: AnthropicResponse) -> ChatResponse {
         usage,
         finish_reason,
         cache_usage,
+        cost_usd: None,
     }
 }
 
@@ -1244,10 +1245,14 @@ impl LlmProviderFactory for AnthropicFactory {
     }
 
     fn supported_auth_modes(&self) -> Vec<AuthMode> {
+        // OAuthAuthCode first — admin SPA defaults `auth_mode` to
+        // `supported_auth_modes[0]` (LlmInstanceCreateModal.tsx),
+        // and the Claude.ai subscription flow is the recommended
+        // path for end users.
         vec![
+            AuthMode::OAuthAuthCode,
             AuthMode::ApiKey,
             AuthMode::SetupToken,
-            AuthMode::OAuthAuthCode,
             AuthMode::OAuthBundleImport,
         ]
     }
@@ -1417,6 +1422,7 @@ mod tests {
             tool_choice: ToolChoice::Auto,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         }
     }
 
@@ -1535,6 +1541,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_body("claude-sonnet-4", &r, false);
         let content = &body["messages"][0]["content"];
@@ -1570,6 +1577,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_body("claude-sonnet-4", &r, false);
         let content = &body["messages"][0]["content"];
@@ -1648,6 +1656,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let err = validate_request(&r).unwrap_err();
         assert!(
@@ -1689,6 +1698,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         assert!(validate_request(&r).is_ok());
     }
@@ -1733,6 +1743,7 @@ mod tests {
                 PromptBlock::cached_short("tail", "current time: 12:00"),
             ],
             cache_tools: true,
+            provider_routing: None,
         }
     }
 
@@ -2069,6 +2080,7 @@ mod tests {
             tool_choice: ToolChoice::Auto,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         }
     }
 

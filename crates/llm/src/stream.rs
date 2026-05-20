@@ -251,6 +251,7 @@ where
         finish_reason,
 
         cache_usage: None,
+        cost_usd: None,
     })
 }
 
@@ -280,6 +281,7 @@ fn synth_chunks_from_response(
         usage,
         finish_reason,
         cache_usage: _,
+        cost_usd: _,
     } = resp;
     let mut chunks: Vec<anyhow::Result<StreamChunk>> = Vec::new();
     match content {
@@ -425,6 +427,7 @@ mod tests {
                 finish_reason: FinishReason::Stop,
 
                 cache_usage: None,
+                cost_usd: None,
             },
         };
         let stream = default_stream_from_chat(
@@ -454,6 +457,7 @@ mod tests {
                 finish_reason: FinishReason::ToolUse,
 
                 cache_usage: None,
+                cost_usd: None,
             },
         };
         let stream = default_stream_from_chat(

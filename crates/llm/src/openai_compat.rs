@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,6 +20,13 @@ use crate::types::{
 };
 use futures::stream::BoxStream;
 
+/// Body-transformer hook signature. Invoked AFTER `build_openai_body`
+/// in both the `chat` and streaming code paths so a wrapper (e.g.
+/// the OpenRouter client targeting an `anthropic/*` slug) can mutate
+/// the wire body before it ships — for example to inject Anthropic
+/// `cache_control` markers. `None` is the zero-impact default.
+pub type BodyTransformer = Arc<dyn Fn(&ChatRequest, &mut serde_json::Value) + Send + Sync>;
+
 pub struct OpenAiClient {
     http: reqwest::Client,
     base_url: String,
@@ -27,6 +35,21 @@ pub struct OpenAiClient {
     rate_limiter: Arc<RateLimiter>,
     circuit: Arc<CircuitBreaker>,
     retry: RetryConfig,
+    /// Extra HTTP headers stamped on every outbound request
+    /// (`chat/completions`, SSE stream, `embeddings`). Empty for raw
+    /// OpenAI / DeepSeek; populated by the OpenRouter wrapper for
+    /// attribution markers (`HTTP-Referer`, `X-Title`). `BTreeMap`
+    /// gives deterministic iteration order for test assertions. The
+    /// fold skips any case-insensitive `authorization` entry so a
+    /// caller can never clobber the bearer token set by
+    /// `bearer_auth()`.
+    extra_headers: BTreeMap<String, String>,
+    /// Optional post-build body transformer. `None` for raw OpenAI /
+    /// DeepSeek; `Some(...)` for OpenRouter wrappers that need to
+    /// inject vendor-specific markers (Anthropic `cache_control`).
+    /// Skipped on the `embeddings` path because that body never
+    /// carries a system message.
+    body_transformer: Option<BodyTransformer>,
 }
 
 impl OpenAiClient {
@@ -70,7 +93,47 @@ impl OpenAiClient {
             rate_limiter,
             circuit,
             retry,
+            extra_headers: BTreeMap::new(),
+            body_transformer: None,
         }
+    }
+
+    /// Same as [`OpenAiClient::new`] but stamps `extra_headers` on
+    /// every outbound HTTP request. Used by the OpenRouter wrapper
+    /// to inject `HTTP-Referer` + `X-Title` attribution markers when
+    /// the base URL points at the canonical OpenRouter host. The
+    /// fold runs AFTER `bearer_auth()` and skips any case-insensitive
+    /// `authorization` entry so the bearer token cannot be
+    /// overwritten by a stray map entry.
+    pub fn with_extra_headers(
+        cfg: &LlmProviderConfig,
+        model: impl Into<String>,
+        retry: RetryConfig,
+        extra_headers: BTreeMap<String, String>,
+    ) -> Self {
+        let mut client = Self::new(cfg, model, retry);
+        client.extra_headers = extra_headers;
+        client
+    }
+
+    /// Extended constructor accepting both `extra_headers` and an
+    /// optional [`BodyTransformer`] hook. Used by OpenRouter when the
+    /// resolved client targets an `anthropic/*` slug — the
+    /// transformer rewrites the system message into the multi-block
+    /// shape that carries `cache_control` markers, lifting the
+    /// prompt-cache hit rate from ~0% to whatever the underlying
+    /// Anthropic route delivers.
+    pub fn with_extra_headers_and_transformer(
+        cfg: &LlmProviderConfig,
+        model: impl Into<String>,
+        retry: RetryConfig,
+        extra_headers: BTreeMap<String, String>,
+        body_transformer: Option<BodyTransformer>,
+    ) -> Self {
+        let mut client = Self::new(cfg, model, retry);
+        client.extra_headers = extra_headers;
+        client.body_transformer = body_transformer;
+        client
     }
 
     async fn classify_response(
@@ -105,12 +168,19 @@ impl OpenAiClient {
         self.rate_limiter.acquire().await;
 
         let url = format!("{}/chat/completions", self.base_url);
-        let body = build_openai_body(req);
+        let mut body = build_openai_body(req);
+        if let Some(t) = &self.body_transformer {
+            t(req, &mut body);
+        }
 
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.api_key)
+        let mut request = self.http.post(&url).bearer_auth(&self.api_key);
+        for (k, v) in &self.extra_headers {
+            if k.eq_ignore_ascii_case("authorization") {
+                continue;
+            }
+            request = request.header(k.as_str(), v.as_str());
+        }
+        let response = request
             .json(&body)
             .send()
             .await
@@ -144,14 +214,24 @@ impl OpenAiClient {
 
         let url = format!("{}/chat/completions", self.base_url);
         let mut body = build_openai_body(req);
+        if let Some(t) = &self.body_transformer {
+            t(req, &mut body);
+        }
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
 
-        let response = self
+        let mut request = self
             .http
             .post(&url)
             .bearer_auth(&self.api_key)
-            .header("accept", "text/event-stream")
+            .header("accept", "text/event-stream");
+        for (k, v) in &self.extra_headers {
+            if k.eq_ignore_ascii_case("authorization") {
+                continue;
+            }
+            request = request.header(k.as_str(), v.as_str());
+        }
+        let response = request
             .json(&body)
             .send()
             .await
@@ -170,10 +250,14 @@ impl OpenAiClient {
             "model": self.model,
             "input": texts,
         });
-        let response = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.api_key)
+        let mut request = self.http.post(&url).bearer_auth(&self.api_key);
+        for (k, v) in &self.extra_headers {
+            if k.eq_ignore_ascii_case("authorization") {
+                continue;
+            }
+            request = request.header(k.as_str(), v.as_str());
+        }
+        let response = request
             .json(&body)
             .send()
             .await
@@ -238,6 +322,7 @@ mod tests {
             tool_choice: ToolChoice::Auto,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         }
     }
 
@@ -391,6 +476,50 @@ mod tests {
     }
 
     #[test]
+    fn parse_response_with_usage_cost_field_populates_cost_usd() {
+        // OpenRouter emits `usage.cost` as a USD float per response.
+        // Other OpenAI-compat providers omit it (None preserved).
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "cost": 0.00012345
+          }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        let cost = resp.cost_usd.expect("cost_usd populated");
+        assert!((cost - 0.00012345).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_response_without_cost_field_leaves_cost_usd_none() {
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{ "prompt_tokens": 100, "completion_tokens": 10 }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        assert!(resp.cost_usd.is_none());
+    }
+
+    #[test]
+    fn parse_response_with_negative_or_nan_cost_filters_to_none() {
+        // Defense-in-depth: a buggy gateway could emit a negative
+        // cost (impossible billable amount) or NaN. The parse path
+        // filters those to None rather than poisoning downstream
+        // billing aggregations.
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{ "prompt_tokens": 1, "completion_tokens": 1, "cost": -0.01 }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        assert!(resp.cost_usd.is_none(), "negative cost must be dropped");
+    }
+
+    #[test]
     fn parse_response_with_zero_cached_tokens_is_treated_as_no_hit() {
         let raw_json = r#"{
           "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
@@ -403,6 +532,67 @@ mod tests {
         let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
         let resp = parse_openai_response(parsed).unwrap();
         assert!(resp.cache_usage.is_none());
+    }
+
+    // ---- extra_headers ----
+
+    fn empty_cfg() -> LlmProviderConfig {
+        LlmProviderConfig {
+            api_key: "sk".into(),
+            base_url: String::new(),
+            group_id: None,
+            rate_limit: Default::default(),
+            auth: None,
+            api_flavor: None,
+            embedding_model: None,
+            safety_settings: None,
+            factory_type: None,
+            api_key_secret_id: None,
+        }
+    }
+
+    fn fast_retry() -> RetryConfig {
+        RetryConfig {
+            max_attempts: 1,
+            initial_backoff_ms: 1,
+            max_backoff_ms: 1,
+            backoff_multiplier: 1.0,
+        }
+    }
+
+    #[test]
+    fn extra_headers_default_is_empty() {
+        let c = OpenAiClient::new(&empty_cfg(), "m", fast_retry());
+        assert!(c.extra_headers.is_empty());
+    }
+
+    #[test]
+    fn extra_headers_inject_via_constructor_round_trip() {
+        let mut headers = BTreeMap::new();
+        headers.insert("HTTP-Referer".into(), "https://example.com".into());
+        headers.insert("X-Title".into(), "test".into());
+        let c = OpenAiClient::with_extra_headers(&empty_cfg(), "m", fast_retry(), headers);
+        assert_eq!(c.extra_headers.len(), 2);
+        assert_eq!(
+            c.extra_headers.get("HTTP-Referer").map(String::as_str),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            c.extra_headers.get("X-Title").map(String::as_str),
+            Some("test")
+        );
+    }
+
+    #[test]
+    fn extra_headers_constructor_preserves_base_url_default() {
+        // Defense-in-depth: the override constructor delegates to
+        // `new()`, so the blank-base-url → OpenAI default path
+        // must still apply. Otherwise OpenRouter wrapper callers
+        // that forget to set base_url would silently hit OpenAI's
+        // host with OpenRouter headers attached.
+        let headers = BTreeMap::new();
+        let c = OpenAiClient::with_extra_headers(&empty_cfg(), "m", fast_retry(), headers);
+        assert_eq!(c.base_url, "https://api.openai.com/v1");
     }
 }
 
@@ -530,6 +720,12 @@ struct OpenAiUsage {
     /// first-write turns where nothing was hit.
     #[serde(default)]
     prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+    /// OpenRouter-specific billable cost (USD) for this turn. Empty
+    /// for raw OpenAI / DeepSeek (those providers do not report cost
+    /// in the response body). Surface to downstream billing via
+    /// [`crate::types::ChatResponse::cost_usd`].
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -557,6 +753,13 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         prompt_tokens: raw.usage.prompt_tokens,
         completion_tokens: raw.usage.completion_tokens,
     };
+
+    // OpenRouter ships `usage.cost` as a USD float (uplift-inclusive)
+    // when the gateway has priced the request. Surface it verbatim
+    // for downstream billing; raw OpenAI / DeepSeek leave the field
+    // absent and we report `None`. Sub-cent precision (e.g.
+    // 0.00012345) preserved by routing through `f64`.
+    let cost_usd = raw.usage.cost.filter(|v| v.is_finite() && *v >= 0.0);
 
     // OpenAI-style automatic prefix caching reports hits
     // through `prompt_tokens_details.cached_tokens`. Only emit a
@@ -602,6 +805,7 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
             usage,
             finish_reason: FinishReason::ToolUse,
             cache_usage,
+            cost_usd,
         });
     }
 
@@ -610,6 +814,7 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         usage,
         finish_reason,
         cache_usage,
+        cost_usd,
     })
 }
 

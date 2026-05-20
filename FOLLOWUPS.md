@@ -44,27 +44,60 @@ each one load-bearing.
    crates nextest verde. Docs gained "Provider routing" section
    in `docs/src/llm/openrouter.md`.
 
-3. **`100.x.usage-cost` — `usage.cost` USD tracking → SaaS
-   billing** — OpenRouter returns `usage.cost` in USD per request.
-   Hook this into the microapp billing pipeline (Phase 83 territory)
-   so SaaS tenants get accurate per-tenant cost attribution
-   regardless of underlying vendor. Trigger: agent-creator
-   microapp implements per-tenant billing dashboards
-   ([[project_microapp_is_saas_meta_creator]]). Cross-check
-   `research/CHANGELOG.md:1877` for the recursion footgun
-   OpenClaw hit ("`openrouter/auto` pricing refresh infinite
-   loop on bootstrap") — gate behind cache + lazy fetch.
+3. ~~**`100.x.usage-cost` — `usage.cost` USD tracking**~~ ✅ CLOSED
+   2026-05-20. Added `ChatResponse.cost_usd: Option<f64>` field
+   (additive — ~25 ChatResponse literal sites updated workspace).
+   `OpenAiUsage` wire struct gained `cost: Option<f64>` parsed
+   via `#[serde(default)]`. `parse_openai_response` filters
+   negative + NaN values (defense: a buggy gateway cannot poison
+   downstream aggregations). Stream destructure pattern updated
+   to ignore the new field. Raw OpenAI / DeepSeek / Anthropic /
+   Gemini responses omit the field and leave `cost_usd = None`.
+   3 new tests (parse with cost, parse without cost, negative
+   value drop). 273/273 nexo-llm + workspace nextest verde.
+   Docs gained "Cost tracking" section in
+   `docs/src/llm/openrouter.md`. OpenClaw
+   `research/CHANGELOG.md:1877` pricing recursion concern N/A
+   (we propagate what the gateway reports per response; no
+   bootstrap pricing fetch).
+   - ✅ FOLLOW-ON CLOSED 2026-05-20: Prometheus counter
+     `nexo_llm_cost_usd_total{provider}` wired in
+     `crates/llm/src/telemetry.rs` (integer micro-USD accumulator
+     → rendered USD 6dp). `OpenRouterClient::chat` emits
+     `add_cost_usd("openrouter", cost)` after each priced
+     response (labelled `openrouter`, not the inner `openai`
+     transport). 2 telemetry tests. Cross-process cost also
+     flows over the remote LLM wire bridge via
+     `WireChatResponse.cost_usd`. STILL DEFERRED: microapp
+     per-tenant billing dashboard (Phase 83 territory) +
+     streaming-path cost (SSE `usage` chunk).
 
-4. **`100.x.models-probe` — live `/api/v1/models` endpoint →
-   dynamic catalog** — `OpenRouterFactory::supports_models_probe()`
-   already returns `true`; downstream admin RPC wizard could call
-   `GET https://openrouter.ai/api/v1/models` and surface the live
-   catalogue instead of (or in addition to) the curated
-   `KNOWN_MODELS` list. Trigger: operator complains that
-   curated list is stale or missing models they need. Cache
-   response for ~15 min to avoid hammering OR; respect
-   `LivePluginInstallerCell` patterns from Phase 97.1 for
-   on-demand network calls.
+4. ~~**`100.x.models-probe` — live `/api/v1/models` endpoint →
+   dynamic catalog**~~ ✅ CLOSED 2026-05-20. Added 5 public
+   helpers in `crates/llm/src/openrouter.rs`:
+   `parse_models_response` (pure JSON → slugs, testable without
+   network), `fetch_live_models` (HTTP GET + cache populate),
+   `cached_live_models` (cache read respecting 15-min TTL),
+   `live_or_known_models` (cache-or-fetch with `KNOWN_MODELS`
+   fallback so UI never gets an empty list), `refresh_live_models`
+   (force-refresh for "Refresh catalogue" buttons). Process-wide
+   `OnceLock<RwLock<Option<(Instant, Vec<String>)>>>` cache
+   (lazy-init because `RwLock::new` is not const). 7 unit tests
+   (parse extract / skip empty IDs / empty data / invalid JSON
+   error + cache empty / cache fresh / cache stale TTL).
+   Re-exported from `nexo_llm::*` as
+   `openrouter_live_or_known_models` etc. Docs gained "Live
+   model catalogue" section. OpenClaw
+   `research/CHANGELOG.md:1877` recursion concern N/A: this is
+   a one-shot fetch on operator request, not a bootstrap loop.
+   - ✅ FOLLOW-ON CLOSED 2026-05-20: live HTTP smoke test landed.
+     `http_fetch_models(base_url, api_key)` split out as a pure
+     (no-cache) fetch so `crates/llm/tests/openrouter_models_http.rs`
+     can drive it against a WireMock `/models` server. 3 tests:
+     catalogue parse over HTTP (asserts bearer + attribution
+     headers + path), 401 error propagation, trailing-slash base
+     URL normalisation. Re-exported as
+     `openrouter_http_fetch_models` + `openrouter_parse_models_response`.
 
 ### Phase 98 — Plugin discovery + install hardening deferreds   ⬜ ACTIVE
 

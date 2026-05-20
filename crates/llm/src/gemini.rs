@@ -558,6 +558,7 @@ fn to_chat_response(resp: GeminiResponse) -> ChatResponse {
             usage,
             finish_reason: FinishReason::Other(format!("BLOCKED:{reason}")),
             cache_usage: None,
+            cost_usd: None,
         };
     }
 
@@ -610,6 +611,7 @@ fn to_chat_response(resp: GeminiResponse) -> ChatResponse {
         usage,
         finish_reason,
         cache_usage: None,
+        cost_usd: None,
     }
 }
 
@@ -703,6 +705,7 @@ mod tests {
             tool_choice: ToolChoice::Auto,
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         }
     }
 
@@ -903,6 +906,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let err = validate_request(&r).unwrap_err();
         assert!(

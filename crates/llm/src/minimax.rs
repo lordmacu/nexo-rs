@@ -722,6 +722,7 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
             finish_reason: FinishReason::ToolUse,
 
             cache_usage: None,
+            cost_usd: None,
         });
     }
 
@@ -742,6 +743,7 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
         finish_reason,
 
         cache_usage: None,
+        cost_usd: None,
     })
 }
 
@@ -960,6 +962,7 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
             finish_reason: FinishReason::ToolUse,
 
             cache_usage: None,
+            cost_usd: None,
         });
     }
 
@@ -969,6 +972,7 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
         finish_reason,
 
         cache_usage: None,
+        cost_usd: None,
     })
 }
 
@@ -1030,6 +1034,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["system"], "be helpful");
@@ -1056,6 +1061,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["tools"][0]["name"], "weather");
@@ -1098,6 +1104,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_openai_body(&req);
         let content = &body["messages"][0]["content"];
@@ -1134,6 +1141,7 @@ mod tests {
 
             system_blocks: Vec::new(),
             cache_tools: false,
+            provider_routing: None,
         };
         let body = build_anthropic_body(&req);
         let content = &body["messages"][0]["content"];

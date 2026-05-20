@@ -50,6 +50,13 @@ pub struct WireChatResponse {
     pub finish_reason: WireFinishReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_usage: Option<WireCacheUsage>,
+    /// Provider-reported billable cost (USD) for this turn — set by
+    /// subprocess LLM plugins that route through OpenRouter. Absent
+    /// for providers that do not report cost. Propagated to
+    /// `ChatResponse::cost_usd` so daemon-side billing sees the same
+    /// value whether the LLM ran in-process or in a subprocess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +204,7 @@ pub fn wire_to_response(w: WireChatResponse) -> ChatResponse {
         usage: wire_to_token_usage(w.usage),
         finish_reason: wire_to_finish_reason(w.finish_reason),
         cache_usage: w.cache_usage.map(wire_to_cache_usage),
+        cost_usd: w.cost_usd,
     }
 }
 
@@ -371,6 +379,7 @@ mod tests {
             },
             finish_reason: WireFinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         };
         let s = serde_json::to_string(&wire).unwrap();
         let back: WireChatResponse = serde_json::from_str(&s).unwrap();

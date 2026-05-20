@@ -31,6 +31,7 @@ impl LlmClient for StubLlm {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         })
     }
     fn model_id(&self) -> &str {
@@ -61,6 +62,7 @@ impl LlmClient for ToolThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
                 cache_usage: None,
+                cost_usd: None,
             })
         } else {
             Ok(ChatResponse {
@@ -68,6 +70,7 @@ impl LlmClient for ToolThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
     }
@@ -98,6 +101,7 @@ impl LlmClient for ReminderThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
                 cache_usage: None,
+                cost_usd: None,
             })
         } else {
             Ok(ChatResponse {
@@ -105,6 +109,7 @@ impl LlmClient for ReminderThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
     }
@@ -136,6 +141,7 @@ impl LlmClient for DelegateThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
                 cache_usage: None,
+                cost_usd: None,
             })
         } else {
             Ok(ChatResponse {
@@ -143,6 +149,7 @@ impl LlmClient for DelegateThenTextLlm {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
     }
@@ -249,6 +256,7 @@ impl LlmClient for CapturingLlm {
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
             cache_usage: None,
+            cost_usd: None,
         })
     }
     fn model_id(&self) -> &str {
@@ -1389,6 +1397,7 @@ impl LlmClient for ToolCallTwiceThenText {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
                 cache_usage: None,
+                cost_usd: None,
             })
         } else {
             Ok(ChatResponse {
@@ -1396,6 +1405,7 @@ impl LlmClient for ToolCallTwiceThenText {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
     }
@@ -1433,6 +1443,7 @@ impl LlmClient for TwoToolsInOneCall {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
                 cache_usage: None,
+                cost_usd: None,
             })
         } else {
             Ok(ChatResponse {
@@ -1440,6 +1451,7 @@ impl LlmClient for TwoToolsInOneCall {
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             })
         }
     }

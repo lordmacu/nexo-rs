@@ -520,6 +520,7 @@ mod tests {
                 },
                 finish_reason: nexo_llm::types::FinishReason::Stop,
                 cache_usage: None,
+                cost_usd: None,
             }));
         }
 

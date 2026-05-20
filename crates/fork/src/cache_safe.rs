@@ -91,6 +91,7 @@ impl CacheSafeParams {
             tool_choice: ToolChoice::Auto,
             system_blocks: self.system_blocks.clone(),
             cache_tools: self.cache_tools,
+            provider_routing: None,
         }
     }
 
@@ -188,6 +189,7 @@ mod tests {
             tool_choice: ToolChoice::Auto,
             system_blocks: vec![PromptBlock::cached_long("identity", "You are nexo.")],
             cache_tools: true,
+            provider_routing: None,
         }
     }
 

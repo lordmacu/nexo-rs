@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
 
         system_blocks: Vec::new(),
         cache_tools: false,
+        provider_routing: None,
     };
 
     let start = std::time::Instant::now();
