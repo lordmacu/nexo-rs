@@ -21,22 +21,29 @@ brainstorm+spec+plan done (cited `research/channels/plugins/
   dedup) + `PluginInstaller::reconcile_channel_instances` trait method;
   `credentials/register` prefers it over the restarter's `reconfigure`.
 
-**Residual (Step 5/6):**
+**Residual:**
 - **Step 5 — reseed hook KEPT (deviation from plan):** `adfd220f`'s
   env-reseed was NOT retired — it still serves the manual
-  `plugins/restart` admin RPC (re-seeds the daemon env before a manual
-  respawn). The reconcile (configure-push) is now the primary eager-start
-  path for `credentials/register`; the reseed is the manual-restart
-  belt-and-suspenders.
-- **Step 6 e2e (open):** dedicated reconcile e2e — needs a mock
-  subprocess that answers `plugin.configure` + a full `HotInstallCtx`
-  fixture. The reconcile reuses the scan/uninstall helpers (already
-  e2e-tested) + 22/22 plugin_install+factory regression green; the
-  add/drop/keep wiring is covered by reuse. Write the dedicated
-  multi-instance e2e (`test-fixtures` mock-subprocess shape "array":
-  boot 1 → reconcile +2nd → 2 subprocesses/2 topics; -1st → dies).
-- Fase-2: whatsapp (session dirs) + email multi-instance (only telegram
-  + whatsapp have `seed_*_subprocess_env_for` seeders today).
+  `plugins/restart` admin RPC. The reconcile (configure-push) is the
+  primary eager-start for `credentials/register`.
+- **e2e — decision logic done (`ba4faca5`), full spawn e2e OPEN:**
+  extracted `parse_desired_instances` + `classify_reconcile` as pure fns
+  + unit-tested (4 tests, incl. the runtime auto-fallback-base dedup).
+  The full spawn e2e is impractical without a `HotInstallCtx` test
+  harness (a boot-time fixture; none exists) — the spawn/configure path
+  is covered by reuse (scan/uninstall e2e-tested + `subprocess_flip_e2e`
+  multi-instance spawn). To write it: build a `HotInstallCtx` fixture +
+  a mock-subprocess that answers `plugin.configure` (`test-fixtures`,
+  shape "array": boot 1 → reconcile +2nd → 2 subprocesses/2 topics;
+  -1st → dies).
+- **fase-2 — whatsapp DONE, email is a larger follow-up:** whatsapp
+  reconciles per-instance (its seeder stamps per-instance
+  `NEXO_PLUGIN_WHATSAPP_SESSION_DIR`, seed-tested). email differs — one
+  subprocess, multi-account internal, configured via the configure-push
+  (no env-seed since Wave 4); the reconcile KEEP path handles its
+  account changes, but per-tenant email SUBPROCESSES (true multi-
+  instance) need the email plugin to accept an instance label + a
+  daemon-side `seed_email_subprocess_env_for` — deferred.
 
 ### Phase 97.1.γ — hot-install completeness (skills + metrics) — SHIPPED 2026-05-20, residual deferreds   ⬜
 
