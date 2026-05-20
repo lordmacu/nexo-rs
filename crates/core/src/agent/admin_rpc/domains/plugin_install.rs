@@ -71,6 +71,16 @@ pub trait PluginInstaller: Send + Sync + std::fmt::Debug {
         &self,
         params: &PluginsSetEnabledParams,
     ) -> anyhow::Result<PluginsSetEnabledResponse>;
+
+    /// Reconcile the live subprocesses of a multi-instance channel
+    /// against its just-persisted config: spawn newly-added instances,
+    /// kill removed ones, and re-push `plugin.configure` to surviving
+    /// ones (eager-start). Called after `credentials/register` so a
+    /// channel instance configured at runtime comes online without a
+    /// daemon restart. Default no-op for minimal embeddings / tests.
+    async fn reconcile_channel_instances(&self, _channel: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 // ── handlers ────────────────────────────────────────────────────

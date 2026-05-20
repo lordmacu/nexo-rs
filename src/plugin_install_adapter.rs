@@ -819,6 +819,245 @@ impl PluginInstaller for LivePluginInstaller {
             warnings,
         })
     }
+
+    async fn reconcile_channel_instances(&self, channel: &str) -> anyhow::Result<()> {
+        let ctx = self.hot_install.as_ref().ok_or_else(|| {
+            nexo_core::telemetry::inc_plugin_install_boot_race("reconcile", "hot_install_unset");
+            anyhow::anyhow!(
+                "reconcile unavailable: hot-install fixtures not yet populated \
+                 (daemon still booting). Retry in ~1 second."
+            )
+        })?;
+
+        // 1. Desired instances = the just-persisted per-channel yaml with
+        //    placeholders resolved (the plugin's on_configure consumes the
+        //    real token, not `${file:…}`).
+        let yaml_path = self
+            .config_dir
+            .join("plugins")
+            .join(format!("{channel}.yaml"));
+        let resolved_entries: Vec<serde_yaml::Value> = match std::fs::read_to_string(&yaml_path) {
+            Ok(raw) => {
+                let resolved =
+                    nexo_config::env::resolve_placeholders(&raw, &yaml_path.display().to_string())?;
+                let parsed: serde_yaml::Value = serde_yaml::from_str(&resolved)?;
+                match parsed.get(channel) {
+                    Some(serde_yaml::Value::Sequence(s)) => s.clone(),
+                    Some(m @ serde_yaml::Value::Mapping(_)) => vec![m.clone()],
+                    _ => Vec::new(),
+                }
+            }
+            // File gone → every live instance is "removed".
+            Err(_) => Vec::new(),
+        };
+
+        // derived_id (`<channel>` | `<channel>.<instance>`) → resolved slice.
+        let mut desired: std::collections::BTreeMap<String, serde_yaml::Value> =
+            std::collections::BTreeMap::new();
+        for entry in &resolved_entries {
+            let label = entry
+                .get("instance")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let id = if label.is_empty() {
+                channel.to_string()
+            } else {
+                format!("{channel}.{label}")
+            };
+            desired.insert(id, entry.clone());
+        }
+
+        // 2. Live handles for this channel (`channel` | `channel.<inst>`).
+        // When the operator configured NAMED instances the bare
+        // `<channel>` auto-fallback is NOT in `desired`, so the drop loop
+        // tears it down (the boot.rs:210 dedup, runtime edition).
+        let prefix = format!("{channel}.");
+        let live_ids: std::collections::BTreeSet<String> = {
+            let guard = ctx.hot_plugin_ctx.plugin_handles.read().await;
+            guard
+                .as_ref()
+                .map(|m| {
+                    m.keys()
+                        .filter(|id| id.as_str() == channel || id.starts_with(&prefix))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let broker_url =
+            std::env::var("NEXO_BROKER_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+        let broker_kind = match nexo_config::AppConfig::load(&self.config_dir) {
+            Ok(cfg) => crate::subprocess_broker_kind_str(cfg.broker.broker.kind),
+            Err(_) => "stdio_bridge",
+        };
+
+        // Discover the base manifest once (only needed for adds).
+        let needs_add = desired.keys().any(|id| !live_ids.contains(id));
+        let snap = if needs_add {
+            Some(discover(&ctx.discovery_cfg, &ctx.current_version))
+        } else {
+            None
+        };
+        let base = snap.as_ref().and_then(|s| {
+            s.plugins
+                .iter()
+                .find(|p| p.manifest.plugin.id == channel)
+                .cloned()
+        });
+
+        let (mut added, mut removed, mut reconfigured) = (0usize, 0usize, 0usize);
+
+        // ── ADD: desired ∖ live → register factory + spawn + configure ──
+        for (id, entry) in &desired {
+            if live_ids.contains(id) {
+                continue;
+            }
+            let (Some(snap), Some(base)) = (snap.as_ref(), base.as_ref()) else {
+                tracing::warn!(channel, instance = %id, "reconcile: base manifest not discovered; cannot spawn instance");
+                continue;
+            };
+            let label = entry.get("instance").and_then(|v| v.as_str()).unwrap_or("");
+            let env = match channel {
+                "telegram" => {
+                    crate::seed_telegram_subprocess_env_for(entry, broker_kind, &broker_url)
+                }
+                "whatsapp" => {
+                    crate::seed_whatsapp_subprocess_env_for(entry, broker_kind, &broker_url)
+                }
+                _ => {
+                    tracing::warn!(
+                        channel,
+                        "reconcile: no subprocess env seeder for channel; skipping add"
+                    );
+                    continue;
+                }
+            };
+            let (derived_id, factory, synthetic) =
+                crate::build_instance_factory(channel, base, label, env);
+            ctx.factory_registry
+                .register_runtime(derived_id.clone(), factory);
+
+            let filtered = {
+                let mut owned: NexoPluginRegistrySnapshot = (**snap).clone();
+                owned.plugins = vec![synthetic.clone()];
+                owned
+            };
+            let stubs = SubprocessCtxStubs::build_with_shared_registries(
+                &ctx.subprocess_runtime,
+                ctx.channel_adapter_registry.clone(),
+                ctx.hook_registry.clone(),
+                ctx.vector_backend_registry.clone(),
+                ctx.tool_registry.clone(),
+            );
+            let result = run_plugin_init_loop_with_factory(
+                &filtered,
+                &ctx.factory_registry,
+                ctx.subprocess_runtime.config_dir.as_path(),
+                &ctx.channel_adapter_registry,
+                &ctx.llm_registry,
+                &ctx.hook_registry,
+                &ctx.vector_backend_registry,
+                None,
+                |manifest, plugin_cfg| {
+                    stubs.context_for_plugin(manifest, &ctx.subprocess_runtime, plugin_cfg)
+                },
+            )
+            .await;
+            for (hid, outcome) in result.outcomes.iter() {
+                if let nexo_core::agent::nexo_plugin_registry::InitOutcome::Failed { error } =
+                    outcome
+                {
+                    tracing::warn!(instance = %hid, error = %error, "reconcile: instance init failed");
+                }
+            }
+            for (hid, handle) in result.handles.into_iter() {
+                if let Err(e) =
+                    register_plugin_in_live_runtime(&hid, handle, &ctx.hot_plugin_ctx).await
+                {
+                    tracing::warn!(instance = %hid, error = %e, "reconcile: register_in_runtime failed");
+                    continue;
+                }
+                hot_add_plugin_metrics(
+                    &ctx.hot_plugin_ctx.plugin_metrics,
+                    &hid,
+                    &synthetic.manifest,
+                );
+            }
+            hot_add_plugins_to_snapshot(&ctx.hot_plugin_ctx.registry, &filtered.plugins);
+            // Eager-start the freshly-spawned instance via on_configure.
+            push_instance_configure(&ctx.hot_plugin_ctx, &derived_id, entry).await;
+            added += 1;
+        }
+
+        // ── DROP: live ∖ desired → kill subprocess + drop factory ──
+        for id in &live_ids {
+            if desired.contains_key(id) {
+                continue;
+            }
+            match unregister_plugin_from_live_runtime(id, &ctx.hot_plugin_ctx).await {
+                Ok(_) => {
+                    ctx.factory_registry.unregister_runtime(id);
+                    hot_remove_plugin_metrics(&ctx.hot_plugin_ctx.plugin_metrics, id);
+                    hot_remove_plugin_from_snapshot(&ctx.hot_plugin_ctx.registry, id);
+                    removed += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(instance = %id, error = %e, "reconcile: unregister failed")
+                }
+            }
+        }
+
+        // ── KEEP: desired ∩ live → re-push configure (eager-start / refresh) ──
+        for (id, entry) in &desired {
+            if !live_ids.contains(id) {
+                continue;
+            }
+            push_instance_configure(&ctx.hot_plugin_ctx, id, entry).await;
+            reconfigured += 1;
+        }
+
+        hot_rebuild_skills_from_snapshot(
+            &ctx.hot_plugin_ctx.plugin_skills,
+            &ctx.hot_plugin_ctx.registry,
+        );
+        if let Some(coord) = &ctx.reload_coord {
+            let _ = coord.reload().await;
+        }
+
+        tracing::info!(
+            channel,
+            added,
+            removed,
+            reconfigured,
+            "reconcile_channel_instances complete"
+        );
+        Ok(())
+    }
+}
+
+/// Push a single instance's resolved config slice to its live
+/// subprocess via `plugin.configure`. The plugin's `on_configure`
+/// deserialises a `Vec<…Config>` and uses the first element, so each
+/// per-instance subprocess gets a 1-element sequence with its own bot.
+async fn push_instance_configure(
+    hot: &nexo_setup::hot_spawn::HotPluginCtx,
+    id: &str,
+    entry: &serde_yaml::Value,
+) {
+    let handle = {
+        let guard = hot.plugin_handles.read().await;
+        guard.as_ref().and_then(|m| m.get(id).cloned())
+    };
+    let Some(handle) = handle else {
+        return;
+    };
+    let value = serde_yaml::Value::Sequence(vec![entry.clone()]);
+    if let Err(e) = handle.configure(&value).await {
+        tracing::warn!(plugin_id = %id, error = %e, "reconcile: handle.configure rejected");
+    }
 }
 
 // ── helpers ─────────────────────────────────────────────────────

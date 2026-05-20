@@ -1299,8 +1299,7 @@ impl AdminRpcDispatcher {
                             .get("channel")
                             .and_then(Value::as_str)
                             .map(str::to_string);
-                        let persister =
-                            channel.as_deref().and_then(|c| self.persister_for(c));
+                        let persister = channel.as_deref().and_then(|c| self.persister_for(c));
                         let outcome = super::domains::credentials::register(
                             store.as_ref(),
                             yaml.as_ref(),
@@ -1326,20 +1325,40 @@ impl AdminRpcDispatcher {
                         // is logged but does NOT fail the register —
                         // the yaml write already succeeded.
                         if outcome.error.is_none() {
-                            if let (Some(restarter), Some(channel)) =
-                                (&self.plugin_restarter, channel.as_deref())
-                            {
-                                match restarter.reconfigure(channel).await {
-                                    Ok(()) => tracing::info!(
-                                        channel,
-                                        "post-register channel reconfigure pushed"
-                                    ),
-                                    Err(e) => tracing::warn!(
-                                        channel,
-                                        error = %e,
-                                        "post-register channel reconfigure failed; \
-                                         configured instance may need a manual restart"
-                                    ),
+                            if let Some(channel) = channel.as_deref() {
+                                // Prefer the installer's full reconcile
+                                // (spawns added instances / kills removed
+                                // ones / re-configures survivors — the
+                                // multi-instance path). Fall back to the
+                                // restarter's single-channel configure-push
+                                // when no installer is wired (minimal
+                                // embeddings).
+                                if let Some(installer) = &self.plugin_installer {
+                                    match installer.reconcile_channel_instances(channel).await {
+                                        Ok(()) => tracing::info!(
+                                            channel,
+                                            "post-register channel instances reconciled"
+                                        ),
+                                        Err(e) => tracing::warn!(
+                                            channel,
+                                            error = %e,
+                                            "post-register channel reconcile failed; \
+                                             instance may need a manual restart"
+                                        ),
+                                    }
+                                } else if let Some(restarter) = &self.plugin_restarter {
+                                    match restarter.reconfigure(channel).await {
+                                        Ok(()) => tracing::info!(
+                                            channel,
+                                            "post-register channel reconfigure pushed"
+                                        ),
+                                        Err(e) => tracing::warn!(
+                                            channel,
+                                            error = %e,
+                                            "post-register channel reconfigure failed; \
+                                             configured instance may need a manual restart"
+                                        ),
+                                    }
                                 }
                             }
                         }
