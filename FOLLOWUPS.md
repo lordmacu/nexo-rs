@@ -66,7 +66,22 @@ non-blocking.
    `plugin_ui/list` aggregator yet; the client re-evaluates with live
    state. Trigger: when health needs to gate server-side.
 
-### Phase 99 — plugin manifest migration BLOCKED on publish   ⬜ BLOCKER
+### Phase 99 — `nexo-cli plugin admin-ui scaffold` generator   ⬜ DEFERRED
+
+Logged 2026-05-20 at 99.11 close-out. A CLI subcommand that emits a
+stub `[plugin.admin_ui]` section + broker handler templates for a
+plugin author. Deferred: the 6 migrated plugins + the
+`manifest-admin-ui.md` reference already serve as copy-paste
+templates, so the generator is convenience, not load-bearing.
+
+### Phase 99 — plugin manifest migration BLOCKED on publish   ✅ RESOLVED 2026-05-20
+
+RESOLVED: `nexo-plugin-manifest 0.1.8` published (carries `admin_ui`).
+All six canonical plugins bumped the dep + adopted `[plugin.admin_ui]`
++ published: google 0.3.1, telegram 0.4.3, email 0.6.2, whatsapp
+0.4.5, browser 0.4.3, web-search 0.1.2. Original blocker text below.
+
+
 
 Discovered 2026-05-20 during 99.10 (Google migration). The external
 plugin repos (google + whatsapp/telegram/email/browser/web-search)

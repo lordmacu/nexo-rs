@@ -36,6 +36,7 @@
 - [Manifest `[plugin.admin]`](./plugins/manifest-admin.md)
 - [Manifest `[plugin.metrics]`](./plugins/manifest-metrics.md)
 - [Manifest `[plugin.dashboard]`](./plugins/manifest-dashboard.md)
+- [Manifest `[plugin.admin_ui]`](./plugins/manifest-admin-ui.md)
 - [Plugin contract](./plugins/contract.md)
 - [Patterns (8 common shapes)](./plugins/patterns.md)
 - [Rust SDK](./plugins/rust-sdk.md)
@@ -144,6 +145,7 @@ part of day-to-day usage. Skim only when you need it.
 - [MCP server exposable catalog](./architecture/mcp-server-exposable.md)
 - [Fork subagent infra](./architecture/fork-subagent.md)
 - [Agent event firehose](./architecture/agent-event-firehose.md)
+- [Plugin admin UI contribution model](./architecture/plugin-admin-ui.md)
 - [Pure-Rust quick tunnel](./architecture/tunnel.md)
 
 # Advanced configuration
