@@ -13,6 +13,17 @@
 
 set -e
 
+# Clear the git env vars that `git commit` exports into hook
+# processes (GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE / …). Without
+# this, any test that shells out to git (e.g.
+# crates/driver-loop/tests/workspace_git_worktree_test.rs running
+# `git worktree add` against its own tempdir repo) inherits a
+# GIT_INDEX_FILE pointing at THIS commit's transient index and fails
+# with `fatal: .git/index: index file open failed: Not a directory`.
+# Unsetting them makes child git invocations resolve their own repo.
+unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX \
+      GIT_AUTHOR_DATE GIT_COMMITTER_DATE GIT_REFLOG_ACTION 2>/dev/null || true
+
 echo ">> fmt check..."
 cargo fmt --all -- --check
 
