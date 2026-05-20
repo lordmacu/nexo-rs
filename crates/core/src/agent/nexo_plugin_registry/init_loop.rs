@@ -1001,7 +1001,7 @@ mod tests {
         use crate::agent::plugin_host::PluginInitContext;
 
         let snap = snapshot_with(vec![discovered("alpha"), discovered("beta")]);
-        let mut registry = PluginFactoryRegistry::new();
+        let registry = PluginFactoryRegistry::new();
         let factory: PluginFactory = Box::new(|_m| {
             let err: super::super::factory::BoxError =
                 Box::new(std::io::Error::other("forced failure for test"));
@@ -1181,7 +1181,7 @@ mod tests {
 
         // Register a factory whose closure body is irrelevant —
         // we expect the loader to fail BEFORE it's invoked.
-        let mut registry = PluginFactoryRegistry::new();
+        let registry = PluginFactoryRegistry::new();
         let factory: PluginFactory = Box::new(|_m| {
             let err: super::super::factory::BoxError =
                 Box::new(std::io::Error::other("factory should not be reached"));

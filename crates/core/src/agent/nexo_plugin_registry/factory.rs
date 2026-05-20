@@ -33,13 +33,18 @@ pub type PluginFactory =
 /// instantiate concrete plugins from discovered manifests.
 #[derive(Default)]
 pub struct PluginFactoryRegistry {
-    factories: BTreeMap<String, PluginFactory>,
+    // Interior-mutable so the registry can be shared as `Arc` AND still
+    // gain/drop factories at runtime (multi-instance hot-registration:
+    // a channel instance configured after boot needs its own factory
+    // registered live). Boot still populates it via `register`.
+    factories: std::sync::RwLock<BTreeMap<String, PluginFactory>>,
 }
 
 impl std::fmt::Debug for PluginFactoryRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
         f.debug_struct("PluginFactoryRegistry")
-            .field("kinds", &self.factories.keys().collect::<Vec<_>>())
+            .field("kinds", &guard.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -51,18 +56,37 @@ impl PluginFactoryRegistry {
 
     /// Register a factory under `plugin_id`. First-registers-wins:
     /// duplicate registration returns `Err(AlreadyRegistered)` and
-    /// the prior factory stays in place.
+    /// the prior factory stays in place. Interior-mutable (`&self`) so
+    /// it works after the registry is wrapped in `Arc`.
     pub fn register(
-        &mut self,
+        &self,
         plugin_id: impl Into<String>,
         factory: PluginFactory,
     ) -> Result<(), FactoryRegistrationError> {
         let id = plugin_id.into();
-        if self.factories.contains_key(&id) {
+        let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
+        if guard.contains_key(&id) {
             return Err(FactoryRegistrationError::AlreadyRegistered { plugin_id: id });
         }
-        self.factories.insert(id, factory);
+        guard.insert(id, factory);
         Ok(())
+    }
+
+    /// Runtime (re)registration — overwrite-allowed so a reconfigured
+    /// or renamed channel instance replaces its prior factory. Returns
+    /// whether a prior factory was replaced. Distinct from [`register`]
+    /// which is first-wins for the boot path.
+    pub fn register_runtime(&self, plugin_id: impl Into<String>, factory: PluginFactory) -> bool {
+        let id = plugin_id.into();
+        let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
+        guard.insert(id, factory).is_some()
+    }
+
+    /// Drop a runtime-registered factory (an uninstalled / removed
+    /// instance). Returns whether one existed.
+    pub fn unregister_runtime(&self, plugin_id: &str) -> bool {
+        let mut guard = self.factories.write().unwrap_or_else(|p| p.into_inner());
+        guard.remove(plugin_id).is_some()
     }
 
     /// Instantiate the plugin registered under `plugin_id` by
@@ -72,11 +96,13 @@ impl PluginFactoryRegistry {
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<Arc<dyn NexoPlugin>, FactoryInstantiateError> {
-        let factory = self.factories.get(plugin_id).ok_or_else(|| {
-            FactoryInstantiateError::NotRegistered {
-                plugin_id: plugin_id.to_string(),
-            }
-        })?;
+        let guard = self.factories.read().unwrap_or_else(|p| p.into_inner());
+        let factory =
+            guard
+                .get(plugin_id)
+                .ok_or_else(|| FactoryInstantiateError::NotRegistered {
+                    plugin_id: plugin_id.to_string(),
+                })?;
         factory(manifest).map_err(|source| FactoryInstantiateError::FactoryFailed {
             plugin_id: plugin_id.to_string(),
             source,
@@ -84,21 +110,35 @@ impl PluginFactoryRegistry {
     }
 
     pub fn is_registered(&self, plugin_id: &str) -> bool {
-        self.factories.contains_key(plugin_id)
+        self.factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(plugin_id)
     }
 
     /// Sorted list of registered plugin ids. Stable iteration for
     /// observability + tests.
     pub fn kinds(&self) -> Vec<String> {
-        self.factories.keys().cloned().collect()
+        self.factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .keys()
+            .cloned()
+            .collect()
     }
 
     pub fn len(&self) -> usize {
-        self.factories.len()
+        self.factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.factories.is_empty()
+        self.factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_empty()
     }
 }
 
@@ -180,7 +220,7 @@ mod tests {
 
     #[test]
     fn register_first_succeeds_and_kinds_lists_it() {
-        let mut reg = PluginFactoryRegistry::new();
+        let reg = PluginFactoryRegistry::new();
         assert!(reg.is_empty());
         let factory: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
         reg.register("alpha", factory).expect("first register ok");
@@ -192,7 +232,7 @@ mod tests {
 
     #[test]
     fn register_duplicate_returns_already_registered() {
-        let mut reg = PluginFactoryRegistry::new();
+        let reg = PluginFactoryRegistry::new();
         let f1: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
         let f2: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
         reg.register("alpha", f1).unwrap();
@@ -204,6 +244,34 @@ mod tests {
         }
         // Map size unchanged.
         assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn register_runtime_overwrites_and_unregister_drops() {
+        let reg = PluginFactoryRegistry::new();
+        let f1: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("a"))));
+        reg.register("a", f1).unwrap();
+        // first-wins `register` still rejects a duplicate.
+        let dup: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("a"))));
+        assert!(reg.register("a", dup).is_err());
+        // `register_runtime` overwrites in place → reports replacement.
+        let f2: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("a"))));
+        assert!(
+            reg.register_runtime("a", f2),
+            "existing id must report replaced=true"
+        );
+        assert_eq!(reg.len(), 1);
+        // `register_runtime` of a fresh id reports no replacement.
+        let fb: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("b"))));
+        assert!(
+            !reg.register_runtime("b", fb),
+            "fresh id must report replaced=false"
+        );
+        assert!(reg.is_registered("b"));
+        // `unregister_runtime` drops only an existing id.
+        assert!(reg.unregister_runtime("b"));
+        assert!(!reg.is_registered("b"));
+        assert!(!reg.unregister_runtime("ghost"));
     }
 
     #[test]
@@ -221,7 +289,7 @@ mod tests {
 
     #[test]
     fn instantiate_factory_error_propagates_as_factory_failed() {
-        let mut reg = PluginFactoryRegistry::new();
+        let reg = PluginFactoryRegistry::new();
         let factory: PluginFactory = Box::new(|_m| {
             let err: BoxError = Box::new(std::io::Error::other("boom"));
             Err(err)
@@ -240,7 +308,7 @@ mod tests {
 
     #[test]
     fn instantiate_success_returns_arc_handle() {
-        let mut reg = PluginFactoryRegistry::new();
+        let reg = PluginFactoryRegistry::new();
         let factory: PluginFactory = Box::new(|_m| Ok(Arc::new(MockPlugin::build("alpha"))));
         reg.register("alpha", factory).unwrap();
         let m = fixture_manifest("alpha");

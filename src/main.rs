@@ -1560,7 +1560,7 @@ fn register_instance_subprocess_factories<C>(
     pre_snap: &nexo_core::agent::nexo_plugin_registry::NexoPluginRegistrySnapshot,
     broker_kind: &str,
     broker_url: &str,
-    factory_registry: &mut nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry,
+    factory_registry: &nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry,
     extra_subprocess_plugins: &mut Vec<nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin>,
     extract_label: impl Fn(&C) -> Option<String>,
     is_enabled: impl Fn(&C) -> bool,
@@ -3769,7 +3769,7 @@ async fn main() -> Result<()> {
     // (browser/telegram/whatsapp/email) keep their dormant
     // manifests OUT of `search_paths` and continue via the legacy
     // block above until they are extracted out-of-tree.
-    let mut factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
+    let factory_registry = nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
 
     // Telegram subprocess flip. For each cfg
     // entry we (1) build a per-spawn env dict whitelisting only
@@ -3808,7 +3808,7 @@ async fn main() -> Result<()> {
             &pre_snap,
             broker_kind,
             &broker_url,
-            &mut factory_registry,
+            &factory_registry,
             &mut extra_subprocess_plugins,
             |c| {
                 c.get("instance")
@@ -3854,7 +3854,7 @@ async fn main() -> Result<()> {
             &pre_snap,
             broker_kind,
             &broker_url,
-            &mut factory_registry,
+            &factory_registry,
             &mut extra_subprocess_plugins,
             |c| {
                 c.get("instance")

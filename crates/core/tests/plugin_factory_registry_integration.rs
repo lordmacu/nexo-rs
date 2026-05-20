@@ -44,7 +44,7 @@ async fn factory_driven_path_records_failed_outcome_for_registered_plugin() {
     // Register a factory that DELIBERATELY fails so we exercise
     // the factory-driven path without having to build a real
     // PluginInitContext.
-    let mut registry = PluginFactoryRegistry::new();
+    let registry = PluginFactoryRegistry::new();
     let factory: PluginFactory = Box::new(|_m| {
         let err: BoxError = Box::new(std::io::Error::other("factory deliberately failed"));
         Err(err)
