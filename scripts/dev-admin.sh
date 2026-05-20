@@ -267,6 +267,8 @@ extensions:
         - agent_events_subscribe_all
         - credentials_crud
         - plugin_restart
+        - plugin_install
+        - plugin_admin_ui
 schema_version: 11
 YAML
 
