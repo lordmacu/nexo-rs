@@ -4156,7 +4156,7 @@ async fn main() -> Result<()> {
     // and the router stays empty for the legacy hardcoded path
     // matchers to serve.
     let http_router = {
-        let mut router = nexo_pairing::plugin_http::PluginHttpRouter::new();
+        let router = nexo_pairing::plugin_http::PluginHttpRouter::new();
         for (plugin_id, handle) in wire.plugin_handles.iter() {
             if let Some(http) = handle.manifest().plugin.http.as_ref() {
                 match router.register(
@@ -7828,6 +7828,7 @@ async fn main() -> Result<()> {
         hot_plugin_ctx: nexo_setup::hot_spawn::HotPluginCtx {
             plugin_handles: plugin_handles_cell.clone(),
             plugin_admin_router: plugin_admin_router.clone(),
+            plugin_http_router: http_router.clone(),
             plugin_poller_router: plugin_poller_router.clone(),
             pairing_triggers: pairing_triggers.clone(),
             pairing_store: pairing_store_for_hot.clone(),
@@ -7837,6 +7838,9 @@ async fn main() -> Result<()> {
             // live state every agent + scrape already reads.
             plugin_skills: plugin_skills_shared.clone(),
             plugin_metrics: plugin_metrics_descriptors.clone(),
+            // 3a — live registry so install/uninstall swaps the snapshot
+            // admin-UI + discovery read.
+            registry: wire.registry.clone(),
         },
     };
     let installer_base = plugin_install_adapter::LivePluginInstaller::new(config_dir.clone());
@@ -12537,6 +12541,11 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 long_term_memory.clone(),
                 shutdown.clone(),
                 server_cfg.autonomous_worker.tick_secs,
+                // `run_mcp_server` mode does not discover plugins, so
+                // there are no plugin skills to share here. The fn now
+                // accepts the handle; pass the real one if this mode
+                // ever wires plugins (97.1.γ #2).
+                nexo_core::agent::nexo_plugin_registry::PluginSkillsState::empty().into_shared(),
             )
             .await?,
         )
@@ -14536,6 +14545,9 @@ async fn start_mcp_autonomous_worker(
     long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
     shutdown: tokio_util::sync::CancellationToken,
     tick_secs: u64,
+    // Phase 97.1.γ #2 — shared plugin-skills handle so the MCP worker
+    // agent also sees plugin-contributed skills, live.
+    plugin_skills: nexo_core::agent::nexo_plugin_registry::SharedPluginSkills,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     use nexo_core::agent::{
         AgentBehavior, AgentContext, CancelFollowupTool, CheckFollowupTool, LlmAgentBehavior,
@@ -14615,7 +14627,8 @@ async fn start_mcp_autonomous_worker(
                 worker_agent_cfg.id
             )
         })?;
-    let behavior = LlmAgentBehavior::new(llm, Arc::clone(&worker_tools));
+    let behavior = LlmAgentBehavior::new(llm, Arc::clone(&worker_tools))
+        .with_plugin_skill_roots(plugin_skills);
 
     let mut worker_ctx = AgentContext::new(
         worker_agent_cfg.id.clone(),

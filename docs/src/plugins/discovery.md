@@ -123,12 +123,14 @@ into the running daemon **without a restart**:
 | Tools (`extends.tools`) | ✅ into the shared `ToolRegistry` |
 | Channels, hooks, LLM providers, vector backends | ✅ |
 | Admin / poller routes, pairing triggers | ✅ |
+| **HTTP routes** (`[plugin.http]`) | ✅ the route table is interior-mutable; install adds + uninstall drops |
 | **Skills** (`[plugin.skills] contributes_dir`) | ✅ re-walked + merged into the shared live handle every agent reads next turn |
 | **Metrics** (`[plugin.metrics]`) | ✅ appended to the live descriptor list the `/metrics` scrape reads |
+| **Registry snapshot** (admin-UI / discovery / capabilities) | ✅ swapped so a hot-installed plugin's `[plugin.admin_ui]` screen + catalogue entry appear live |
 
 Enabling/disabling (`set_enabled`) and uninstalling apply the inverse
-live — skills + metrics are added on enable/install and dropped on
-disable/uninstall.
+live — every contribution above is added on enable/install and dropped
+on disable/uninstall.
 
 **Plugin skills in the admin UI.** Plugin-contributed skills appear in
 the **Skills** screen alongside operator skills, tagged with a
@@ -136,8 +138,9 @@ the **Skills** screen alongside operator skills, tagged with a
 `source_plugin` field). They are read-only there — remove them by
 uninstalling the plugin. Operator skills win on a name collision.
 
-Still restart-bound: agents, HTTP routes, dashboards, admin-UI
-descriptors (their hosting structures lack interior mutability today).
+Still restart-bound: plugin-contributed **agents** (`[plugin.agents]` —
+no plugin ships these yet, so the hot-spawn path is unbuilt) and setup-
+wizard **dashboards** (the channel-link surface is rebuilt at boot).
 
 ## Architecture pointers
 

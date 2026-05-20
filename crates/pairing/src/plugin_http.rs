@@ -98,13 +98,16 @@ struct Route {
 /// a reserved path as their leading segment too.
 pub const RESERVED_PREFIXES: &[&str] = &["/health", "/metrics", "/pair", "/admin", "/.well-known"];
 
-/// Longest-prefix-first matcher. Insertion preserves declaration
-/// order until [`Self::sort`] is called; once sorted, prefix
-/// matching is deterministic for ambiguous prefixes (e.g.
-/// `/api/v1` wins over `/api`).
-#[derive(Debug, Clone, Default)]
+/// Longest-prefix-first matcher: `register` keeps the route table
+/// sorted so prefix matching is deterministic when prefixes nest
+/// (`/api/v1` wins over `/api`).
+/// Interior-mutable (Phase 97.1.γ 3b): the router lives behind an
+/// `Arc` shared with the request loop, and hot plugin install /
+/// uninstall mutates it through `&self` (RwLock) so HTTP routes go
+/// live without a daemon restart.
+#[derive(Debug, Default)]
 pub struct PluginHttpRouter {
-    routes: Vec<Route>,
+    routes: std::sync::RwLock<Vec<Route>>,
 }
 
 impl PluginHttpRouter {
@@ -123,7 +126,7 @@ impl PluginHttpRouter {
     /// operators see the cause; the plugin's broker handler
     /// stays unhooked from those routes.
     pub fn register(
-        &mut self,
+        &self,
         plugin_id: &str,
         mount_prefix: &str,
         timeout: Option<Duration>,
@@ -136,42 +139,51 @@ impl PluginHttpRouter {
                 });
             }
         }
+        let mut routes = self.routes.write().expect("plugin http routes lock");
         // Drop any existing entry for the same plugin_id (live
         // restart replaces).
-        self.routes.retain(|r| r.plugin_id != plugin_id);
-        self.routes.push(Route {
+        routes.retain(|r| r.plugin_id != plugin_id);
+        routes.push(Route {
             mount_prefix: mount_prefix.to_string(),
             plugin_id: plugin_id.to_string(),
             timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
         });
-        self.sort();
-        Ok(())
-    }
-
-    /// Longest-prefix-first ordering. Required for deterministic
-    /// matching when prefixes nest (`/api/v1` MUST win over
-    /// `/api` when both are registered).
-    fn sort(&mut self) {
-        self.routes.sort_by(|a, b| {
+        // Longest-prefix-first ordering — deterministic when prefixes
+        // nest (`/api/v1` MUST win over `/api`).
+        routes.sort_by(|a, b| {
             b.mount_prefix
                 .len()
                 .cmp(&a.mount_prefix.len())
                 .then_with(|| a.plugin_id.cmp(&b.plugin_id))
         });
+        Ok(())
     }
 
-    /// Match a request path. Returns `(plugin_id, timeout)` if a
-    /// route covers it; the caller forwards via
-    /// [`forward_request`].
-    pub fn match_path(&self, path: &str) -> Option<(&str, Duration)> {
-        self.routes
+    /// Drop a plugin's route (hot uninstall / disable). Returns
+    /// `true` when an entry was removed.
+    pub fn unregister(&self, plugin_id: &str) -> bool {
+        let mut routes = self.routes.write().expect("plugin http routes lock");
+        let before = routes.len();
+        routes.retain(|r| r.plugin_id != plugin_id);
+        routes.len() != before
+    }
+
+    /// Match a request path. Returns `(plugin_id, timeout)` (owned,
+    /// since the route table is behind a lock) if a route covers it;
+    /// the caller forwards via [`forward_request`].
+    pub fn match_path(&self, path: &str) -> Option<(String, Duration)> {
+        let routes = self.routes.read().expect("plugin http routes lock");
+        routes
             .iter()
             .find(|r| path.starts_with(&r.mount_prefix))
-            .map(|r| (r.plugin_id.as_str(), r.timeout))
+            .map(|r| (r.plugin_id.clone(), r.timeout))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.routes.is_empty()
+        self.routes
+            .read()
+            .expect("plugin http routes lock")
+            .is_empty()
     }
 }
 
@@ -242,7 +254,7 @@ pub enum PluginHttpForwardError {
 pub fn build_router_from_handles(
     handles: &std::collections::BTreeMap<String, Arc<dyn DynPluginManifest>>,
 ) -> PluginHttpRouter {
-    let mut router = PluginHttpRouter::new();
+    let router = PluginHttpRouter::new();
     for (plugin_id, handle) in handles.iter() {
         if let Some(section) = handle.http_section() {
             let _ = router.register(plugin_id, &section.mount_prefix, section.timeout);
@@ -282,7 +294,7 @@ mod tests {
 
     #[test]
     fn match_path_uses_longest_prefix_first() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin_short", "/api", None).unwrap();
         r.register("plugin_long", "/api/v1", None).unwrap();
         let (id, _) = r.match_path("/api/v1/users").expect("matches");
@@ -291,7 +303,7 @@ mod tests {
 
     #[test]
     fn match_path_falls_back_to_shorter_prefix() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin_short", "/api", None).unwrap();
         r.register("plugin_long", "/api/v1", None).unwrap();
         let (id, _) = r.match_path("/api/v2/users").expect("matches");
@@ -300,7 +312,7 @@ mod tests {
 
     #[test]
     fn match_path_returns_none_for_no_match() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin", "/whatsapp", None).unwrap();
         assert!(r.match_path("/foo").is_none());
         assert!(r.match_path("/").is_none());
@@ -308,7 +320,7 @@ mod tests {
 
     #[test]
     fn register_replaces_existing_entry_for_same_plugin() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin", "/old", None).unwrap();
         r.register("plugin", "/new", None).unwrap();
         assert!(r.match_path("/old").is_none());
@@ -317,7 +329,7 @@ mod tests {
 
     #[test]
     fn register_applies_custom_timeout() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin", "/slow", Some(Duration::from_secs(120)))
             .unwrap();
         let (_, t) = r.match_path("/slow/foo").unwrap();
@@ -326,15 +338,27 @@ mod tests {
 
     #[test]
     fn register_default_timeout_when_none() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         r.register("plugin", "/fast", None).unwrap();
         let (_, t) = r.match_path("/fast/foo").unwrap();
         assert_eq!(t, DEFAULT_TIMEOUT);
     }
 
     #[test]
+    fn hot_register_and_unregister_through_shared_ref() {
+        // Phase 97.1.γ 3b — interior mutability: register + unregister
+        // through a shared `&self` (the daemon holds an `Arc`).
+        let r = std::sync::Arc::new(PluginHttpRouter::new());
+        r.register("browser", "/browser", None).unwrap();
+        assert!(r.match_path("/browser/screenshot").is_some());
+        assert!(r.unregister("browser"));
+        assert!(r.match_path("/browser/screenshot").is_none());
+        assert!(!r.unregister("browser"), "second remove is a no-op");
+    }
+
+    #[test]
     fn register_rejects_reserved_prefixes() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         for reserved in RESERVED_PREFIXES {
             let result = r.register("evil_plugin", reserved, None);
             assert!(
@@ -346,7 +370,7 @@ mod tests {
 
     #[test]
     fn register_rejects_subpath_of_reserved() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         // `/health/foo` shadows the daemon's `/health` endpoint
         // if matched first — must be rejected.
         let result = r.register("evil_plugin", "/health/foo", None);
@@ -358,7 +382,7 @@ mod tests {
 
     #[test]
     fn register_accepts_prefixes_that_only_share_substring_with_reserved() {
-        let mut r = PluginHttpRouter::new();
+        let r = PluginHttpRouter::new();
         // `/healthy` is NOT a subpath of `/health` — `/health/` is
         // the prefix that would shadow; `/healthy` is a sibling.
         assert!(r.register("plugin", "/healthy", None).is_ok());

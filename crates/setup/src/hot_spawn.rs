@@ -30,10 +30,13 @@ use nexo_broker::AnyBroker;
 use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
 use nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers;
 use nexo_core::agent::admin_rpc::BrokerPairingTrigger;
-use nexo_core::agent::nexo_plugin_registry::{PluginSkillSummary, SharedPluginSkills};
+use nexo_core::agent::nexo_plugin_registry::{
+    DiscoveredPlugin, NexoPluginRegistry, PluginSkillSummary, SharedPluginSkills,
+};
 use nexo_core::agent::skills::read_skill_metadata;
 use nexo_core::agent::NexoPlugin;
 use nexo_pairing::plugin_admin::PluginAdminRouter;
+use nexo_pairing::plugin_http::PluginHttpRouter;
 use nexo_pairing::plugin_metrics::PluginMetricsDescriptor;
 use nexo_pairing::plugin_poller::{PluginPollerHandle, PluginPollerRouter};
 use nexo_plugin_manifest::PluginManifest;
@@ -53,6 +56,10 @@ pub type SharedPluginMetrics = Arc<ArcSwap<Vec<PluginMetricsDescriptor>>>;
 pub struct HotPluginCtx {
     pub plugin_handles: SharedPluginHandles,
     pub plugin_admin_router: Arc<PluginAdminRouter>,
+    /// Live HTTP route table (Phase 97.1.γ 3b). Interior-mutable so
+    /// hot install/uninstall adds/drops the plugin's `[plugin.http]`
+    /// route without a restart.
+    pub plugin_http_router: Arc<PluginHttpRouter>,
     pub plugin_poller_router: Arc<PluginPollerRouter>,
     pub pairing_triggers: PairingChannelTriggers,
     pub pairing_store: Option<Arc<dyn PairingChallengeStore>>,
@@ -64,6 +71,10 @@ pub struct HotPluginCtx {
     /// Live plugin Prometheus-metrics descriptors, shared with the
     /// `/metrics` scrape (Phase 97.1.γ).
     pub plugin_metrics: SharedPluginMetrics,
+    /// The live plugin registry. Hot install/uninstall swaps its
+    /// snapshot so admin-UI (Phase 99), discovery, and capability
+    /// views see the new plugin set without a restart (97.1.γ 3a).
+    pub registry: Arc<NexoPluginRegistry>,
 }
 
 impl std::fmt::Debug for HotPluginCtx {
@@ -71,6 +82,7 @@ impl std::fmt::Debug for HotPluginCtx {
         f.debug_struct("HotPluginCtx")
             .field("plugin_handles", &"<shared-cell>")
             .field("plugin_admin_router", &"<router>")
+            .field("plugin_http_router", &"<router>")
             .field("plugin_poller_router", &"<router>")
             .field("pairing_triggers", &"<triggers>")
             .field(
@@ -80,6 +92,7 @@ impl std::fmt::Debug for HotPluginCtx {
             .field("broker", &"<broker>")
             .field("plugin_skills", &"<arc-swap>")
             .field("plugin_metrics", &"<arc-swap>")
+            .field("registry", &"<registry>")
             .finish()
     }
 }
@@ -152,6 +165,27 @@ pub async fn register_plugin_in_live_runtime(
                 method_prefix = %admin.method_prefix,
                 error = %err,
                 "hot-spawn: plugin admin route registration rejected"
+            ),
+        }
+    }
+
+    // 2b. Plugin HTTP route (Phase 97.1.γ 3b — interior-mutable).
+    if let Some(http) = manifest.plugin.http.as_ref() {
+        match ctx.plugin_http_router.register(
+            plugin_id,
+            &http.mount_prefix,
+            http.timeout_seconds.map(std::time::Duration::from_secs),
+        ) {
+            Ok(()) => tracing::info!(
+                plugin = %plugin_id,
+                prefix = %http.mount_prefix,
+                "hot-spawn: registered plugin HTTP route"
+            ),
+            Err(err) => tracing::warn!(
+                plugin = %plugin_id,
+                prefix = %http.mount_prefix,
+                error = %err,
+                "hot-spawn: plugin HTTP route registration rejected (reserved prefix)"
             ),
         }
     }
@@ -257,10 +291,13 @@ pub async fn unregister_plugin_from_live_runtime(
         }
         None => false,
     };
+    // Phase 97.1.γ 3b — drop the plugin's HTTP route (interior-mutable,
+    // unlike the admin/pairing routers which still linger).
+    ctx.plugin_http_router.unregister(plugin_id);
     if removed {
         tracing::info!(
             plugin = %plugin_id,
-            "hot-remove: dropped plugin handle from shared cell \
+            "hot-remove: dropped plugin handle from shared cell + HTTP route \
              (admin router + pairing trigger entries linger until re-install)"
         );
     }
@@ -371,6 +408,38 @@ pub fn hot_remove_plugin_metrics(metrics: &SharedPluginMetrics, plugin_id: &str)
     metrics.store(Arc::new(next));
 }
 
+/// Add newly-installed plugins to the live registry snapshot so the
+/// admin-UI aggregator (Phase 99 `plugin_ui/list`), discovery, and
+/// capability views see them without a daemon restart (97.1.γ 3a).
+/// Dedups by plugin id (idempotent).
+pub fn hot_add_plugins_to_snapshot(registry: &NexoPluginRegistry, new: &[DiscoveredPlugin]) {
+    if new.is_empty() {
+        return;
+    }
+    let cur = registry.snapshot();
+    let mut next = (*cur).clone();
+    for dp in new {
+        let id = &dp.manifest.plugin.id;
+        if next.plugins.iter().any(|p| &p.manifest.plugin.id == id) {
+            continue;
+        }
+        next.plugins.push(dp.clone());
+    }
+    registry.swap(Arc::new(next));
+}
+
+/// Remove a plugin from the live registry snapshot (inverse of
+/// [`hot_add_plugins_to_snapshot`]).
+pub fn hot_remove_plugin_from_snapshot(registry: &NexoPluginRegistry, plugin_id: &str) {
+    let cur = registry.snapshot();
+    let mut next = (*cur).clone();
+    let before = next.plugins.len();
+    next.plugins.retain(|p| p.manifest.plugin.id != plugin_id);
+    if next.plugins.len() != before {
+        registry.swap(Arc::new(next));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +514,23 @@ mod tests {
         assert_eq!(metrics.load().len(), 1, "idempotent");
         hot_remove_plugin_metrics(&metrics, "alpha");
         assert_eq!(metrics.load().len(), 0);
+    }
+
+    #[test]
+    fn snapshot_add_idempotent_then_remove() {
+        use nexo_core::agent::nexo_plugin_registry::{DiscoveredPlugin, NexoPluginRegistry};
+        let registry = NexoPluginRegistry::empty();
+        let dp = DiscoveredPlugin {
+            manifest: manifest_with(""),
+            root_dir: std::path::PathBuf::from("/tmp/alpha"),
+            manifest_path: std::path::PathBuf::from("/tmp/alpha/nexo-plugin.toml"),
+        };
+        hot_add_plugins_to_snapshot(&registry, std::slice::from_ref(&dp));
+        assert_eq!(registry.snapshot().plugins.len(), 1);
+        hot_add_plugins_to_snapshot(&registry, std::slice::from_ref(&dp));
+        assert_eq!(registry.snapshot().plugins.len(), 1, "idempotent by id");
+        hot_remove_plugin_from_snapshot(&registry, "alpha");
+        assert!(registry.snapshot().plugins.is_empty());
     }
 
     #[test]

@@ -14,18 +14,31 @@ no prompt. Shared `Arc<ArcSwap<PluginSkillsState>>` + an arc-swap
 metrics descriptor list are mutated by `hot_spawn::hot_add/remove_*`
 from `scan` / `uninstall` / `set_enabled`.
 
-Residual deferreds:
-1. **skills conflict re-promotion on uninstall** — when two plugins
-   contribute the same skill name, the first wins; uninstalling the
-   winner drops that skill but does NOT promote the runner-up live (a
-   full re-walk on next boot/scan fixes it). Rare; low priority.
-2. **MCP autonomous worker agent** (`src/main.rs` ~14600) does not get
-   the shared plugin-skills handle yet — only the main agent loop +
-   the hot-spawn spawner do. Wire it when the MCP worker needs plugin
-   skills.
-3. **Agents / HTTP routes / dashboards / admin-UI descriptors** remain
-   restart-bound on install (their hosting Vec/Arc lack interior
-   mutability) — same gap noted in `hot_spawn.rs`.
+Follow-up wave (2026-05-20) closed the meatiest gaps:
+- **3a registry snapshot live** ✅ — `hot_spawn::hot_add/remove_plugins_to_snapshot`
+  swaps the registry snapshot on install/uninstall/enable/disable, so a
+  hot-installed plugin's `[plugin.admin_ui]` screen + discovery catalogue
+  entry + capability views appear LIVE.
+- **3b HTTP routes live** ✅ — `PluginHttpRouter` is now interior-mutable
+  (`RwLock<Vec<Route>>`, `register`/`unregister` via `&self`); install
+  adds + uninstall drops the `[plugin.http]` route (browser plugin
+  consumer). `match_path` returns owned `(String, Duration)`.
+- **#2 MCP worker** ✅ — `start_mcp_autonomous_worker` now takes the
+  shared plugin-skills handle (passed empty in `run_mcp_server` mode,
+  which does not discover plugins; ready for a real handle if it does).
+
+Still deferred:
+1. **skills conflict re-promotion on uninstall** — first-plugin-wins;
+   uninstalling the winner drops the skill but does NOT promote the
+   runner-up live (boot/scan re-walk fixes it). Rare; low priority.
+2. **3c hot-spawn plugin-contributed agents** — `[plugin.agents]` exists
+   but NO plugin ships contributed agents today, and `AgentSpawnerFn` is
+   a non-`Clone` closure deep in `main` boot, not reachable from the
+   install adapter without a refactor. Untestable without a consumer →
+   build it when a plugin first contributes an agent.
+3. **Setup-wizard dashboards** — the channel-link dashboard surface is
+   rebuilt at boot; a hot-installed plugin's `[plugin.dashboard]` doesn't
+   appear in the wizard until restart. Low runtime impact.
 
 ### Phase 99 — admin UI Mode B (embedded iframe) — DEFERRED to v2   ⬜ DEFERRED
 

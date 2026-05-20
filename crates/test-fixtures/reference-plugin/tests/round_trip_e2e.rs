@@ -160,14 +160,14 @@ async fn http_proxy_get_hello_round_trip() {
         |req| nexo_reference_plugin::http::handle_request(req),
     )
     .await;
-    let mut router = PluginHttpRouter::new();
+    let router = PluginHttpRouter::new();
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
     let info = router.match_path("/reference_demo/hello").expect("match");
     let reply = forward_http(
         &broker,
-        info.0,
+        &info.0,
         "GET",
         "/reference_demo/hello",
         "",
@@ -191,7 +191,7 @@ async fn http_proxy_post_echo_round_trips_body() {
         |req| nexo_reference_plugin::http::handle_request(req),
     )
     .await;
-    let mut router = PluginHttpRouter::new();
+    let router = PluginHttpRouter::new();
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
@@ -199,7 +199,7 @@ async fn http_proxy_post_echo_round_trips_body() {
     let body_in = b"hello-binary-body";
     let reply = forward_http(
         &broker,
-        info.0,
+        &info.0,
         "POST",
         "/reference_demo/echo",
         "",
@@ -222,14 +222,14 @@ async fn http_proxy_unknown_path_returns_plugin_404() {
         |req| nexo_reference_plugin::http::handle_request(req),
     )
     .await;
-    let mut router = PluginHttpRouter::new();
+    let router = PluginHttpRouter::new();
     router
         .register("reference_demo", "/reference_demo", None)
         .expect("register");
     let info = router.match_path("/reference_demo/missing").expect("match");
     let reply = forward_http(
         &broker,
-        info.0,
+        &info.0,
         "GET",
         "/reference_demo/missing",
         "",
