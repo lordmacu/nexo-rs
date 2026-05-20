@@ -389,7 +389,7 @@ dashmap     = { workspace = true, optional = true }
 # Phase 81.15.a — gated by the `plugin` feature. Pulled only by
 # plugin authors who use `PluginAdapter`; microapp authors leave
 # the feature off and don't pay the dep cost.
-nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest", optional = true }
+nexo-plugin-manifest = { version = "0.1.8", path = "../plugin-manifest", optional = true }
 nexo-broker = { version = "0.1.6", path = "../broker", optional = true }
 # Phase 81.15.c — child-side typed wrappers for memory.recall +
 # llm.complete RPCs. nexo-llm gives ChatMessage/ChatRequest/

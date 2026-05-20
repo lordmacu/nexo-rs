@@ -32,7 +32,7 @@ reqwest     = { workspace = true, features = ["rustls-tls-native-roots"] }
 tokio       = { workspace = true, features = ["fs", "sync", "time", "rt"] }
 futures     = { workspace = true }
 nexo-tool-meta       = { workspace = true }
-nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
+nexo-plugin-manifest = { version = "0.1.8", path = "../plugin-manifest" }
 nexo-resilience      = { version = "0.1.4", path = "../resilience" }
 
 [dev-dependencies]

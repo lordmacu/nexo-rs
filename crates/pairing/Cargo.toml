@@ -37,7 +37,7 @@ tracing        = { workspace = true }
 # adapter via manifest data instead of a hardcoded Rust
 # constructor on the daemon side.
 nexo-broker    = { version = "0.1.6", path = "../broker" }
-nexo-plugin-manifest = { version = "0.1.7", path = "../plugin-manifest" }
+nexo-plugin-manifest = { version = "0.1.8", path = "../plugin-manifest" }
 # Phase 96 — PluginPollerRouter forwards ticks via broker JSON-RPC
 # and reuses the TickAck/TickMetrics wire shapes from nexo-poller
 # so the runner doesn't have to re-define them.
