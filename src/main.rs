@@ -1554,6 +1554,37 @@ where
 /// (caller stays quiet); `None` when no base manifest exists so
 /// the caller can emit a guidance warning.
 #[allow(clippy::too_many_arguments)]
+/// Build the `(derived_id, factory, synthetic DiscoveredPlugin)` for
+/// ONE channel instance. Shared by the boot path
+/// (`register_instance_subprocess_factories`) and the runtime
+/// multi-instance reconcile (`nexo_setup` reconcile) so both derive
+/// identical ids (`<plugin>.<instance>`), envs, and synthetic manifests.
+fn build_instance_factory(
+    plugin_id: &str,
+    base: &nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
+    instance_label: &str,
+    env: std::collections::HashMap<String, String>,
+) -> (
+    String,
+    nexo_core::agent::nexo_plugin_registry::PluginFactory,
+    nexo_core::agent::nexo_plugin_registry::DiscoveredPlugin,
+) {
+    let trimmed = instance_label.trim();
+    let derived_id = if trimmed.is_empty() {
+        plugin_id.to_string()
+    } else {
+        format!("{plugin_id}.{trimmed}")
+    };
+    let synthetic =
+        nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(base, trimmed);
+    let factory = nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
+        synthetic.manifest.clone(),
+        env,
+        trimmed.to_string(),
+    );
+    (derived_id, factory, synthetic)
+}
+
 fn register_instance_subprocess_factories<C>(
     plugin_id: &str,
     cfgs: Vec<C>,
@@ -1580,20 +1611,9 @@ fn register_instance_subprocess_factories<C>(
             continue;
         }
         let instance_label = extract_label(&cfg).unwrap_or_default();
-        let trimmed = instance_label.trim();
-        let derived_id = if trimmed.is_empty() {
-            plugin_id.to_string()
-        } else {
-            format!("{plugin_id}.{trimmed}")
-        };
         let env = seed_env(&cfg, broker_kind, broker_url);
-        let synthetic =
-            nexo_core::agent::nexo_plugin_registry::synthesize_instance_plugin(&base, trimmed);
-        let factory = nexo_core::agent::nexo_plugin_registry::subprocess_plugin_factory_with_env(
-            synthetic.manifest.clone(),
-            env,
-            trimmed.to_string(),
-        );
+        let (derived_id, factory, synthetic) =
+            build_instance_factory(plugin_id, &base, &instance_label, env);
         if let Err(e) = factory_registry.register(derived_id.clone(), factory) {
             tracing::warn!(
                 plugin_id = %derived_id,
@@ -2504,12 +2524,8 @@ async fn main() -> Result<()> {
                     return;
                 };
                 let env = match channel {
-                    "telegram" => {
-                        seed_telegram_subprocess_env_for(entry, broker_kind, &broker_url)
-                    }
-                    "whatsapp" => {
-                        seed_whatsapp_subprocess_env_for(entry, broker_kind, &broker_url)
-                    }
+                    "telegram" => seed_telegram_subprocess_env_for(entry, broker_kind, &broker_url),
+                    "whatsapp" => seed_whatsapp_subprocess_env_for(entry, broker_kind, &broker_url),
                     _ => return,
                 };
                 let mut stamped = 0usize;
@@ -7264,429 +7280,431 @@ async fn main() -> Result<()> {
         // plugin-contributed skills, live.
         let shared_skills_c = plugin_skills_shared.clone();
 
-        let spawner: AgentSpawnerFn =
-            AgentSpawnerFn(Box::new(move |cfg, plugins_fresh, llm_fresh| {
-            let broker = broker_c.clone();
-            let sessions = Arc::clone(&sessions_c);
-            let memory = memory_c.clone();
-            let llm_registry = Arc::clone(&llm_registry_c);
-            // Phase 97.x — prefer the fresh `cfg.llm` from the
-            // coordinator's current reload cycle (carries providers
-            // added mid-runtime via `llm_providers/upsert`). The boot
-            // snapshot is kept only for documentation/parity — using it
-            // here is what made a wizard-created agent fail to bind its
-            // just-added provider until a daemon restart.
-            let _llm_cfg_boot_snapshot = Arc::clone(&llm_cfg_c);
-            let llm_cfg = llm_fresh;
-            // Phase 97.3 — prefer the fresh `cfg.plugins` from the
-            // coordinator's current reload cycle (carries entries
-            // added mid-runtime via `credentials/register`). Falls
-            // back to the boot snapshot only if the coordinator
-            // somehow handed us a default-empty config — that
-            // path doesn't exist today; the explicit selection
-            // documents intent.
-            let _plugins_boot_snapshot = Arc::clone(&plugins_c);
-            let plugins = plugins_fresh;
-            let peer_directory = Arc::clone(&peer_directory_c);
-            let transcripts_redactor = Arc::clone(&transcripts_redactor_c);
-            let transcripts_index = transcripts_index_c.clone();
-            let credentials = credentials_c.clone();
-            let link_extractor = Arc::clone(&link_extractor_c);
-            // Phase 95 — web_search_router clone removed.
-            let pairing_gate = Arc::clone(&pairing_gate_c);
-            let plan_approval_registry = plan_approval_registry_c.clone();
-            let dispatch_ctx = dispatch_ctx_c.clone();
-            let processing_store = Arc::clone(&processing_store_c);
-            let event_emitter = event_emitter_c.clone();
-            let default_recall_mode = default_recall_mode_c.clone();
-            let plugin_handles_cell = plugin_handles_cell_c.clone();
-            let pollers_runner = pollers_runner_c.clone();
-            let channel_boot = channel_boot_c.clone();
-            let mcp_manager = mcp_manager_c.clone();
-            let extension_runtimes: Vec<_> = extension_runtimes_c
-                .iter()
-                .map(|(rt, cand)| (Arc::clone(rt), cand.clone()))
-                .collect();
-            let mcp_cfg = mcp_cfg_c.clone();
-            let tools_per_agent = Arc::clone(&tools_per_agent_c);
-            let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
-            let shared_skills = shared_skills_c.clone();
+        let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(
+            move |cfg, plugins_fresh, llm_fresh| {
+                let broker = broker_c.clone();
+                let sessions = Arc::clone(&sessions_c);
+                let memory = memory_c.clone();
+                let llm_registry = Arc::clone(&llm_registry_c);
+                // Phase 97.x — prefer the fresh `cfg.llm` from the
+                // coordinator's current reload cycle (carries providers
+                // added mid-runtime via `llm_providers/upsert`). The boot
+                // snapshot is kept only for documentation/parity — using it
+                // here is what made a wizard-created agent fail to bind its
+                // just-added provider until a daemon restart.
+                let _llm_cfg_boot_snapshot = Arc::clone(&llm_cfg_c);
+                let llm_cfg = llm_fresh;
+                // Phase 97.3 — prefer the fresh `cfg.plugins` from the
+                // coordinator's current reload cycle (carries entries
+                // added mid-runtime via `credentials/register`). Falls
+                // back to the boot snapshot only if the coordinator
+                // somehow handed us a default-empty config — that
+                // path doesn't exist today; the explicit selection
+                // documents intent.
+                let _plugins_boot_snapshot = Arc::clone(&plugins_c);
+                let plugins = plugins_fresh;
+                let peer_directory = Arc::clone(&peer_directory_c);
+                let transcripts_redactor = Arc::clone(&transcripts_redactor_c);
+                let transcripts_index = transcripts_index_c.clone();
+                let credentials = credentials_c.clone();
+                let link_extractor = Arc::clone(&link_extractor_c);
+                // Phase 95 — web_search_router clone removed.
+                let pairing_gate = Arc::clone(&pairing_gate_c);
+                let plan_approval_registry = plan_approval_registry_c.clone();
+                let dispatch_ctx = dispatch_ctx_c.clone();
+                let processing_store = Arc::clone(&processing_store_c);
+                let event_emitter = event_emitter_c.clone();
+                let default_recall_mode = default_recall_mode_c.clone();
+                let plugin_handles_cell = plugin_handles_cell_c.clone();
+                let pollers_runner = pollers_runner_c.clone();
+                let channel_boot = channel_boot_c.clone();
+                let mcp_manager = mcp_manager_c.clone();
+                let extension_runtimes: Vec<_> = extension_runtimes_c
+                    .iter()
+                    .map(|(rt, cand)| (Arc::clone(rt), cand.clone()))
+                    .collect();
+                let mcp_cfg = mcp_cfg_c.clone();
+                let tools_per_agent = Arc::clone(&tools_per_agent_c);
+                let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
+                let shared_skills = shared_skills_c.clone();
 
-            Box::pin(async move {
-                let agent_id = cfg.id.clone();
+                Box::pin(async move {
+                    let agent_id = cfg.id.clone();
 
-                // 1. Resolve LLM via shared helper.
-                tracing::info!(
-                    agent = %agent_id,
-                    wanted_provider = %cfg.model.provider,
-                    visible_providers = ?llm_cfg.providers.keys().collect::<Vec<_>>(),
-                    "hot-spawn: binding agent LLM against fresh reloaded llm config"
-                );
-                let llm = resolve_llm_client(&cfg, &llm_registry, &llm_cfg)?;
+                    // 1. Resolve LLM via shared helper.
+                    tracing::info!(
+                        agent = %agent_id,
+                        wanted_provider = %cfg.model.provider,
+                        visible_providers = ?llm_cfg.providers.keys().collect::<Vec<_>>(),
+                        "hot-spawn: binding agent LLM against fresh reloaded llm config"
+                    );
+                    let llm = resolve_llm_client(&cfg, &llm_registry, &llm_cfg)?;
 
-                // 2. Tools registry — Phase 81.32 c7.c.1 expanded
-                //    surface. Registers every tool whose
-                //    construction needs ONLY the captures already
-                //    threaded into this closure (broker, memory,
-                //    cfg). Tools requiring boot-only state
-                //    (email_tool_ctx, pollers_runner, mcp_manager,
-                //    extension_runtimes, channel_boot, google
-                //    credentials/workspace) stay deferred as
-                //    Phase 81.32 c7.c.2.
-                let tools = Arc::new(ToolRegistry::new());
-                tools.register(DelegationTool::tool_def(), DelegationTool);
-                nexo_core::agent::dispatch_handlers::register_dispatch_tools_into(&tools);
-                if cfg.plugins.iter().any(|p| p == "memory") {
-                    if let Some(mem) = memory.clone() {
-                        tools.register(
-                            nexo_core::agent::MemoryTool::tool_def(),
-                            nexo_core::agent::MemoryTool::new_with_default_mode(
-                                mem,
-                                default_recall_mode.clone(),
-                            ),
-                        );
+                    // 2. Tools registry — Phase 81.32 c7.c.1 expanded
+                    //    surface. Registers every tool whose
+                    //    construction needs ONLY the captures already
+                    //    threaded into this closure (broker, memory,
+                    //    cfg). Tools requiring boot-only state
+                    //    (email_tool_ctx, pollers_runner, mcp_manager,
+                    //    extension_runtimes, channel_boot, google
+                    //    credentials/workspace) stay deferred as
+                    //    Phase 81.32 c7.c.2.
+                    let tools = Arc::new(ToolRegistry::new());
+                    tools.register(DelegationTool::tool_def(), DelegationTool);
+                    nexo_core::agent::dispatch_handlers::register_dispatch_tools_into(&tools);
+                    if cfg.plugins.iter().any(|p| p == "memory") {
+                        if let Some(mem) = memory.clone() {
+                            tools.register(
+                                nexo_core::agent::MemoryTool::tool_def(),
+                                nexo_core::agent::MemoryTool::new_with_default_mode(
+                                    mem,
+                                    default_recall_mode.clone(),
+                                ),
+                            );
+                        }
                     }
-                }
-                // Phase 81.33.a — generic outbound tool
-                // registration from manifest. Hot-spawn path
-                // mirrors the boot loop's generic loop. Reads
-                // plugin_handles from the shared cell at call
-                // time so respawned plugins (Phase 81.21.b) get
-                // their fresh handles registered.
-                {
-                    let guard = plugin_handles_cell.read().await;
-                    if let Some(handles) = guard.as_ref() {
-                        for plugin_id in &cfg.plugins {
-                            if let Some(handle) = handles.get(plugin_id) {
-                                handle.register_outbound_tools(&tools);
+                    // Phase 81.33.a — generic outbound tool
+                    // registration from manifest. Hot-spawn path
+                    // mirrors the boot loop's generic loop. Reads
+                    // plugin_handles from the shared cell at call
+                    // time so respawned plugins (Phase 81.21.b) get
+                    // their fresh handles registered.
+                    {
+                        let guard = plugin_handles_cell.read().await;
+                        if let Some(handles) = guard.as_ref() {
+                            for plugin_id in &cfg.plugins {
+                                if let Some(handle) = handles.get(plugin_id) {
+                                    handle.register_outbound_tools(&tools);
+                                }
                             }
                         }
                     }
-                }
-                // Phase 81.20.x Stage 7 — whatsapp + telegram tool
-                // register fallbacks removed from the hot-spawn path
-                // as well. Both plugins' subprocesses advertise their
-                // outbound tool defs in the `initialize` reply; the
-                // daemon's `RemoteToolHandler` (registered above via
-                // the iterator over `plugin_handles`) routes tool
-                // invocations through the broker. No
-                // `wa_in_manifest` / `tg_in_manifest` gating
-                // required anymore.
-                if cfg.heartbeat.enabled {
-                    if let Some(mem) = memory.clone() {
+                    // Phase 81.20.x Stage 7 — whatsapp + telegram tool
+                    // register fallbacks removed from the hot-spawn path
+                    // as well. Both plugins' subprocesses advertise their
+                    // outbound tool defs in the `initialize` reply; the
+                    // daemon's `RemoteToolHandler` (registered above via
+                    // the iterator over `plugin_handles`) routes tool
+                    // invocations through the broker. No
+                    // `wa_in_manifest` / `tg_in_manifest` gating
+                    // required anymore.
+                    if cfg.heartbeat.enabled {
+                        if let Some(mem) = memory.clone() {
+                            tools.register(
+                                nexo_core::agent::HeartbeatTool::tool_def(),
+                                nexo_core::agent::HeartbeatTool::new(mem),
+                            );
+                        }
+                    }
+                    // Email follow-up control plane — same gate as boot:
+                    // email plugin + memory backend present.
+                    if cfg.plugins.iter().any(|p| p == "email") {
+                        if let Some(mem) = memory.clone() {
+                            tools.register(
+                                nexo_core::agent::StartFollowupTool::tool_def(),
+                                nexo_core::agent::StartFollowupTool::new(mem.clone()),
+                            );
+                            tools.register(
+                                nexo_core::agent::CheckFollowupTool::tool_def(),
+                                nexo_core::agent::CheckFollowupTool::new(mem.clone()),
+                            );
+                            tools.register(
+                                nexo_core::agent::CancelFollowupTool::tool_def(),
+                                nexo_core::agent::CancelFollowupTool::new(mem),
+                            );
+                        }
+                    }
+                    if cfg.plan_mode.enabled {
                         tools.register(
-                            nexo_core::agent::HeartbeatTool::tool_def(),
-                            nexo_core::agent::HeartbeatTool::new(mem),
+                            nexo_core::agent::plan_mode_tool::EnterPlanModeTool::tool_def(),
+                            nexo_core::agent::plan_mode_tool::EnterPlanModeTool,
+                        );
+                        tools.register(
+                            nexo_core::agent::plan_mode_tool::ExitPlanModeTool::tool_def(),
+                            nexo_core::agent::plan_mode_tool::ExitPlanModeTool,
+                        );
+                        tools.register(
+                            nexo_core::agent::plan_mode_tool::PlanModeResolveTool::tool_def(),
+                            nexo_core::agent::plan_mode_tool::PlanModeResolveTool,
                         );
                     }
-                }
-                // Email follow-up control plane — same gate as boot:
-                // email plugin + memory backend present.
-                if cfg.plugins.iter().any(|p| p == "email") {
-                    if let Some(mem) = memory.clone() {
+                    // Always-on tools (cheap, pure, no captures).
+                    tools.register(
+                        nexo_core::agent::todo_write_tool::TodoWriteTool::tool_def(),
+                        nexo_core::agent::todo_write_tool::TodoWriteTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
+                        nexo_core::agent::tool_search_tool::ToolSearchTool::new(),
+                    );
+                    tools.register(
+                        nexo_core::agent::synthetic_output_tool::SyntheticOutputTool::tool_def(),
+                        nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::notebook_edit_tool::NotebookEditTool::tool_def(),
+                        nexo_core::agent::notebook_edit_tool::NotebookEditTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::mcp_router_tool::ListMcpResourcesTool::tool_def(),
+                        nexo_core::agent::mcp_router_tool::ListMcpResourcesTool,
+                    );
+                    tools.register(
+                        nexo_core::agent::mcp_router_tool::ReadMcpResourceTool::tool_def(),
+                        nexo_core::agent::mcp_router_tool::ReadMcpResourceTool,
+                    );
+                    // Proactive Sleep — gate matches boot.
+                    let proactive_enabled_somewhere = cfg.proactive.enabled
+                        || cfg
+                            .inbound_bindings
+                            .iter()
+                            .filter_map(|b| b.proactive.as_ref())
+                            .any(|p| p.enabled);
+                    if proactive_enabled_somewhere {
                         tools.register(
-                            nexo_core::agent::StartFollowupTool::tool_def(),
-                            nexo_core::agent::StartFollowupTool::new(mem.clone()),
-                        );
-                        tools.register(
-                            nexo_core::agent::CheckFollowupTool::tool_def(),
-                            nexo_core::agent::CheckFollowupTool::new(mem.clone()),
-                        );
-                        tools.register(
-                            nexo_core::agent::CancelFollowupTool::tool_def(),
-                            nexo_core::agent::CancelFollowupTool::new(mem),
+                            nexo_core::agent::SleepTool::tool_def(),
+                            nexo_core::agent::SleepTool,
                         );
                     }
-                }
-                if cfg.plan_mode.enabled {
-                    tools.register(
-                        nexo_core::agent::plan_mode_tool::EnterPlanModeTool::tool_def(),
-                        nexo_core::agent::plan_mode_tool::EnterPlanModeTool,
-                    );
-                    tools.register(
-                        nexo_core::agent::plan_mode_tool::ExitPlanModeTool::tool_def(),
-                        nexo_core::agent::plan_mode_tool::ExitPlanModeTool,
-                    );
-                    tools.register(
-                        nexo_core::agent::plan_mode_tool::PlanModeResolveTool::tool_def(),
-                        nexo_core::agent::plan_mode_tool::PlanModeResolveTool,
-                    );
-                }
-                // Always-on tools (cheap, pure, no captures).
-                tools.register(
-                    nexo_core::agent::todo_write_tool::TodoWriteTool::tool_def(),
-                    nexo_core::agent::todo_write_tool::TodoWriteTool,
-                );
-                tools.register(
-                    nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
-                    nexo_core::agent::tool_search_tool::ToolSearchTool::new(),
-                );
-                tools.register(
-                    nexo_core::agent::synthetic_output_tool::SyntheticOutputTool::tool_def(),
-                    nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
-                );
-                tools.register(
-                    nexo_core::agent::notebook_edit_tool::NotebookEditTool::tool_def(),
-                    nexo_core::agent::notebook_edit_tool::NotebookEditTool,
-                );
-                tools.register(
-                    nexo_core::agent::mcp_router_tool::ListMcpResourcesTool::tool_def(),
-                    nexo_core::agent::mcp_router_tool::ListMcpResourcesTool,
-                );
-                tools.register(
-                    nexo_core::agent::mcp_router_tool::ReadMcpResourceTool::tool_def(),
-                    nexo_core::agent::mcp_router_tool::ReadMcpResourceTool,
-                );
-                // Proactive Sleep — gate matches boot.
-                let proactive_enabled_somewhere = cfg.proactive.enabled
-                    || cfg
-                        .inbound_bindings
-                        .iter()
-                        .filter_map(|b| b.proactive.as_ref())
-                        .any(|p| p.enabled);
-                if proactive_enabled_somewhere {
-                    tools.register(
-                        nexo_core::agent::SleepTool::tool_def(),
-                        nexo_core::agent::SleepTool,
-                    );
-                }
-                // RemoteTrigger — gate matches boot.
-                let remote_triggers_enabled_somewhere = !cfg.remote_triggers.is_empty()
-                    || cfg
-                        .inbound_bindings
-                        .iter()
-                        .filter_map(|b| b.remote_triggers.as_ref())
-                        .any(|list| !list.is_empty());
-                if remote_triggers_enabled_somewhere {
-                    let sink: std::sync::Arc<
-                        dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink,
-                    > = std::sync::Arc::new(
-                        nexo_core::agent::remote_trigger_tool::ReqwestSink::new(broker.clone()),
-                    );
-                    tools.register(
-                        nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
-                        nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
-                    );
-                }
-                // Phase 81.20.x F2.3 — email outbound tools register
-                // path removed. Email v0.6.0+ subprocess advertises
-                // its 12 tools via JSON-RPC; daemon's RemoteToolHandler
-                // routes per-agent invocations through the broker
-                // without daemon-side fallback.
-                // Phase 81.32 c7.c.2 — pollers control tools.
-                if let Some(runner) = pollers_runner.as_ref() {
-                    nexo_poller_tools::register_all(&tools, Arc::clone(runner));
-                }
-                // Phase 81.32 c7.c.2 — channel_list/send/status
-                // when this agent's bindings declare
-                // `allowed_channel_servers`. Mirrors boot loop's
-                // `channels_in_play` gate.
-                let channels_in_play = cfg.channels.is_some()
-                    && cfg
-                        .inbound_bindings
-                        .iter()
-                        .any(|b| !b.allowed_channel_servers.is_empty());
-                if channels_in_play {
-                    use nexo_core::agent::channel_list_tool::ChannelListTool;
-                    use nexo_core::agent::channel_send_tool::ChannelSendTool;
-                    use nexo_core::agent::channel_status_tool::ChannelStatusTool;
-                    let list_def = ChannelListTool::tool_def();
-                    let list_handler = std::sync::Arc::new(ChannelListTool::new_dynamic(
-                        channel_boot.registry.clone(),
-                    ));
-                    tools.register_arc(list_def, list_handler);
-                    let send_def = ChannelSendTool::tool_def();
-                    let send_handler = std::sync::Arc::new(ChannelSendTool::new_dynamic(
-                        channel_boot.registry.clone(),
-                    ));
-                    tools.register_arc(send_def, send_handler);
-                    let status_def = ChannelStatusTool::tool_def();
-                    let status_handler = std::sync::Arc::new(ChannelStatusTool::new_dynamic(
-                        channel_boot.registry.clone(),
-                    ));
-                    tools.register_arc(status_def, status_handler);
-                }
-                // Phase 81.32 c7.c.2 — extension tools registered
-                // post-handshake (same iteration as boot). Hooks
-                // are not wired in hot-spawn because behavior
-                // already constructed above; extension hooks
-                // wire at behavior-build time (deferred to
-                // c7.c.3).
-                for (rt, cand) in &extension_runtimes {
-                    let pid = cand.manifest.id();
-                    for desc in &rt.handshake().tools {
-                        let def = nexo_core::agent::ExtensionTool::tool_def(desc, pid);
-                        let handler = nexo_core::agent::ExtensionTool::new(
-                            pid,
-                            desc.name.clone(),
-                            Arc::clone(rt),
+                    // RemoteTrigger — gate matches boot.
+                    let remote_triggers_enabled_somewhere = !cfg.remote_triggers.is_empty()
+                        || cfg
+                            .inbound_bindings
+                            .iter()
+                            .filter_map(|b| b.remote_triggers.as_ref())
+                            .any(|list| !list.is_empty());
+                    if remote_triggers_enabled_somewhere {
+                        let sink: std::sync::Arc<
+                            dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink,
+                        > = std::sync::Arc::new(
+                            nexo_core::agent::remote_trigger_tool::ReqwestSink::new(broker.clone()),
+                        );
+                        tools.register(
+                            nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
+                            nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
+                        );
+                    }
+                    // Phase 81.20.x F2.3 — email outbound tools register
+                    // path removed. Email v0.6.0+ subprocess advertises
+                    // its 12 tools via JSON-RPC; daemon's RemoteToolHandler
+                    // routes per-agent invocations through the broker
+                    // without daemon-side fallback.
+                    // Phase 81.32 c7.c.2 — pollers control tools.
+                    if let Some(runner) = pollers_runner.as_ref() {
+                        nexo_poller_tools::register_all(&tools, Arc::clone(runner));
+                    }
+                    // Phase 81.32 c7.c.2 — channel_list/send/status
+                    // when this agent's bindings declare
+                    // `allowed_channel_servers`. Mirrors boot loop's
+                    // `channels_in_play` gate.
+                    let channels_in_play = cfg.channels.is_some()
+                        && cfg
+                            .inbound_bindings
+                            .iter()
+                            .any(|b| !b.allowed_channel_servers.is_empty());
+                    if channels_in_play {
+                        use nexo_core::agent::channel_list_tool::ChannelListTool;
+                        use nexo_core::agent::channel_send_tool::ChannelSendTool;
+                        use nexo_core::agent::channel_status_tool::ChannelStatusTool;
+                        let list_def = ChannelListTool::tool_def();
+                        let list_handler = std::sync::Arc::new(ChannelListTool::new_dynamic(
+                            channel_boot.registry.clone(),
+                        ));
+                        tools.register_arc(list_def, list_handler);
+                        let send_def = ChannelSendTool::tool_def();
+                        let send_handler = std::sync::Arc::new(ChannelSendTool::new_dynamic(
+                            channel_boot.registry.clone(),
+                        ));
+                        tools.register_arc(send_def, send_handler);
+                        let status_def = ChannelStatusTool::tool_def();
+                        let status_handler = std::sync::Arc::new(ChannelStatusTool::new_dynamic(
+                            channel_boot.registry.clone(),
+                        ));
+                        tools.register_arc(status_def, status_handler);
+                    }
+                    // Phase 81.32 c7.c.2 — extension tools registered
+                    // post-handshake (same iteration as boot). Hooks
+                    // are not wired in hot-spawn because behavior
+                    // already constructed above; extension hooks
+                    // wire at behavior-build time (deferred to
+                    // c7.c.3).
+                    for (rt, cand) in &extension_runtimes {
+                        let pid = cand.manifest.id();
+                        for desc in &rt.handshake().tools {
+                            let def = nexo_core::agent::ExtensionTool::tool_def(desc, pid);
+                            let handler = nexo_core::agent::ExtensionTool::new(
+                                pid,
+                                desc.name.clone(),
+                                Arc::clone(rt),
+                            )
+                            .with_descriptor_metadata(
+                                desc.description.clone(),
+                                desc.input_schema.clone(),
+                            )
+                            .with_context_passthrough(cand.manifest.context.passthrough);
+                            tools.register_if_absent(def, handler);
+                        }
+                    }
+                    // Phase 81.32 c7.c.2 — MCP tools per-agent.
+                    // Reuses the shared sentinel session for the
+                    // process. Channel inbound loops + hot-reload
+                    // callbacks (boot lines 5915+, 6010+) are
+                    // deferred to c7.c.3 because they spawn
+                    // long-lived tasks; the registration alone is
+                    // safe to repeat across spawn calls.
+                    if let Some(mgr) = &mcp_manager {
+                        let rt = mgr.get_or_create(uuid::Uuid::nil()).await;
+                        let mcp_ctx_pt = mcp_cfg
+                            .as_ref()
+                            .map(|m| m.context.passthrough)
+                            .unwrap_or(false);
+                        let mcp_overrides: std::collections::HashMap<String, bool> = mcp_cfg
+                            .as_ref()
+                            .map(|m| {
+                                m.servers
+                                    .iter()
+                                    .filter_map(|(name, yaml)| match yaml {
+                                        nexo_config::McpServerYaml::Stdio {
+                                            context_passthrough: Some(v),
+                                            ..
+                                        }
+                                        | nexo_config::McpServerYaml::StreamableHttp {
+                                            context_passthrough: Some(v),
+                                            ..
+                                        }
+                                        | nexo_config::McpServerYaml::Sse {
+                                            context_passthrough: Some(v),
+                                            ..
+                                        } => Some((name.clone(), *v)),
+                                        _ => None,
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        nexo_core::agent::register_session_tools_with_overrides(
+                            &rt,
+                            &tools,
+                            mcp_ctx_pt,
+                            mcp_overrides,
                         )
-                        .with_descriptor_metadata(
-                            desc.description.clone(),
-                            desc.input_schema.clone(),
-                        )
-                        .with_context_passthrough(cand.manifest.context.passthrough);
-                        tools.register_if_absent(def, handler);
+                        .await;
                     }
-                }
-                // Phase 81.32 c7.c.2 — MCP tools per-agent.
-                // Reuses the shared sentinel session for the
-                // process. Channel inbound loops + hot-reload
-                // callbacks (boot lines 5915+, 6010+) are
-                // deferred to c7.c.3 because they spawn
-                // long-lived tasks; the registration alone is
-                // safe to repeat across spawn calls.
-                if let Some(mgr) = &mcp_manager {
-                    let rt = mgr.get_or_create(uuid::Uuid::nil()).await;
-                    let mcp_ctx_pt = mcp_cfg
-                        .as_ref()
-                        .map(|m| m.context.passthrough)
-                        .unwrap_or(false);
-                    let mcp_overrides: std::collections::HashMap<String, bool> = mcp_cfg
-                        .as_ref()
-                        .map(|m| {
-                            m.servers
-                                .iter()
-                                .filter_map(|(name, yaml)| match yaml {
-                                    nexo_config::McpServerYaml::Stdio {
-                                        context_passthrough: Some(v),
-                                        ..
-                                    }
-                                    | nexo_config::McpServerYaml::StreamableHttp {
-                                        context_passthrough: Some(v),
-                                        ..
-                                    }
-                                    | nexo_config::McpServerYaml::Sse {
-                                        context_passthrough: Some(v),
-                                        ..
-                                    } => Some((name.clone(), *v)),
-                                    _ => None,
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    nexo_core::agent::register_session_tools_with_overrides(
-                        &rt,
-                        &tools,
-                        mcp_ctx_pt,
-                        mcp_overrides,
-                    )
-                    .await;
-                }
-                // Built-in defer marks. Idempotent: tools that
-                // didn't get registered above are silently skipped.
-                nexo_core::agent::mark_built_in_deferred(&tools);
-                // Apply legacy (no-bindings) agent-level
-                // allowlist; per-binding allowlists are enforced
-                // at session time as in boot.
-                if cfg.inbound_bindings.is_empty() && !cfg.allowed_tools.is_empty() {
-                    tools.retain_matching(&cfg.allowed_tools);
-                }
+                    // Built-in defer marks. Idempotent: tools that
+                    // didn't get registered above are silently skipped.
+                    nexo_core::agent::mark_built_in_deferred(&tools);
+                    // Apply legacy (no-bindings) agent-level
+                    // allowlist; per-binding allowlists are enforced
+                    // at session time as in boot.
+                    if cfg.inbound_bindings.is_empty() && !cfg.allowed_tools.is_empty() {
+                        tools.retain_matching(&cfg.allowed_tools);
+                    }
 
-                // 3. Validate (catches typo'd `allowed_tools` +
-                //    telegram-binding consistency).
-                let tool_defs = tools.to_tool_defs();
-                let known_tool_names: Vec<&str> =
-                    tool_defs.iter().map(|d| d.name.as_str()).collect();
-                validate_agent_config(&cfg, &plugins, &known_tool_names)?;
+                    // 3. Validate (catches typo'd `allowed_tools` +
+                    //    telegram-binding consistency).
+                    let tool_defs = tools.to_tool_defs();
+                    let known_tool_names: Vec<&str> =
+                        tool_defs.iter().map(|d| d.name.as_str()).collect();
+                    validate_agent_config(&cfg, &plugins, &known_tool_names)?;
 
-                // 4. Behavior + Agent.
-                let behavior = LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools))
-                    .with_plugin_skill_roots(shared_skills.clone());
-                let agent_cfg = cfg.clone();
-                let agent = Arc::new(Agent::new(agent_cfg, behavior));
+                    // 4. Behavior + Agent.
+                    let behavior = LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools))
+                        .with_plugin_skill_roots(shared_skills.clone());
+                    let agent_cfg = cfg.clone();
+                    let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
-                // 5. Pairing adapter registry — Phase 81.20.x Stage 7:
-                //    empty registry, populated by the loop below from
-                //    each plugin's `build_pairing_adapter()` trait
-                //    method (Phase 81.33.b.real).
-                let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
-                {
-                    let guard = plugin_handles_cell.read().await;
-                    if let Some(handles) = guard.as_ref() {
-                        for (plugin_id, handle) in handles.iter() {
-                            if let Some(adapter) = handle.build_pairing_adapter(broker.clone()) {
-                                tracing::info!(
-                                    plugin = %plugin_id,
-                                    channel = %adapter.channel_id(),
-                                    "registered manifest-driven pairing adapter (hot-spawn, Phase 81.33.b.real)",
-                                );
-                                pairing_registry.register(adapter);
+                    // 5. Pairing adapter registry — Phase 81.20.x Stage 7:
+                    //    empty registry, populated by the loop below from
+                    //    each plugin's `build_pairing_adapter()` trait
+                    //    method (Phase 81.33.b.real).
+                    let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
+                    {
+                        let guard = plugin_handles_cell.read().await;
+                        if let Some(handles) = guard.as_ref() {
+                            for (plugin_id, handle) in handles.iter() {
+                                if let Some(adapter) = handle.build_pairing_adapter(broker.clone())
+                                {
+                                    tracing::info!(
+                                        plugin = %plugin_id,
+                                        channel = %adapter.channel_id(),
+                                        "registered manifest-driven pairing adapter (hot-spawn, Phase 81.33.b.real)",
+                                    );
+                                    pairing_registry.register(adapter);
+                                }
                             }
                         }
                     }
-                }
 
-                // 6. Assemble runtime via shared helper.
-                let assembly_deps = RuntimeAssemblyDeps {
-                    tools: Arc::clone(&tools),
-                    memory: memory.clone(),
-                    peers: Arc::clone(&peer_directory),
-                    redactor: Arc::clone(&transcripts_redactor),
-                    transcripts_index: transcripts_index.as_ref().map(Arc::clone),
-                    credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
-                    breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
-                    link_extractor: Arc::clone(&link_extractor),
-                    // Phase 95 — web_search_router removed.
-                    pairing_gate: Arc::clone(&pairing_gate),
-                    pairing_adapters: pairing_registry,
-                    plan_approval_registry: plan_approval_registry.clone(),
-                    dispatch_ctx: dispatch_ctx.as_ref().map(Arc::clone),
-                    processing_store: Arc::clone(&processing_store),
-                    event_emitter,
-                };
-                let runtime = assemble_agent_runtime(
-                    Arc::clone(&agent),
-                    broker.clone(),
-                    Arc::clone(&sessions),
-                    assembly_deps,
-                );
+                    // 6. Assemble runtime via shared helper.
+                    let assembly_deps = RuntimeAssemblyDeps {
+                        tools: Arc::clone(&tools),
+                        memory: memory.clone(),
+                        peers: Arc::clone(&peer_directory),
+                        redactor: Arc::clone(&transcripts_redactor),
+                        transcripts_index: transcripts_index.as_ref().map(Arc::clone),
+                        credentials: credentials.as_ref().map(|b| Arc::clone(&b.resolver)),
+                        breakers: credentials.as_ref().map(|b| Arc::clone(&b.breakers)),
+                        link_extractor: Arc::clone(&link_extractor),
+                        // Phase 95 — web_search_router removed.
+                        pairing_gate: Arc::clone(&pairing_gate),
+                        pairing_adapters: pairing_registry,
+                        plan_approval_registry: plan_approval_registry.clone(),
+                        dispatch_ctx: dispatch_ctx.as_ref().map(Arc::clone),
+                        processing_store: Arc::clone(&processing_store),
+                        event_emitter,
+                    };
+                    let runtime = assemble_agent_runtime(
+                        Arc::clone(&agent),
+                        broker.clone(),
+                        Arc::clone(&sessions),
+                        assembly_deps,
+                    );
 
-                // 7. Capture handles before start. `start()` takes
-                //    `&self` so we can still move `runtime` into
-                //    the SpawnedAgent afterwards.
-                let reload_tx = runtime.reload_sender();
-                let snapshot_handle = runtime.snapshot_handle();
-                let known_tools: Arc<Vec<String>> = Arc::new(
-                    tools
-                        .to_tool_defs()
-                        .iter()
-                        .map(|d| d.name.clone())
-                        .collect(),
-                );
+                    // 7. Capture handles before start. `start()` takes
+                    //    `&self` so we can still move `runtime` into
+                    //    the SpawnedAgent afterwards.
+                    let reload_tx = runtime.reload_sender();
+                    let snapshot_handle = runtime.snapshot_handle();
+                    let known_tools: Arc<Vec<String>> = Arc::new(
+                        tools
+                            .to_tool_defs()
+                            .iter()
+                            .map(|d| d.name.clone())
+                            .collect(),
+                    );
 
-                // 8. Insert into shared DashMaps so the cron
-                //    post-hook + reload coordinator see the new
-                //    agent on the next reload.
-                tools_per_agent.insert(agent_id.clone(), Arc::clone(&tools));
-                agent_snapshot_handles.insert(agent_id.clone(), snapshot_handle);
+                    // 8. Insert into shared DashMaps so the cron
+                    //    post-hook + reload coordinator see the new
+                    //    agent on the next reload.
+                    tools_per_agent.insert(agent_id.clone(), Arc::clone(&tools));
+                    agent_snapshot_handles.insert(agent_id.clone(), snapshot_handle);
 
-                // 9. Start. Spawns broker subs + heartbeat tasks
-                //    via `tokio::spawn` internally — the
-                //    AgentRuntime can drop after this and the
-                //    tasks keep running via cloned Arc state.
-                runtime
-                    .start()
-                    .await
-                    .map_err(|e| SpawnError::Internal(format!("runtime.start: {e}")))?;
+                    // 9. Start. Spawns broker subs + heartbeat tasks
+                    //    via `tokio::spawn` internally — the
+                    //    AgentRuntime can drop after this and the
+                    //    tasks keep running via cloned Arc state.
+                    runtime
+                        .start()
+                        .await
+                        .map_err(|e| SpawnError::Internal(format!("runtime.start: {e}")))?;
 
-                tracing::info!(
-                    agent = %agent_id,
-                    tool_count = tools.to_tool_defs().len(),
-                    "hot-spawned with full tool parity (Phase 81.32 c7.c.2). \
-                     Still deferred: google_* OAuth + extension hooks + \
-                     MCP hot-reload callbacks — Phase 81.32 c7.c.3 follow-up."
-                );
+                    tracing::info!(
+                        agent = %agent_id,
+                        tool_count = tools.to_tool_defs().len(),
+                        "hot-spawned with full tool parity (Phase 81.32 c7.c.2). \
+                         Still deferred: google_* OAuth + extension hooks + \
+                         MCP hot-reload callbacks — Phase 81.32 c7.c.3 follow-up."
+                    );
 
-                Ok(SpawnedAgent {
-                    agent_id,
-                    reload_tx,
-                    known_tools,
-                    shutdown_token: tokio_util::sync::CancellationToken::new(),
-                    runtime,
+                    Ok(SpawnedAgent {
+                        agent_id,
+                        reload_tx,
+                        known_tools,
+                        shutdown_token: tokio_util::sync::CancellationToken::new(),
+                        runtime,
+                    })
                 })
-            })
-        }));
+            },
+        ));
         // Phase 81.32 c7.b.followup — closure returns out of the
         // outer `let pending_spawner = { ... }` block; the actual
         // install happens after `coord.start()` stashes the
