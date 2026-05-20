@@ -2,6 +2,52 @@
 
 This file tracks the **active technical backlog** in English.
 
+### multi-instance-hot-registration — Steps 1+2 SHIPPED 2026-05-20, Steps 3-6 OPEN   🔄
+
+Goal: configuring/removing the **Nth instance** of a channel plugin
+(e.g. a 2nd telegram bot) at runtime registers/spawns/kills that
+instance's subprocess in the live runtime — no daemon restart. Today
+only boot (`register_instance_subprocess_factories`) does per-instance
+subprocesses; post-boot only the single auto-fallback works (via the
+`reconfigure` configure-push of `d2e8e93d`).
+
+Forge: brainstorm + spec + plan done (cited `research/channels/plugins/
+{types.adapters.ts:525 ChannelLifecycleAdapter, read-only.ts:30}` +
+`acp/translator.ts:1110`; `claude-code-leak/` ABSENT declared).
+
+**Shipped (foundation):**
+- **Step 1** `9c0eda67` — `PluginFactoryRegistry` interior-mutable
+  (`RwLock<BTreeMap>`, `register(&self)`) + `register_runtime` (overwrite)
+  + `unregister_runtime`; 12/12 factory tests.
+- **Step 2** `8331ad76` — `build_instance_factory(plugin_id, base,
+  label, env) -> (id, factory, synthetic)` extracted from the boot path;
+  boot byte-equivalent; reused by the runtime reconcile.
+
+**Open (resume here):**
+- **Step 3** `reconcile_channel_instances(channel)` — **place in
+  `LivePluginInstaller`** (it owns `HotInstallCtx`; `LivePluginRestarter`
+  does NOT, so the original plan's placement was wrong). Reuse the exact
+  `scan()` pattern (plugin_install_adapter.rs:357): discover base → diff
+  desired (`instances_for` + `opaque_plugin_entries`) vs live handles →
+  add: `build_instance_factory` + `factory_registry.register_runtime` +
+  filtered snapshot + `run_plugin_init_loop_with_factory` +
+  `register_plugin_in_live_runtime` + `handle.configure(slice)`; drop:
+  `unregister_plugin_from_live_runtime` + `unregister_runtime`; keep:
+  `handle.configure` (== today's `reconfigure`). Honor the boot.rs:210
+  dedup (drop the auto-fallback base when the 1st named instance lands).
+  The per-channel env seed (`seed_*_subprocess_env_for`) lives in
+  `main.rs` → thread a build closure into the installer (reseed-hook
+  pattern of `adfd220f`).
+- **Step 4** expose via the `PluginInstaller` trait (dispatcher already
+  holds `plugin_installer`); `credentials/register` calls
+  `reconcile_channel_instances(channel)` instead of `reconfigure`.
+- **Step 5** retire the `adfd220f` env-reseed hook (configure-push +
+  per-instance `env_clear` supersede it; keep `seed_*` for the spawn env).
+- **Step 6** tests (drift boot↔runtime; e2e add/drop/keep via
+  `test-fixtures` mock-subprocess shape "array") + docs + PHASES/CLAUDE
+  row + close-out.
+- Fase-2: whatsapp (session dirs) + email multi-instance.
+
 ### Phase 97.1.γ — hot-install completeness (skills + metrics) — SHIPPED 2026-05-20, residual deferreds   ⬜
 
 Shipped: installing/enabling a plugin now registers its **skills** +
