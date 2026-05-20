@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-05-20T00:00:00Z",
+  "updated_at": "2026-05-20T02:00:00Z",
   "plugins": [
     {
       "name": "nexo-plugin-telegram",
@@ -55,6 +55,51 @@
       "category": "channel",
       "tags": ["browser", "cdp", "automation"],
       "description": "Headless Chrome / CDP browser plugin — multi-instance per agent, auto-download of chrome-headless-shell."
+    },
+    {
+      "name": "nexo-plugin-voice",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-voice",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-voice/main/nexo-plugin.toml",
+      "category": "tool",
+      "tags": ["voice", "stt", "tts", "whisper", "candle"],
+      "description": "Speech-to-text + text-to-speech tool plugin — Candle Whisper local inference + cloud providers."
+    },
+    {
+      "name": "nexo-plugin-admin",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-admin",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-admin/main/nexo-plugin.toml",
+      "category": "tool",
+      "tags": ["admin", "dashboard", "ui", "operator"],
+      "description": "Official admin plugin — operator dashboard (agents, channels, plugins, memory, tenants) served out-of-tree."
+    },
+    {
+      "name": "nexo-poller-rss",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-poller-rss",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-poller-rss/main/nexo-plugin.toml",
+      "category": "poller",
+      "tags": ["rss", "atom", "feeds", "poller"],
+      "description": "RSS / Atom feed poller — scheduled tick fetches new items + dispatches to the agent loop."
+    },
+    {
+      "name": "nexo-poller-gmail",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-poller-gmail",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-poller-gmail/main/nexo-plugin.toml",
+      "category": "poller",
+      "tags": ["gmail", "email", "google", "oauth", "poller"],
+      "description": "Gmail poller — scheduled inbox checks via the Gmail API with OAuth credential refresh."
+    },
+    {
+      "name": "nexo-poller-google-calendar",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-poller-google-calendar",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-poller-google-calendar/main/nexo-plugin.toml",
+      "category": "poller",
+      "tags": ["google-calendar", "calendar", "google", "oauth", "poller"],
+      "description": "Google Calendar poller — scheduled event checks via the Calendar API with OAuth credential refresh."
     }
   ]
 }
