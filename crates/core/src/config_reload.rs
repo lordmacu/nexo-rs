@@ -330,7 +330,11 @@ impl ConfigReloadCoordinator {
                     continue;
                 };
                 match spawner
-                    .call(agent_cfg.clone(), Arc::new(cfg.plugins.clone()))
+                    .call(
+                        agent_cfg.clone(),
+                        Arc::new(cfg.plugins.clone()),
+                        Arc::new(cfg.llm.clone()),
+                    )
                     .await
                 {
                     Ok(spawned) => {
@@ -698,7 +702,7 @@ mod tests {
 
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let rec = Arc::clone(&seen);
-        coord.set_spawner(Arc::new(AgentSpawnerFn(Box::new(move |cfg, _plugins| {
+        coord.set_spawner(Arc::new(AgentSpawnerFn(Box::new(move |cfg, _plugins, _llm| {
             let rec = Arc::clone(&rec);
             Box::pin(async move {
                 rec.lock().unwrap().push(cfg.id.clone());

@@ -321,6 +321,7 @@ pub struct AgentSpawnerFn(
         dyn Fn(
                 AgentConfig,
                 std::sync::Arc<nexo_config::types::plugins::PluginsConfig>,
+                std::sync::Arc<nexo_config::LlmConfig>,
             )
                 -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>>
             + Send
@@ -340,12 +341,21 @@ impl AgentSpawnerFn {
     /// agent created in the same flow as a fresh pair was
     /// rejected with "plugin `<channel>` not configured" against
     /// the stale boot snapshot.
+    /// Phase 97.x — `llm` is the fresh `cfg.llm` snapshot from the
+    /// coordinator's current reload cycle (NOT the boot-time capture),
+    /// mirroring `plugins`. Lets the spawner bind an agent against an
+    /// LLM provider that was added mid-runtime via the wizard's
+    /// `llm_providers/upsert` flow — without this, an agent created in
+    /// the same flow as a fresh provider was rejected with "LLM
+    /// provider instance `<id>` not present in config.providers"
+    /// against the stale boot snapshot.
     pub fn call(
         &self,
         cfg: AgentConfig,
         plugins: std::sync::Arc<nexo_config::types::plugins::PluginsConfig>,
+        llm: std::sync::Arc<nexo_config::LlmConfig>,
     ) -> Pin<Box<dyn Future<Output = Result<SpawnedAgent, SpawnError>> + Send>> {
-        (self.0)(cfg, plugins)
+        (self.0)(cfg, plugins, llm)
     }
 }
 

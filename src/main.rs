@@ -7212,12 +7212,20 @@ async fn main() -> Result<()> {
         // plugin-contributed skills, live.
         let shared_skills_c = plugin_skills_shared.clone();
 
-        let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg, plugins_fresh| {
+        let spawner: AgentSpawnerFn =
+            AgentSpawnerFn(Box::new(move |cfg, plugins_fresh, llm_fresh| {
             let broker = broker_c.clone();
             let sessions = Arc::clone(&sessions_c);
             let memory = memory_c.clone();
             let llm_registry = Arc::clone(&llm_registry_c);
-            let llm_cfg = Arc::clone(&llm_cfg_c);
+            // Phase 97.x — prefer the fresh `cfg.llm` from the
+            // coordinator's current reload cycle (carries providers
+            // added mid-runtime via `llm_providers/upsert`). The boot
+            // snapshot is kept only for documentation/parity — using it
+            // here is what made a wizard-created agent fail to bind its
+            // just-added provider until a daemon restart.
+            let _llm_cfg_boot_snapshot = Arc::clone(&llm_cfg_c);
+            let llm_cfg = llm_fresh;
             // Phase 97.3 — prefer the fresh `cfg.plugins` from the
             // coordinator's current reload cycle (carries entries
             // added mid-runtime via `credentials/register`). Falls
@@ -7256,6 +7264,12 @@ async fn main() -> Result<()> {
                 let agent_id = cfg.id.clone();
 
                 // 1. Resolve LLM via shared helper.
+                tracing::info!(
+                    agent = %agent_id,
+                    wanted_provider = %cfg.model.provider,
+                    visible_providers = ?llm_cfg.providers.keys().collect::<Vec<_>>(),
+                    "hot-spawn: binding agent LLM against fresh reloaded llm config"
+                );
                 let llm = resolve_llm_client(&cfg, &llm_registry, &llm_cfg)?;
 
                 // 2. Tools registry — Phase 81.32 c7.c.1 expanded
