@@ -2477,7 +2477,56 @@ async fn main() -> Result<()> {
     // failure surface. The `CancellationToken` here is a fresh
     // local — same pragmatic compromise as the
     // `subprocess_shutdown` token (see comment further down).
-    let live_plugin_restarter: std::sync::Arc<nexo_setup::admin_adapters::LivePluginRestarter> =
+    let live_plugin_restarter: std::sync::Arc<nexo_setup::admin_adapters::LivePluginRestarter> = {
+        // Pre-restart hook: re-seed the daemon process env for the
+        // channel from the freshly-persisted plugins config. A channel
+        // configured AFTER boot was registered via the auto-fallback
+        // path (`spawn_env = None`), so its subprocess inherits the
+        // daemon env on respawn — stamping the instance vars here makes
+        // the restart bring it up WITH its instance + polling, no manual
+        // daemon restart. Only channels with a subprocess env seeder are
+        // handled; others are no-ops.
+        let reseed_config_dir = config_dir_abs.clone();
+        let reseed: std::sync::Arc<dyn Fn(&str) + Send + Sync> =
+            std::sync::Arc::new(move |channel: &str| {
+                let fresh = match AppConfig::load(&reseed_config_dir) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(channel, error = %e, "reseed: AppConfig::load failed");
+                        return;
+                    }
+                };
+                let broker_kind = subprocess_broker_kind_str(fresh.broker.broker.kind);
+                let broker_url = std::env::var("NEXO_BROKER_URL")
+                    .unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
+                let entries = opaque_plugin_entries(&fresh.plugins, channel);
+                let Some(entry) = entries.first() else {
+                    return;
+                };
+                let env = match channel {
+                    "telegram" => {
+                        seed_telegram_subprocess_env_for(entry, broker_kind, &broker_url)
+                    }
+                    "whatsapp" => {
+                        seed_whatsapp_subprocess_env_for(entry, broker_kind, &broker_url)
+                    }
+                    _ => return,
+                };
+                let mut stamped = 0usize;
+                for (k, v) in env {
+                    // Only the plugin-specific instance vars — never
+                    // clobber PATH / HOME / broker vars the daemon owns.
+                    if k.starts_with("NEXO_PLUGIN_") {
+                        std::env::set_var(&k, &v);
+                        stamped += 1;
+                    }
+                }
+                tracing::info!(
+                    channel,
+                    stamped,
+                    "reseed: stamped subprocess instance env onto daemon process for next respawn"
+                );
+            });
         nexo_setup::admin_adapters::LivePluginRestarter::new(
             plugin_handles_cell.clone(),
             tokio_util::sync::CancellationToken::new(),
@@ -2485,7 +2534,9 @@ async fn main() -> Result<()> {
             None,
             llm_registry.clone(),
             std::sync::Arc::new(cfg.llm.clone()),
-        );
+        )
+        .with_reseed_env(reseed)
+    };
 
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions

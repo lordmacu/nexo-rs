@@ -5590,6 +5590,17 @@ pub struct LivePluginRestarter {
     memory: Option<std::sync::Arc<nexo_memory::LongTermMemory>>,
     llm_registry: std::sync::Arc<nexo_llm::LlmRegistry>,
     llm_config: std::sync::Arc<nexo_config::LlmConfig>,
+    /// Pre-restart hook (channel id → re-seed daemon process env).
+    /// A channel configured AFTER boot was registered via the
+    /// auto-fallback path with `spawn_env = None`, so its subprocess
+    /// inherits the daemon's process env on (re)spawn. This hook,
+    /// invoked right BEFORE `force_restart`, stamps the freshly
+    /// configured instance's `NEXO_PLUGIN_<CHANNEL>_*` vars onto the
+    /// daemon env so the respawned child comes up WITH its instance
+    /// and starts polling — no manual daemon restart. `None` in
+    /// minimal embeddings / tests. Wired in `src/main.rs` where the
+    /// per-channel `seed_*_subprocess_env_for` helpers live.
+    reseed_env: Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl std::fmt::Debug for LivePluginRestarter {
@@ -5619,6 +5630,25 @@ impl LivePluginRestarter {
             memory,
             llm_registry,
             llm_config,
+            reseed_env: None,
+        })
+    }
+
+    /// Install the pre-restart daemon-env reseed hook. Constructor
+    /// returns `Arc<Self>` so this rebuilds the Arc with the hook
+    /// set (cheap; the restarter is built once at boot).
+    pub fn with_reseed_env(
+        self: std::sync::Arc<Self>,
+        reseed: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            handles_cell: self.handles_cell.clone(),
+            ctx_shutdown: self.ctx_shutdown.clone(),
+            broker: self.broker.clone(),
+            memory: self.memory.clone(),
+            llm_registry: self.llm_registry.clone(),
+            llm_config: self.llm_config.clone(),
+            reseed_env: Some(reseed),
         })
     }
 }
@@ -5654,6 +5684,14 @@ impl nexo_core::agent::admin_rpc::domains::plugin_restart::PluginRestarter for L
         let arc_sub = sub.weak_self_arc().ok_or_else(|| {
             anyhow::anyhow!("plugin {plugin_id} weak_self not populated; factory bypassed")
         })?;
+        // Re-seed the daemon process env from the freshly-persisted
+        // config BEFORE respawning, so an auto-fallback subprocess
+        // (configured after boot) inherits its instance env on the
+        // restart and starts polling. No-op when no hook is wired or
+        // the channel has no subprocess env seeder.
+        if let Some(reseed) = &self.reseed_env {
+            reseed(plugin_id);
+        }
         // Re-derive LlmServices the same way init_loop does so
         // the respawned child speaks through the same provider
         // plumbing.
