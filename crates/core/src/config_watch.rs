@@ -12,10 +12,12 @@
 //!   - `runtime.yaml`
 //!
 //! Extras can be listed under `runtime.reload.extra_watch_paths` in
-//! `runtime.yaml`. Paths that don't exist at spawn time are skipped
-//! with a `warn` — they're re-considered on the next restart (file
-//! watchers can't retroactively attach to a path that appears later
-//! without platform-specific tricks we don't need yet).
+//! `runtime.yaml`. The watcher attaches a single recursive watch on
+//! the config directory (not the individual files), so files that
+//! don't exist yet at boot — the setup wizard writes `agents.yaml` /
+//! `llm.yaml` after first launch — and atomic-rename writes (admin RPC
+//! writes a temp file then renames over the target) are both caught.
+//! Events are filtered to the watched paths above.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -49,13 +51,40 @@ pub fn spawn_config_watcher(
     // to the spawning future.
     tokio::task::spawn_blocking(move || {
         let result = (|| -> anyhow::Result<()> {
+            // Absolute paths we care about (the config files +
+            // `agents.d/`). We watch the PARENT directory recursively
+            // (below) and filter events to these. Watching the files
+            // directly is wrong twice over: (a) on a fresh install the
+            // files don't exist at boot — the setup wizard writes them
+            // later, so a per-file watch finds no targets and disables
+            // itself permanently; (b) admin-RPC + editors write via
+            // atomic rename (temp file + rename over the target), which
+            // replaces the inode a per-file `NonRecursive` watch is
+            // bound to, so the Modify never fires. A recursive dir watch
+            // catches both create and rename.
+            let interesting: Vec<PathBuf> = DEFAULT_WATCH_PATHS
+                .iter()
+                .map(|p| config_dir.join(p))
+                .chain(extra_paths.iter().map(|p| config_dir.join(p)))
+                .collect();
+            let filter = interesting.clone();
+
             let mut debouncer = new_debouncer(debounce, None, move |res: DebounceEventResult| {
                 match res {
                     Ok(events) if !events.is_empty() => {
-                        // Any debounced batch → one notification. The
-                        // coordinator dedupes subsequent reloads via its
-                        // serial mutex.
-                        let _ = notify_tx.try_send(());
+                        // Only fire when a watched file (or something
+                        // under `agents.d/`) changed — ignore unrelated
+                        // writes in the same dir (broker.yaml, plugins/,
+                        // editor temp files). The coordinator dedupes
+                        // subsequent reloads via its serial mutex.
+                        let relevant = events.iter().any(|ev| {
+                            ev.paths
+                                .iter()
+                                .any(|p| filter.iter().any(|t| p == t || p.starts_with(t)))
+                        });
+                        if relevant {
+                            let _ = notify_tx.try_send(());
+                        }
                     }
                     Ok(_) => {}
                     Err(errs) => {
@@ -67,47 +96,38 @@ pub fn spawn_config_watcher(
             })
             .context("spawn notify-debouncer-full")?;
 
-            let mut targets: Vec<PathBuf> = DEFAULT_WATCH_PATHS
-                .iter()
-                .map(|p| config_dir.join(p))
-                .collect();
-            for p in &extra_paths {
-                targets.push(config_dir.join(p));
-            }
-
-            let mut watched_any = false;
-            for target in &targets {
-                if !target.exists() {
-                    tracing::debug!(
-                        path = %target.display(),
-                        "config watch target does not exist — skipping"
-                    );
-                    continue;
-                }
-                let mode = if target.is_dir() {
-                    RecursiveMode::Recursive
-                } else {
-                    RecursiveMode::NonRecursive
-                };
-                match debouncer.watcher().watch(target, mode) {
+            // One recursive watch on the config dir → creates + atomic
+            // renames of the interesting files are caught even when they
+            // don't exist yet at boot.
+            let watched_any = if config_dir.is_dir() {
+                match debouncer
+                    .watcher()
+                    .watch(&config_dir, RecursiveMode::Recursive)
+                {
                     Ok(_) => {
-                        watched_any = true;
-                        tracing::info!(path = %target.display(), mode = ?mode, "config watcher attached");
+                        tracing::info!(
+                            config_dir = %config_dir.display(),
+                            "config watcher attached (recursive dir watch)"
+                        );
+                        true
                     }
                     Err(e) => {
                         tracing::warn!(
-                            path = %target.display(),
+                            config_dir = %config_dir.display(),
                             error = %e,
-                            "config watcher failed to attach — skipping",
+                            "config watcher failed to attach to config dir",
                         );
+                        false
                     }
                 }
-            }
+            } else {
+                false
+            };
 
             if !watched_any {
                 tracing::warn!(
                     config_dir = %config_dir.display(),
-                    "config watcher has no live targets — auto reload disabled until the files appear and the process restarts"
+                    "config watcher has no live config dir — auto reload disabled until it appears and the process restarts"
                 );
                 // Keep the task alive until shutdown so the Receiver
                 // end doesn't race; the coordinator can still take
@@ -188,6 +208,60 @@ mod tests {
             .await
             .expect("watcher must fire within 2s");
         assert_eq!(fired, Some(()));
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn watcher_fires_on_file_created_after_start() {
+        // The fresh-install / wizard case: llm.yaml does NOT exist when
+        // the daemon boots, the wizard creates it later. A per-file
+        // watch would have found no target + disabled itself; the
+        // recursive dir watch catches the create.
+        let dir = tempfile::tempdir().unwrap();
+        let shutdown = CancellationToken::new();
+        let mut rx = spawn_config_watcher(
+            dir.path().to_path_buf(),
+            Vec::new(),
+            Duration::from_millis(100),
+            shutdown.clone(),
+        )
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Create llm.yaml AFTER the watcher started.
+        fs::write(dir.path().join("llm.yaml"), "providers: {}\n").unwrap();
+
+        let fired = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("watcher must fire on a file created after start");
+        assert_eq!(fired, Some(()));
+
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
+    async fn watcher_ignores_unrelated_files() {
+        // A write to a file we don't track (e.g. broker.yaml) must not
+        // trigger an agent reload.
+        let dir = tempfile::tempdir().unwrap();
+        let shutdown = CancellationToken::new();
+        let mut rx = spawn_config_watcher(
+            dir.path().to_path_buf(),
+            Vec::new(),
+            Duration::from_millis(100),
+            shutdown.clone(),
+        )
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        fs::write(dir.path().join("broker.yaml"), "broker: {}\n").unwrap();
+
+        let fired = tokio::time::timeout(Duration::from_millis(800), rx.recv()).await;
+        assert!(
+            fired.is_err(),
+            "unrelated file write must not fire a reload"
+        );
 
         shutdown.cancel();
     }

@@ -537,6 +537,27 @@ impl AdminRpcBootstrap {
             grants.insert(id.clone(), entry.capabilities_grant.clone());
         }
 
+        // Zero-config default (Phase 97.1.γ): when the operator gives
+        // NO explicit `extensions.yaml` entry for a declared plugin,
+        // default its grant to the manifest's declared union
+        // (required + optional). This matches the documented design —
+        // "grant = union of required + optional; drop a capability to
+        // revoke" — and makes `install.sh` / `nexo admin` work out of
+        // the box without a hand-written grant. An explicit entry
+        // (even partial / empty) is the operator's authoritative
+        // override and is left untouched.
+        for (id, decl) in &declared {
+            if !inputs.extensions_cfg.entries.contains_key(id) {
+                let union: Vec<String> = decl
+                    .required
+                    .iter()
+                    .chain(decl.optional.iter())
+                    .cloned()
+                    .collect();
+                grants.insert(id.clone(), union);
+            }
+        }
+
         // 2-tier validation: required missing → error, optional
         // missing → warn, orphan grant → warn.
         let report = validate_capabilities_at_boot(&declared, &grants);
@@ -1381,6 +1402,64 @@ mod tests {
         assert!(bootstrap
             .spawn_options_for("other", StdioSpawnOptions::default())
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn build_zero_config_defaults_grant_to_declared_union() {
+        // No `extensions.yaml` entry for "agent-creator" → its grant
+        // defaults to the manifest's declared union (required +
+        // optional). Build MUST succeed (a missing required cap would
+        // be a CapabilityValidation error) — proving install.sh /
+        // `nexo admin` work zero-config without a hand-written grant.
+        let cfg = extensions_cfg_with_grant("unrelated", &[]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &["plugin_admin_ui"]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build(AdminBootstrapInputs {
+            config_dir: dir.path(),
+            secrets_root: dir.path(),
+            audit_db: None,
+            extensions_cfg: &cfg,
+            admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
+            reload_signal: noop_reload(),
+            transcript_reader: None,
+            broker: None,
+            transcript_writer: None,
+            processing_store: None,
+            tenant_store: None,
+            mcp_store: None,
+            plugin_doctor: None,
+            plugin_handles_cell: None,
+            persona_install_roots: Vec::new(),
+            plugin_restarter: None,
+            plugin_installer: None,
+            plugin_discovery: None,
+            memory_reader: None,
+            memory_snapshot_reader: None,
+            secrets_store: None,
+            llm_provider_probe: None,
+            llm_completer: None,
+            llm_provider_catalog: Vec::new(),
+            auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
+            skills_store: None,
+            escalation_store: None,
+            agent_event_log: None,
+            persisters: Vec::new(),
+            pairing_triggers: Default::default(),
+            plugin_admin_router: None,
+            plugin_ui: None,
+        })
+        .await
+        .unwrap()
+        .expect("admin wire built zero-config");
+        assert!(bootstrap.is_active());
+        assert!(bootstrap.wired_ids().contains(&"agent-creator".to_string()));
     }
 
     #[tokio::test]
