@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-05-20T00:00:00Z",
+  "plugins": [
+    {
+      "name": "nexo-plugin-telegram",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-telegram",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-telegram/main/nexo-plugin.toml",
+      "category": "channel",
+      "tags": ["messaging", "telegram", "bot"],
+      "description": "Telegram bot channel plugin — inbound messages + outbound replies via the Bot API."
+    },
+    {
+      "name": "nexo-plugin-whatsapp",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-whatsapp",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-whatsapp/main/nexo-plugin.toml",
+      "category": "channel",
+      "tags": ["messaging", "whatsapp", "signal-protocol"],
+      "description": "WhatsApp channel plugin — QR pairing + per-agent session multiplexing via wa-agent."
+    },
+    {
+      "name": "nexo-plugin-email",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-email",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-email/main/nexo-plugin.toml",
+      "category": "channel",
+      "tags": ["messaging", "email", "imap", "smtp"],
+      "description": "Email channel plugin — IMAP intake + SMTP delivery with per-tenant account fan-out."
+    },
+    {
+      "name": "nexo-plugin-google",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-google",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-google/main/nexo-plugin.toml",
+      "category": "tool",
+      "tags": ["oauth", "gmail", "google-calendar", "google-drive"],
+      "description": "Google OAuth + Gmail / Calendar / Drive tools as a subprocess plugin."
+    },
+    {
+      "name": "nexo-plugin-web-search",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-web-search",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-web-search/main/nexo-plugin.toml",
+      "category": "tool",
+      "tags": ["search", "brave", "tavily", "ddg", "perplexity"],
+      "description": "Multi-provider web search tool — Brave, Tavily, DDG, Perplexity with per-binding policy."
+    },
+    {
+      "name": "nexo-plugin-browser",
+      "owner": "lordmacu",
+      "repo": "lordmacu/nexo-rs-plugin-browser",
+      "manifest_url": "https://raw.githubusercontent.com/lordmacu/nexo-rs-plugin-browser/main/nexo-plugin.toml",
+      "category": "channel",
+      "tags": ["browser", "cdp", "automation"],
+      "description": "Headless Chrome / CDP browser plugin — multi-instance per agent, auto-download of chrome-headless-shell."
+    }
+  ]
+}

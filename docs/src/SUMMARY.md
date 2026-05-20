@@ -21,6 +21,7 @@
 - [LLM providers](./llm/minimax.md)
 - [Memory · short-term](./memory/short-term.md)
 - [Plugin catalog](./plugins/catalog.md)
+- [Plugin discovery (Phase 98)](./plugins/discovery.md)
 - [Skills catalog](./skills/catalog.md)
 
 # Plugin SDKs
@@ -121,6 +122,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Phase 93.11 compile-time plugin decoupling audit](./architecture/phase-93-decoupling-audit.md)
 - [Plugin auto-discovery design memo](./architecture/plugin-auto-discovery.md)
 - [Plugin install pipeline audit (Phase 98)](./architecture/plugin-install-audit-2026-05-19.md)
+- [Plugin discovery (Phase 98)](./architecture/plugin-discovery.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
@@ -158,6 +160,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Anthropic / Claude](./llm/anthropic.md)
 - [OpenAI-compatible](./llm/openai.md)
 - [DeepSeek](./llm/deepseek.md)
+- [OpenRouter](./llm/openrouter.md)
 - [Multi-instance providers + secret-backed keys](./llm/multi-instance.md)
 - [Credential schema (Phase 82.10.u)](./llm/credential-schema.md)
 - [OAuth flows (Phase 82.10.u)](./llm/oauth-flows.md)

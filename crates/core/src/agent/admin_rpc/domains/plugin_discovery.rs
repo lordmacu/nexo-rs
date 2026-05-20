@@ -34,10 +34,7 @@ pub trait DiscoveryReader: Send + Sync + std::fmt::Debug {
     /// Return the merged catalogue. Apply the request's `query`,
     /// `compat_only`, `category`, `source` filters server-side
     /// (cheaper than shipping the full catalogue every call).
-    async fn search(
-        &self,
-        params: &PluginsSearchParams,
-    ) -> anyhow::Result<PluginsSearchResponse>;
+    async fn search(&self, params: &PluginsSearchParams) -> anyhow::Result<PluginsSearchResponse>;
 
     /// Resolve compat + manifest summary for one crate. `version`
     /// is informational for now (manifest fetched from HEAD); pin-
@@ -87,9 +84,7 @@ pub async fn search(reader: &dyn DiscoveryReader, params: Value) -> AdminRpcResu
     }
     match reader.search(&p).await {
         Ok(resp) => AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null)),
-        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "plugins.search: {e}"
-        ))),
+        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!("plugins.search: {e}"))),
     }
 }
 

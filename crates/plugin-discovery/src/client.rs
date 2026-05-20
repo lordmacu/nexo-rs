@@ -321,10 +321,13 @@ impl DiscoveryClient for DefaultDiscoveryClient {
         // can't show a stale 24h-cached answer.
         let fallbacks = derive_fallback_urls(&plugin);
         let manifest = match plugin.manifest_url.as_deref() {
-            Some(url) => fetch_manifest(&self.http, url, &fallbacks, self.config.http_timeout).await,
+            Some(url) => {
+                fetch_manifest(&self.http, url, &fallbacks, self.config.http_timeout).await
+            }
             None => match fallbacks.first() {
                 Some(first) => {
-                    fetch_manifest(&self.http, first, &fallbacks[1..], self.config.http_timeout).await
+                    fetch_manifest(&self.http, first, &fallbacks[1..], self.config.http_timeout)
+                        .await
                 }
                 None => None,
             },
@@ -335,8 +338,7 @@ impl DiscoveryClient for DefaultDiscoveryClient {
                 manifest_summary: None,
             });
         };
-        let compat =
-            compat::compat_check(Some(&f.min_nexo_version), &self.config.daemon_version);
+        let compat = compat::compat_check(Some(&f.min_nexo_version), &self.config.daemon_version);
         // `version` param currently informational — manifest fetch
         // always targets the repo's HEAD; pinning to a tag is a
         // follow-up. We still echo it back to the caller via a
@@ -369,8 +371,12 @@ fn derive_fallback_urls(plugin: &DiscoveredPlugin) -> Vec<String> {
         return Vec::new();
     };
     let mut parts = rest.split('/');
-    let Some(org) = parts.next() else { return Vec::new() };
-    let Some(name) = parts.next() else { return Vec::new() };
+    let Some(org) = parts.next() else {
+        return Vec::new();
+    };
+    let Some(name) = parts.next() else {
+        return Vec::new();
+    };
     let name = name.trim_end_matches(".git");
     if org.is_empty() || name.is_empty() {
         return Vec::new();
