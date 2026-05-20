@@ -281,7 +281,23 @@ impl DiscoveryClient for DefaultDiscoveryClient {
         let ttl_ms = self.config.cache_ttl.as_millis() as u64;
         let now = now_ms();
         if let Some(snap) = self.cache.read_fresh(now, ttl_ms).await? {
-            let filtered = Self::filter_by_query(snap.items, query);
+            let mut items = snap.items;
+            // Recompute compat against the CURRENT daemon version. The
+            // cached `compat` was computed when the snapshot was written
+            // — possibly by an OLDER daemon — so without this the
+            // "needs upgrade" badge would persist for the full cache TTL
+            // after a daemon upgrade. `NeedsUpgrade` carries its
+            // `required` range, so re-running the cheap version check
+            // against the live daemon version clears (or keeps) it
+            // correctly without a re-fetch.
+            for p in &mut items {
+                if let CompatStatus::NeedsUpgrade { required, .. } = &p.compat {
+                    if let Ok(req) = required.parse::<semver::VersionReq>() {
+                        p.compat = compat::compat_check(Some(&req), &self.config.daemon_version);
+                    }
+                }
+            }
+            let filtered = Self::filter_by_query(items, query);
             return Ok(SearchOutcome {
                 items: filtered,
                 fetched_at_ms: snap.fetched_at_ms,
