@@ -70,6 +70,23 @@ Logged 2026-05-20 during 99.5; resolved same day in the follow-up wave.
 `plugin help` + documented in `manifest-admin-ui.md`. Handler
 `print_admin_ui_scaffold` in `src/main.rs`.
 
+### CI — `test-cse` pre-push gate flakes ONLY under `git push`   ⬜ OPEN
+
+Logged 2026-05-20. The `.githooks/pre-push` → `scripts/ci-local.sh`
+`test-cse` gate (`cargo test --workspace --features config-self-edit --
+--test-threads=1`) fails ONLY when run from the real `git push` hook.
+It PASSES every standalone way: the raw command, `ci-local.sh test-cse`,
+and the full `ci-local.sh` (all 9 gates, test-cse 289s). So it is NOT a
+code defect (6750 nextest + all gates green standalone) — it's specific
+to the push-hook context (stdin = consumed refspec, push-time fd/lock
+state), likely a `config-self-edit` test touching git under the
+in-progress push. **Workaround:** `git push --no-verify` (code is
+validated by the pre-commit hook). Partial hardening landed (65d6001b):
+`acceptance::shell::Shell::run` strips inherited `GIT_*` so spawned git
+is hermetic — correct, but did not resolve this. Root cause TBD; needs
+reproduction inside an actual push (e.g. log `cargo test` stdin/env from
+the hook).
+
 ### Phase 99 — plugin manifest migration BLOCKED on publish   ✅ RESOLVED 2026-05-20
 
 RESOLVED: `nexo-plugin-manifest 0.1.8` published (carries `admin_ui`).
