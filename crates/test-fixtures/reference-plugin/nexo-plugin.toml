@@ -88,3 +88,105 @@ path = "reference_demo_token.txt"
 # library crate (no subprocess); the entrypoint is documented but
 # inert. Operators wiring a real plugin would set:
 #   command = "/usr/local/bin/nexo-plugin-<id>"
+
+# ────────────────────────────────────────────────────────────────
+# Phase 99 — admin UI contribution model (Mode A declarative).
+#
+# Exercises every contribution + field shape so plugin authors have
+# a copy-pastable template. `describe = false` ⇒ the daemon
+# synthesises the live descriptor from the screens below + the
+# plugin's `cfg.plugins.reference_demo` values. `options_source.rpc`
+# + actions forward to the plugin via `[plugin.admin]` above.
+# ────────────────────────────────────────────────────────────────
+[plugin.admin_ui]
+schema_version = 1
+mode           = "declarative"
+describe       = false
+
+# Top-level menu in the plugin's own namespace (any trust tier).
+[[plugin.admin_ui.contributions]]
+id     = "reference"
+slot   = "plugin.reference_demo.root"
+label  = "Reference"
+icon   = "puzzle"
+order  = 1000
+screen = "settings"
+
+# Submenu nested under the top-level entry.
+[[plugin.admin_ui.contributions]]
+id     = "reference-advanced"
+parent = "reference"
+label  = "Advanced"
+screen = "advanced"
+
+# Core-slot injection — only surfaces for Official-trust plugins.
+[[plugin.admin_ui.contributions]]
+id     = "reference-integrations"
+slot   = "core.sidebar.integrations"
+label  = "Reference (core)"
+screen = "settings"
+
+[[plugin.admin_ui.screens]]
+id    = "settings"
+title = "Reference Settings"
+
+[[plugin.admin_ui.screens.fields]]
+key      = "host"
+type     = "text"
+label    = "Host"
+required = true
+
+[[plugin.admin_ui.screens.fields]]
+key   = "port"
+type  = "number"
+label = "Port"
+
+[[plugin.admin_ui.screens.fields]]
+key   = "token"
+type  = "secret"
+label = "Token"
+
+[[plugin.admin_ui.screens.fields]]
+key   = "enabled"
+type  = "toggle"
+label = "Enabled"
+
+# Static-options select, gated on another field's value.
+[[plugin.admin_ui.screens.fields]]
+key          = "region"
+type         = "select"
+label        = "Region"
+visible_when = "config.enabled"
+
+[[plugin.admin_ui.screens.fields.options]]
+value = "us"
+label = "US"
+
+[[plugin.admin_ui.screens.fields.options]]
+value = "eu"
+label = "EU"
+
+# RPC-sourced options resolved via the plugin's [plugin.admin].
+[[plugin.admin_ui.screens.fields]]
+key   = "calendar"
+type  = "select"
+label = "Calendar"
+
+[plugin.admin_ui.screens.fields.options_source]
+kind   = "rpc"
+method = "nexo/admin/reference_demo/admin_ui/options/calendars"
+
+[[plugin.admin_ui.screens.actions]]
+id         = "ping"
+label      = "Ping"
+method     = "nexo/admin/reference_demo/admin_ui/ping"
+on_success = "toast"
+
+[[plugin.admin_ui.screens]]
+id    = "advanced"
+title = "Advanced"
+
+[[plugin.admin_ui.screens.fields]]
+key   = "debug"
+type  = "toggle"
+label = "Debug"

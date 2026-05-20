@@ -66,6 +66,33 @@ non-blocking.
    `plugin_ui/list` aggregator yet; the client re-evaluates with live
    state. Trigger: when health needs to gate server-side.
 
+### Phase 99 — plugin manifest migration BLOCKED on publish   ⬜ BLOCKER
+
+Discovered 2026-05-20 during 99.10 (Google migration). The external
+plugin repos (google + whatsapp/telegram/email/browser/web-search)
+pin `nexo-plugin-manifest` from **crates.io** (e.g. google = `0.1.6`).
+That published crate lacks the new `[plugin.admin_ui]` field, and
+`PluginSection` is `#[serde(deny_unknown_fields)]` → adding the
+section is a **hard parse error** in each plugin until a newer
+manifest crate ships.
+
+**So 99.10 / 99.11 manifest sections cannot land code-only.** Gate:
+1. `cargo release -p nexo-plugin-manifest` (publish the version with
+   `admin_ui` + `visible_when`). Likely also bump/publish
+   `nexo-tool-meta` (plugin_ui wire types) for any plugin consuming
+   them — google's handlers hand-build JSON so they need only the
+   manifest crate.
+2. Bump each plugin's `nexo-plugin-manifest` dep to the new version.
+3. Add `[plugin.admin_ui]` to each plugin's `nexo-plugin.toml` +
+   (for dynamic ones) the broker handlers.
+4. Re-publish each plugin (operator).
+
+**Done so far (unblocked parts):** Google ships the `admin_ui/describe`
++ `config_set` broker handlers (commit `c02e0ac`, ready to activate);
+its manifest carries a note explaining the block. The reference-plugin
+fixture (in-tree, path-deps the local manifest crate) DOES carry the
+section + is e2e-tested — proving the contract end-to-end in-tree.
+
 ### Phase 100 — OpenRouter LLM provider deferreds   ⬜ ACTIVE
 
 Logged 2026-05-20 alongside Phase 100 close-out. Scoped *out* of

@@ -1254,4 +1254,162 @@ mod tests {
     // cfg paths.
     #[allow(dead_code)]
     fn _fixture_types(_: Contribution, _: Screen, _: SelectOption) {}
+
+    // ── 99.9 — e2e round-trip against the REAL reference manifest ─
+
+    /// Load + parse the checked-in reference plugin manifest and
+    /// build the domain view from it (proves the real
+    /// `[plugin.admin_ui]` fixture flows through the daemon).
+    fn reference_view() -> PluginUiManifestView {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../test-fixtures/reference-plugin/nexo-plugin.toml"
+        );
+        let text = std::fs::read_to_string(path).expect("read reference manifest");
+        let manifest: nexo_plugin_manifest::PluginManifest =
+            toml::from_str(&text).expect("parse reference manifest");
+        // The manifest must pass full validation (incl. admin_ui).
+        let mut errs = Vec::new();
+        nexo_plugin_manifest::validate::run_all(
+            &manifest,
+            &semver::Version::new(0, 1, 0),
+            &mut errs,
+        );
+        let admin_ui_errs: Vec<_> = errs
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    nexo_plugin_manifest::ManifestError::AdminUiInvalid { .. }
+                )
+            })
+            .collect();
+        assert!(
+            admin_ui_errs.is_empty(),
+            "admin_ui validation: {admin_ui_errs:?}"
+        );
+
+        let p = &manifest.plugin;
+        PluginUiManifestView {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            admin_ui: p
+                .admin_ui
+                .clone()
+                .expect("reference declares [plugin.admin_ui]"),
+            admin: p.admin.clone(),
+            config_schema: None,
+        }
+    }
+
+    #[test]
+    fn reference_e2e_list_official_shows_all_contributions() {
+        let view = reference_view();
+        let d = domain_with(
+            vec![view],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            Arc::new(FakeConfig::default()),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        );
+        let resp: PluginUiListResponse = serde_json::from_value(ok_value(d.list())).unwrap();
+        let g = &resp.plugins[0];
+        // own-namespace + submenu + core-slot all survive for Official.
+        let ids: Vec<_> = g.contributions.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"reference"));
+        assert!(ids.contains(&"reference-advanced"));
+        assert!(ids.contains(&"reference-integrations"));
+        assert_eq!(g.hidden_count, 0);
+    }
+
+    #[test]
+    fn reference_e2e_list_unverified_drops_core_slot_only() {
+        let view = reference_view();
+        let d = domain_with(
+            vec![view],
+            TrustTier::Unverified,
+            Arc::new(FakeForwarder::default()),
+            Arc::new(FakeConfig::default()),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        );
+        let resp: PluginUiListResponse = serde_json::from_value(ok_value(d.list())).unwrap();
+        let g = &resp.plugins[0];
+        let ids: Vec<_> = g.contributions.iter().map(|c| c.id.as_str()).collect();
+        // own namespace + its submenu survive; core slot dropped.
+        assert!(ids.contains(&"reference"));
+        assert!(ids.contains(&"reference-advanced"));
+        assert!(!ids.contains(&"reference-integrations"));
+        assert_eq!(g.hidden_count, 1);
+    }
+
+    #[tokio::test]
+    async fn reference_e2e_describe_synthesises_with_rpc_options() {
+        let forwarder = Arc::new(FakeForwarder::default());
+        forwarder.replies.lock().unwrap().push((
+            "options/calendars".into(),
+            json!([{"value": "primary", "label": "Primary"}]),
+        ));
+        let view = reference_view();
+        let d = domain_with(
+            vec![view],
+            TrustTier::Official,
+            forwarder,
+            Arc::new(FakeConfig::default()),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        );
+        let resp = d
+            .describe(json!({"plugin": "reference_demo", "screen": "settings"}))
+            .await;
+        let desc: ScreenDescriptor = serde_json::from_value(ok_value(resp)).unwrap();
+        // secret field carries status, never a value.
+        let token = desc.fields.iter().find(|f| f.key == "token").unwrap();
+        assert_eq!(token.field_type, "secret");
+        assert_eq!(token.value, None);
+        assert_eq!(token.secret, Some(SecretStatus::Unset));
+        // rpc options resolved via the forwarder.
+        let cal = desc.fields.iter().find(|f| f.key == "calendar").unwrap();
+        assert_eq!(cal.options.as_ref().unwrap()[0].value, "primary");
+    }
+
+    #[tokio::test]
+    async fn reference_e2e_config_set_routes_secret_and_persists() {
+        let config = Arc::new(FakeConfig::default());
+        let creds = Arc::new(FakeCreds::default());
+        let view = reference_view();
+        let d = domain_with(
+            vec![view],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            config.clone(),
+            creds.clone(),
+            None,
+            false,
+        );
+        let resp = d
+            .config_set(
+                json!({
+                    "plugin": "reference_demo",
+                    "screen": "settings",
+                    "values": { "host": "h.example.com", "token": "s3cr3t", "enabled": true }
+                }),
+                None,
+            )
+            .await;
+        let out: ConfigSetResponse = serde_json::from_value(ok_value(resp)).unwrap();
+        assert!(out.ok);
+        let stored = config.read("reference_demo").unwrap().unwrap();
+        assert_eq!(stored.get("host"), Some(&json!("h.example.com")));
+        assert!(stored.get("token").is_none()); // secret not in YAML
+        assert!(creds
+            .list_credentials()
+            .unwrap()
+            .iter()
+            .any(|(c, i)| c == "reference_demo" && i.as_deref() == Some("token")));
+    }
 }
