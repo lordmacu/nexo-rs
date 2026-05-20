@@ -146,6 +146,15 @@ metrics, admin-UI screens, and agents. Setup-wizard channel
 need no hot-reload either. A daemon restart is no longer required to
 pick up an installed plugin's contributions.
 
+**Channel instances live too.** Configuring a channel instance at
+runtime — a bot token / account via `nexo/admin/credentials/register`
+(the wizard) — reconciles that channel's live subprocesses without a
+restart: a newly-added instance (e.g. a 2nd telegram bot) gets its own
+subprocess spawned + started, a removed one is torn down, and surviving
+ones are re-configured. Multi-instance channels run one isolated
+subprocess per instance (`<channel>.<instance>`), each on its own
+`plugin.inbound/outbound.<channel>.<instance>` topics.
+
 ## Architecture pointers
 
 - `crates/plugin-discovery/` — standalone publishable crate.

@@ -2,51 +2,41 @@
 
 This file tracks the **active technical backlog** in English.
 
-### multi-instance-hot-registration — Steps 1+2 SHIPPED 2026-05-20, Steps 3-6 OPEN   🔄
+### multi-instance-hot-registration — Steps 1-4 SHIPPED 2026-05-20, residual   🔄
 
 Goal: configuring/removing the **Nth instance** of a channel plugin
 (e.g. a 2nd telegram bot) at runtime registers/spawns/kills that
-instance's subprocess in the live runtime — no daemon restart. Today
-only boot (`register_instance_subprocess_factories`) does per-instance
-subprocesses; post-boot only the single auto-fallback works (via the
-`reconfigure` configure-push of `d2e8e93d`).
+instance's subprocess in the live runtime — no daemon restart. Forge
+brainstorm+spec+plan done (cited `research/channels/plugins/
+{types.adapters.ts:525, read-only.ts:30}` + `acp/translator.ts:1110`;
+`claude-code-leak/` ABSENT declared).
 
-Forge: brainstorm + spec + plan done (cited `research/channels/plugins/
-{types.adapters.ts:525 ChannelLifecycleAdapter, read-only.ts:30}` +
-`acp/translator.ts:1110`; `claude-code-leak/` ABSENT declared).
-
-**Shipped (foundation):**
+**Shipped:**
 - **Step 1** `9c0eda67` — `PluginFactoryRegistry` interior-mutable
-  (`RwLock<BTreeMap>`, `register(&self)`) + `register_runtime` (overwrite)
-  + `unregister_runtime`; 12/12 factory tests.
-- **Step 2** `8331ad76` — `build_instance_factory(plugin_id, base,
-  label, env) -> (id, factory, synthetic)` extracted from the boot path;
-  boot byte-equivalent; reused by the runtime reconcile.
+  (`RwLock<BTreeMap>`) + `register_runtime`/`unregister_runtime`; tests.
+- **Step 2** `8331ad76` — `build_instance_factory` extracted (boot
+  byte-equivalent; reused by reconcile).
+- **Step 3+4** `deb8a230` — `LivePluginInstaller::reconcile_channel_instances`
+  (add/drop/keep, reusing the `scan()` machinery; runtime auto-fallback
+  dedup) + `PluginInstaller::reconcile_channel_instances` trait method;
+  `credentials/register` prefers it over the restarter's `reconfigure`.
 
-**Open (resume here):**
-- **Step 3** `reconcile_channel_instances(channel)` — **place in
-  `LivePluginInstaller`** (it owns `HotInstallCtx`; `LivePluginRestarter`
-  does NOT, so the original plan's placement was wrong). Reuse the exact
-  `scan()` pattern (plugin_install_adapter.rs:357): discover base → diff
-  desired (`instances_for` + `opaque_plugin_entries`) vs live handles →
-  add: `build_instance_factory` + `factory_registry.register_runtime` +
-  filtered snapshot + `run_plugin_init_loop_with_factory` +
-  `register_plugin_in_live_runtime` + `handle.configure(slice)`; drop:
-  `unregister_plugin_from_live_runtime` + `unregister_runtime`; keep:
-  `handle.configure` (== today's `reconfigure`). Honor the boot.rs:210
-  dedup (drop the auto-fallback base when the 1st named instance lands).
-  The per-channel env seed (`seed_*_subprocess_env_for`) lives in
-  `main.rs` → thread a build closure into the installer (reseed-hook
-  pattern of `adfd220f`).
-- **Step 4** expose via the `PluginInstaller` trait (dispatcher already
-  holds `plugin_installer`); `credentials/register` calls
-  `reconcile_channel_instances(channel)` instead of `reconfigure`.
-- **Step 5** retire the `adfd220f` env-reseed hook (configure-push +
-  per-instance `env_clear` supersede it; keep `seed_*` for the spawn env).
-- **Step 6** tests (drift boot↔runtime; e2e add/drop/keep via
-  `test-fixtures` mock-subprocess shape "array") + docs + PHASES/CLAUDE
-  row + close-out.
-- Fase-2: whatsapp (session dirs) + email multi-instance.
+**Residual (Step 5/6):**
+- **Step 5 — reseed hook KEPT (deviation from plan):** `adfd220f`'s
+  env-reseed was NOT retired — it still serves the manual
+  `plugins/restart` admin RPC (re-seeds the daemon env before a manual
+  respawn). The reconcile (configure-push) is now the primary eager-start
+  path for `credentials/register`; the reseed is the manual-restart
+  belt-and-suspenders.
+- **Step 6 e2e (open):** dedicated reconcile e2e — needs a mock
+  subprocess that answers `plugin.configure` + a full `HotInstallCtx`
+  fixture. The reconcile reuses the scan/uninstall helpers (already
+  e2e-tested) + 22/22 plugin_install+factory regression green; the
+  add/drop/keep wiring is covered by reuse. Write the dedicated
+  multi-instance e2e (`test-fixtures` mock-subprocess shape "array":
+  boot 1 → reconcile +2nd → 2 subprocesses/2 topics; -1st → dies).
+- Fase-2: whatsapp (session dirs) + email multi-instance (only telegram
+  + whatsapp have `seed_*_subprocess_env_for` seeders today).
 
 ### Phase 97.1.γ — hot-install completeness (skills + metrics) — SHIPPED 2026-05-20, residual deferreds   ⬜
 
