@@ -126,6 +126,19 @@ impl PluginInstaller for LivePluginInstallerCell {
             }
         }
     }
+    async fn reconcile_channel_instances(&self, channel: &str) -> anyhow::Result<()> {
+        // MUST forward to the real installer — without this the cell
+        // falls back to the trait's no-op default, so a channel
+        // configured at runtime never reconciles (the bug behind
+        // "first-pair doesn't bring the bot online, restart does").
+        match self.inner.get() {
+            Some(i) => i.reconcile_channel_instances(channel).await,
+            None => {
+                nexo_core::telemetry::inc_plugin_install_boot_race("reconcile", "cell_unset");
+                anyhow::bail!("plugin installer not yet populated (daemon still booting)")
+            }
+        }
+    }
 }
 
 /// Phase 97.1.β — fixtures required to spawn a freshly-installed
@@ -885,6 +898,16 @@ impl PluginInstaller for LivePluginInstaller {
         // runtime.
         let desired_ids: std::collections::BTreeSet<String> = desired.keys().cloned().collect();
         let (add_ids, drop_ids, keep_ids) = classify_reconcile(&desired_ids, &live_ids);
+        tracing::info!(
+            channel,
+            yaml_entries = resolved_entries.len(),
+            desired = ?desired_ids,
+            live = ?live_ids,
+            add = ?add_ids,
+            drop = ?drop_ids,
+            keep = ?keep_ids,
+            "reconcile: classified channel instances"
+        );
 
         // Discover the base manifest once (only needed for adds).
         let snap = if !add_ids.is_empty() {
@@ -932,6 +955,12 @@ impl PluginInstaller for LivePluginInstaller {
             };
             let (derived_id, factory, synthetic) =
                 crate::build_instance_factory(channel, base, label, env);
+            tracing::info!(
+                channel,
+                instance = %derived_id,
+                synthetic_id = %synthetic.manifest.plugin.id,
+                "reconcile: registering factory + spawning instance subprocess"
+            );
             ctx.factory_registry
                 .register_runtime(derived_id.clone(), factory);
 
@@ -961,6 +990,13 @@ impl PluginInstaller for LivePluginInstaller {
                 },
             )
             .await;
+            tracing::info!(
+                channel,
+                instance = %derived_id,
+                handles = result.handles.len(),
+                outcomes = result.outcomes.len(),
+                "reconcile: init loop done"
+            );
             for (hid, outcome) in result.outcomes.iter() {
                 if let nexo_core::agent::nexo_plugin_registry::InitOutcome::Failed { error } =
                     outcome
