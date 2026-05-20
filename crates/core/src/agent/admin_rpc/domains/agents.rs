@@ -1174,9 +1174,7 @@ mod tests {
         // the 17th attempt will land outside our seeded set with
         // overwhelming probability (each attempt has 999_984/1M
         // odds of being free given a 16-id seeded set).
-        let seeded: Vec<String> = (0..16)
-            .map(|i| format!("agent_{i:06}"))
-            .collect();
+        let seeded: Vec<String> = (0..16).map(|i| format!("agent_{i:06}")).collect();
         let id = resolve_agent_id("", true, &seeded).unwrap();
         assert!(id.starts_with("agent_"));
         assert!(!seeded.iter().any(|s| s == &id), "got seeded `{id}`");

@@ -170,8 +170,7 @@ fn map_repo(raw: GithubRepo, raw_github_base: &str) -> Option<DiscoveredPlugin> 
     // that's wired.
     let crate_name = derive_crate_name(&name);
     let branch = default_branch.as_deref().unwrap_or("main");
-    let manifest_url =
-        format!("{raw_github_base}/{full_name}/{branch}/nexo-plugin.toml");
+    let manifest_url = format!("{raw_github_base}/{full_name}/{branch}/nexo-plugin.toml");
     let install_params = PluginsInstallParams {
         crate_name: crate_name.clone(),
         version: None,
@@ -257,7 +256,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(happy_body()))
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(
+            server.uri(),
+            &format!("{}/raw", server.uri()),
+            Duration::from_secs(5),
+            None,
+        );
         let items = src.fetch().await.expect("fetch ok");
         assert_eq!(items.len(), 2);
         let tele = items
@@ -288,7 +292,12 @@ mod tests {
             .respond_with(ResponseTemplate::new(403))
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(
+            server.uri(),
+            &format!("{}/raw", server.uri()),
+            Duration::from_secs(5),
+            None,
+        );
         let err = src.fetch().await.expect_err("403 must surface");
         assert_eq!(err.source, SOURCE_NAME);
         assert!(
@@ -308,7 +317,12 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let src = GithubTopicSource::new(server.uri(), &format!("{}/raw", server.uri()), Duration::from_secs(5), None);
+        let src = GithubTopicSource::new(
+            server.uri(),
+            &format!("{}/raw", server.uri()),
+            Duration::from_secs(5),
+            None,
+        );
         let items = src.fetch().await.expect("ok");
         assert!(items.is_empty());
     }

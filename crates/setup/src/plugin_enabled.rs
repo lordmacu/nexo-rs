@@ -31,24 +31,19 @@ fn discovery_yaml_path(config_dir: &Path) -> PathBuf {
 /// Returns `true` when the file actually changed. Idempotent:
 /// disabling an already-disabled plugin (or enabling an
 /// already-enabled one) is a no-op returning `false`.
-pub fn set_plugin_disabled(
-    config_dir: &Path,
-    plugin_id: &str,
-    disabled: bool,
-) -> Result<bool> {
+pub fn set_plugin_disabled(config_dir: &Path, plugin_id: &str, disabled: bool) -> Result<bool> {
     let path = discovery_yaml_path(config_dir);
 
     // Load existing file or start from an empty mapping. A malformed
     // file is a hard error — we don't want to clobber an operator's
     // hand-edited discovery.yaml by silently overwriting it.
     let mut root: Value = if path.exists() {
-        let body = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let body =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         if body.trim().is_empty() {
             Value::Mapping(Mapping::new())
         } else {
-            serde_yaml::from_str(&body)
-                .with_context(|| format!("parse {}", path.display()))?
+            serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
         }
     } else {
         Value::Mapping(Mapping::new())
@@ -93,8 +88,7 @@ pub fn set_plugin_disabled(
                 .with_context(|| format!("mkdir {}", parent.display()))?;
         }
         let body = serde_yaml::to_string(&root).context("serialize discovery.yaml")?;
-        std::fs::write(&path, body)
-            .with_context(|| format!("write {}", path.display()))?;
+        std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
     }
 
     Ok(changed)
@@ -108,8 +102,8 @@ pub fn read_disabled(config_dir: &Path) -> Result<Vec<String>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let body = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let body =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     if body.trim().is_empty() {
         return Ok(Vec::new());
     }

@@ -206,7 +206,9 @@ enum Mode {
     /// Phase 98.11 — `nexo plugin refresh`. Invalidates the
     /// discovery cache so the next `plugin search` re-fetches
     /// every source.
-    PluginRefresh { json: bool },
+    PluginRefresh {
+        json: bool,
+    },
     /// `nexo persona install
     /// <owner>/<repo>[@<tag>] [--dest <dir>] [--target
     /// <triple>] [--json]`. Mirror of `Mode::PluginInstall`
@@ -2708,21 +2710,18 @@ async fn main() -> Result<()> {
                     // when the file is absent OR carries zero
                     // authors. Operators control trust through ONE
                     // file instead of two.
-                    if let Ok(trusted) =
-                        nexo_ext_installer::TrustedKeysConfig::load(&config_dir)
-                    {
-                        let owners: Vec<String> = trusted
-                            .authors
-                            .iter()
-                            .map(|a| a.owner.clone())
-                            .collect();
+                    if let Ok(trusted) = nexo_ext_installer::TrustedKeysConfig::load(&config_dir) {
+                        let owners: Vec<String> =
+                            trusted.authors.iter().map(|a| a.owner.clone()).collect();
                         if !owners.is_empty() {
                             discovery_cfg.official_owners = owners;
                         }
                     }
-                    Some(nexo_setup::discovery_adapter::DefaultDiscoveryAdapter::from_default_client(
-                        discovery_cfg,
-                    ))
+                    Some(
+                        nexo_setup::discovery_adapter::DefaultDiscoveryAdapter::from_default_client(
+                            discovery_cfg,
+                        ),
+                    )
                 },
                 memory_reader: memory_reader.clone(),
                 memory_snapshot_reader: Some(
@@ -10658,7 +10657,9 @@ fn print_usage() {
     println!(
         "  agent plugin search [QUERY] [--compat-only] [--category=...] [--source=...] [--json]  Browse public catalogue (Phase 98)"
     );
-    println!("  agent plugin refresh [--json]           Invalidate plugin discovery cache (Phase 98)");
+    println!(
+        "  agent plugin refresh [--json]           Invalidate plugin discovery cache (Phase 98)"
+    );
     println!("  agent plugin help                      Show plugin subcommand help");
     println!(
         "  agent doctor capabilities [--json]     List write/reveal env toggles and their state"
@@ -16710,8 +16711,10 @@ async fn run_plugin_refresh(json: bool) -> Result<i32> {
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string(&serde_json::json!({ "ok": false, "error": e.to_string() }))
-                        .unwrap_or_default()
+                    serde_json::to_string(
+                        &serde_json::json!({ "ok": false, "error": e.to_string() })
+                    )
+                    .unwrap_or_default()
                 );
             } else {
                 eprintln!("✗ Plugin refresh failed: {e}");

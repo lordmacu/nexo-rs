@@ -576,10 +576,7 @@ impl PluginInstaller for LivePluginInstaller {
         params: &PluginsSetEnabledParams,
     ) -> anyhow::Result<PluginsSetEnabledResponse> {
         let ctx = self.hot_install.as_ref().ok_or_else(|| {
-            nexo_core::telemetry::inc_plugin_install_boot_race(
-                "set_enabled",
-                "hot_install_unset",
-            );
+            nexo_core::telemetry::inc_plugin_install_boot_race("set_enabled", "hot_install_unset");
             anyhow::anyhow!(
                 "set_enabled unavailable: hot-install fixtures not yet populated \
                  (daemon still booting). Retry in ~1 second."
@@ -597,11 +594,8 @@ impl PluginInstaller for LivePluginInstaller {
 
         if !params.enabled {
             // ── Disable: drop the live handle (binary stays). ──
-            let removed = unregister_plugin_from_live_runtime(
-                &params.plugin_id,
-                &ctx.hot_plugin_ctx,
-            )
-            .await?;
+            let removed =
+                unregister_plugin_from_live_runtime(&params.plugin_id, &ctx.hot_plugin_ctx).await?;
             tracing::info!(
                 plugin_id = %params.plugin_id,
                 config_changed,

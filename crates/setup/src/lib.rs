@@ -23,13 +23,13 @@
 pub mod admin_adapters;
 pub mod admin_bootstrap;
 pub mod admin_capability_collect;
-pub mod discovery_adapter;
 pub mod agent_wizard;
 pub mod auth_rotator;
 pub mod capabilities;
 #[cfg(feature = "config-self-edit")]
 pub mod config_tool_bridge;
 pub mod credentials_check;
+pub mod discovery_adapter;
 pub mod hot_spawn;
 pub mod http_supervisor;
 pub mod llm_completer;

@@ -54,14 +54,8 @@ impl DefaultDiscoveryAdapter {
 
 #[async_trait]
 impl DiscoveryReader for DefaultDiscoveryAdapter {
-    async fn search(
-        &self,
-        params: &PluginsSearchParams,
-    ) -> anyhow::Result<PluginsSearchResponse> {
-        let outcome = self
-            .client
-            .search(params.query.as_deref())
-            .await?;
+    async fn search(&self, params: &PluginsSearchParams) -> anyhow::Result<PluginsSearchResponse> {
+        let outcome = self.client.search(params.query.as_deref()).await?;
         let category_filter = params.category.as_deref();
         let source_filter = params.source.as_deref();
         let compat_only = params.compat_only;
@@ -194,7 +188,12 @@ mod tests {
         refresh_calls: Mutex<u32>,
     }
 
-    fn plugin(name: &str, category: PluginCategory, source: PluginSource, compat: CompatStatus) -> DiscoveredPlugin {
+    fn plugin(
+        name: &str,
+        category: PluginCategory,
+        source: PluginSource,
+        compat: CompatStatus,
+    ) -> DiscoveredPlugin {
         DiscoveredPlugin {
             name: name.into(),
             version: Some("0.1.0".into()),
@@ -245,9 +244,7 @@ mod tests {
                     plugin(
                         "nexo-plugin-foo",
                         PluginCategory::Tool,
-                        PluginSource::GithubTopic {
-                            repo: "x/y".into(),
-                        },
+                        PluginSource::GithubTopic { repo: "x/y".into() },
                         CompatStatus::Unknown,
                     ),
                 ],
