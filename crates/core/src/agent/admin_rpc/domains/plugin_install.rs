@@ -24,7 +24,8 @@ use serde_json::Value;
 
 use nexo_tool_meta::admin::plugin_install::{
     PluginsInstallParams, PluginsInstallResponse, PluginsScanParams, PluginsScanResponse,
-    PluginsUninstallParams, PluginsUninstallResponse,
+    PluginsSetEnabledParams, PluginsSetEnabledResponse, PluginsUninstallParams,
+    PluginsUninstallResponse,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -59,6 +60,17 @@ pub trait PluginInstaller: Send + Sync + std::fmt::Debug {
         &self,
         params: &PluginsUninstallParams,
     ) -> anyhow::Result<PluginsUninstallResponse>;
+
+    /// Phase 98 follow-up — toggle a plugin's enabled state.
+    /// `enabled = false` appends the id to `plugins/discovery.yaml`'s
+    /// `disabled[]` + hot-removes the live handle (binary stays on
+    /// disk). `enabled = true` removes the id + hot-spawns. Persisted
+    /// in the yaml so it survives a daemon restart. Idempotent —
+    /// re-requesting the current state reports `config_changed: false`.
+    async fn set_enabled(
+        &self,
+        params: &PluginsSetEnabledParams,
+    ) -> anyhow::Result<PluginsSetEnabledResponse>;
 }
 
 // ── handlers ────────────────────────────────────────────────────
@@ -148,6 +160,33 @@ pub async fn uninstall_plugin(reader: &dyn PluginInstaller, params: Value) -> Ad
                 AdminRpcResult::err(AdminRpcError::InvalidParams(msg))
             } else {
                 AdminRpcResult::err(AdminRpcError::Internal(format!("plugins.uninstall: {msg}")))
+            }
+        }
+    }
+}
+
+/// `nexo/admin/plugins/set_enabled`.
+pub async fn set_enabled_plugin(reader: &dyn PluginInstaller, params: Value) -> AdminRpcResult {
+    let p: PluginsSetEnabledParams = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if p.plugin_id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("plugin_id is empty".into()));
+    }
+    match reader.set_enabled(&p).await {
+        Ok(resp) => AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null)),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not found")
+                || msg.contains("is in-tree")
+                || msg.contains("not yet populated")
+            {
+                AdminRpcResult::err(AdminRpcError::InvalidParams(msg))
+            } else {
+                AdminRpcResult::err(AdminRpcError::Internal(format!(
+                    "plugins.set_enabled: {msg}"
+                )))
             }
         }
     }
@@ -281,6 +320,26 @@ mod tests {
                 cargo_uninstalled: params.cargo_uninstall,
                 cargo_stdout: String::new(),
                 cargo_stderr: String::new(),
+            })
+        }
+        async fn set_enabled(
+            &self,
+            params: &PluginsSetEnabledParams,
+        ) -> anyhow::Result<PluginsSetEnabledResponse> {
+            if let Some(msg) = self.next_err.lock().unwrap().take() {
+                anyhow::bail!(msg);
+            }
+            Ok(PluginsSetEnabledResponse {
+                plugin_id: params.plugin_id.clone(),
+                enabled: params.enabled,
+                config_changed: true,
+                spawned: if params.enabled {
+                    vec![params.plugin_id.clone()]
+                } else {
+                    vec![]
+                },
+                removed: !params.enabled,
+                warnings: vec![],
             })
         }
     }

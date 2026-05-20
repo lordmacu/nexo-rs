@@ -37,7 +37,8 @@ use nexo_setup::hot_spawn::{
 };
 use nexo_tool_meta::admin::plugin_install::{
     InstallSource, PluginsInstallParams, PluginsInstallResponse, PluginsScanResponse,
-    PluginsUninstallParams, PluginsUninstallResponse,
+    PluginsSetEnabledParams, PluginsSetEnabledResponse, PluginsUninstallParams,
+    PluginsUninstallResponse,
 };
 
 use crate::plugin_install::install_plugin_silent;
@@ -107,6 +108,18 @@ impl PluginInstaller for LivePluginInstallerCell {
             Some(i) => i.uninstall(params).await,
             None => {
                 nexo_core::telemetry::inc_plugin_install_boot_race("uninstall", "cell_unset");
+                anyhow::bail!("plugin installer not yet populated (daemon still booting)")
+            }
+        }
+    }
+    async fn set_enabled(
+        &self,
+        params: &PluginsSetEnabledParams,
+    ) -> anyhow::Result<PluginsSetEnabledResponse> {
+        match self.inner.get() {
+            Some(i) => i.set_enabled(params).await,
+            None => {
+                nexo_core::telemetry::inc_plugin_install_boot_race("set_enabled", "cell_unset");
                 anyhow::bail!("plugin installer not yet populated (daemon still booting)")
             }
         }
@@ -543,6 +556,176 @@ impl PluginInstaller for LivePluginInstaller {
             cargo_uninstalled,
             cargo_stdout,
             cargo_stderr,
+        })
+    }
+
+    /// Phase 98 follow-up — toggle a plugin's enabled state.
+    ///
+    /// `enabled = false` (disable): append the id to
+    /// `plugins/discovery.yaml`'s `disabled[]` then hot-remove the
+    /// live handle. The on-disk binary stays put.
+    ///
+    /// `enabled = true` (enable): remove the id from `disabled[]`
+    /// then hot-spawn it. The spawn uses a discovery cfg CLONE with
+    /// the id stripped from `disabled` — `ctx.discovery_cfg` is a
+    /// boot-time snapshot that still lists the id, so a plain
+    /// `discover()` would skip it (same staleness Phase 97.3 solved
+    /// for agent spawn).
+    async fn set_enabled(
+        &self,
+        params: &PluginsSetEnabledParams,
+    ) -> anyhow::Result<PluginsSetEnabledResponse> {
+        let ctx = self.hot_install.as_ref().ok_or_else(|| {
+            nexo_core::telemetry::inc_plugin_install_boot_race(
+                "set_enabled",
+                "hot_install_unset",
+            );
+            anyhow::anyhow!(
+                "set_enabled unavailable: hot-install fixtures not yet populated \
+                 (daemon still booting). Retry in ~1 second."
+            )
+        })?;
+
+        // 1. Persist the toggle in discovery.yaml. Survives restart.
+        let config_changed = nexo_setup::plugin_enabled::set_plugin_disabled(
+            &self.config_dir,
+            &params.plugin_id,
+            !params.enabled,
+        )?;
+
+        let mut warnings: Vec<String> = Vec::new();
+
+        if !params.enabled {
+            // ── Disable: drop the live handle (binary stays). ──
+            let removed = unregister_plugin_from_live_runtime(
+                &params.plugin_id,
+                &ctx.hot_plugin_ctx,
+            )
+            .await?;
+            tracing::info!(
+                plugin_id = %params.plugin_id,
+                config_changed,
+                removed,
+                "plugins/set_enabled: disabled"
+            );
+            return Ok(PluginsSetEnabledResponse {
+                plugin_id: params.plugin_id.clone(),
+                enabled: false,
+                config_changed,
+                spawned: Vec::new(),
+                removed,
+                warnings,
+            });
+        }
+
+        // ── Enable: discover with a cfg clone that no longer lists
+        // this id in `disabled`, filter to just this plugin, spawn. ──
+        let mut fresh_cfg: PluginDiscoveryConfig = ctx.discovery_cfg.clone();
+        fresh_cfg.disabled.retain(|d| d != &params.plugin_id);
+
+        let snap = discover(&fresh_cfg, &ctx.current_version);
+
+        // Already live? (operator double-clicked enable). No-op spawn.
+        let already_live = {
+            let guard = ctx.hot_plugin_ctx.plugin_handles.read().await;
+            guard
+                .as_ref()
+                .map(|m| m.contains_key(&params.plugin_id))
+                .unwrap_or(false)
+        };
+
+        let target: Vec<_> = snap
+            .plugins
+            .iter()
+            .filter(|p| p.manifest.plugin.id == params.plugin_id)
+            .cloned()
+            .collect();
+
+        if target.is_empty() {
+            warnings.push(format!(
+                "{}: removed from disabled[] but no manifest discoverable on disk \
+                 (binary missing? run install). Config saved; nothing to spawn.",
+                params.plugin_id
+            ));
+            return Ok(PluginsSetEnabledResponse {
+                plugin_id: params.plugin_id.clone(),
+                enabled: true,
+                config_changed,
+                spawned: Vec::new(),
+                removed: false,
+                warnings,
+            });
+        }
+
+        if already_live {
+            return Ok(PluginsSetEnabledResponse {
+                plugin_id: params.plugin_id.clone(),
+                enabled: true,
+                config_changed,
+                spawned: Vec::new(),
+                removed: false,
+                warnings,
+            });
+        }
+
+        let filtered_snap = {
+            let mut owned: NexoPluginRegistrySnapshot = (*snap).clone();
+            owned.plugins = target;
+            owned
+        };
+
+        let stubs = SubprocessCtxStubs::build_with_shared_registries(
+            &ctx.subprocess_runtime,
+            ctx.channel_adapter_registry.clone(),
+            ctx.hook_registry.clone(),
+            ctx.vector_backend_registry.clone(),
+            ctx.tool_registry.clone(),
+        );
+
+        let result = run_plugin_init_loop_with_factory(
+            &filtered_snap,
+            &ctx.factory_registry,
+            ctx.subprocess_runtime.config_dir.as_path(),
+            &ctx.channel_adapter_registry,
+            &ctx.llm_registry,
+            &ctx.hook_registry,
+            &ctx.vector_backend_registry,
+            None,
+            |manifest, plugin_cfg| {
+                stubs.context_for_plugin(manifest, &ctx.subprocess_runtime, plugin_cfg)
+            },
+        )
+        .await;
+
+        for (id, outcome) in result.outcomes.iter() {
+            if let nexo_core::agent::nexo_plugin_registry::InitOutcome::Failed { error } = outcome {
+                warnings.push(format!("{id}: init failed — {error}"));
+            }
+        }
+
+        let mut spawned = Vec::new();
+        for (id, handle) in result.handles.into_iter() {
+            match register_plugin_in_live_runtime(&id, handle, &ctx.hot_plugin_ctx).await {
+                Ok(()) => spawned.push(id),
+                Err(e) => warnings.push(format!("{id}: register_in_runtime failed — {e}")),
+            }
+        }
+
+        tracing::info!(
+            plugin_id = %params.plugin_id,
+            config_changed,
+            spawned_count = spawned.len(),
+            warnings_count = warnings.len(),
+            "plugins/set_enabled: enabled"
+        );
+
+        Ok(PluginsSetEnabledResponse {
+            plugin_id: params.plugin_id.clone(),
+            enabled: true,
+            config_changed,
+            spawned,
+            removed: false,
+            warnings,
         })
     }
 }

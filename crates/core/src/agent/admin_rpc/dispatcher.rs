@@ -983,7 +983,8 @@ impl AdminRpcDispatcher {
             // tighter if the threat model expands.
             "nexo/admin/plugins/scan"
             | "nexo/admin/plugins/install"
-            | "nexo/admin/plugins/uninstall" => Some("plugin_install"),
+            | "nexo/admin/plugins/uninstall"
+            | "nexo/admin/plugins/set_enabled" => Some("plugin_install"),
             // Phase 98.10 — read-mostly discovery surface. Reuses
             // `plugin_install` capability since both verbs let an
             // operator influence which plugins exist on the host;
@@ -1655,6 +1656,14 @@ impl AdminRpcDispatcher {
             "nexo/admin/plugins/uninstall" => match &self.plugin_installer {
                 Some(i) => {
                     super::domains::plugin_install::uninstall_plugin(i.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "plugin install domain not configured".into(),
+                )),
+            },
+            "nexo/admin/plugins/set_enabled" => match &self.plugin_installer {
+                Some(i) => {
+                    super::domains::plugin_install::set_enabled_plugin(i.as_ref(), params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugin install domain not configured".into(),

@@ -232,3 +232,46 @@ pub struct PluginsUninstallResponse {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cargo_stderr: String,
 }
+
+// ── set_enabled (Phase 98 follow-up) ─────────────────────────────
+
+/// Params for `nexo/admin/plugins/set_enabled`. Toggles a plugin's
+/// enabled state by editing `plugins/discovery.yaml`'s
+/// `discovery.disabled[]` list + hot-removing (disable) or
+/// hot-spawning (enable) the live handle. Unlike `uninstall`, the
+/// on-disk binary is never deleted — re-enabling re-spawns it with
+/// no re-download.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginsSetEnabledParams {
+    /// Plugin id from the manifest's `[plugin] id`.
+    pub plugin_id: String,
+    /// `true` → enable (remove from `disabled[]` + hot-spawn).
+    /// `false` → disable (append to `disabled[]` + hot-remove).
+    pub enabled: bool,
+}
+
+/// Response for `nexo/admin/plugins/set_enabled`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS), ts(export))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginsSetEnabledResponse {
+    /// Echo of the plugin id.
+    pub plugin_id: String,
+    /// Echo of the requested enabled state.
+    pub enabled: bool,
+    /// `true` when `discovery.yaml` actually changed. `false` when
+    /// the plugin was already in the requested state (idempotent).
+    pub config_changed: bool,
+    /// On enable: plugin ids hot-spawned (usually one). Empty on
+    /// disable.
+    #[serde(default)]
+    pub spawned: Vec<String>,
+    /// On disable: `true` when the live handle was dropped. `false`
+    /// on enable or when no handle existed.
+    #[serde(default)]
+    pub removed: bool,
+    /// Free-form per-plugin diagnostics from the spawn/remove cycle
+    /// (init failures, register errors). Empty on the happy path.
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
