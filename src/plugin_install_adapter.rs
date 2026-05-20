@@ -33,9 +33,9 @@ use nexo_core::agent::nexo_plugin_registry::{
     PluginFactoryRegistry, SubprocessCtxStubs, SubprocessRuntime,
 };
 use nexo_setup::hot_spawn::{
-    hot_add_plugin_metrics, hot_add_plugin_skills, hot_add_plugins_to_snapshot,
-    hot_remove_plugin_from_snapshot, hot_remove_plugin_metrics, hot_remove_plugin_skills,
-    register_plugin_in_live_runtime, unregister_plugin_from_live_runtime, HotPluginCtx,
+    hot_add_plugin_metrics, hot_add_plugins_to_snapshot, hot_rebuild_skills_from_snapshot,
+    hot_remove_plugin_from_snapshot, hot_remove_plugin_metrics, register_plugin_in_live_runtime,
+    unregister_plugin_from_live_runtime, HotPluginCtx,
 };
 use nexo_tool_meta::admin::plugin_install::{
     InstallSource, PluginsInstallParams, PluginsInstallResponse, PluginsScanResponse,
@@ -458,20 +458,13 @@ impl PluginInstaller for LivePluginInstaller {
         for (id, handle) in result.handles.into_iter() {
             match register_plugin_in_live_runtime(&id, handle, &ctx.hot_plugin_ctx).await {
                 Ok(()) => {
-                    // Phase 97.1.γ — hot-add the plugin's skills + metrics
-                    // into the same shared handles agents + the /metrics
-                    // scrape already read, so both go live without a restart.
+                    // Phase 97.1.γ — hot-add the plugin's metrics descriptor
+                    // (skills are rebuilt from the snapshot below).
                     if let Some(dp) = filtered_snap
                         .plugins
                         .iter()
                         .find(|p| p.manifest.plugin.id == id)
                     {
-                        hot_add_plugin_skills(
-                            &ctx.hot_plugin_ctx.plugin_skills,
-                            &id,
-                            &dp.root_dir,
-                            &dp.manifest,
-                        );
                         hot_add_plugin_metrics(
                             &ctx.hot_plugin_ctx.plugin_metrics,
                             &id,
@@ -490,6 +483,12 @@ impl PluginInstaller for LivePluginInstaller {
         // snapshot so admin-UI (Phase 99 `plugin_ui/list`), discovery,
         // and capability views see them without a restart.
         hot_add_plugins_to_snapshot(&ctx.hot_plugin_ctx.registry, &filtered_snap.plugins);
+        // #1 — rebuild skills from the updated snapshot (SSOT; correct
+        // first-plugin-wins + conflict re-promotion).
+        hot_rebuild_skills_from_snapshot(
+            &ctx.hot_plugin_ctx.plugin_skills,
+            &ctx.hot_plugin_ctx.registry,
+        );
 
         tracing::info!(
             spawned_count = spawned.len(),
@@ -555,13 +554,16 @@ impl PluginInstaller for LivePluginInstaller {
         // down on the next runtime tick.
         let removed =
             unregister_plugin_from_live_runtime(&params.plugin_id, &ctx.hot_plugin_ctx).await?;
-        // Phase 97.1.γ — drop the plugin's skills + metrics from the
-        // shared handles so agents + the /metrics scrape stop seeing
-        // them without a daemon restart. 3a — also drop it from the
-        // live registry snapshot (admin-UI / discovery).
-        hot_remove_plugin_skills(&ctx.hot_plugin_ctx.plugin_skills, &params.plugin_id);
+        // Phase 97.1.γ — drop the plugin's metrics + remove it from the
+        // live registry snapshot (admin-UI / discovery), then rebuild
+        // skills from the updated snapshot (#1 — re-promotes a runner-up
+        // if this plugin had won a skill-name conflict).
         hot_remove_plugin_metrics(&ctx.hot_plugin_ctx.plugin_metrics, &params.plugin_id);
         hot_remove_plugin_from_snapshot(&ctx.hot_plugin_ctx.registry, &params.plugin_id);
+        hot_rebuild_skills_from_snapshot(
+            &ctx.hot_plugin_ctx.plugin_skills,
+            &ctx.hot_plugin_ctx.registry,
+        );
 
         // 2. Optional `cargo uninstall`. Only fires when explicitly
         // requested; the binary may have come from a Release tarball
@@ -632,11 +634,14 @@ impl PluginInstaller for LivePluginInstaller {
             // ── Disable: drop the live handle (binary stays). ──
             let removed =
                 unregister_plugin_from_live_runtime(&params.plugin_id, &ctx.hot_plugin_ctx).await?;
-            // Phase 97.1.γ — disabling also hides its skills + metrics
-            // + drops it from the live registry snapshot.
-            hot_remove_plugin_skills(&ctx.hot_plugin_ctx.plugin_skills, &params.plugin_id);
+            // Phase 97.1.γ — disabling drops its metrics + removes it
+            // from the snapshot, then rebuilds skills from the snapshot.
             hot_remove_plugin_metrics(&ctx.hot_plugin_ctx.plugin_metrics, &params.plugin_id);
             hot_remove_plugin_from_snapshot(&ctx.hot_plugin_ctx.registry, &params.plugin_id);
+            hot_rebuild_skills_from_snapshot(
+                &ctx.hot_plugin_ctx.plugin_skills,
+                &ctx.hot_plugin_ctx.registry,
+            );
             tracing::info!(
                 plugin_id = %params.plugin_id,
                 config_changed,
@@ -742,19 +747,13 @@ impl PluginInstaller for LivePluginInstaller {
         for (id, handle) in result.handles.into_iter() {
             match register_plugin_in_live_runtime(&id, handle, &ctx.hot_plugin_ctx).await {
                 Ok(()) => {
-                    // Phase 97.1.γ — enabling a plugin surfaces its
-                    // skills + metrics live (mirror of scan's hot-add).
+                    // Phase 97.1.γ — enabling a plugin surfaces its metrics
+                    // live (skills rebuilt from the snapshot below).
                     if let Some(dp) = filtered_snap
                         .plugins
                         .iter()
                         .find(|p| p.manifest.plugin.id == id)
                     {
-                        hot_add_plugin_skills(
-                            &ctx.hot_plugin_ctx.plugin_skills,
-                            &id,
-                            &dp.root_dir,
-                            &dp.manifest,
-                        );
                         hot_add_plugin_metrics(
                             &ctx.hot_plugin_ctx.plugin_metrics,
                             &id,
@@ -768,8 +767,12 @@ impl PluginInstaller for LivePluginInstaller {
         }
 
         // Phase 97.1.γ 3a — surface the enabled plugin in the live
-        // registry snapshot (admin-UI / discovery).
+        // registry snapshot (admin-UI / discovery) + rebuild skills (#1).
         hot_add_plugins_to_snapshot(&ctx.hot_plugin_ctx.registry, &filtered_snap.plugins);
+        hot_rebuild_skills_from_snapshot(
+            &ctx.hot_plugin_ctx.plugin_skills,
+            &ctx.hot_plugin_ctx.registry,
+        );
 
         tracing::info!(
             plugin_id = %params.plugin_id,

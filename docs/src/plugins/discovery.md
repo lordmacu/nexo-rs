@@ -139,8 +139,10 @@ the **Skills** screen alongside operator skills, tagged with a
 uninstalling the plugin. Operator skills win on a name collision.
 
 Still restart-bound: plugin-contributed **agents** (`[plugin.agents]` —
-no plugin ships these yet, so the hot-spawn path is unbuilt) and setup-
-wizard **dashboards** (the channel-link surface is rebuilt at boot).
+no plugin ships these yet, so the hot-spawn path is unbuilt). Setup-
+wizard channel **dashboards** are not affected — they re-read from disk
+on every `nexo setup` run, so a hot-installed plugin shows up on the
+next invocation without any restart.
 
 ## Architecture pointers
 

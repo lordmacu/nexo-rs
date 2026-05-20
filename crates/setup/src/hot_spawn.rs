@@ -22,7 +22,6 @@
 //! informational for now — a follow-up converts them to ArcSwap /
 //! RwLock when a dashboard plugin needs hot-install.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -31,9 +30,9 @@ use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
 use nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers;
 use nexo_core::agent::admin_rpc::BrokerPairingTrigger;
 use nexo_core::agent::nexo_plugin_registry::{
-    DiscoveredPlugin, NexoPluginRegistry, PluginSkillSummary, SharedPluginSkills,
+    merge_plugin_contributed_skills, DiscoveredPlugin, NexoPluginRegistry, PluginSkillsState,
+    SharedPluginSkills,
 };
-use nexo_core::agent::skills::read_skill_metadata;
 use nexo_core::agent::NexoPlugin;
 use nexo_pairing::plugin_admin::PluginAdminRouter;
 use nexo_pairing::plugin_http::PluginHttpRouter;
@@ -304,73 +303,21 @@ pub async fn unregister_plugin_from_live_runtime(
     Ok(removed)
 }
 
-/// Hot-add a plugin's contributed skills to the shared live handle
-/// (Phase 97.1.γ). Walks `<root_dir>/<contributes_dir>/<name>/SKILL.md`,
-/// caches each skill's frontmatter metadata, and respects
-/// first-plugin-wins (a skill name already attributed is left
-/// untouched). No-op when the plugin declares no `contributes_dir` or
-/// the directory is missing. The next agent turn sees the new skills.
-pub fn hot_add_plugin_skills(
+/// Rebuild the live plugin-skills state from the CURRENT registry
+/// snapshot — the single source of truth (Phase 97.1.γ #1). Call
+/// AFTER the snapshot is updated (install adds / uninstall removes the
+/// plugin via [`hot_add_plugins_to_snapshot`] /
+/// [`hot_remove_plugin_from_snapshot`]). Because it re-walks every
+/// live plugin, it handles first-plugin-wins AND re-promotion of a
+/// runner-up when the conflict winner is uninstalled — the per-plugin
+/// add/remove path could not.
+pub fn hot_rebuild_skills_from_snapshot(
     skills: &SharedPluginSkills,
-    plugin_id: &str,
-    root_dir: &Path,
-    manifest: &PluginManifest,
+    registry: &NexoPluginRegistry,
 ) {
-    let Some(dir) = manifest.plugin.skills.contributes_dir.as_ref() else {
-        return;
-    };
-    let root = root_dir.join(dir);
-    if !root.exists() {
-        return;
-    }
-    let cur = skills.load_full();
-    let mut next = (*cur).clone();
-    if !next.roots.contains(&root) {
-        next.roots.push(root.clone());
-    }
-    let Ok(rd) = std::fs::read_dir(&root) else {
-        return;
-    };
-    let mut entries: Vec<_> = rd
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-            continue;
-        };
-        let skill_md = entry.path().join("SKILL.md");
-        if !skill_md.is_file() {
-            continue;
-        }
-        // First-plugin-wins: a name already attributed is not shadowed.
-        if next.skills.iter().any(|s| s.name == name) {
-            continue;
-        }
-        let meta = read_skill_metadata(&skill_md, &name);
-        next.skills.push(PluginSkillSummary {
-            name,
-            display_name: meta.name,
-            description: meta.description,
-            plugin_id: plugin_id.to_string(),
-        });
-    }
-    skills.store(Arc::new(next));
-}
-
-/// Hot-remove a plugin's skills from the shared handle (by plugin id,
-/// since uninstall only has the id). Also prunes any skill root whose
-/// directory no longer exists on disk (the uninstalled plugin's dir).
-/// NOTE: a skill name this plugin WON in a conflict is not re-promoted
-/// to the runner-up here (a full re-walk on next boot/scan fixes that
-/// rare case) — see FOLLOWUPS Phase 97.1.γ.
-pub fn hot_remove_plugin_skills(skills: &SharedPluginSkills, plugin_id: &str) {
-    let cur = skills.load_full();
-    let mut next = (*cur).clone();
-    next.skills.retain(|s| s.plugin_id != plugin_id);
-    next.roots.retain(|r| r.exists());
-    skills.store(Arc::new(next));
+    let snap = registry.snapshot();
+    let report = merge_plugin_contributed_skills(&snap);
+    skills.store(Arc::new(PluginSkillsState::from_report(&report)));
 }
 
 /// Hot-add a plugin's `[plugin.metrics]` descriptor to the shared
@@ -454,52 +401,88 @@ mod tests {
         toml::from_str(&toml).unwrap()
     }
 
-    #[test]
-    fn hot_add_then_remove_skills_mutates_shared_handle() {
+    fn manifest_for(id: &str, extra: &str) -> PluginManifest {
+        let toml = format!(
+            "[plugin]\nid = \"{id}\"\nversion = \"0.1.0\"\nname = \"{id}\"\n\
+             description = \"x\"\nmin_nexo_version = \">=0.0.1\"\n{extra}"
+        );
+        toml::from_str(&toml).unwrap()
+    }
+
+    /// Build a `DiscoveredPlugin` rooted at a tempdir that ships one
+    /// skill `<skill_name>/SKILL.md`. The `TempDir` is returned so the
+    /// caller keeps it alive for the test's duration.
+    fn plugin_with_skill(id: &str, skill_name: &str) -> (tempfile::TempDir, DiscoveredPlugin) {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("skills").join("triager");
+        let skill_dir = dir.path().join("skills").join(skill_name);
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("SKILL.md"),
-            "---\ndescription: triage things\n---\n\nbody\n",
+            format!("---\ndescription: {skill_name}\n---\n\nbody\n"),
         )
         .unwrap();
-        let manifest = manifest_with("[plugin.skills]\ncontributes_dir = \"skills\"\n");
-        let skills = PluginSkillsState::empty().into_shared();
+        let manifest = manifest_for(id, "[plugin.skills]\ncontributes_dir = \"skills\"\n");
+        let dp = DiscoveredPlugin {
+            manifest,
+            root_dir: dir.path().to_path_buf(),
+            manifest_path: dir.path().join("nexo-plugin.toml"),
+        };
+        (dir, dp)
+    }
 
-        hot_add_plugin_skills(&skills, "alpha", dir.path(), &manifest);
+    fn registry_with(plugins: Vec<DiscoveredPlugin>) -> Arc<NexoPluginRegistry> {
+        use nexo_core::agent::nexo_plugin_registry::NexoPluginRegistrySnapshot;
+        let registry = NexoPluginRegistry::empty();
+        registry.swap(Arc::new(NexoPluginRegistrySnapshot {
+            plugins,
+            ..Default::default()
+        }));
+        registry
+    }
+
+    #[test]
+    fn rebuild_skills_from_snapshot_lists_plugin_skill() {
+        let (_d, alpha) = plugin_with_skill("alpha", "triager");
+        let registry = registry_with(vec![alpha]);
+        let skills = PluginSkillsState::empty().into_shared();
+        hot_rebuild_skills_from_snapshot(&skills, &registry);
         let st = skills.load();
         assert_eq!(st.skills.len(), 1);
         assert_eq!(st.skills[0].name, "triager");
         assert_eq!(st.skills[0].plugin_id, "alpha");
-        assert_eq!(st.skills[0].description.as_deref(), Some("triage things"));
+        assert_eq!(st.skills[0].description.as_deref(), Some("triager"));
         assert_eq!(st.roots.len(), 1);
-        drop(st);
-
-        // Uninstall deletes the plugin dir; remove drops skills by id
-        // and prunes the now-missing root.
-        fs::remove_dir_all(dir.path().join("skills")).unwrap();
-        hot_remove_plugin_skills(&skills, "alpha");
-        let st = skills.load();
-        assert!(st.skills.is_empty());
-        assert!(st.roots.is_empty());
     }
 
     #[test]
-    fn hot_add_skills_respects_first_plugin_wins() {
-        let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("skills").join("dup");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "body\n").unwrap();
-        let manifest = manifest_with("[plugin.skills]\ncontributes_dir = \"skills\"\n");
+    fn rebuild_skills_repromotes_runner_up_when_winner_uninstalled() {
+        let (_d1, alpha) = plugin_with_skill("alpha", "dup");
+        let (_d2, beta) = plugin_with_skill("beta", "dup");
         let skills = PluginSkillsState::empty().into_shared();
-        hot_add_plugin_skills(&skills, "alpha", dir.path(), &manifest);
-        // Second plugin with the same skill name must NOT shadow alpha.
-        hot_add_plugin_skills(&skills, "beta", dir.path(), &manifest);
+
+        // Both present → first in snapshot order (alpha) wins.
+        let registry = registry_with(vec![alpha.clone(), beta.clone()]);
+        hot_rebuild_skills_from_snapshot(&skills, &registry);
+        {
+            let st = skills.load();
+            let dups: Vec<_> = st.skills.iter().filter(|s| s.name == "dup").collect();
+            assert_eq!(dups.len(), 1);
+            assert_eq!(dups[0].plugin_id, "alpha", "first plugin wins");
+        }
+
+        // Uninstall alpha → snapshot has only beta → rebuild promotes it
+        // (the per-plugin remove path could not do this — #1).
+        registry.swap(Arc::new(
+            nexo_core::agent::nexo_plugin_registry::NexoPluginRegistrySnapshot {
+                plugins: vec![beta],
+                ..Default::default()
+            },
+        ));
+        hot_rebuild_skills_from_snapshot(&skills, &registry);
         let st = skills.load();
         let dups: Vec<_> = st.skills.iter().filter(|s| s.name == "dup").collect();
         assert_eq!(dups.len(), 1);
-        assert_eq!(dups[0].plugin_id, "alpha");
+        assert_eq!(dups[0].plugin_id, "beta", "runner-up promoted");
     }
 
     #[test]

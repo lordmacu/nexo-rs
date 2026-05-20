@@ -27,18 +27,30 @@ Follow-up wave (2026-05-20) closed the meatiest gaps:
   shared plugin-skills handle (passed empty in `run_mcp_server` mode,
   which does not discover plugins; ready for a real handle if it does).
 
-Still deferred:
-1. **skills conflict re-promotion on uninstall** — first-plugin-wins;
-   uninstalling the winner drops the skill but does NOT promote the
-   runner-up live (boot/scan re-walk fixes it). Rare; low priority.
-2. **3c hot-spawn plugin-contributed agents** — `[plugin.agents]` exists
-   but NO plugin ships contributed agents today, and `AgentSpawnerFn` is
-   a non-`Clone` closure deep in `main` boot, not reachable from the
-   install adapter without a refactor. Untestable without a consumer →
-   build it when a plugin first contributes an agent.
-3. **Setup-wizard dashboards** — the channel-link dashboard surface is
-   rebuilt at boot; a hot-installed plugin's `[plugin.dashboard]` doesn't
-   appear in the wizard until restart. Low runtime impact.
+Second wrap-up (2026-05-20):
+- **#1 skills conflict re-promotion** ✅ RESOLVED — skills are now
+  rebuilt from the live registry snapshot on every install / uninstall /
+  enable / disable (`hot_spawn::hot_rebuild_skills_from_snapshot`,
+  single source of truth). Re-walking the remaining plugins re-promotes
+  a runner-up when the conflict winner is uninstalled. Replaced the
+  per-plugin add/remove path.
+- **Setup-wizard dashboards** ✅ N/A — the channel dashboard is a setup
+  wizard (`nexo setup`) CLI surface; `channels_dashboard::detect_channels`
+  re-reads from disk on every invocation, and the daemon serves NO
+  runtime dashboard (`RuntimeHealth` has no dashboard field). A
+  hot-installed plugin appears on the next wizard run automatically —
+  nothing to hot-reload.
+
+Still deferred (one item):
+1. **3c hot-spawn plugin-contributed agents** — `[plugin.agents]` exists
+   in the manifest but NO plugin ships contributed agents today, and
+   `AgentSpawnerFn` is a non-`Clone` closure deep in `main` boot, not
+   reachable from the install adapter without an invasive refactor.
+   Building it now = speculative + untestable (no consumer). The
+   registry snapshot is already live (3a), so when the first plugin
+   contributes an agent, the install path can run
+   `merge_plugin_contributed_agents` over the new plugin + spawn via an
+   `Arc`-wrapped `AgentSpawnerFn`. Deferred until that consumer exists.
 
 ### Phase 99 — admin UI Mode B (embedded iframe) — DEFERRED to v2   ⬜ DEFERRED
 
