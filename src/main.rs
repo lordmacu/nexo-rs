@@ -136,6 +136,13 @@ enum Mode {
     },
     /// Static help block for the plugin subcommand.
     PluginHelp,
+    /// `nexo plugin admin-ui-scaffold <plugin_id>` prints a
+    /// copy-paste `[plugin.admin_ui]` manifest stub (Phase 99 Mode A)
+    /// to stdout so plugin authors start from a working contribution +
+    /// config screen instead of the docs.
+    PluginAdminUiScaffold {
+        plugin_id: String,
+    },
     /// `nexo plugin new <id> --lang <lang>` scaffolds
     /// a fresh out-of-tree plugin from one of the four bundled
     /// templates (rust / python / typescript / php). Templates
@@ -1953,6 +1960,10 @@ async fn main() -> Result<()> {
             plugin_install::print_plugin_help();
             return Ok(());
         }
+        Mode::PluginAdminUiScaffold { plugin_id } => {
+            print_admin_ui_scaffold(&plugin_id);
+            return Ok(());
+        }
         Mode::PluginSearch {
             query,
             compat_only,
@@ -2658,22 +2669,55 @@ async fn main() -> Result<()> {
             let forwarder: std::sync::Arc<dyn PluginRpcForwarder> = std::sync::Arc::new(
                 plugin_ui_adapter::BrokerPluginRpcForwarder::new(broker.clone()),
             );
+            // Curated-index owner allowlist for the CommunityIndexed
+            // tier — read once from the Phase 98 discovery disk cache
+            // (empty until the index repo exists + refresh has run).
+            let community_owners = {
+                let daemon_version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                    .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+                let state_dir = nexo_project_tracker::state::nexo_state_dir();
+                plugin_ui_adapter::community_owners_from_discovery_cache(&state_dir, daemon_version)
+                    .await
+            };
             let trust: std::sync::Arc<dyn PluginTrustResolver> = std::sync::Arc::new(
                 plugin_ui_adapter::TrustedKeysPluginTrustResolver::from_config_dir(
                     config_dir.as_path(),
                     plugin_ui_registry_cell.clone(),
-                ),
+                )
+                .with_community_owners(community_owners),
             );
-            std::sync::Arc::new(PluginUiDomain::new(
-                registry,
-                config_store,
-                creds,
-                forwarder,
-                trust,
-                Some(admin_reload_signal.clone()),
-                false,
-                "en",
-            ))
+            // Versioned reload: awaits the coordinator + returns the
+            // applied config version so `config_set` reports a real
+            // `reload_version` (99.x.reload-version follow-up). Returns
+            // 0 during the boot race before the coordinator exists.
+            let reload_versioned: nexo_core::agent::admin_rpc::domains::plugin_ui::ReloadVersionedSignal = {
+                let cell = std::sync::Arc::clone(&admin_reload_cell);
+                std::sync::Arc::new(move || {
+                    let cell = std::sync::Arc::clone(&cell);
+                    Box::pin(async move {
+                        match cell.get() {
+                            Some(coord) => coord.reload().await.version,
+                            None => 0,
+                        }
+                    })
+                        as std::pin::Pin<
+                            Box<dyn std::future::Future<Output = u64> + Send>,
+                        >
+                })
+            };
+            std::sync::Arc::new(
+                PluginUiDomain::new(
+                    registry,
+                    config_store,
+                    creds,
+                    forwarder,
+                    trust,
+                    Some(admin_reload_signal.clone()),
+                    false,
+                    "en",
+                )
+                .with_reload_versioned(reload_versioned),
+            )
         };
 
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
@@ -10295,6 +10339,12 @@ fn parse_args() -> CliArgs {
             skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
         },
         [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
+        // `nexo plugin admin-ui-scaffold <plugin_id>`.
+        [cmd, sub, id] if cmd == "plugin" && sub == "admin-ui-scaffold" => {
+            Mode::PluginAdminUiScaffold {
+                plugin_id: id.to_string(),
+            }
+        }
         // `nexo plugin run <path-or-manifest> [...]`.
         [cmd, sub, path] if cmd == "plugin" && sub == "run" => Mode::PluginRun {
             path: PathBuf::from(path),
@@ -16613,6 +16663,77 @@ async fn handle_llm_invoke(
 }
 
 // ── Phase 98.11 — `nexo plugin {search,refresh}` CLI helpers ────
+
+/// Print a copy-paste `[plugin.admin_ui]` manifest stub for a plugin
+/// author (Phase 99 Mode A, declarative). Customised with the given
+/// plugin id so the slot (`plugin.<id>.root`) + contribution id are
+/// valid out of the box. Mirrors `docs/src/plugins/manifest-admin-ui.md`.
+fn print_admin_ui_scaffold(plugin_id: &str) {
+    // Sanitise to the manifest id charset so the emitted slot is valid.
+    let id: String = plugin_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let id = if id.is_empty() {
+        "myplugin".to_string()
+    } else {
+        id
+    };
+    println!(
+        r#"# Append to your nexo-plugin.toml. Requires nexo-plugin-manifest >= 0.1.8.
+# Static config screen: the daemon synthesises the form from these
+# fields + your [plugin.config_schema], validates a save (merged), and
+# hot-applies. Set describe = true to serve a live descriptor instead
+# (forwarded to your [plugin.admin] handler). See the manifest-admin-ui docs.
+[plugin.admin_ui]
+schema_version = 1
+mode           = "declarative"
+describe       = false
+
+[[plugin.admin_ui.contributions]]
+id     = "{id}"
+slot   = "plugin.{id}.root"
+label  = "{Title}"
+icon   = "puzzle"
+order  = 1000
+screen = "settings"
+
+[[plugin.admin_ui.screens]]
+id    = "settings"
+title = "{Title} Settings"
+
+[[plugin.admin_ui.screens.fields]]
+key   = "enabled"
+type  = "toggle"
+label = "Enabled"
+
+[[plugin.admin_ui.screens.fields]]
+key   = "instance"
+type  = "text"
+label = "Instance label"
+
+# secret fields route to the credential store, never to YAML:
+# [[plugin.admin_ui.screens.fields]]
+# key   = "api_key"
+# type  = "secret"
+# label = "API key"
+"#,
+        id = id,
+        Title = {
+            let mut c = id.chars();
+            match c.next() {
+                Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
+                None => id.clone(),
+            }
+        }
+    );
+}
 
 async fn run_plugin_search(
     query: Option<String>,

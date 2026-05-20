@@ -22,6 +22,9 @@ use super::audit::{
     hash_params, now_epoch_ms, AdminAuditReader, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
     InMemoryAuditWriter,
 };
+use nexo_tool_meta::admin::agent_events::{AgentEventKind, PluginUiChangeKind};
+use nexo_tool_meta::admin::plugin_discovery::TrustTier;
+
 use super::capabilities::CapabilitySet;
 use super::channel_outbound::ChannelOutboundDispatcher;
 use super::domains::agent_events::TranscriptReader;
@@ -511,6 +514,34 @@ impl AdminRpcDispatcher {
     ) -> Self {
         self.event_emitter = Some(emitter);
         self
+    }
+
+    /// Phase 99 `99.x.sse-multi-site-emit` — fire `PluginUiChanged`
+    /// after a successful install / uninstall / enable / disable so
+    /// admin shells refetch `plugin_ui/list` live (no manual reload).
+    /// Best-effort: `trust_tier` / `admin_ui_present` are placeholders
+    /// the subsequent `list` refetch resolves authoritatively (the
+    /// dispatcher holds no trust resolver). No coalescer — these are
+    /// discrete operator actions, not a burst source.
+    async fn emit_plugin_ui_change(&self, plugin_id: &str, kind: PluginUiChangeKind) {
+        let Some(em) = &self.event_emitter else {
+            return;
+        };
+        if plugin_id.is_empty() {
+            return;
+        }
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        em.emit(AgentEventKind::PluginUiChanged {
+            event_kind: kind,
+            plugin_id: plugin_id.to_string(),
+            admin_ui_present: true,
+            trust_tier: TrustTier::Unverified,
+            at_ms,
+        })
+        .await;
     }
 
     /// Replace the capability set. Boot wiring calls this once
@@ -1692,14 +1723,38 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/plugins/install" => match &self.plugin_installer {
-                Some(i) => super::domains::plugin_install::install_plugin(i.as_ref(), params).await,
+                Some(i) => {
+                    let pid = params
+                        .get("crate_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let r =
+                        super::domains::plugin_install::install_plugin(i.as_ref(), params).await;
+                    if r.error.is_none() {
+                        self.emit_plugin_ui_change(&pid, PluginUiChangeKind::Installed)
+                            .await;
+                    }
+                    r
+                }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugin install domain not configured".into(),
                 )),
             },
             "nexo/admin/plugins/uninstall" => match &self.plugin_installer {
                 Some(i) => {
-                    super::domains::plugin_install::uninstall_plugin(i.as_ref(), params).await
+                    let pid = params
+                        .get("plugin_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let r =
+                        super::domains::plugin_install::uninstall_plugin(i.as_ref(), params).await;
+                    if r.error.is_none() {
+                        self.emit_plugin_ui_change(&pid, PluginUiChangeKind::Uninstalled)
+                            .await;
+                    }
+                    r
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugin install domain not configured".into(),
@@ -1707,7 +1762,26 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/plugins/set_enabled" => match &self.plugin_installer {
                 Some(i) => {
-                    super::domains::plugin_install::set_enabled_plugin(i.as_ref(), params).await
+                    let pid = params
+                        .get("plugin_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let enabled = params
+                        .get("enabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let r = super::domains::plugin_install::set_enabled_plugin(i.as_ref(), params)
+                        .await;
+                    if r.error.is_none() {
+                        let kind = if enabled {
+                            PluginUiChangeKind::Enabled
+                        } else {
+                            PluginUiChangeKind::Disabled
+                        };
+                        self.emit_plugin_ui_change(&pid, kind).await;
+                    }
+                    r
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "plugin install domain not configured".into(),
@@ -1913,6 +1987,51 @@ mod tests {
             caps.iter().map(|s| s.to_string()).collect::<HashSet<_>>(),
         );
         AdminRpcDispatcher::new().with_capabilities(CapabilitySet::from_grants(grants))
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingEmitter {
+        events: std::sync::Mutex<Vec<AgentEventKind>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::agent::agent_events::AgentEventEmitter for RecordingEmitter {
+        async fn emit(&self, event: AgentEventKind) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_plugin_ui_change_fires_with_kind_and_id() {
+        let em = Arc::new(RecordingEmitter::default());
+        let d = AdminRpcDispatcher::new().with_event_emitter(em.clone());
+        d.emit_plugin_ui_change("telegram", PluginUiChangeKind::Installed)
+            .await;
+        let events = em.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEventKind::PluginUiChanged {
+                event_kind,
+                plugin_id,
+                ..
+            } => {
+                assert_eq!(*event_kind, PluginUiChangeKind::Installed);
+                assert_eq!(plugin_id, "telegram");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_plugin_ui_change_noop_on_empty_id_or_no_emitter() {
+        let em = Arc::new(RecordingEmitter::default());
+        let d = AdminRpcDispatcher::new().with_event_emitter(em.clone());
+        d.emit_plugin_ui_change("", PluginUiChangeKind::Disabled)
+            .await;
+        assert!(em.events.lock().unwrap().is_empty());
+        // No emitter wired → no panic, no-op.
+        AdminRpcDispatcher::new()
+            .emit_plugin_ui_change("telegram", PluginUiChangeKind::Enabled)
+            .await;
     }
 
     #[tokio::test]

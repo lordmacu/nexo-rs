@@ -749,6 +749,11 @@ pub fn print_plugin_help() {
              workflow, and helper scripts. With --git, the directory is a fresh\n\
              git repository with one initial commit.\n\
          \n\
+         admin-ui-scaffold <plugin_id>\n\
+             Print a copy-paste [plugin.admin_ui] manifest stub (Phase 99 Mode A)\n\
+             so the plugin contributes an admin config screen. Append it to your\n\
+             nexo-plugin.toml. Requires nexo-plugin-manifest >= 0.1.8.\n\
+         \n\
          run <path-or-manifest> [--no-daemon-config] [--watch] [--verbose] [--json]\n\
              Boot the daemon with a local plugin overriding discovery's\n\
              search_paths[0]. Use during inner-loop dev to skip the install +\n\

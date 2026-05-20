@@ -204,12 +204,18 @@ impl PluginRpcForwarder for BrokerPluginRpcForwarder {
 // ── trust resolver adapter ───────────────────────────────────────
 
 /// [`PluginTrustResolver`] keyed on the plugin's `[plugin.meta]`
-/// author vs the operator's `TrustedKeysConfig.authors` allowlist.
-/// `Official` when the author is trusted, else `Unverified`.
-/// `CommunityIndexed` (curated-index membership) is deferred — see
-/// FOLLOWUPS Phase 99 trust tiers.
+/// author. `Official` when the author is in the operator's
+/// `TrustedKeysConfig.authors` allowlist; `CommunityIndexed` when in
+/// the curated-index owner set (Phase 98 discovery cache); else
+/// `Unverified`.
 pub struct TrustedKeysPluginTrustResolver {
     owners: BTreeSet<String>,
+    /// Owners listed in the curated plugin index (Phase 98 discovery
+    /// disk cache). An author here — but not in `owners` — resolves
+    /// to `CommunityIndexed` (99.x.community-indexed-trust). Empty
+    /// until the index repo exists + `refresh_index` has populated
+    /// the cache.
+    community_owners: BTreeSet<String>,
     cell: PluginUiRegistryCell,
 }
 
@@ -220,7 +226,19 @@ impl TrustedKeysPluginTrustResolver {
         let owners = nexo_ext_installer::TrustedKeysConfig::load(config_dir)
             .map(|t| t.authors.into_iter().map(|a| a.owner).collect())
             .unwrap_or_default();
-        Self { owners, cell }
+        Self {
+            owners,
+            community_owners: BTreeSet::new(),
+            cell,
+        }
+    }
+
+    /// Attach the curated-index owner set (built at boot from the
+    /// discovery disk cache). Owners here resolve to `CommunityIndexed`
+    /// unless they're already trusted (`Official`).
+    pub fn with_community_owners(mut self, owners: BTreeSet<String>) -> Self {
+        self.community_owners = owners;
+        self
     }
 }
 
@@ -237,9 +255,41 @@ impl PluginTrustResolver for TrustedKeysPluginTrustResolver {
             .and_then(|p| p.manifest.plugin.meta.author.clone());
         match author {
             Some(a) if self.owners.contains(&a) => TrustTier::Official,
+            Some(a) if self.community_owners.contains(&a) => TrustTier::CommunityIndexed,
             _ => TrustTier::Unverified,
         }
     }
+}
+
+/// Build the curated-index owner allowlist from the Phase 98 plugin
+/// discovery disk cache (`<state_dir>/plugin-discovery/catalogue.json`).
+/// Best-effort: empty when the cache is missing / unreadable / holds
+/// no community-indexed entries (e.g. before the curated index repo
+/// exists or `refresh_index` has run). Read once at boot; staleness
+/// is acceptable for a trust hint.
+pub async fn community_owners_from_discovery_cache(
+    state_dir: &Path,
+    daemon_version: semver::Version,
+) -> BTreeSet<String> {
+    use nexo_tool_meta::admin::plugin_discovery::{PluginSource, TrustTier};
+    let cfg = nexo_plugin_discovery::config::DiscoveryConfig::with_defaults(
+        state_dir.to_path_buf(),
+        daemon_version,
+    );
+    let cache = nexo_plugin_discovery::cache::DiskCache::new(cfg.cache_file_path());
+    let Ok(Some(snap)) = cache.read_any().await else {
+        return BTreeSet::new();
+    };
+    snap.items
+        .into_iter()
+        .filter(|p| {
+            matches!(p.trust_tier, TrustTier::CommunityIndexed)
+                || p.sources
+                    .iter()
+                    .any(|s| matches!(s, PluginSource::CuratedIndex))
+        })
+        .map(|p| p.owner)
+        .collect()
 }
 
 #[cfg(test)]
@@ -300,6 +350,14 @@ mod tests {
         assert_eq!(v2, json!({"host": "y"}));
     }
 
+    #[tokio::test]
+    async fn community_owners_empty_when_cache_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let owners =
+            community_owners_from_discovery_cache(dir.path(), semver::Version::new(1, 0, 0)).await;
+        assert!(owners.is_empty());
+    }
+
     #[test]
     fn config_store_missing_file_is_none() {
         let dir = tempfile::tempdir().unwrap();
@@ -320,6 +378,7 @@ mod tests {
         let cell: PluginUiRegistryCell = Arc::new(OnceLock::new());
         let r = TrustedKeysPluginTrustResolver {
             owners: BTreeSet::new(),
+            community_owners: BTreeSet::new(),
             cell,
         };
         assert_eq!(r.trust_of("google"), TrustTier::Unverified);

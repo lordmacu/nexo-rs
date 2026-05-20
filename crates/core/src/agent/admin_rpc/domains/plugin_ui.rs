@@ -21,6 +21,8 @@
 //! are wired in `main.rs` boot.
 
 use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
@@ -46,6 +48,11 @@ use super::credentials::CredentialStore;
 
 /// Boxed firehose emitter handle passed from the dispatcher.
 type Emitter = Option<Arc<dyn AgentEventEmitter>>;
+
+/// Async reload that returns the applied config version. Built in
+/// `main.rs` from the `ConfigReloadCoordinator` (`reload().await.version`).
+pub type ReloadVersionedSignal =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = u64> + Send>> + Send + Sync>;
 
 /// Per-plugin manifest data the domain needs. Decouples the domain
 /// from `NexoPluginRegistry` for testing.
@@ -102,6 +109,25 @@ pub trait PluginTrustResolver: Send + Sync {
     fn trust_of(&self, plugin_id: &str) -> TrustTier;
 }
 
+/// Live per-plugin runtime state fed to server-side `visible_when`.
+#[derive(Debug, Clone, Copy)]
+pub struct PluginRuntimeHealth {
+    /// Operator-enabled (vs toggled off).
+    pub enabled: bool,
+    /// Supervisor reports the subprocess healthy / responsive.
+    pub healthy: bool,
+}
+
+/// Resolve a plugin's live enabled/health state (supervisor
+/// telemetry). Optional on [`PluginUiDomain`]: when unset, `enabled`
+/// derives from the plugin's config `enabled` field and `healthy`
+/// defaults to `true` (the client re-evaluates `visible_when` with
+/// live state). 99.x.visible-when-health-context follow-up.
+pub trait PluginHealthResolver: Send + Sync {
+    /// Runtime health for `plugin_id`.
+    fn health_of(&self, plugin_id: &str) -> PluginRuntimeHealth;
+}
+
 /// The `plugin_ui` admin RPC domain.
 #[derive(Clone)]
 pub struct PluginUiDomain {
@@ -111,6 +137,12 @@ pub struct PluginUiDomain {
     forwarder: Arc<dyn PluginRpcForwarder>,
     trust: Arc<dyn PluginTrustResolver>,
     reload: Option<ReloadSignal>,
+    /// Async reload that returns the applied config version. When set,
+    /// `config_set` awaits it to report `reload_version`; otherwise it
+    /// falls back to the fire-and-forget [`ReloadSignal`].
+    reload_versioned: Option<ReloadVersionedSignal>,
+    /// Optional live health source for server-side `visible_when`.
+    health: Option<Arc<dyn PluginHealthResolver>>,
     allow_community_core: bool,
     /// Operator locale for label resolution (BCP-47). v1 defaults
     /// to `"en"`; richer per-request locale is a follow-up.
@@ -137,9 +169,40 @@ impl PluginUiDomain {
             forwarder,
             trust,
             reload,
+            reload_versioned: None,
+            health: None,
             allow_community_core,
             locale: locale.into(),
         }
+    }
+
+    /// Attach a live health resolver so server-side `visible_when`
+    /// sees real enabled/health state (99.x.visible-when-health-context).
+    pub fn with_health_resolver(mut self, health: Arc<dyn PluginHealthResolver>) -> Self {
+        self.health = Some(health);
+        self
+    }
+
+    /// Attach an async reload that returns the applied config version
+    /// so `config_set` can report a real `reload_version` (Phase 99
+    /// `99.x.reload-version` follow-up). Takes precedence over the
+    /// fire-and-forget [`ReloadSignal`].
+    pub fn with_reload_versioned(mut self, reload: ReloadVersionedSignal) -> Self {
+        self.reload_versioned = Some(reload);
+        self
+    }
+
+    /// Fire the config reload. Prefers the versioned variant (awaits
+    /// it, returns `Some(version)`); else fires the sync signal and
+    /// returns `None`.
+    async fn do_reload(&self) -> Option<u64> {
+        if let Some(r) = &self.reload_versioned {
+            return Some(r().await);
+        }
+        if let Some(reload) = &self.reload {
+            reload();
+        }
+        None
     }
 
     // ── list ─────────────────────────────────────────────────────
@@ -157,8 +220,19 @@ impl PluginUiDomain {
                 .ok()
                 .flatten()
                 .unwrap_or(Value::Null);
+            // Real-ish runtime state: prefer the live health resolver;
+            // else derive `enabled` from the plugin's config `enabled`
+            // field (real) and leave `healthy` true (auto-respawn keeps
+            // registered plugins healthy; a live probe is client-side).
+            let (enabled, healthy) = match &self.health {
+                Some(h) => {
+                    let s = h.health_of(&view.id);
+                    (s.enabled, s.healthy)
+                }
+                None => (cfg_enabled(&cfg), true),
+            };
             let ctx = json!({
-                "plugin": { "installed": true, "enabled": true, "healthy": true },
+                "plugin": { "installed": true, "enabled": enabled, "healthy": healthy },
                 "config": cfg,
                 "user": {},
                 "tenant": {},
@@ -478,14 +552,12 @@ impl PluginUiDomain {
         }
 
         // Hot-apply.
-        if let Some(reload) = &self.reload {
-            reload();
-        }
+        let reload_version = self.do_reload().await;
         self.emit_config_changed(&view.id, &emitter).await;
 
         let response = ConfigSetResponse {
             ok: true,
-            reload_version: None,
+            reload_version,
             errors: vec![],
         };
         AdminRpcResult::ok(serde_json::to_value(response).unwrap_or(Value::Null))
@@ -515,10 +587,9 @@ impl PluginUiDomain {
         {
             Ok(result) => {
                 // Plugin owns persistence; still fire reload so the
-                // daemon picks up any config the plugin wrote.
-                if let Some(reload) = &self.reload {
-                    reload();
-                }
+                // daemon picks up any config the plugin wrote. The
+                // plugin's own response carries no version, so discard.
+                let _ = self.do_reload().await;
                 self.emit_config_changed(&view.id, emitter).await;
                 AdminRpcResult::ok(result)
             }
@@ -637,6 +708,12 @@ fn visible_ok(expr: Option<&str>, ctx: &Value) -> bool {
             Err(_) => false,
         },
     }
+}
+
+/// Derive `enabled` from a plugin config slice — `config.enabled`
+/// when present, else `true` (most plugins are enabled by default).
+fn cfg_enabled(cfg: &Value) -> bool {
+    cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true)
 }
 
 /// Serde name of a `rename_all = "snake_case"` enum (FieldType /
@@ -1138,6 +1215,99 @@ mod tests {
         let stored = config.read("telegram").unwrap().unwrap();
         assert_eq!(stored.get("token"), Some(&json!("abc")));
         assert_eq!(stored.get("instance"), Some(&json!("main")));
+    }
+
+    #[tokio::test]
+    async fn config_set_reports_reload_version_when_versioned_reload_attached() {
+        let d = domain_with(
+            vec![smtp_view(false)],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            Arc::new(FakeConfig::default()),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        )
+        .with_reload_versioned(Arc::new(|| Box::pin(async { 42u64 })));
+        let resp = d
+            .config_set(
+                json!({"plugin": "google", "screen": "smtp", "values": {"host": "h"}}),
+                None,
+            )
+            .await;
+        let out: ConfigSetResponse = serde_json::from_value(ok_value(resp)).unwrap();
+        assert!(out.ok, "{:?}", out.errors);
+        assert_eq!(out.reload_version, Some(42));
+    }
+
+    #[tokio::test]
+    async fn config_set_reload_version_none_with_only_sync_reload() {
+        let d = domain_with(
+            vec![smtp_view(false)],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            Arc::new(FakeConfig::default()),
+            Arc::new(FakeCreds::default()),
+            Some(Arc::new(|| {})),
+            false,
+        );
+        let resp = d
+            .config_set(
+                json!({"plugin": "google", "screen": "smtp", "values": {"host": "h"}}),
+                None,
+            )
+            .await;
+        let out: ConfigSetResponse = serde_json::from_value(ok_value(resp)).unwrap();
+        assert_eq!(out.reload_version, None);
+    }
+
+    #[test]
+    fn list_hides_contribution_when_config_disabled() {
+        let mk = || PluginUiManifestView {
+            id: "telegram".into(),
+            name: "Telegram".into(),
+            admin_ui: toml::from_str(
+                r#"
+                describe = false
+                [[contributions]]
+                id = "telegram"
+                slot = "plugin.telegram.root"
+                label = "Telegram"
+                screen = "s"
+                visible_when = "plugin.enabled"
+                [[screens]]
+                id = "s"
+                title = "Telegram"
+                "#,
+            )
+            .unwrap(),
+            admin: None,
+            config_schema: None,
+        };
+        let config = Arc::new(FakeConfig::default());
+        config
+            .write("telegram", &json!({"enabled": false}))
+            .unwrap();
+        let d = domain_with(
+            vec![mk()],
+            TrustTier::Official,
+            Arc::new(FakeForwarder::default()),
+            config.clone(),
+            Arc::new(FakeCreds::default()),
+            None,
+            false,
+        );
+        // enabled=false → visible_when "plugin.enabled" drops it.
+        let out: PluginUiListResponse = serde_json::from_value(ok_value(d.list())).unwrap();
+        let entry = out.plugins.iter().find(|p| p.id == "telegram").unwrap();
+        assert!(entry.contributions.is_empty());
+        assert_eq!(entry.hidden_count, 1);
+
+        // enabled=true → visible.
+        config.write("telegram", &json!({"enabled": true})).unwrap();
+        let out: PluginUiListResponse = serde_json::from_value(ok_value(d.list())).unwrap();
+        let entry = out.plugins.iter().find(|p| p.id == "telegram").unwrap();
+        assert_eq!(entry.contributions.len(), 1);
     }
 
     #[tokio::test]

@@ -13,6 +13,10 @@ Requires **`nexo-plugin-manifest >= 0.1.8`** (the version that adds
 the `admin_ui` field). Plugins surface in the admin under
 **Settings › Plugins** (`/m/settings/plugins`).
 
+> **Quick start:** `nexo plugin admin-ui-scaffold <plugin_id>` prints a
+> ready-to-paste stub of the section below, customised with your
+> plugin id. Append it to your `nexo-plugin.toml`.
+
 ## Hybrid descriptor
 
 The section is the **cold contract** — *what* a plugin may

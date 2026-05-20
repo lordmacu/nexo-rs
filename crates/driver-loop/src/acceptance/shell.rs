@@ -63,6 +63,21 @@ impl ShellRunner {
             .arg("-c")
             .arg(cmd)
             .current_dir(cwd)
+            // Hermetic git context. A parent git operation (e.g. a
+            // pre-push hook running the driver's acceptance / worktree
+            // commands) exports GIT_DIR / GIT_INDEX_FILE / … into this
+            // process. Without stripping them, `git -C <src> worktree
+            // add` resolves against the OUTER repo and fails with
+            // `fatal: .git/index: index file open failed: Not a
+            // directory`. Strip them so every spawned command derives
+            // git context from `cwd` (the test-cse pre-push flake fix).
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_PREFIX")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_NAMESPACE")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)

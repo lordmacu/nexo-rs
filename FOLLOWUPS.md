@@ -33,46 +33,42 @@ viewers).
 expressed as a Mode A declarative descriptor. Until then Mode A is
 the only contribution path.
 
-### Phase 99 — Mode A v1 deferreds   ⬜ ACTIVE
+### Phase 99 — Mode A v1 deferreds   ✅ RESOLVED 2026-05-20
 
-Logged 2026-05-20 during 99.5 execution. Scoped out of v1; each is
-non-blocking.
+Logged 2026-05-20 during 99.5; resolved same day in the follow-up wave.
 
-1. **`99.x.community-indexed-trust`** — `PluginTrustResolver` v1
-   resolves only `Official` (meta.author ∈ `TrustedKeysConfig.authors`)
-   vs `Unverified`. `CommunityIndexed` needs curated-index membership
-   (`lordmacu/nexo-plugin-index`) which isn't loaded at runtime.
-   Trigger: when the curated index is queryable daemon-side, extend
-   `TrustedKeysPluginTrustResolver` (`src/plugin_ui_adapter.rs`).
-2. **`99.x.reload-version`** — `config_set` returns
-   `reload_version: None` because `ReloadSignal = Arc<dyn Fn()>`
-   returns `()`. To surface the real applied version, thread a
-   reload variant returning `ConfigReloadCoordinator::reload()`'s
-   `ReloadOutcome.version` into `PluginUiDomain`.
-3. **`99.x.sse-multi-site-emit` + coalescer** — 99.6 v1 emits
-   `PluginUiChanged{ConfigChanged}` only (from `config_set`, via the
-   dispatcher's `event_emitter`). The other 4 kinds
-   (`Installed`/`Uninstalled` from the 97.1.β installer adapter,
-   `Enabled`/`Disabled` from 97.A `config_reload`) are NOT emitted —
-   those pipelines hold no `AgentEventEmitter` handle, so threading
-   one in is a separate change. The 250ms per-plugin coalescer is
-   deferred with them (only burst sites need it). Until then, the
-   admin shell refetches `plugin_ui/list` on mount/focus as the
-   fallback for install/uninstall/enable/disable.
-4. **`99.x.visible-when-health-context`** — server-side `visible_when`
-   eval uses a best-effort context (`plugin.{installed,enabled,
-   healthy}=true` + live `config`). Real per-plugin enabled/health
-   state (supervisor uptime telemetry) is not plumbed into the
-   `plugin_ui/list` aggregator yet; the client re-evaluates with live
-   state. Trigger: when health needs to gate server-side.
+1. **`99.x.community-indexed-trust`** ✅ — `TrustedKeysPluginTrustResolver`
+   (`src/plugin_ui_adapter.rs`) now resolves three tiers: `Official`
+   (author ∈ `TrustedKeysConfig.authors`), `CommunityIndexed` (author ∈
+   curated-index owner set), else `Unverified`. The owner set is built
+   once at boot from the Phase 98 discovery disk cache
+   (`community_owners_from_discovery_cache`). DORMANT until the curated
+   index repo (`lordmacu/nexo-plugin-index`) exists + `refresh_index`
+   runs — the set is empty until then, so plugins resolve
+   Official/Unverified exactly as before. Correct + ready.
+2. **`99.x.reload-version`** ✅ — `PluginUiDomain::with_reload_versioned`
+   takes an async signal returning the applied version; `config_set`
+   awaits it and reports the real `reload_version`. Wired in `main.rs`
+   from the `ConfigReloadCoordinator` (`reload().await.version`). Falls
+   back to `None` with only the sync `ReloadSignal`.
+3. **`99.x.sse-multi-site-emit`** ✅ (coalescer SKIPPED) — the dispatcher
+   fires `PluginUiChanged` after a successful install (`Installed`) /
+   uninstall (`Uninstalled`) / set_enabled (`Enabled`/`Disabled`);
+   `config_set` already fired `ConfigChanged`. The frontend refetches
+   on any `plugin_ui_changed`. The 250ms coalescer is intentionally
+   skipped — these are discrete operator actions, not a burst source;
+   revisit only if a burst emitter appears.
+4. **`99.x.visible-when-health-context`** ✅ — `plugin_ui/list` derives
+   `enabled` from the plugin's config `enabled` field (real) and exposes
+   an optional `PluginHealthResolver` hook for live `healthy` (defaults
+   true; supervisor health is async + client re-evaluated).
 
-### Phase 99 — `nexo-cli plugin admin-ui scaffold` generator   ⬜ DEFERRED
+### Phase 99 — `nexo plugin admin-ui-scaffold` generator   ✅ RESOLVED 2026-05-20
 
-Logged 2026-05-20 at 99.11 close-out. A CLI subcommand that emits a
-stub `[plugin.admin_ui]` section + broker handler templates for a
-plugin author. Deferred: the 6 migrated plugins + the
-`manifest-admin-ui.md` reference already serve as copy-paste
-templates, so the generator is convenience, not load-bearing.
+`nexo plugin admin-ui-scaffold <plugin_id>` prints a copy-paste
+`[plugin.admin_ui]` stub (customised id + title-cased label), listed in
+`plugin help` + documented in `manifest-admin-ui.md`. Handler
+`print_admin_ui_scaffold` in `src/main.rs`.
 
 ### Phase 99 — plugin manifest migration BLOCKED on publish   ✅ RESOLVED 2026-05-20
 
