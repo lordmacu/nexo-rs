@@ -22,17 +22,28 @@
 //! informational for now — a follow-up converts them to ArcSwap /
 //! RwLock when a dashboard plugin needs hot-install.
 
+use std::path::Path;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use nexo_broker::AnyBroker;
 use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
 use nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers;
 use nexo_core::agent::admin_rpc::BrokerPairingTrigger;
+use nexo_core::agent::nexo_plugin_registry::{PluginSkillSummary, SharedPluginSkills};
+use nexo_core::agent::skills::read_skill_metadata;
 use nexo_core::agent::NexoPlugin;
 use nexo_pairing::plugin_admin::PluginAdminRouter;
+use nexo_pairing::plugin_metrics::PluginMetricsDescriptor;
 use nexo_pairing::plugin_poller::{PluginPollerHandle, PluginPollerRouter};
+use nexo_plugin_manifest::PluginManifest;
 
 use crate::admin_adapters::SharedPluginHandles;
+
+/// Live, hot-swappable list of plugin Prometheus-metrics descriptors
+/// (Phase 97.1.γ). Same shape as `RuntimeHealth.plugin_metrics` in
+/// `main.rs`; install/uninstall append / drop without a restart.
+pub type SharedPluginMetrics = Arc<ArcSwap<Vec<PluginMetricsDescriptor>>>;
 
 /// Bundle of Arc-shared registries the post-wire cascade touches.
 /// One per daemon process — cloned (cheap, all Arc) into the
@@ -46,6 +57,13 @@ pub struct HotPluginCtx {
     pub pairing_triggers: PairingChannelTriggers,
     pub pairing_store: Option<Arc<dyn PairingChallengeStore>>,
     pub broker: AnyBroker,
+    /// Live plugin-skills handle, shared with every agent (Phase
+    /// 97.1.γ). Install/uninstall swaps it so contributed skills go
+    /// live without a restart.
+    pub plugin_skills: SharedPluginSkills,
+    /// Live plugin Prometheus-metrics descriptors, shared with the
+    /// `/metrics` scrape (Phase 97.1.γ).
+    pub plugin_metrics: SharedPluginMetrics,
 }
 
 impl std::fmt::Debug for HotPluginCtx {
@@ -60,6 +78,8 @@ impl std::fmt::Debug for HotPluginCtx {
                 &self.pairing_store.as_ref().map(|_| "<store>"),
             )
             .field("broker", &"<broker>")
+            .field("plugin_skills", &"<arc-swap>")
+            .field("plugin_metrics", &"<arc-swap>")
             .finish()
     }
 }
@@ -245,4 +265,194 @@ pub async fn unregister_plugin_from_live_runtime(
         );
     }
     Ok(removed)
+}
+
+/// Hot-add a plugin's contributed skills to the shared live handle
+/// (Phase 97.1.γ). Walks `<root_dir>/<contributes_dir>/<name>/SKILL.md`,
+/// caches each skill's frontmatter metadata, and respects
+/// first-plugin-wins (a skill name already attributed is left
+/// untouched). No-op when the plugin declares no `contributes_dir` or
+/// the directory is missing. The next agent turn sees the new skills.
+pub fn hot_add_plugin_skills(
+    skills: &SharedPluginSkills,
+    plugin_id: &str,
+    root_dir: &Path,
+    manifest: &PluginManifest,
+) {
+    let Some(dir) = manifest.plugin.skills.contributes_dir.as_ref() else {
+        return;
+    };
+    let root = root_dir.join(dir);
+    if !root.exists() {
+        return;
+    }
+    let cur = skills.load_full();
+    let mut next = (*cur).clone();
+    if !next.roots.contains(&root) {
+        next.roots.push(root.clone());
+    }
+    let Ok(rd) = std::fs::read_dir(&root) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let skill_md = entry.path().join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        // First-plugin-wins: a name already attributed is not shadowed.
+        if next.skills.iter().any(|s| s.name == name) {
+            continue;
+        }
+        let meta = read_skill_metadata(&skill_md, &name);
+        next.skills.push(PluginSkillSummary {
+            name,
+            display_name: meta.name,
+            description: meta.description,
+            plugin_id: plugin_id.to_string(),
+        });
+    }
+    skills.store(Arc::new(next));
+}
+
+/// Hot-remove a plugin's skills from the shared handle (by plugin id,
+/// since uninstall only has the id). Also prunes any skill root whose
+/// directory no longer exists on disk (the uninstalled plugin's dir).
+/// NOTE: a skill name this plugin WON in a conflict is not re-promoted
+/// to the runner-up here (a full re-walk on next boot/scan fixes that
+/// rare case) — see FOLLOWUPS Phase 97.1.γ.
+pub fn hot_remove_plugin_skills(skills: &SharedPluginSkills, plugin_id: &str) {
+    let cur = skills.load_full();
+    let mut next = (*cur).clone();
+    next.skills.retain(|s| s.plugin_id != plugin_id);
+    next.roots.retain(|r| r.exists());
+    skills.store(Arc::new(next));
+}
+
+/// Hot-add a plugin's `[plugin.metrics]` descriptor to the shared
+/// live handle so the next `/metrics` scrape includes it (Phase
+/// 97.1.γ). No-op unless `prometheus = true`; idempotent.
+pub fn hot_add_plugin_metrics(
+    metrics: &SharedPluginMetrics,
+    plugin_id: &str,
+    manifest: &PluginManifest,
+) {
+    let Some(m) = manifest.plugin.metrics.as_ref() else {
+        return;
+    };
+    if !m.prometheus {
+        return;
+    }
+    let cur = metrics.load_full();
+    if cur.iter().any(|d| d.plugin_id == plugin_id) {
+        return;
+    }
+    let mut next = (*cur).clone();
+    let mut d = PluginMetricsDescriptor::new(plugin_id, m.broker_topic_prefix.clone());
+    if let Some(secs) = m.timeout_seconds {
+        d = d.with_timeout(std::time::Duration::from_secs(secs));
+    }
+    next.push(d);
+    metrics.store(Arc::new(next));
+}
+
+/// Hot-remove a plugin's metrics descriptor from the shared handle.
+pub fn hot_remove_plugin_metrics(metrics: &SharedPluginMetrics, plugin_id: &str) {
+    let cur = metrics.load_full();
+    let mut next = (*cur).clone();
+    next.retain(|d| d.plugin_id != plugin_id);
+    metrics.store(Arc::new(next));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexo_core::agent::nexo_plugin_registry::PluginSkillsState;
+    use std::fs;
+
+    fn manifest_with(extra: &str) -> PluginManifest {
+        let toml = format!(
+            "[plugin]\nid = \"alpha\"\nversion = \"0.1.0\"\nname = \"alpha\"\n\
+             description = \"x\"\nmin_nexo_version = \">=0.0.1\"\n{extra}"
+        );
+        toml::from_str(&toml).unwrap()
+    }
+
+    #[test]
+    fn hot_add_then_remove_skills_mutates_shared_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("skills").join("triager");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: triage things\n---\n\nbody\n",
+        )
+        .unwrap();
+        let manifest = manifest_with("[plugin.skills]\ncontributes_dir = \"skills\"\n");
+        let skills = PluginSkillsState::empty().into_shared();
+
+        hot_add_plugin_skills(&skills, "alpha", dir.path(), &manifest);
+        let st = skills.load();
+        assert_eq!(st.skills.len(), 1);
+        assert_eq!(st.skills[0].name, "triager");
+        assert_eq!(st.skills[0].plugin_id, "alpha");
+        assert_eq!(st.skills[0].description.as_deref(), Some("triage things"));
+        assert_eq!(st.roots.len(), 1);
+        drop(st);
+
+        // Uninstall deletes the plugin dir; remove drops skills by id
+        // and prunes the now-missing root.
+        fs::remove_dir_all(dir.path().join("skills")).unwrap();
+        hot_remove_plugin_skills(&skills, "alpha");
+        let st = skills.load();
+        assert!(st.skills.is_empty());
+        assert!(st.roots.is_empty());
+    }
+
+    #[test]
+    fn hot_add_skills_respects_first_plugin_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("skills").join("dup");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "body\n").unwrap();
+        let manifest = manifest_with("[plugin.skills]\ncontributes_dir = \"skills\"\n");
+        let skills = PluginSkillsState::empty().into_shared();
+        hot_add_plugin_skills(&skills, "alpha", dir.path(), &manifest);
+        // Second plugin with the same skill name must NOT shadow alpha.
+        hot_add_plugin_skills(&skills, "beta", dir.path(), &manifest);
+        let st = skills.load();
+        let dups: Vec<_> = st.skills.iter().filter(|s| s.name == "dup").collect();
+        assert_eq!(dups.len(), 1);
+        assert_eq!(dups[0].plugin_id, "alpha");
+    }
+
+    #[test]
+    fn hot_add_metrics_idempotent_then_remove() {
+        let manifest = manifest_with(
+            "[plugin.metrics]\nprometheus = true\nbroker_topic_prefix = \"plugin.metrics.alpha\"\n",
+        );
+        let metrics: SharedPluginMetrics = Arc::new(ArcSwap::from_pointee(Vec::new()));
+        hot_add_plugin_metrics(&metrics, "alpha", &manifest);
+        assert_eq!(metrics.load().len(), 1);
+        hot_add_plugin_metrics(&metrics, "alpha", &manifest);
+        assert_eq!(metrics.load().len(), 1, "idempotent");
+        hot_remove_plugin_metrics(&metrics, "alpha");
+        assert_eq!(metrics.load().len(), 0);
+    }
+
+    #[test]
+    fn hot_add_metrics_skips_when_prometheus_false() {
+        let manifest =
+            manifest_with("[plugin.metrics]\nprometheus = false\nbroker_topic_prefix = \"x\"\n");
+        let metrics: SharedPluginMetrics = Arc::new(ArcSwap::from_pointee(Vec::new()));
+        hot_add_plugin_metrics(&metrics, "alpha", &manifest);
+        assert!(metrics.load().is_empty());
+    }
 }

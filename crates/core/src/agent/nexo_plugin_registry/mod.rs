@@ -40,7 +40,10 @@ pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{
     merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport, MergeResolution,
 };
-pub use contributes_skills::{merge_plugin_contributed_skills, SkillConflict, SkillsMergeReport};
+pub use contributes_skills::{
+    merge_plugin_contributed_skills, PluginSkillSummary, PluginSkillsState, SharedPluginSkills,
+    SkillConflict, SkillsMergeReport,
+};
 pub use discovery::discover;
 pub use factory::{
     BoxError, FactoryInstantiateError, FactoryRegistrationError, PluginFactory,

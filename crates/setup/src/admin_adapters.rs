@@ -444,6 +444,10 @@ pub struct FsSkillsStore {
     root: PathBuf,
     locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
     on_change: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Live plugin-contributed skills (Phase 97.1.γ). When set, `list`
+    /// appends them with `source_plugin = Some(..)`; operator skills
+    /// win on a name collision.
+    plugin_skills: Option<nexo_core::agent::nexo_plugin_registry::SharedPluginSkills>,
 }
 
 impl std::fmt::Debug for FsSkillsStore {
@@ -463,6 +467,7 @@ impl FsSkillsStore {
             root: root.into(),
             locks: DashMap::new(),
             on_change: None,
+            plugin_skills: None,
         }
     }
 
@@ -471,6 +476,17 @@ impl FsSkillsStore {
     /// hot-reload happens in lock-step with other yaml mutations.
     pub fn with_on_change(mut self, cb: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.on_change = Some(cb);
+        self
+    }
+
+    /// Attach the live plugin-skills handle so `list` surfaces
+    /// plugin-contributed skills with a `source_plugin` badge
+    /// (Phase 97.1.γ).
+    pub fn with_plugin_skills(
+        mut self,
+        skills: nexo_core::agent::nexo_plugin_registry::SharedPluginSkills,
+    ) -> Self {
+        self.plugin_skills = Some(skills);
         self
     }
 
@@ -606,6 +622,7 @@ impl FsSkillsStore {
             body,
             max_chars,
             requires,
+            source_plugin: None,
             updated_at,
         }))
     }
@@ -728,36 +745,64 @@ impl FsSkillsStore {
             Some(tid) => self.root.join(tid),
         };
         let mut out = Vec::new();
-        let mut entries = match tokio::fs::read_dir(&scope_dir).await {
-            Ok(d) => d,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(e.into()),
-        };
-        while let Some(entry) = entries.next_entry().await? {
-            let ft = match entry.file_type().await {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if !ft.is_dir() {
-                continue;
-            }
-            let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
-                continue;
-            };
-            if let Some(p) = prefix {
-                if !name.starts_with(p) {
-                    continue;
+        // Operator/workspace skills. A missing scope dir is not an
+        // error — plugin skills (below) may still apply.
+        match tokio::fs::read_dir(&scope_dir).await {
+            Ok(mut entries) => {
+                while let Some(entry) = entries.next_entry().await? {
+                    let ft = match entry.file_type().await {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    if !ft.is_dir() {
+                        continue;
+                    }
+                    let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+                        continue;
+                    };
+                    if let Some(p) = prefix {
+                        if !name.starts_with(p) {
+                            continue;
+                        }
+                    }
+                    let Some(record) = self.read_record(tenant_id, &name).await? else {
+                        continue;
+                    };
+                    out.push(SkillSummary {
+                        name: record.name,
+                        display_name: record.display_name,
+                        description: record.description,
+                        source_plugin: None,
+                        updated_at: record.updated_at,
+                    });
                 }
             }
-            let Some(record) = self.read_record(tenant_id, &name).await? else {
-                continue;
-            };
-            out.push(SkillSummary {
-                name: record.name,
-                display_name: record.display_name,
-                description: record.description,
-                updated_at: record.updated_at,
-            });
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        // Phase 97.1.γ — plugin-contributed skills (global only; not
+        // tenant-scoped). Operator skills win on a name collision.
+        if tenant_id.is_none() {
+            if let Some(skills) = &self.plugin_skills {
+                let state = skills.load();
+                for ps in state.skills.iter() {
+                    if let Some(p) = prefix {
+                        if !ps.name.starts_with(p) {
+                            continue;
+                        }
+                    }
+                    if out.iter().any(|s| s.name == ps.name) {
+                        continue;
+                    }
+                    out.push(SkillSummary {
+                        name: ps.name.clone(),
+                        display_name: ps.display_name.clone(),
+                        description: ps.description.clone(),
+                        source_plugin: Some(ps.plugin_id.clone()),
+                        updated_at: chrono::Utc::now(),
+                    });
+                }
+            }
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
@@ -789,6 +834,7 @@ impl FsSkillsStore {
             body: params.body,
             max_chars: params.max_chars,
             requires: params.requires.unwrap_or_default(),
+            source_plugin: None,
             updated_at: chrono::Utc::now(),
         };
         let blob = Self::compose_blob(&record);
@@ -3080,6 +3126,63 @@ mod escalation_store_tests {
         let list = store.list(None).await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "weather");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_list_includes_plugin_skills_with_source() {
+        use nexo_core::agent::nexo_plugin_registry::{PluginSkillSummary, PluginSkillsState};
+        let root = skills_tmp();
+        let state = PluginSkillsState {
+            roots: vec![],
+            skills: vec![PluginSkillSummary {
+                name: "triager".into(),
+                display_name: Some("Triager".into()),
+                description: Some("triage".into()),
+                plugin_id: "telegram".into(),
+            }],
+        };
+        let store = FsSkillsStore::new(&root).with_plugin_skills(state.into_shared());
+        let list = store.list(None).await.unwrap();
+        let s = list
+            .iter()
+            .find(|s| s.name == "triager")
+            .expect("plugin skill listed");
+        assert_eq!(s.source_plugin.as_deref(), Some("telegram"));
+        assert_eq!(s.display_name.as_deref(), Some("Triager"));
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_operator_wins_over_plugin_on_name_collision() {
+        use nexo_core::agent::nexo_plugin_registry::{PluginSkillSummary, PluginSkillsState};
+        let root = skills_tmp();
+        let state = PluginSkillsState {
+            roots: vec![],
+            skills: vec![PluginSkillSummary {
+                name: "weather".into(),
+                display_name: Some("Plugin Weather".into()),
+                description: None,
+                plugin_id: "telegram".into(),
+            }],
+        };
+        let store = FsSkillsStore::new(&root).with_plugin_skills(state.into_shared());
+        store
+            .upsert(SkillsUpsertParams {
+                name: "weather".into(),
+                display_name: Some("Operator Weather".into()),
+                description: None,
+                body: "x".into(),
+                max_chars: None,
+                requires: None,
+                tenant_id: None,
+            })
+            .await
+            .unwrap();
+        let list = store.list(None).await.unwrap();
+        let weather: Vec<_> = list.iter().filter(|s| s.name == "weather").collect();
+        assert_eq!(weather.len(), 1, "no duplicate");
+        assert_eq!(weather[0].source_plugin, None, "operator wins");
         tokio::fs::remove_dir_all(&root).await.ok();
     }
 

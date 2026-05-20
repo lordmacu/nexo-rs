@@ -773,7 +773,11 @@ struct RuntimeHealth {
     /// Empty when no plugin declares `[plugin.metrics] prometheus
     /// = true` — then only daemon-internal sources (LLM, MCP,
     /// poller, tunnel, legacy email) feed the aggregate.
-    plugin_metrics: Arc<Vec<nexo_pairing::plugin_metrics::PluginMetricsDescriptor>>,
+    /// Live, hot-swappable so a plugin install/uninstall appends or
+    /// drops its `[plugin.metrics]` descriptor and the next `/metrics`
+    /// scrape picks it up — no daemon restart (Phase 97.1.γ).
+    plugin_metrics:
+        Arc<arc_swap::ArcSwap<Vec<nexo_pairing::plugin_metrics::PluginMetricsDescriptor>>>,
 }
 
 #[derive(Clone)]
@@ -2350,6 +2354,13 @@ async fn main() -> Result<()> {
     // error.
     let plugin_handles_cell = nexo_setup::admin_adapters::shared_plugin_handles_cell();
 
+    // Phase 97.1.γ — ONE shared plugin-skills handle at the outer boot
+    // scope so the skills store, every agent, and the hot-install ctx
+    // all reference it. Empty now; populated from the boot merge after
+    // `wire_plugin_registry`, then mutated live on install/uninstall.
+    let plugin_skills_shared: nexo_core::agent::nexo_plugin_registry::SharedPluginSkills =
+        nexo_core::agent::nexo_plugin_registry::PluginSkillsState::empty().into_shared();
+
     // Phase 81.20.x Stage 7 Phase 2 — pairing trigger registry.
     // Cloned into the admin bootstrap (the dispatcher reads
     // through the same `Arc<DashMap>` for `pairing/start` lookups)
@@ -2593,7 +2604,10 @@ async fn main() -> Result<()> {
         let skills_store: Option<
             std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>,
         > = Some(std::sync::Arc::new(
-            nexo_setup::admin_adapters::FsSkillsStore::new(config_dir.join("skills")),
+            nexo_setup::admin_adapters::FsSkillsStore::new(config_dir.join("skills"))
+                // Phase 97.1.γ — surface plugin skills in `skills/list`
+                // with a `source_plugin` badge, live.
+                .with_plugin_skills(plugin_skills_shared.clone()),
         ));
         // In-memory escalation store. v0
         // semantics: pause-resume cycle clears state, daemon
@@ -3912,6 +3926,10 @@ async fn main() -> Result<()> {
         &extra_subprocess_plugins,
     )
     .await;
+    // Phase 97.1.γ — populate the shared plugin-skills handle (held by
+    // the skills store + every agent) with the boot merge result. From
+    // here, install/uninstall mutate this same handle live.
+    plugin_skills_shared.store(wire.shared_skills.load_full());
     // Phase 97.1.β — share the factory registry with the live
     // plugin installer adapter so `nexo/admin/plugins/scan` can
     // build hot-spawned plugins through the same factories the
@@ -3978,7 +3996,7 @@ async fn main() -> Result<()> {
                 out.push(d);
             }
         }
-        Arc::new(out)
+        Arc::new(arc_swap::ArcSwap::from_pointee(out))
     };
 
     // Phase 81.33.b.real Stage 4 — populate the plugin admin router
@@ -6556,7 +6574,11 @@ async fn main() -> Result<()> {
 
         let mut behavior = LlmAgentBehavior::new(llm.clone(), Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
-            .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
+            .with_tool_policy(tool_policy_registry.for_agent(&agent_id))
+            // Phase 97.1.γ — share the live plugin-skills handle so
+            // plugin-contributed skills reach the prompt (fixes the
+            // boot gap) AND hot install/uninstall is picked up next turn.
+            .with_plugin_skill_roots(plugin_skills_shared.clone());
 
         // Wire post-turn memory extraction. Constructed
         // earlier in the loop from the optional `extract_memories` YAML
@@ -7185,6 +7207,10 @@ async fn main() -> Result<()> {
         let mcp_cfg_c = cfg.mcp.clone();
         let tools_per_agent_c = Arc::clone(&tools_per_agent);
         let agent_snapshot_handles_c = Arc::clone(&agent_snapshot_handles);
+        // Phase 97.1.γ — share the live plugin-skills handle into the
+        // spawner so hot-spawned (wizard-created) agents also see
+        // plugin-contributed skills, live.
+        let shared_skills_c = plugin_skills_shared.clone();
 
         let spawner: AgentSpawnerFn = AgentSpawnerFn(Box::new(move |cfg, plugins_fresh| {
             let broker = broker_c.clone();
@@ -7224,6 +7250,7 @@ async fn main() -> Result<()> {
             let mcp_cfg = mcp_cfg_c.clone();
             let tools_per_agent = Arc::clone(&tools_per_agent_c);
             let agent_snapshot_handles = Arc::clone(&agent_snapshot_handles_c);
+            let shared_skills = shared_skills_c.clone();
 
             Box::pin(async move {
                 let agent_id = cfg.id.clone();
@@ -7498,7 +7525,8 @@ async fn main() -> Result<()> {
                 validate_agent_config(&cfg, &plugins, &known_tool_names)?;
 
                 // 4. Behavior + Agent.
-                let behavior = LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools));
+                let behavior = LlmAgentBehavior::new(Arc::clone(&llm), Arc::clone(&tools))
+                    .with_plugin_skill_roots(shared_skills.clone());
                 let agent_cfg = cfg.clone();
                 let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
@@ -7804,6 +7832,11 @@ async fn main() -> Result<()> {
             pairing_triggers: pairing_triggers.clone(),
             pairing_store: pairing_store_for_hot.clone(),
             broker: broker.clone(),
+            // Phase 97.1.γ — same shared handles boot uses for agents +
+            // the /metrics scrape, so hot install/uninstall mutates the
+            // live state every agent + scrape already reads.
+            plugin_skills: plugin_skills_shared.clone(),
+            plugin_metrics: plugin_metrics_descriptors.clone(),
         },
     };
     let installer_base = plugin_install_adapter::LivePluginInstaller::new(config_dir.clone());
@@ -15507,7 +15540,8 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     // the daemon switches automatically: the direct call above
     // skips + this scrape line takes over.
     body.push_str(
-        &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics).await,
+        &nexo_pairing::plugin_metrics::scrape_all(&health.broker, &health.plugin_metrics.load())
+            .await,
     );
     // Phase 92.followup.b — surface tunnel lifecycle counters
     // (`tunnel_starts_total`, `tunnel_starts_failed_total`,

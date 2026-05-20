@@ -2,6 +2,31 @@
 
 This file tracks the **active technical backlog** in English.
 
+### Phase 97.1.γ — hot-install completeness (skills + metrics) — SHIPPED 2026-05-20, residual deferreds   ⬜
+
+Shipped: installing/enabling a plugin now registers its **skills** +
+**metrics** into the live runtime (no restart), like tools already
+were; plugin skills surface in the admin Skills screen with a
+`source_plugin` "from plugin" badge. Also fixed a latent boot gap —
+plugin `skill_roots` were computed but never threaded into agents
+(`with_plugin_skill_roots` was never called), so plugin skills reached
+no prompt. Shared `Arc<ArcSwap<PluginSkillsState>>` + an arc-swap
+metrics descriptor list are mutated by `hot_spawn::hot_add/remove_*`
+from `scan` / `uninstall` / `set_enabled`.
+
+Residual deferreds:
+1. **skills conflict re-promotion on uninstall** — when two plugins
+   contribute the same skill name, the first wins; uninstalling the
+   winner drops that skill but does NOT promote the runner-up live (a
+   full re-walk on next boot/scan fixes it). Rare; low priority.
+2. **MCP autonomous worker agent** (`src/main.rs` ~14600) does not get
+   the shared plugin-skills handle yet — only the main agent loop +
+   the hot-spawn spawner do. Wire it when the MCP worker needs plugin
+   skills.
+3. **Agents / HTTP routes / dashboards / admin-UI descriptors** remain
+   restart-bound on install (their hosting Vec/Arc lack interior
+   mutability) — same gap noted in `hot_spawn.rs`.
+
 ### Phase 99 — admin UI Mode B (embedded iframe) — DEFERRED to v2   ⬜ DEFERRED
 
 Logged 2026-05-20 during Phase 99 brainstorm/plan. Decision: ship

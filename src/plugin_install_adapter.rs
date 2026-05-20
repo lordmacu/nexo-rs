@@ -33,7 +33,9 @@ use nexo_core::agent::nexo_plugin_registry::{
     PluginFactoryRegistry, SubprocessCtxStubs, SubprocessRuntime,
 };
 use nexo_setup::hot_spawn::{
-    register_plugin_in_live_runtime, unregister_plugin_from_live_runtime, HotPluginCtx,
+    hot_add_plugin_metrics, hot_add_plugin_skills, hot_remove_plugin_metrics,
+    hot_remove_plugin_skills, register_plugin_in_live_runtime, unregister_plugin_from_live_runtime,
+    HotPluginCtx,
 };
 use nexo_tool_meta::admin::plugin_install::{
     InstallSource, PluginsInstallParams, PluginsInstallResponse, PluginsScanResponse,
@@ -455,7 +457,29 @@ impl PluginInstaller for LivePluginInstaller {
         let mut spawned = Vec::new();
         for (id, handle) in result.handles.into_iter() {
             match register_plugin_in_live_runtime(&id, handle, &ctx.hot_plugin_ctx).await {
-                Ok(()) => spawned.push(id),
+                Ok(()) => {
+                    // Phase 97.1.γ — hot-add the plugin's skills + metrics
+                    // into the same shared handles agents + the /metrics
+                    // scrape already read, so both go live without a restart.
+                    if let Some(dp) = filtered_snap
+                        .plugins
+                        .iter()
+                        .find(|p| p.manifest.plugin.id == id)
+                    {
+                        hot_add_plugin_skills(
+                            &ctx.hot_plugin_ctx.plugin_skills,
+                            &id,
+                            &dp.root_dir,
+                            &dp.manifest,
+                        );
+                        hot_add_plugin_metrics(
+                            &ctx.hot_plugin_ctx.plugin_metrics,
+                            &id,
+                            &dp.manifest,
+                        );
+                    }
+                    spawned.push(id);
+                }
                 Err(e) => {
                     warnings.push(format!("{id}: register_in_runtime failed — {e}"));
                 }
@@ -526,6 +550,11 @@ impl PluginInstaller for LivePluginInstaller {
         // down on the next runtime tick.
         let removed =
             unregister_plugin_from_live_runtime(&params.plugin_id, &ctx.hot_plugin_ctx).await?;
+        // Phase 97.1.γ — drop the plugin's skills + metrics from the
+        // shared handles so agents + the /metrics scrape stop seeing
+        // them without a daemon restart.
+        hot_remove_plugin_skills(&ctx.hot_plugin_ctx.plugin_skills, &params.plugin_id);
+        hot_remove_plugin_metrics(&ctx.hot_plugin_ctx.plugin_metrics, &params.plugin_id);
 
         // 2. Optional `cargo uninstall`. Only fires when explicitly
         // requested; the binary may have come from a Release tarball
@@ -596,6 +625,9 @@ impl PluginInstaller for LivePluginInstaller {
             // ── Disable: drop the live handle (binary stays). ──
             let removed =
                 unregister_plugin_from_live_runtime(&params.plugin_id, &ctx.hot_plugin_ctx).await?;
+            // Phase 97.1.γ — disabling also hides its skills + metrics.
+            hot_remove_plugin_skills(&ctx.hot_plugin_ctx.plugin_skills, &params.plugin_id);
+            hot_remove_plugin_metrics(&ctx.hot_plugin_ctx.plugin_metrics, &params.plugin_id);
             tracing::info!(
                 plugin_id = %params.plugin_id,
                 config_changed,
@@ -700,7 +732,28 @@ impl PluginInstaller for LivePluginInstaller {
         let mut spawned = Vec::new();
         for (id, handle) in result.handles.into_iter() {
             match register_plugin_in_live_runtime(&id, handle, &ctx.hot_plugin_ctx).await {
-                Ok(()) => spawned.push(id),
+                Ok(()) => {
+                    // Phase 97.1.γ — enabling a plugin surfaces its
+                    // skills + metrics live (mirror of scan's hot-add).
+                    if let Some(dp) = filtered_snap
+                        .plugins
+                        .iter()
+                        .find(|p| p.manifest.plugin.id == id)
+                    {
+                        hot_add_plugin_skills(
+                            &ctx.hot_plugin_ctx.plugin_skills,
+                            &id,
+                            &dp.root_dir,
+                            &dp.manifest,
+                        );
+                        hot_add_plugin_metrics(
+                            &ctx.hot_plugin_ctx.plugin_metrics,
+                            &id,
+                            &dp.manifest,
+                        );
+                    }
+                    spawned.push(id);
+                }
                 Err(e) => warnings.push(format!("{id}: register_in_runtime failed — {e}")),
             }
         }

@@ -15,11 +15,79 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use serde::Serialize;
 
 use super::report::{DiagnosticLevel, DiscoveryDiagnostic, DiscoveryDiagnosticKind};
 use super::NexoPluginRegistrySnapshot;
+
+/// One plugin-contributed skill with cached display metadata, ready
+/// for the admin skills list (Phase 97.1.γ). Built once at walk time
+/// so the `skills/list` RPC needs no per-request frontmatter IO.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PluginSkillSummary {
+    /// Skill id (the `<name>/SKILL.md` directory name).
+    pub name: String,
+    /// `name:` from the SKILL.md frontmatter, if any.
+    pub display_name: Option<String>,
+    /// `description:` from the frontmatter, if any.
+    pub description: Option<String>,
+    /// Plugin that contributes this skill (attribution winner).
+    pub plugin_id: String,
+}
+
+/// Live snapshot of plugin-contributed skills shared across all
+/// agents + the skills admin RPC. Swapped atomically on plugin
+/// install / uninstall so contributions go live without a daemon
+/// restart (Phase 97.1.γ).
+#[derive(Clone, Debug, Default)]
+pub struct PluginSkillsState {
+    /// Plugin skill roots passed verbatim to `SkillLoader::with_plugin_roots`.
+    pub roots: Vec<PathBuf>,
+    /// Attributed plugin skills (first-plugin-wins) with cached metadata.
+    pub skills: Vec<PluginSkillSummary>,
+}
+
+/// Shared, hot-swappable handle to [`PluginSkillsState`].
+pub type SharedPluginSkills = Arc<ArcSwap<PluginSkillsState>>;
+
+impl PluginSkillsState {
+    /// An empty state (no plugin skills) — the default before any
+    /// plugin with a `contributes_dir` is loaded.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Build the live state from a [`SkillsMergeReport`], reading each
+    /// attributed skill's frontmatter once to cache its display name +
+    /// description. Best-effort: an unreadable `SKILL.md` yields a
+    /// summary with `None` metadata (the skill still lists + loads).
+    pub fn from_report(report: &SkillsMergeReport) -> Self {
+        let roots = report.skill_roots.values().cloned().collect();
+        let mut skills = Vec::with_capacity(report.attribution.len());
+        for (skill_name, plugin_id) in &report.attribution {
+            let Some(root) = report.skill_roots.get(plugin_id) else {
+                continue;
+            };
+            let skill_md = root.join(skill_name).join("SKILL.md");
+            let meta = crate::agent::skills::read_skill_metadata(&skill_md, skill_name);
+            skills.push(PluginSkillSummary {
+                name: skill_name.clone(),
+                display_name: meta.name,
+                description: meta.description,
+                plugin_id: plugin_id.clone(),
+            });
+        }
+        Self { roots, skills }
+    }
+
+    /// Wrap this state in a fresh [`SharedPluginSkills`] handle.
+    pub fn into_shared(self) -> SharedPluginSkills {
+        Arc::new(ArcSwap::from_pointee(self))
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct SkillsMergeReport {
@@ -270,6 +338,22 @@ mod tests {
         );
         assert!(report.conflicts.is_empty());
         assert!(report.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn plugin_skills_state_caches_metadata_and_attribution() {
+        let p = PluginSkillFixture::new("alpha");
+        p.add_skill("triager", "you triage");
+        let snap = snapshot_with(vec![p.discovered()]);
+        let report = merge_plugin_contributed_skills(&snap);
+        let state = PluginSkillsState::from_report(&report);
+        assert_eq!(state.roots.len(), 1);
+        assert_eq!(state.skills.len(), 1);
+        let s = &state.skills[0];
+        assert_eq!(s.name, "triager");
+        assert_eq!(s.plugin_id, "alpha");
+        // The fixture writes `description: <name>` frontmatter.
+        assert_eq!(s.description.as_deref(), Some("triager"));
     }
 
     #[test]

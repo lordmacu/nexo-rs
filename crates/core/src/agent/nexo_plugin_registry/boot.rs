@@ -22,6 +22,7 @@ use super::init_loop::run_plugin_init_loop_with_factory;
 use super::{
     discover, merge_plugin_contributed_agents, merge_plugin_contributed_skills,
     run_plugin_init_loop, NexoPluginRegistry, NexoPluginRegistrySnapshot, PluginDiscoveryConfig,
+    PluginSkillsState, SharedPluginSkills,
 };
 use crate::agent::channel_adapter::ChannelAdapterRegistry;
 use crate::agent::plugin_host::NexoPlugin;
@@ -81,6 +82,13 @@ pub struct WirePluginRegistryOutput {
     /// uses the same vec so plugin priority is consistent across
     /// agents.
     pub skill_roots: Vec<PathBuf>,
+    /// Live, shared plugin-skills handle (Phase 97.1.γ). Built from
+    /// the same merge as `skill_roots` but carries attribution +
+    /// cached metadata, and is hot-swappable on plugin install/
+    /// uninstall. Every spawned `LlmAgentBehavior` clones this Arc via
+    /// `with_plugin_skill_roots`; the skills admin RPC reads it to
+    /// list plugin skills with a `source_plugin` badge.
+    pub shared_skills: SharedPluginSkills,
     /// Channel adapter registry. Held in scope so the outbound
     /// dispatcher can pull it without changing the boot wire shape.
     pub channel_adapter_registry: Arc<ChannelAdapterRegistry>,
@@ -249,6 +257,9 @@ pub async fn wire_plugin_registry_with_runtime(
     // 3. catalog plugin-contributed skill roots.
     let skill_merge = merge_plugin_contributed_skills(&snap);
     let skill_roots: Vec<PathBuf> = skill_merge.skill_roots.values().cloned().collect();
+    // Live, shared handle for hot install/uninstall + admin-RPC listing.
+    let shared_skills: SharedPluginSkills =
+        PluginSkillsState::from_report(&skill_merge).into_shared();
 
     // 4. drive NexoPlugin::init() per discovered plugin.
     //    When the operator supplies a `factory_registry`, plugins
@@ -476,6 +487,7 @@ pub async fn wire_plugin_registry_with_runtime(
     WirePluginRegistryOutput {
         registry,
         skill_roots,
+        shared_skills,
         // Same registry used by the post-init hook so
         // callers see the registered remote adapters.
         channel_adapter_registry: shared_channel_adapter_registry,

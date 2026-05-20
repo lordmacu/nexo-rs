@@ -324,6 +324,7 @@ mod tests {
                     name: r.name.clone(),
                     display_name: r.display_name.clone(),
                     description: r.description.clone(),
+                    source_plugin: r.source_plugin.clone(),
                     updated_at: r.updated_at,
                 })
                 .collect())
@@ -341,6 +342,7 @@ mod tests {
                 body: params.body,
                 max_chars: params.max_chars,
                 requires: params.requires.unwrap_or_default(),
+                source_plugin: None,
                 updated_at: Utc.with_ymd_and_hms(2026, 5, 2, 12, 0, 0).unwrap(),
             };
             rows.insert(params.name, record.clone());

@@ -711,6 +711,18 @@ fn parse_frontmatter(raw: &str, skill_name: &str, path: &Path) -> (SkillMetadata
         }
     }
 }
+
+/// Read ONLY the frontmatter metadata from a `SKILL.md` file (body
+/// discarded). Used to cache a plugin-contributed skill's display name
+/// + description for the admin skills list (Phase 97.1.γ). Best-effort:
+/// a missing / unreadable file yields default metadata, never an error.
+pub fn read_skill_metadata(skill_md: &Path, skill_name: &str) -> SkillMetadata {
+    let raw = match std::fs::read_to_string(skill_md) {
+        Ok(s) => s,
+        Err(_) => return SkillMetadata::default(),
+    };
+    parse_frontmatter(raw.trim_start(), skill_name, skill_md).0
+}
 fn find_closing_delim(after_open: &str) -> Option<usize> {
     let mut offset = 0;
     for line in after_open.split_inclusive('\n') {

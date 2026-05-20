@@ -22,6 +22,8 @@ use nexo_memory::EmailFollowupEntry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+
+use crate::agent::nexo_plugin_registry::{PluginSkillsState, SharedPluginSkills};
 use std::sync::{Arc, Mutex};
 /// Build the JSON payload channel plugins consume from
 /// `plugin.outbound.<channel>.<instance?>`. The `text` variant
@@ -297,13 +299,13 @@ pub struct LlmAgentBehavior {
     /// `"default"`; multi-tenant SaaS wires the per-binding tenant
     /// at boot via `with_mutation_hook`.
     mutation_tenant: String,
-    /// Plugin-contributed skill roots threaded from
-    /// `wire_plugin_registry` boot output. Empty when no plugin
-    /// discovery is configured. `prepare_system_prompt()` consumes
-    /// this via `SkillLoader::with_plugin_roots(self.plugin_skill_roots.clone())`
-    /// so plugin-contributed skills become discoverable to every
-    /// agent without operator-level skills_dir duplication.
-    plugin_skill_roots: Vec<PathBuf>,
+    /// Live, shared handle to plugin-contributed skill roots
+    /// (Phase 97.1.γ). Built once at boot and SHARED across all agents
+    /// so a plugin install/uninstall swaps it atomically and every
+    /// agent sees the change on its next turn — no daemon restart.
+    /// `prepare_system_prompt()` reads `self.plugin_skills.load().roots`
+    /// per turn. An empty handle preserves legacy behavior.
+    plugin_skills: SharedPluginSkills,
     /// Outbound reply transform pipeline. Each transformer runs in
     /// registration order before the reply hits the channel topic.
     /// Empty by default — transformers are opt-in via
@@ -417,7 +419,7 @@ impl LlmAgentBehavior {
             memory_dir: None,
             mutation_hook: None,
             mutation_tenant: "default".into(),
-            plugin_skill_roots: Vec::new(),
+            plugin_skills: PluginSkillsState::empty().into_shared(),
             reply_transform_chain: super::reply_transform::OutboundReplyTransformChain::empty(),
         }
     }
@@ -701,8 +703,8 @@ impl LlmAgentBehavior {
     /// legacy behavior (operator's `skills_dir` is the only
     /// source). Operator-priority is preserved by the loader's
     /// search order — see `SkillLoader::candidate_paths`.
-    pub fn with_plugin_skill_roots(mut self, roots: Vec<PathBuf>) -> Self {
-        self.plugin_skill_roots = roots;
+    pub fn with_plugin_skill_roots(mut self, skills: SharedPluginSkills) -> Self {
+        self.plugin_skills = skills;
         self
     }
 
@@ -1350,7 +1352,7 @@ impl LlmAgentBehavior {
                     // `candidate_paths` searches the operator
                     // chain (tenant + global + legacy) before
                     // any plugin root.
-                    .with_plugin_roots(self.plugin_skill_roots.clone());
+                    .with_plugin_roots(self.plugin_skills.load().roots.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     skills_section = Some(blocks);

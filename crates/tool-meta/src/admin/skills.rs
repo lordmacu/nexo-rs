@@ -57,6 +57,12 @@ pub struct SkillSummary {
     /// Optional one-line description from frontmatter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Contributing plugin id when this skill comes from a plugin's
+    /// `[plugin.skills] contributes_dir` (Phase 97.1.γ). `None` for
+    /// operator/workspace skills. The admin UI shows a "from <plugin>"
+    /// badge and treats plugin skills as read-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_plugin: Option<String>,
     /// Last-modified timestamp at the time the summary was built.
     pub updated_at: DateTime<Utc>,
 }
@@ -83,6 +89,10 @@ pub struct SkillRecord {
     /// Author-declared dependency requirements.
     #[serde(default)]
     pub requires: SkillRequiresRecord,
+    /// Contributing plugin id when this skill comes from a plugin
+    /// (Phase 97.1.γ); `None` for operator/workspace skills.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_plugin: Option<String>,
     /// Last-modified timestamp.
     pub updated_at: DateTime<Utc>,
 }
@@ -217,9 +227,14 @@ mod tests {
                 env: vec!["TARIFARIO_TOKEN".into()],
                 mode: SkillDepsMode::Warn,
             },
+            source_plugin: Some("telegram".into()),
             updated_at: fixed_ts(),
         };
         let v = to_value(&record).unwrap();
+        assert_eq!(
+            v.get("source_plugin").and_then(|s| s.as_str()),
+            Some("telegram")
+        );
         let back: SkillRecord = from_value(v).unwrap();
         assert_eq!(record, back);
     }
@@ -233,6 +248,7 @@ mod tests {
             body: "body".into(),
             max_chars: None,
             requires: SkillRequiresRecord::default(),
+            source_plugin: None,
             updated_at: fixed_ts(),
         };
         let v = to_value(&record).unwrap();
@@ -240,6 +256,7 @@ mod tests {
         assert!(!obj.contains_key("display_name"));
         assert!(!obj.contains_key("description"));
         assert!(!obj.contains_key("max_chars"));
+        assert!(!obj.contains_key("source_plugin"));
     }
 
     #[test]
@@ -251,6 +268,7 @@ mod tests {
             body: "body".into(),
             max_chars: None,
             requires: SkillRequiresRecord::default(),
+            source_plugin: None,
             updated_at: fixed_ts(),
         };
         let v = to_value(&record).unwrap();
@@ -324,6 +342,7 @@ mod tests {
             body: "Use to check liveness.".into(),
             max_chars: None,
             requires: SkillRequiresRecord::default(),
+            source_plugin: None,
             updated_at: fixed_ts(),
         };
         let blob = format!(

@@ -112,6 +112,33 @@ manually if a deployment needs to point at private mirrors:
 | `daemon_version` | `CARGO_PKG_VERSION` | Test compat against an older or newer host |
 | `github_token` | `None` | Lift unauth GitHub rate limit |
 
+## What goes live on install (no restart)
+
+*Phase 97.1.γ.* Installing a plugin (`nexo/admin/plugins/install` →
+auto-`scan`, or `nexo/admin/plugins/scan`) registers its contributions
+into the running daemon **without a restart**:
+
+| Contribution | Live on install? |
+|---|---|
+| Tools (`extends.tools`) | ✅ into the shared `ToolRegistry` |
+| Channels, hooks, LLM providers, vector backends | ✅ |
+| Admin / poller routes, pairing triggers | ✅ |
+| **Skills** (`[plugin.skills] contributes_dir`) | ✅ re-walked + merged into the shared live handle every agent reads next turn |
+| **Metrics** (`[plugin.metrics]`) | ✅ appended to the live descriptor list the `/metrics` scrape reads |
+
+Enabling/disabling (`set_enabled`) and uninstalling apply the inverse
+live — skills + metrics are added on enable/install and dropped on
+disable/uninstall.
+
+**Plugin skills in the admin UI.** Plugin-contributed skills appear in
+the **Skills** screen alongside operator skills, tagged with a
+`from plugin <id>` badge (the `skills/list` RPC carries a
+`source_plugin` field). They are read-only there — remove them by
+uninstalling the plugin. Operator skills win on a name collision.
+
+Still restart-bound: agents, HTTP routes, dashboards, admin-UI
+descriptors (their hosting structures lack interior mutability today).
+
 ## Architecture pointers
 
 - `crates/plugin-discovery/` — standalone publishable crate.
