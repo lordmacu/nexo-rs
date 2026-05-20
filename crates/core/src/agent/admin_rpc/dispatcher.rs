@@ -1295,18 +1295,51 @@ impl AdminRpcDispatcher {
                         // just default to no-persister on parse
                         // failure so the existing error path
                         // wins.
-                        let persister = params
+                        let channel = params
                             .get("channel")
                             .and_then(Value::as_str)
-                            .and_then(|c| self.persister_for(c));
-                        super::domains::credentials::register(
+                            .map(str::to_string);
+                        let persister =
+                            channel.as_deref().and_then(|c| self.persister_for(c));
+                        let outcome = super::domains::credentials::register(
                             store.as_ref(),
                             yaml.as_ref(),
                             persister,
                             params,
                             &move || trigger(),
                         )
-                        .await
+                        .await;
+                        // Phase 97.x — after a successful credential
+                        // register, restart the channel's plugin so
+                        // the subprocess re-reads its yaml and
+                        // (re)starts polling/connecting for the
+                        // just-configured instance WITHOUT a daemon
+                        // restart. Generic across telegram / email /
+                        // any future credential-flow channel (whatsapp
+                        // restarts via its pairing `on_pair_success`
+                        // path). Idempotent; a missing restarter skips
+                        // silently; a restart failure is logged but
+                        // does NOT fail the register — the yaml write
+                        // already succeeded.
+                        if outcome.error.is_none() {
+                            if let (Some(restarter), Some(channel)) =
+                                (&self.plugin_restarter, channel.as_deref())
+                            {
+                                match restarter.restart(channel).await {
+                                    Ok(_) => tracing::info!(
+                                        channel,
+                                        "post-register channel plugin restart fired"
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        channel,
+                                        error = %e,
+                                        "post-register channel plugin restart failed; \
+                                         configured instance may need a manual restart"
+                                    ),
+                                }
+                            }
+                        }
+                        outcome
                     }
                     _ => AdminRpcResult::err(AdminRpcError::Internal(
                         "credentials domain not configured".into(),
