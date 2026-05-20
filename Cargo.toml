@@ -169,7 +169,7 @@ description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LL
 # boot, `--override-from` deep-merge, `nexo init` 19-template
 # scaffolder) + packaging postinst hooks. Next pre-release wave
 # bumps to `"0.1.7-rc1"` per the same flow.
-version      = "0.1.6"
+version      = "0.2.1"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
