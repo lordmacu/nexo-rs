@@ -168,7 +168,7 @@ impl DefaultDiscoveryClient {
         let manifests = self.fetch_all_manifests(&items).await;
         let mut enriched: Vec<DiscoveredPlugin> = items
             .into_iter()
-            .zip(manifests.into_iter())
+            .zip(manifests)
             .map(|(mut plugin, fetched)| {
                 if let Some(f) = fetched {
                     plugin.category = f.category;
