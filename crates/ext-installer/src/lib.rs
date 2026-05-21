@@ -286,15 +286,9 @@ pub async fn resolve_release_with_contract<C: ExtractContract>(
     api_base: &str,
 ) -> Result<ResolvedReleaseTyped<C::Manifest>, InstallError> {
     let release = fetch_release_raw(client, coords, api_base).await?;
-    let version_str = release.tag_name.trim_start_matches('v').to_string();
-    let version = semver::Version::parse(&version_str).map_err(|e| InstallError::ReleaseShape {
-        owner: coords.owner.clone(),
-        repo: coords.repo.clone(),
-        reason: format!(
-            "release tag `{}` does not parse as semver `vX.Y.Z`: {e}",
-            release.tag_name
-        ),
-    })?;
+    // Fallback version when the manifest carries none (personas). The
+    // real version is derived from the manifest below once it's parsed.
+    let tag_version = release.tag_name.trim_start_matches('v').to_string();
 
     // Locate the manifest asset (filename declared by contract).
     let manifest_asset_name = contract.manifest_asset_name();
@@ -323,6 +317,18 @@ pub async fn resolve_release_with_contract<C: ExtractContract>(
         .map_err(|e| InstallError::Http(format!("read manifest body: {e}")))?;
     let manifest = contract.parse_manifest(&manifest_bytes, coords)?;
     let pkg_id = contract.manifest_id(&manifest);
+    // Prefer the manifest's own version for asset naming + the version
+    // check: the release build names assets `<id>-<manifest_version>-
+    // <target>`, and cargo-release can bump Cargo.toml + the git tag
+    // one patch ahead of the plugin manifest — trusting the tag would
+    // look for assets that don't exist. Personas (no manifest version)
+    // fall back to the tag.
+    let version_str = contract.manifest_version(&manifest).unwrap_or(tag_version);
+    let version = semver::Version::parse(&version_str).map_err(|e| InstallError::ReleaseShape {
+        owner: coords.owner.clone(),
+        repo: coords.repo.clone(),
+        reason: format!("version `{version_str}` is not semver `X.Y.Z`: {e}"),
+    })?;
 
     // Find the tarball asset for the requested target. `noarch`
     // acts as a fallback target name so portable plugins

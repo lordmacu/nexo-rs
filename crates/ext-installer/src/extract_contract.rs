@@ -62,6 +62,17 @@ pub trait ExtractContract {
     /// `<id>-<version>-noarch.tar.gz`. Must match the id
     /// chosen by the release publisher when uploading assets.
     fn manifest_id(&self, manifest: &Self::Manifest) -> String;
+
+    /// Version the resolver should use for the tarball asset name +
+    /// the post-extract version check. `Some` when the manifest
+    /// carries its own version (plugins) — that matches what the
+    /// release build named assets with, even when `cargo release`
+    /// bumps `Cargo.toml` + the git tag one patch ahead of the
+    /// plugin manifest. `None` (default) falls back to the git tag
+    /// (personas, whose manifest has no version field).
+    fn manifest_version(&self, _manifest: &Self::Manifest) -> Option<String> {
+        None
+    }
 }
 
 /// Plugin-flavoured contract — the original behavior reified.
@@ -101,5 +112,9 @@ impl ExtractContract for PluginExtractContract {
 
     fn manifest_id(&self, manifest: &Self::Manifest) -> String {
         manifest.plugin.id.clone()
+    }
+
+    fn manifest_version(&self, manifest: &Self::Manifest) -> Option<String> {
+        Some(manifest.plugin.version.to_string())
     }
 }
