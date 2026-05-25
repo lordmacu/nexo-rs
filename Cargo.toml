@@ -320,7 +320,7 @@ bytes              = "1"
 ipnetwork          = { version = "0.20", features = ["serde"] }
 futures            = "0.3"
 base64             = "0.22"
-sha2               = "0.10"
+sha2               = "0.11"
 hex                = "0.4"
 sqlite-vec         = "0.1"
 lru                = "0.17"
