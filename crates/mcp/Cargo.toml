@@ -85,7 +85,7 @@ tracing-subscriber = { workspace = true }
 eventsource-stream = "0.2"
 # Phase 76.3 — JWT signing fixtures (RSA keypair + JWKS server).
 rsa        = "0.9"
-rand       = "0.8"
+rand       = "0.10"
 base64     = "0.22"
 # Phase 76.10 — serialise telemetry tests (module-global counters).
 serial_test = "3"
