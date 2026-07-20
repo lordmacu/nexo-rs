@@ -831,9 +831,9 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "bytes"
-version = "1.11.1"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
+checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 dependencies = [
  "serde",
 ]
@@ -1518,7 +1518,7 @@ dependencies = [
  "cssparser-macros",
  "dtoa-short",
  "itoa",
- "phf 0.10.1",
+ "phf 0.11.3",
  "smallvec",
 ]
 
@@ -1570,7 +1570,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1659,9 +1659,9 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "6.1.0"
+version = "6.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
 dependencies = [
  "cfg-if",
  "crossbeam-utils",
@@ -1847,7 +1847,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2056,7 +2056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2896,9 +2896,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.13"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"
+checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3197,9 +3197,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "humantime"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 
 [[package]]
 name = "humantime-serde"
@@ -3213,9 +3213,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.9.0"
+version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6299f016b246a94207e63da54dbe807655bf9e00044f73ded42c3ac5305fbcca"
+checksum = "55281c53a1894c864990125767da440a4e630446785086f52523b20033b74498"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3267,7 +3267,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3673,7 +3673,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4366,7 +4366,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "humantime-serde",
  "nexo-driver-claude",
  "nexo-driver-types",
@@ -4399,7 +4399,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "base64 0.22.1",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "hex",
  "nexo-config",
  "nexo-resilience",
@@ -4426,7 +4426,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "nexo-config",
  "nexo-resilience",
@@ -4446,7 +4446,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "reqwest",
  "serde_json",
@@ -4507,7 +4507,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "cron",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "git2",
  "globset",
@@ -4569,7 +4569,7 @@ dependencies = [
  "async-nats",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "gethostname",
  "humantime",
  "humantime-serde",
@@ -4629,7 +4629,7 @@ version = "0.1.9"
 dependencies = [
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "humantime-serde",
  "nexo-driver-types",
  "serde",
@@ -4653,7 +4653,7 @@ dependencies = [
  "async-nats",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "humantime-serde",
  "nexo-config",
  "nexo-driver-claude",
@@ -4683,7 +4683,7 @@ version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "nexo-driver-types",
  "nexo-mcp",
  "regex",
@@ -4787,7 +4787,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "async-trait",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "humantime-serde",
  "nexo-broker",
@@ -4852,7 +4852,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "eventsource-stream",
  "futures",
  "hex",
@@ -4883,7 +4883,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "rand 0.8.6",
  "reqwest",
  "serde",
@@ -4902,7 +4902,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "lsp-types",
  "serde",
@@ -4927,7 +4927,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "eventsource-stream",
  "futures",
  "futures-util",
@@ -4985,7 +4985,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "hex",
  "libsqlite3-sys",
  "lru",
@@ -5018,7 +5018,7 @@ dependencies = [
  "age",
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "git2",
  "hex",
  "nexo-driver-types",
@@ -5073,7 +5073,7 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "futures",
  "handlebars",
  "hf-hub",
@@ -5130,7 +5130,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "hex",
  "hmac",
  "image",
@@ -5235,7 +5235,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "cron",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "humantime",
  "nexo-auth",
  "nexo-broker",
@@ -5353,7 +5353,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "dirs 5.0.1",
  "futures",
  "humantime",
@@ -5430,7 +5430,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "console",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "dialoguer",
  "globset",
  "indicatif",
@@ -5534,7 +5534,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cloudflare-quick-tunnel",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "tempfile",
  "tokio",
  "tracing",
@@ -5546,7 +5546,7 @@ version = "0.2.1"
 dependencies = [
  "async-trait",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap 6.2.1",
  "hex",
  "nexo-resilience",
  "reqwest",
@@ -5698,7 +5698,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6164,9 +6164,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fabbf1ead8a5bcbc20f5f8b939ee3f5b0f6f281b6ad3468b84656b658b455259"
 dependencies = [
- "phf_macros",
  "phf_shared 0.10.0",
- "proc-macro-hack",
 ]
 
 [[package]]
@@ -6175,6 +6173,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
+ "phf_macros",
  "phf_shared 0.11.3",
 ]
 
@@ -6220,16 +6219,15 @@ dependencies = [
 
 [[package]]
 name = "phf_macros"
-version = "0.10.0"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58fdf3184dd560f160dd73922bea2d5cd6e8f064bf4b13110abd81b03697b4e0"
+checksum = "f84ac04429c13a7ff43785d75ad27569f2951ce0ffd30a3321230db2fc727216"
 dependencies = [
- "phf_generator 0.10.0",
- "phf_shared 0.10.0",
- "proc-macro-hack",
+ "phf_generator 0.11.3",
+ "phf_shared 0.11.3",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -6481,12 +6479,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-hack"
-version = "0.5.20+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc375e1527247fe1a97d8b7156678dfe7c1af2fc075c9a4db3690ecd2a148068"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6596,7 +6588,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -6633,9 +6625,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6880,9 +6872,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.3"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -6892,9 +6884,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -6903,9 +6895,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.10"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
@@ -7078,7 +7070,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7091,7 +7083,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7285,15 +7277,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scc"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
-dependencies = [
- "sdd",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7368,12 +7351,6 @@ dependencies = [
  "ring",
  "untrusted",
 ]
-
-[[package]]
-name = "sdd"
-version = "3.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "sec1"
@@ -7624,9 +7601,9 @@ dependencies = [
 
 [[package]]
 name = "serial_test"
-version = "3.4.0"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
+checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
 dependencies = [
  "fslock",
  "futures-executor",
@@ -7634,15 +7611,14 @@ dependencies = [
  "log",
  "once_cell",
  "parking_lot 0.12.5",
- "scc",
  "serial_test_derive",
 ]
 
 [[package]]
 name = "serial_test_derive"
-version = "3.4.0"
+version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
+checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8209,7 +8185,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
- "quote",
  "unicode-ident",
 ]
 
@@ -8311,10 +8286,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8521,9 +8496,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.1"
+version = "1.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
+checksum = "d988bcd52dbe076d3d46903332f58c912b87a2c49b1428419a5845154762ffee"
 dependencies = [
  "bytes",
  "libc",
@@ -9153,9 +9128,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.23.1"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -9506,7 +9481,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10102,18 +10077,18 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
  "zeroize_derive",
 ]
 
 [[package]]
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",
